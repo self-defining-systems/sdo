@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,7 +15,7 @@ import (
 
 // Drive the real stage and closure over the same synthetic clock and live
 // rollout snapshots. The controller observes only when the test steps it.
-func automaticRecoveryWorld(t *testing.T, tc settlingCase, policy string) (*Controller, *settlingWorld, *IncidentClosure) {
+func automaticRecoveryWorld(t *testing.T, tc settlingCase, policy string, extra ...sdk.Detector) (*Controller, *settlingWorld, *IncidentClosure) {
 	t.Helper()
 	world := newSettlingWorld(tc)
 	stage, state := settlingStageOn(t, tc, world)
@@ -43,7 +44,7 @@ func automaticRecoveryWorld(t *testing.T, tc settlingCase, policy string) (*Cont
 		stage.WaitBound = cfg.AfterPlaybookWait
 	}
 	stage.StabilityWindow = cfg.ClosureStabilityWindow
-	controller, err := NewController(cfg, loop.Detectors[:1], world, &recordingDispatcher{}, now)
+	controller, err := NewController(cfg, append(slices.Clone(loop.Detectors[:1]), extra...), world, &recordingDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,12 +131,12 @@ func TestAutomaticRecoveryDeadlineSurvivesRestartAndWaitPolicy(t *testing.T) {
 		t.Fatalf("wait deadline moved or expired before its bound: %s", got)
 	}
 	autoStep(t, restarted, world.clock, time.Second)
-	if !restarted.escalatedAt.Equal(bound) || autoReport(restarted).GetHandoffSelected() || world.restarts.Load() != 1 {
+	if !restarted.escalatedAt.Equal(bound) || autoReport(restarted).GetHandoffSelected() || restarted.awaitingAutomaticRecoveryLocked() != nil || world.restarts.Load() != 1 {
 		t.Fatal("the configured wait did not expire without an agent or replay")
 	}
 }
 
-func TestAutomaticRecoveryOnlyHandsOffFreshFiringAlerts(t *testing.T) {
+func TestAutomaticRecoveryDeadlineAppliesPolicyToObservedAlerts(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		policy  string
@@ -299,5 +300,168 @@ func TestAutomaticRecoveryWaitRequiresALiveWrite(t *testing.T) {
 				t.Fatalf("the executor completed %s without a live write", name)
 			}
 		})
+	}
+}
+
+func TestAutomaticRecoveryClosesWithAJoinedPage(t *testing.T) {
+	c, world, closed := automaticRecoveryWorld(t, settlingCase{healAfter: 12 * time.Second}, settings.AfterPlaybookAgent)
+	if err := c.admitPage(t.Context(), world.clock.Now(), nil, ExternalIncident{
+		ID: "fallback-page", Namespace: "app", Message: "Users still see failures",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	autoStep(t, c, world.clock, 12*time.Second)
+	autoStep(t, c, world.clock, 5*time.Second)
+	autoStep(t, c, world.clock, time.Second)
+	report := deterministicStageReport(closed.Request.PriorStages)
+	if c.IncidentOpen() || closed.Request.Page == "" || !closed.EscalatedAt.IsZero() ||
+		report.GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED {
+		t.Fatalf("joined page held automatic recovery: closure=%v report=%v", closed.VerifiedAt, report)
+	}
+}
+
+type delayedAutomaticSnapshot struct {
+	world *settlingWorld
+	err   error
+}
+
+func (p delayedAutomaticSnapshot) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	lag, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	<-lag.Done()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := p.world.clock.advance(ctx, 2*time.Second); err != nil {
+		return nil, err
+	}
+	if p.err != nil {
+		return nil, p.err
+	}
+	return p.world.Snapshot(ctx)
+}
+
+func TestAutomaticDeadlineHandsOffAfterSlowOrUnavailableObservation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"slow firing sample", nil},
+		{"unavailable sample", sdk.ErrUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c, world, _ := automaticRecoveryWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
+				c.provider = delayedAutomaticSnapshot{world: world, err: tc.err}
+				bound := autoReport(c).GetRecoveryDeadline().AsTime()
+				autoStep(t, c, world.clock, bound.Sub(world.clock.Now()))
+				if tc.err == nil {
+					states, _ := c.latestEvaluations([]string{"traffic-health"}, bound, false)
+					if len(states) != 1 || states[0].Status != DetectorEvaluationFiring || !states[0].EvaluatedAt.Equal(bound) {
+						t.Fatalf("slow firing sample lost its step timestamp: %v", states)
+					}
+				}
+				report := autoReport(c)
+				if !report.GetHandoffSelected() || !slices.Equal(report.GetHandoffKeys(), c.currentIncidentRequest.OpeningKeys) ||
+					!c.escalatedAt.IsZero() || c.awaitingAutomaticRecoveryLocked() != nil {
+					t.Fatalf("deadline did not select one handoff for the alert set: report=%v escalated=%v", report, c.escalatedAt)
+				}
+			})
+		})
+	}
+}
+
+func TestAutomaticStageLeavesAPageOpenedIncidentForTheResponder(t *testing.T) {
+	world := newSettlingWorld(settlingCase{})
+	stage, state := settlingStageOn(t, settlingCase{}, world)
+	state.Request.Page = "Investigate an externally reported symptom"
+	report, err := stage.Run(t.Context(), state)
+	if err != nil || playbookWrote(report) || world.restarts.Load() != 0 {
+		t.Fatalf("automatic stage acted on page clues: report=%v err=%v", report, err)
+	}
+}
+
+type unavailableHandoffView struct {
+	reads int
+}
+
+func (p *unavailableHandoffView) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	p.reads++
+	return nil, sdk.ErrUnavailable
+}
+
+type preparingAutomaticHandoff struct {
+	recordingDispatcher
+	loop *ResponderLoop
+}
+
+func (d *preparingAutomaticHandoff) PrepareDispatch(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
+	request = d.loop.prepareDispatch(ctx, request, nil, goCodePathCoverage{})
+	request.PreparedAgentTask = "synthetic-frozen-task"
+	return request, nil
+}
+
+type unavailableHandoffClue struct{ closureScopeDetector }
+
+func (d *unavailableHandoffClue) Spec() sdk.DetectorSpec {
+	spec := d.closureScopeDetector.Spec()
+	spec.Class, spec.Owner = sdk.DetectorClassLearned, sdk.DetectorOwnerResponder
+	spec.OriginatingIncident = "synthetic-prior-incident"
+	return spec
+}
+
+func TestAutomaticHandoffAndClosureIgnoreAPermanentlyUnavailableClue(t *testing.T) {
+	clue := &unavailableHandoffClue{closureScopeDetector{id: "optional-clue", unavailable: true}}
+	c, world, closed := automaticRecoveryWorld(t, settlingCase{healAfter: 100 * time.Second}, settings.AfterPlaybookAgent, clue)
+	loop := c.responderLoop
+	loop.Detectors = append(loop.Detectors, clue)
+	dispatcher := &preparingAutomaticHandoff{recordingDispatcher: recordingDispatcher{requests: make(chan IncidentRequest, 2)}, loop: loop}
+	c.dispatcher = dispatcher
+	step := func(advance time.Duration) {
+		t.Helper()
+		if err := world.clock.advance(t.Context(), advance); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Step(t.Context(), world.clock.Now(), nil); err != nil {
+			t.Fatal(err)
+		}
+		c.Wait()
+	}
+
+	bound := autoReport(c).GetRecoveryDeadline().AsTime()
+	step(bound.Sub(world.clock.Now()))
+	if !autoReport(c).GetHandoffSelected() {
+		t.Fatal("the still-firing alert did not select handoff")
+	}
+	unavailable := new(unavailableHandoffView)
+	loop.Provider = unavailable
+	if prepared, err := c.PrepareDispatchStep(t.Context()); err != nil || !prepared {
+		t.Fatalf("prepare handoff = %v, %v", prepared, err)
+	}
+	loop.Provider = world
+	effect, ok := c.PendingDispatchEffect()
+	if !ok {
+		t.Fatal("handoff did not publish a pending dispatch")
+	}
+	if err := c.ExecuteDispatchEffect(t.Context(), effect); err != nil {
+		t.Fatal(err)
+	}
+	c.Wait()
+	step(time.Second)
+	step(4 * time.Second)
+	step(5 * time.Second)
+	step(time.Second)
+	samples, _ := c.latestEvaluations([]string{clue.id}, bound, false)
+	if len(samples) != 1 || samples[0].Status != DetectorEvaluationError {
+		t.Fatalf("test did not exercise a permanently unavailable clue: %v", samples)
+	}
+	if dispatcher.callCount() != 1 || c.IncidentOpen() || closed.Result == nil || !closed.EscalatedAt.IsZero() {
+		t.Fatalf("claims=%d open=%v closure=%s escalated=%s", dispatcher.callCount(), c.IncidentOpen(), closed.VerifiedAt, closed.EscalatedAt)
+	}
+	if len(closed.FinalDetectorStates) != 1 || closed.FinalDetectorStates[0].DetectorID != "traffic-health" {
+		t.Fatalf("recovery used observations outside the alert set: %v", closed.FinalDetectorStates)
+	}
+	if unavailable.reads != 0 {
+		t.Fatalf("handoff preparation made %d live observation reads", unavailable.reads)
 	}
 }

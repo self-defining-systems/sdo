@@ -42,6 +42,7 @@ func (c *Controller) resumeClosureVerification(ctx context.Context, effect Closu
 	c.incidentDetectedAt = closure.DetectedAt
 	c.incidentDispatchedAt = closure.DispatchedAt
 	c.responderCompletedAt = closure.ResponderCompletedAt
+	c.escalatedAt = closure.EscalatedAt
 	c.responderDone = true
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 	c.incidentFindingKeys = findingKeys(closure.Request.Findings)

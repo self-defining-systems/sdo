@@ -88,12 +88,13 @@ keep running. With no incident open, a page opens one whose alert set starts emp
 (`IncidentRequest.page` set, no `opening_keys`; the active clues ride as evidence)
 and the responder is dispatched once with the page text; with an incident open it
 joins it (`page` recorded, the responder never re-prompted). Detector openers that
-activate later join the alert set as usual (`joined_keys`). An incident holding a
-page is Recovered only after its responder returned: no detector can clear a page,
-so there is no early close; within the verification grace the alert set (every
-health detector when none joined) must then stay clear for the stability window
-after SDO's last known write, else the incident escalates. The closure is an
-ordinary verified one, so the closing turn and learning gate are unchanged. A page
+activate later join the alert set as usual (`joined_keys`). A page-opened incident
+requires its responder to return. A page joined during an active responder turn
+also waits for that return. During automatic recovery of a detector incident,
+the joined page rides as evidence and does not expand the alert set. Only the
+owners of the opening and joined alert keys can hold detector recovery. An
+empty alert set has no detector prerequisites. Closure still waits for the
+stability window and known writes to settle. A page
 is accepted once (`ControllerState.last_page_id`); the producer may leave it in the
 inbox. Watch-only controllers ignore pages.
 
@@ -363,8 +364,8 @@ the backup to put back.
 Readiness is not recovery. One predicate, Recovered (`runtime/recovery_verification.go`), closes an incident,
 clears the automatic stage and ends the responder session: the incident's alert set cleared
 and stayed clear for the stability window after SDO's last change settled. `since` is the later of detection and the
-settle time of SDO's last write (plan completion or the written workload's latest Pod Ready transition; a workload
-still rolling out holds recovery). An opening user test recovers when its fresh samples since `since` meet its SLO,
+completion time of SDO's last write. A pending workload write must be observed by its controller and show
+progress on the written revision. A later Pod Ready transition does not move the write epoch. An opening user test recovers when its fresh samples since `since` meet its SLO,
 so do those in the trailing stability window, and its latest sample is good; its detector clearing is not enough,
 because its SLO window can still hold samples from before the fix. An opening Kubernetes condition recovers when its
 finding is inactive with a clear streak of the stability window. The alert set is `opening_keys` plus `joined_keys`: user tests that started failing while the incident was open, within
@@ -378,7 +379,9 @@ passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVAT
 
 The automatic stage records `NOTHING_APPLIED` when it wrote nothing. After a write it persists one deadline at apply completion. The allowance is workload startup time plus the greater of 90 seconds and the alert owners' clearing lag, plus the stability window. The configured `response.after_playbook_wait` supplies the allowance for the `wait` policy. The response deadline caps the initial allowance. Later readiness changes, passes and restarts leave that deadline fixed. If all prerequisites are confirmed at expiry and only stability is running, the controller can extend once to the start of stability plus its duration and one observation interval. It never escalates or records a rollout failure during that stability-only wait.
 
-When the bound expires under the default `agent` policy, a freshly failing member of the opening or joined alerts can trigger one durable handoff. `escalate` and `wait` withhold the agent after an applied playbook. The controller marks an unsettled rollout at expiry as a terminal trust failure for its revision. The prepared task carries the selected residual alerts and application receipts. Worker claim uses that saved task. On StatefulSet source restore, the executor replaces Pods off the observed update revision within the original application, respecting the rolling-update partition and binding deletions to Pod UIDs.
+When the bound expires under the default `agent` policy, a firing or unconfirmed member of the opening or joined alerts triggers one durable handoff if response time remains. The deadline step uses the normal observation budget capped by the response deadline. `escalate` and `wait` withhold the agent after an applied playbook. The controller marks an unsettled rollout at expiry as a terminal trust failure for its revision. The prepared task carries the selected residual alerts and application receipts. Task preparation and worker claim use saved observations and receipts, without requiring another live diagnosis.
+
+After a StatefulSet source restore changes its template, the executor can replace a Pod on the wrong revision. The controller revisits pending automatic restores on later steps before handoff. Replacement follows descending eligible ordinals and the rolling-update partition. It waits for the previous replacement to become available. Kubernetes updates Ready RollingUpdate Pods. Supplemental deletions are UID-bound and recorded on the original application.
 Data effects never change the outcome: each applied effect is recorded as a `data effect:` line in the
 closure's `source_check_notes` (and in verify's `data_effects[]`), with, for `unknown` and `data-write`,
 whether a backup of this incident held the records it could change (a `RepairData` whose named

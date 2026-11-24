@@ -109,7 +109,9 @@ func (*DeterministicResponseStage) Name() string { return "deterministic" }
 
 func (stage *DeterministicResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
 	report := &contracts.StageReport{Stage: stage.Name(), StartedAt: contractTimestamp(lifecycleio.Now().UTC())}
-	if stage.NewLoop == nil {
+	// The first responder must read a page that opened the incident. Clues
+	// accompanying the page cannot substitute for its report.
+	if stage.NewLoop == nil || (pageOpened(&state.Request) && len(state.PriorStages) == 0) {
 		return report, nil
 	}
 	loop := stage.NewLoop(state.Request)

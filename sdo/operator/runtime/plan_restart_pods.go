@@ -15,7 +15,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -45,6 +44,8 @@ func (c TypedPlanClient) NamespacePods(ctx context.Context, namespace string) ([
 type StuckRestartPod struct {
 	Pod    corev1.Pod
 	Reason string
+	// A source restore selects Pods by their current revision and availability.
+	requireSameVersion bool
 }
 
 // PodsControllerWillNotRoll returns the workload's current Pods that its
@@ -181,6 +182,9 @@ func (e PlanExecutor) replaceStuckPods(ctx context.Context, stuck []StuckRestart
 		if err != nil {
 			return fmt.Errorf("read Pod %s the restart must replace: %w", ref.Name, err)
 		}
+		if item.requireSameVersion && live.GetResourceVersion() != item.Pod.ResourceVersion {
+			continue
+		}
 		if err := deleter.Delete(ctx, ref, item.Pod.UID, live.GetResourceVersion()); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete Pod %s the restart must replace (%s): %w", ref.Name, item.Reason, err)
 		}
@@ -195,15 +199,16 @@ func (e PlanExecutor) replaceStuckPods(ctx context.Context, stuck []StuckRestart
 	return nil
 }
 
-// sourceRestoredStatefulSets returns the StatefulSet source writes, including
-// the identity and fields the executor just verified.
-func sourceRestoredStatefulSets(plan program.Plan, result PlanApplicationResult) []PlanPatch {
+// sourceRestoredStatefulSets identifies actual template changes made by
+// accepted-source reconciliation. Other restores do not own a Pod rollout.
+func sourceRestoredStatefulSets(result PlanApplicationResult) []PlanPatch {
 	var restores []PlanPatch
 	for _, patch := range result.Patches {
-		if patch.Ref.Kind != "StatefulSet" || patch.Before == nil || patch.After == nil {
+		if patch.Ref.Kind != "StatefulSet" || patch.Before == nil || patch.After == nil ||
+			reflect.DeepEqual(statefulSetTemplate(patch.Before), statefulSetTemplate(patch.After)) {
 			continue
 		}
-		for _, action := range plan.Actions {
+		for _, action := range result.ActionsApplied {
 			if ref, err := planActionRef(action); err == nil && ref == patch.Ref && isSourceReconcile(action) {
 				restores = append(restores, patch)
 				break
@@ -213,102 +218,141 @@ func sourceRestoredStatefulSets(plan program.Plan, result PlanApplicationResult)
 	return restores
 }
 
-// replaceRestoredStatefulSetPods completes the source restore within the
-// application's mutation fence. Kubernetes recreates eligible Pods at the
-// observed update revision.
+func statefulSetTemplate(set *unstructured.Unstructured) any {
+	template, _, _ := unstructured.NestedFieldNoCopy(set.Object, "spec", "template")
+	return template
+}
 
-func (e PlanExecutor) replaceRestoredStatefulSetPods(ctx context.Context, restores []PlanPatch, result *PlanApplicationResult) error {
+// advanceRestoredStatefulSets takes one live sample and replaces at most one
+// Pod. The original apply and subsequent controller steps share this path.
+func (e PlanExecutor) advanceRestoredStatefulSets(ctx context.Context, restores []PlanPatch, result *PlanApplicationResult, replace func(StuckRestartPod) error) (bool, error) {
 	lister, ok := e.Client.(planPodLister)
-	if !ok || len(restores) == 0 {
-		return nil
+	if !ok {
+		return false, nil
 	}
+	var waiting bool
 	for _, restore := range restores {
-		ref := restore.Ref
-		set, err := e.awaitObservedStatefulSet(ctx, restore)
+		live, err := e.Client.Get(ctx, restore.Ref)
+		if apierrors.IsNotFound(err) {
+			continue
+		}
 		if err != nil {
-			return fmt.Errorf("read StatefulSet %s after its source restore: %w", ref.Name, err)
+			return true, fmt.Errorf("read restored StatefulSet %s: %w", restore.Ref.Name, err)
 		}
-		pods, err := lister.NamespacePods(ctx, ref.Namespace)
+		if live == nil || live.GetUID() != restore.Before.GetUID() ||
+			!reflect.DeepEqual(statefulSetTemplate(live), statefulSetTemplate(restore.After)) {
+			continue // The original write no longer owns this template.
+		}
+		var set appsv1.StatefulSet
+		if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(live.Object, &set); err != nil {
+			return true, err
+		}
+		if set.Status.ObservedGeneration < set.Generation || set.Status.UpdateRevision == "" {
+			waiting = true
+			continue
+		}
+		pods, err := lister.NamespacePods(ctx, set.Namespace)
 		if err != nil {
-			return fmt.Errorf("list Pods of StatefulSet %s: %w", ref.Name, err)
+			return true, fmt.Errorf("list Pods of restored StatefulSet %s: %w", set.Name, err)
 		}
-		stuck, err := podsOffUpdateRevision(set, pods)
-		if err != nil {
-			return err
+		candidate, pending := nextRestoredStatefulSetPod(set, pods, result.ObjectEffects, e.clock()())
+		if candidate != nil {
+			return true, replace(*candidate)
 		}
-		if err := e.replaceStuckPods(ctx, stuck, result); err != nil {
-			return err
-		}
+		waiting = waiting || pending
 	}
-	return nil
+	return waiting, nil
 }
 
-const templateRolloutWaitBound = 10 * time.Second
-
-// awaitObservedStatefulSet reads the StatefulSet once its controller has
-// observed the restored template, so status.updateRevision names that template.
-func (e PlanExecutor) awaitObservedStatefulSet(ctx context.Context, restore PlanPatch) (*unstructured.Unstructured, error) {
-	deadline := lifecycleio.Now().Add(templateRolloutWaitBound)
-	template, _, _ := unstructured.NestedMap(restore.After.Object, "spec", "template")
-	for {
-		set, err := e.Client.Get(ctx, restore.Ref)
-		if err != nil {
-			return nil, err
-		}
-		liveTemplate, _, _ := unstructured.NestedMap(set.Object, "spec", "template")
-		if set.GetUID() != restore.Before.GetUID() || !reflect.DeepEqual(liveTemplate, template) {
-			return nil, fmt.Errorf("StatefulSet identity or template changed after the source restore")
-		}
-		observed, _, _ := unstructured.NestedInt64(set.Object, "status", "observedGeneration")
-		if revision, _, _ := unstructured.NestedString(set.Object, "status", "updateRevision"); observed >= set.GetGeneration() && revision != "" {
-			return set, nil
-		}
-		if !lifecycleio.Now().Before(deadline) {
-			return nil, fmt.Errorf("controller did not publish the restored revision")
-		}
-		if err := lifecycleio.Wait(ctx, 250*time.Millisecond); err != nil {
-			return nil, err
-		}
+// Kubernetes owns RollingUpdate of a healthy old Pod. Help only an old,
+// unavailable Pod that can hold that rollout, or an OnDelete template that
+// requires explicit replacement. Work down the eligible ordinals.
+func nextRestoredStatefulSetPod(set appsv1.StatefulSet, pods []corev1.Pod, effects []PlanObjectEffect, now time.Time) (*StuckRestartPod, bool) {
+	start, replicas, partition := 0, 1, 0
+	if set.Spec.Ordinals != nil {
+		start = int(set.Spec.Ordinals.Start)
 	}
-}
-
-// podsOffUpdateRevision returns the owned Pods eligible for replacement in
-// ordinal order, preserving the rolling-update partition.
-func podsOffUpdateRevision(workload *unstructured.Unstructured, pods []corev1.Pod) ([]StuckRestartPod, error) {
-	var set appsv1.StatefulSet
-	if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(workload.Object, &set); err != nil {
-		return nil, err
+	if set.Spec.Replicas != nil {
+		replicas = int(*set.Spec.Replicas)
 	}
-	update := set.Status.UpdateRevision
-	if update == "" {
-		return nil, nil
-	}
-	partition := 0
 	if rolling := set.Spec.UpdateStrategy.RollingUpdate; rolling != nil && rolling.Partition != nil {
 		partition = int(*rolling.Partition)
 	}
-	type ordinalPod struct {
-		ordinal int
-		pod     corev1.Pod
-		reason  string
-	}
-	var found []ordinalPod
+	onDelete := set.Spec.UpdateStrategy.Type == appsv1.OnDeleteStatefulSetStrategyType
+	owned := make(map[string]corev1.Pod)
+	highest := -1
+	var next *StuckRestartPod
+	allAvailable, terminating := true, false
+	update := set.Status.UpdateRevision
 	for _, pod := range pods {
 		owner := metav1.GetControllerOf(&pod)
-		if pod.DeletionTimestamp != nil || owner == nil || owner.Kind != "StatefulSet" || owner.Name != set.Name || pod.Namespace != set.Namespace || (set.UID != "" && owner.UID != set.UID) {
+		if owner == nil || owner.Kind != "StatefulSet" || owner.Name != set.Name || owner.UID != set.UID || pod.Namespace != set.Namespace {
 			continue
 		}
+		ordinal, valid := statefulSetPodOrdinal(set.Name, pod.Name)
+		if !valid || ordinal < start || ordinal >= start+replicas {
+			continue
+		}
+		owned[pod.Name] = pod
+		ready := podRunningAndReady(pod)
+		terminating = terminating || pod.DeletionTimestamp != nil
+		allAvailable = allAvailable && statefulSetPodAvailable(pod, set.Spec.MinReadySeconds, now)
 		revision := pod.Labels[appsv1.ControllerRevisionHashLabelKey]
-		ordinal, err := strconv.Atoi(strings.TrimPrefix(pod.Name, set.Name+"-"))
-		if revision == update || err != nil || ordinal < partition {
+		if ordinal < start+partition || ordinal <= highest || revision == update ||
+			pod.DeletionTimestamp != nil || (!onDelete && ready) {
 			continue
 		}
-		found = append(found, ordinalPod{ordinal, pod, fmt.Sprintf("Pod revision %q differs from restored revision %q", revision, update)})
+		highest = ordinal
+		next = &StuckRestartPod{Pod: pod, requireSameVersion: true,
+			Reason: fmt.Sprintf("Pod revision %q differs from restored revision %q", revision, update)}
 	}
-	sort.Slice(found, func(i, j int) bool { return found[i].ordinal < found[j].ordinal })
-	var stuck []StuckRestartPod
-	for _, item := range found {
-		stuck = append(stuck, StuckRestartPod{Pod: item.pod, Reason: item.reason})
+	if next == nil {
+		return nil, false
 	}
-	return stuck, nil
+	if terminating {
+		return nil, true
+	}
+	// A prior replacement must become available before making another.
+	for _, effect := range effects {
+		if effect.Operation != "delete" || effect.Ref.Kind != "Pod" || effect.Ref.Namespace != set.Namespace ||
+			effect.State == "not_applied" {
+			continue
+		}
+		ordinal, valid := statefulSetPodOrdinal(set.Name, effect.Ref.Name)
+		if !valid || ordinal < start+partition || ordinal >= start+replicas {
+			continue
+		}
+		pod, exists := owned[effect.Ref.Name]
+		if !exists || string(pod.UID) == effect.UID || !statefulSetPodAvailable(pod, set.Spec.MinReadySeconds, now) {
+			return nil, true
+		}
+	}
+	// An OnDelete repair may take a healthy replica down only when all desired
+	// replicas are available. RollingUpdate assistance never reduces readiness.
+	if podRunningAndReady(next.Pod) && (!allAvailable || len(owned) < replicas) {
+		return nil, true
+	}
+	return next, true
+}
+
+func statefulSetPodOrdinal(setName, podName string) (int, bool) {
+	suffix, matches := strings.CutPrefix(podName, setName+"-")
+	ordinal, err := strconv.Atoi(suffix)
+	return ordinal, matches && err == nil
+}
+
+func statefulSetPodAvailable(pod corev1.Pod, minReadySeconds int32, now time.Time) bool {
+	if pod.DeletionTimestamp != nil || !podRunningAndReady(pod) {
+		return false
+	}
+	if minReadySeconds == 0 {
+		return true
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return !condition.LastTransitionTime.IsZero() &&
+				!now.Before(condition.LastTransitionTime.Add(time.Duration(minReadySeconds)*time.Second))
+		}
+	}
+	return false
 }

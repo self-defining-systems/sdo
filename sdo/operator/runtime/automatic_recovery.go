@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -15,16 +16,14 @@ import (
 // decision. The completed stage report and dispatch state are saved together
 // before ordinary dispatch preparation publishes a worker task.
 func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.StageReport, stabilityOnly bool, check recoveryCheck, rolloutBlockers []sdk.Finding) {
-	if !c.escalatedAt.IsZero() || report.GetHandoffSelected() {
-		return
-	}
+	observedAt := laterObservationTime(now, c.clock())
 	request := c.currentIncidentRequest
 	applied := playbookWrote(report)
 	deadline := c.automaticDeadlineLocked(report)
 	if applied && report.RecoveryDeadline == nil {
 		report.RecoveryDeadline = contractTimestamp(deadline)
 	}
-	if applied && now.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
+	if applied && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
 	if stabilityOnly && applied {
@@ -38,21 +37,20 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 		return
 	}
 
-	// Use fresh firing samples, not tracker persistence or a retained opening
-	// descriptor. A pending rollout or an unavailable sample cannot stand in
-	// for an alert-set member that is still failing.
+	// A fresh scoped clear can remove an alert from the handoff. Missing or
+	// unconfirmed health cannot establish that users recovered.
 	keys := alertKeys(request)
 	if applied {
-		keys = c.freshFiringKeysLocked(now, *request)
-		markAutomaticRecovery(report, now, contracts.RecoveryWait_EXIT_REASON_DEADLINE)
+		keys = c.unresolvedAlertKeysLocked(now, *request)
+		markAutomaticRecovery(report, observedAt, contracts.RecoveryWait_EXIT_REASON_DEADLINE)
 		markUnsettledRollouts(report, check.record, rolloutBlockers)
 	} else if !stageEscalatedIn(request.PriorStages) {
 		keys = findingKeys(request.Findings)
 	}
 	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
-		(request.ResponseDeadline.IsZero() || now.Before(request.ResponseDeadline))
+		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
 	if !canDispatch || stageEscalatedIn(request.PriorStages) || applied && (!agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) || len(keys) == 0) {
-		c.escalateLocked(now)
+		c.escalateLocked(observedAt)
 		return
 	}
 
@@ -67,28 +65,38 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	c.resetDispatchRetryLocked()
 }
 
-func (c *Controller) freshFiringKeysLocked(now time.Time, request IncidentRequest) []string {
-	scope := newRecoveryScope(alertKeys(&request))
-	seen := make(map[string]bool)
+func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRequest) []string {
+	keys := alertKeys(&request)
+	scope := newRecoveryScope(keys)
+	clear := make(map[string]bool)
+	firing := make(map[string]bool)
+	sampledFiring := make(map[string]bool)
 	for _, id := range c.recoveryDetectorIDs(request) {
 		if !c.recoverySamples[id].matches(now, scope) {
 			continue
 		}
 		states, _ := c.latestEvaluations([]string{id}, now, false)
-		if len(states) == 0 || states[0].Status != DetectorEvaluationFiring {
+		if len(states) == 0 || !states[0].EvaluatedAt.Equal(now) {
 			continue
 		}
-		for _, fp := range states[0].Fingerprints {
-			seen[FindingStateKey(id, fp)] = true
+		switch states[0].Status {
+		case DetectorEvaluationClear:
+			clear[id] = true
+		case DetectorEvaluationFiring:
+			sampledFiring[id] = true
+			for _, fp := range states[0].Fingerprints {
+				firing[FindingStateKey(id, fp)] = true
+			}
 		}
 	}
-	var keys []string
-	for _, key := range alertKeys(&request) {
-		if seen[key] {
-			keys = append(keys, key)
+	var unresolved []string
+	for _, key := range keys {
+		id, _, _ := strings.Cut(key, "\x00")
+		if firing[key] || !clear[id] && !sampledFiring[id] {
+			unresolved = append(unresolved, key)
 		}
 	}
-	return keys
+	return unresolved
 }
 
 func (c *Controller) automaticDeadlineLocked(report *contracts.StageReport) time.Time {
@@ -155,7 +163,7 @@ func stageDispatchRequest(request IncidentRequest) IncidentRequest {
 }
 
 func (c *Controller) awaitingAutomaticRecoveryLocked() *contracts.StageReport {
-	if c.currentIncidentRequest == nil || !c.responderDone {
+	if !c.incidentOpen || c.currentIncidentRequest == nil || !c.responderDone || !c.escalatedAt.IsZero() || c.dispatchError != "" {
 		return nil
 	}
 	report := deterministicStageReport(c.currentIncidentRequest.PriorStages)
@@ -171,24 +179,29 @@ func (c *Controller) awaitingAutomaticRecoveryLocked() *contracts.StageReport {
 func (c *Controller) automaticObservationContext(ctx context.Context, now time.Time) (context.Context, context.CancelFunc) {
 	c.mu.Lock()
 	report := c.awaitingAutomaticRecoveryLocked()
-	if !playbookWrote(report) || !c.escalatedAt.IsZero() {
+	if !playbookWrote(report) {
 		c.mu.Unlock()
 		return ctx, func() {}
 	}
 	bound := c.automaticDeadlineLocked(report)
+	response := c.currentIncidentRequest.ResponseDeadline
 	c.mu.Unlock()
-	remaining := bound.Sub(now)
-	if remaining <= 0 {
-		remaining = time.Second
+	// Before expiry, wake at the handoff deadline. At expiry use the normal
+	// snapshot/detector budgets, with the remaining response budget as a cap.
+	if now.Before(bound) && (response.IsZero() || bound.Before(response)) {
+		response = bound
 	}
-	return context.WithTimeout(ctx, remaining)
+	if response.IsZero() {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, response.Sub(laterObservationTime(now, c.clock())))
 }
 
 func (c *Controller) loseAutomaticObservation(now time.Time) {
 	c.resetEarlyStability()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if report := c.awaitingAutomaticRecoveryLocked(); playbookWrote(report) && !c.midStage.running && !now.Before(c.automaticDeadlineLocked(report)) {
+	if report := c.awaitingAutomaticRecoveryLocked(); playbookWrote(report) && !c.midStage.running && !c.closurePreparingLocked() {
 		c.automaticRecoveryLocked(now, report, false, recoveryCheck{}, nil)
 	}
 }
@@ -224,4 +237,13 @@ func (c *Controller) restoreAutomaticLoop(ctx context.Context, request IncidentR
 	}
 	c.mu.Unlock()
 	return loop, nil
+}
+
+// The step time keys samples, while elapsed observation time counts against the
+// response budget. An injected clock may lag the supplied step time.
+func laterObservationTime(step, observed time.Time) time.Time {
+	if observed.After(step) {
+		return observed
+	}
+	return step
 }

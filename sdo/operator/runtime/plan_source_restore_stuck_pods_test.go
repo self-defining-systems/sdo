@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -56,9 +57,8 @@ func syntheticStorePod(owner *appsv1.StatefulSet, spec stuckPod, now time.Time) 
 	return pod
 }
 
-// After ReconcileFromSource restores a StatefulSet's template, a Pod still on
-// another revision is deleted so the controller recreates it at the restored
-// revision. This includes Ready and recently unready Pods.
+// Restore helps a blocked old revision one Pod at a time and leaves healthy
+// RollingUpdate replicas to Kubernetes.
 func TestReconcileFromSourceReplacesStatefulSetPodsOffTheUpdateRevision(t *testing.T) {
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	for _, test := range []struct {
@@ -69,7 +69,10 @@ func TestReconcileFromSourceReplacesStatefulSetPodsOffTheUpdateRevision(t *testi
 	}{
 		{"image pull failure", nil,
 			[]stuckPod{{name: "store-0", revision: "store-old", waiting: "ImagePullBackOff", notReadyFor: time.Second}}, []string{"store-0"}},
-		{"all old-revision Pods in ordinal order", nil,
+		{"highest blocked ordinal first", func(set *appsv1.StatefulSet) {
+			replicas := int32(11)
+			set.Spec.Replicas = &replicas
+		},
 			[]stuckPod{
 				{name: "store-10", revision: "store-old", waiting: "CrashLoopBackOff", notReadyFor: time.Second},
 				{name: "store-2", revision: "store-old", waiting: "ErrImagePull", notReadyFor: time.Second},
@@ -77,13 +80,24 @@ func TestReconcileFromSourceReplacesStatefulSetPodsOffTheUpdateRevision(t *testi
 				{name: "store-3", revision: "store-new", waiting: "ImagePullBackOff"},
 				{name: "store-4", revision: "store-old", notReadyFor: time.Second},
 				{name: "store-5", revision: "store-old", notReadyFor: 2 * time.Minute},
-			}, []string{"store-1", "store-2", "store-4", "store-5", "store-10"}},
+			}, []string{"store-10"}},
 		{"Pods below a rolling-update partition stay", func(set *appsv1.StatefulSet) {
-			partition := int32(1)
+			replicas, partition := int32(2), int32(1)
+			set.Spec.Replicas = &replicas
 			set.Spec.UpdateStrategy.RollingUpdate = &appsv1.RollingUpdateStatefulSetStrategy{Partition: &partition}
 		}, []stuckPod{{name: "store-0", revision: "store-old", waiting: "ImagePullBackOff"}, {name: "store-1", revision: "store-old", waiting: "ImagePullBackOff"}}, []string{"store-1"}},
-		{"parallel policy still replaces old revisions", func(set *appsv1.StatefulSet) { set.Spec.PodManagementPolicy = appsv1.ParallelPodManagement },
-			[]stuckPod{{name: "store-0", revision: "store-old", waiting: "ImagePullBackOff"}}, []string{"store-0"}},
+		{"parallel policy leaves Ready replicas to Kubernetes", func(set *appsv1.StatefulSet) {
+			replicas := int32(2)
+			set.Spec.Replicas = &replicas
+			set.Spec.PodManagementPolicy = appsv1.ParallelPodManagement
+		}, []stuckPod{{name: "store-0", revision: "store-old", waiting: "ImagePullBackOff"},
+			{name: "store-1", revision: "store-old", ready: true}}, []string{"store-0"}},
+		{"OnDelete replaces one Ready replica", func(set *appsv1.StatefulSet) {
+			replicas := int32(2)
+			set.Spec.Replicas = &replicas
+			set.Spec.UpdateStrategy.Type = appsv1.OnDeleteStatefulSetStrategyType
+		}, []stuckPod{{name: "store-0", revision: "store-old", ready: true},
+			{name: "store-1", revision: "store-old", ready: true}}, []string{"store-1"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			live := syntheticSet("registry.invalid/store:bad", test.mutate)
@@ -160,5 +174,115 @@ func TestReconcileFromSourceOfADeploymentDeletesNoPods(t *testing.T) {
 	result, err := executor.Apply(context.Background(), incident, program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}, false)
 	if err != nil || len(result.ObjectEffects) != 0 {
 		t.Fatalf("Apply = %+v, %v", result, err)
+	}
+}
+
+func TestStatefulSetSourceRestoreWithUnchangedTemplateKeepsPods(t *testing.T) {
+	now := verifyT0
+	live := syntheticSet("registry.invalid/store:good", nil)
+	accepted := live.DeepCopy()
+	replicas := int32(2)
+	accepted.Spec.Replicas = &replicas
+	pod := syntheticStorePod(live, stuckPod{name: "store-0", revision: "store-old", ready: true}, now)
+	client := fake.NewSimpleClientset(live, pod)
+	manifest, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(accepted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "app", Name: "store"}
+	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Source: templateSource{&unstructured.Unstructured{Object: manifest}},
+		Rollouts: recordedRollouts{new([]sdk.ObjectRef)}, Verifier: passingVerifier{}, Now: func() time.Time { return now }}
+	incident := IncidentRequest{IncidentID: "synthetic", Namespace: "app", RepairPolicy: "recorded-actions", SourceCommit: "0123456789abcdef0123456789abcdef01234567",
+		Findings: []sdk.Finding{{RuleID: "synthetic", PrimaryResource: ref}}}
+	result, err := executor.Apply(t.Context(), incident, program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}, false)
+	if err != nil || !result.Applied {
+		t.Fatalf("Apply = %+v, %v", result, err)
+	}
+	if _, err := client.CoreV1().Pods("app").Get(t.Context(), pod.Name, metav1.GetOptions{}); err != nil || len(result.ObjectEffects) != 0 {
+		t.Fatalf("a restore with an unchanged template replaced a Pod: effects=%v error=%v", result.ObjectEffects, err)
+	}
+}
+
+func TestAutomaticStatefulSetRestoreContinuesAfterControllerObservation(t *testing.T) {
+	ctx := t.Context()
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{}, "agent")
+	now := world.clock.Now()
+	sets, pods := world.client.AppsV1().StatefulSets("app"), world.client.CoreV1().Pods("app")
+	live := syntheticSet("registry.invalid/store:bad", func(set *appsv1.StatefulSet) {
+		replicas := int32(2)
+		set.Spec.Replicas = &replicas
+		set.Generation, set.Status.ObservedGeneration = 2, 1
+	})
+	accepted := live.DeepCopy()
+	accepted.Spec.Template.Spec.Containers[0].Image = "registry.invalid/store:good"
+	if _, err := sets.Create(ctx, live, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"store-0", "store-1"} {
+		pod := syntheticStorePod(live, stuckPod{name: name, revision: "store-old"}, now)
+		if _, err := pods.Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(accepted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "app", Name: "store"}
+	loop := c.responderLoop
+	executor := loop.Executor
+	executor.Source = templateSource{&unstructured.Unstructured{Object: manifest}}
+	executor.Rollouts = recordedRollouts{new([]sdk.ObjectRef)}
+	result, err := executor.Apply(ctx, *c.currentIncidentRequest,
+		program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}, false)
+	if err != nil || len(result.ObjectEffects) != 0 {
+		t.Fatalf("apply before observed generation: effects=%v error=%v", result.ObjectEffects, err)
+	}
+	// Model the automatic stage publishing the template write as its outcome.
+	app := loop.applicationsLog[0]
+	app.Result = result
+	loop.applicationsLog[0] = app
+	c.currentIncidentResult.PlanApplications = []RecordedPlanApplication{app}
+	receipt, err := recordedPlanContract(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := autoReport(c).GetMitigations()[0]
+	attempt.ApplyReceipt = receipt
+	attempt.TouchedObjects = touchedObjects(result)
+
+	present := func(name string, want bool) {
+		t.Helper()
+		_, err := pods.Get(ctx, name, metav1.GetOptions{})
+		if want && err != nil || !want && !apierrors.IsNotFound(err) {
+			t.Fatalf("Pod %s present want %v, lookup error %v", name, want, err)
+		}
+	}
+	autoStep(t, c, world.clock, 20*time.Second)
+	present("store-1", true)
+	observed, err := sets.Get(ctx, live.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed.Status.ObservedGeneration = observed.Generation
+	if _, err := sets.UpdateStatus(ctx, observed, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	autoStep(t, c, world.clock, time.Second)
+	present("store-1", false)
+	present("store-0", true)
+	autoStep(t, c, world.clock, time.Second)
+	present("store-0", true)
+	replacement := syntheticStorePod(live, stuckPod{name: "store-1", revision: "store-new", ready: true}, world.clock.Now())
+	replacement.UID = "replacement"
+	if _, err := pods.Create(ctx, replacement, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	autoStep(t, c, world.clock, time.Second)
+	present("store-0", false)
+	present("store-1", true)
+	effects := autoReport(c).GetMitigations()[0].GetApplyReceipt().GetObjectEffects()
+	if len(effects) != 2 || effects[0].GetRef().GetName() != "store-1" || effects[1].GetRef().GetName() != "store-0" {
+		t.Fatalf("application did not retain ordered replacement receipts: %v", effects)
 	}
 }

@@ -177,8 +177,10 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.Trust = trust
-	if request.ExternalMessage != "" {
-		request.MaxResponseLoops = l.MaxBatches
+	request.MaxResponseLoops = l.MaxBatches
+	if request.ExternalMessage != "" || deterministicStageReport(request.PriorStages).GetHandoffSelected() {
+		// Handoff already has the controller's alert decision and receipts.
+		// Optional live diagnosis may be unavailable or spend the claim budget.
 		return request
 	}
 	// The automatic stage and the controller already stored open@detect; only a
@@ -190,7 +192,6 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 	request.InitialProgramRuns = l.diagnose(ctx, l.findings, false)
 	fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 	request.PlaybookCoverage = coverage.Coverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, trust)
-	request.MaxResponseLoops = l.MaxBatches
 	return request
 }
 
