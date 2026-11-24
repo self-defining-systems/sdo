@@ -652,6 +652,11 @@ func memoryTest(ctx context.Context, args []string, getenv func(string) string, 
 	for _, line := range ownIncidentLines(checked, id) {
 		fmt.Fprintln(stdout, line)
 	}
+	for _, gap := range checked.GetCoverageGaps() {
+		if strings.HasPrefix(gap.GetMessage(), "program "+id+" preview (") {
+			fmt.Fprintf(stdout, "  %s\n", gap.GetMessage())
+		}
+	}
 	replayed := 0
 	for _, note := range checked.GetMitigationReplayNotes() {
 		if note.GetProgramId() == id {

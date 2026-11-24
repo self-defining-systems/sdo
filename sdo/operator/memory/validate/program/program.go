@@ -444,7 +444,10 @@ func TestProgramCorpus(t *testing.T){
  t.Logf("replay observation: status=%%s errors=%%v faulted=%%s post=%%s",r.Status,r.Errors,r.Faulted.Result,r.Post.Result)
  gaps=append(gaps,r.Notes...)
  notes=append(notes,ReplayNote(%q,%q,r))
- if m,ok:=registry.Mitigator(%q);ok{if err:=sdktest.CheckPlanValid(m,c.Corpus);err!=nil{t.Error(err)}}
+ if m,ok:=registry.Mitigator(%q);ok{
+  if err:=sdktest.CheckPlanValid(m,c.Corpus);err!=nil{t.Error(err)}
+  if why:=replay.CheckMitigationPreview(m,c);why!=""{gaps=append(gaps,"program "+m.Spec().ID+" preview ("+why+")")}
+ }
  })
 `, item.ID+"/"+id, id, item.ID, id, item.ID, item.ID, id, item.ID)
 		}
@@ -467,16 +470,16 @@ func IncidentPlanTests(programs []Spec) string {
 	}
 	var test strings.Builder
 	test.WriteString(`package generated
-import("encoding/json";"os";"testing";"sdo.dev/operator/sdk/sdktest")
+import("encoding/json";"os";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/program";"sdo.dev/operator/sdk/sdktest")
 func TestProgramPlansOnTheIncidentOpenState(t *testing.T){
  registry,err:=Programs();if err!=nil{t.Fatal(err)}
  gaps:=[]string{}
  defer func(){data,err:=json.Marshal(gaps);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("incident-plan-gaps.json",data,0600);err!=nil{t.Fatal(err)}}()
  check:=func(id string){
   m,ok:=registry.Mitigator(id);if !ok{return}
-  unverified,err:=sdktest.CheckPlansOnIncident(m,"testdata/incident-open")
+  unverified,err:=sdktest.CheckPlansOnIncident(m,"testdata/incident-open",func(m program.Mitigator,c sdktest.CorpusCase)string{return replay.CheckMitigationPreview(m,replay.Case{Corpus:c})})
   if err!=nil{t.Errorf("%s: %v",id,err)}
-  for _,why:=range unverified{gaps=append(gaps,"program "+id+" is not verified on its own incident ("+why+")")}
+  for _,why:=range unverified{gaps=append(gaps,"program "+id+" preview ("+why+")")}
  }
 `)
 	for _, item := range programs {

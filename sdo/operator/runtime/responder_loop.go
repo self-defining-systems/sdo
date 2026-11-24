@@ -1284,7 +1284,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		response.Error = "program returned an empty plan"
 		return
 	}
-	preview, err := l.Executor.Apply(ctx, l.Request, plan, true)
+	preview, err := l.Executor.PreviewMitigation(ctx, l.Request, plan)
 	if err != nil {
 		response.Error = err.Error()
 		return

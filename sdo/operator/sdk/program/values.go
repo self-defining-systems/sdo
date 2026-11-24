@@ -3,6 +3,7 @@ package program
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -13,6 +14,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sdo.dev/operator/sdk"
 )
+
+// ErrValuePathUnavailable means the selected object lacks the requested field.
+var ErrValuePathUnavailable = errors.New("value path unavailable")
 
 // ValueOrigin identifies the authority from which an action value is resolved.
 type ValueOrigin string
@@ -228,7 +232,7 @@ func ResolveValue(v Value, in ValueInputs) (any, ValueProvenance, error) {
 	}
 	value, err := FieldValue(object, v.path)
 	if err != nil {
-		return nil, p, fmt.Errorf("value path unavailable")
+		return nil, p, ErrValuePathUnavailable
 	}
 	return value, p, nil
 }

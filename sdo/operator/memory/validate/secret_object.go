@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -83,9 +84,6 @@ func holdsSecretData(value any, inSecrets bool) bool {
 }
 
 var (
-	pemPrivateKey = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----`)
-	// Well-known credential shapes: cloud access key IDs, forge and chat tokens, JWTs.
-	tokenShapes = regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bsk-[A-Za-z0-9_-]{32,}|\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}`)
 	// A credential-named key with a literal value on the same line.
 	credentialKeyValue = regexp.MustCompile(`(?im)^[\s+-]*(?:- )?["']?[\w.-]*(?:password|passwd|token|api[_-]?key|private[_-]?key|access[_-]?key|client[_-]?secret|secret[_-]?key|secretAccessKey)["']?\s*[:=]\s*(\S.*)$`)
 )
@@ -101,13 +99,10 @@ func secretMaterial(p string, data []byte) string {
 			return ""
 		}
 	}
-	text := string(data)
-	switch {
-	case pemPrivateKey.MatchString(text):
-		return "PEM private key"
-	case tokenShapes.MatchString(text):
-		return "access token or key"
+	if shape := memory.CredentialShape(data); shape != "" {
+		return shape
 	}
+	text := string(data)
 	if strings.HasPrefix(p, layout.DeploymentDir+"/") {
 		for _, m := range credentialKeyValue.FindAllStringSubmatch(text, -1) {
 			if literalCredentialValue(m[1]) {

@@ -18,9 +18,9 @@ Copy the closer of `examples/template-drift/` or `examples/stuck-pods/` to
 - The SDK can run commands, not only restart and patch: a fix with no typed action (SQL, a CLI) is `program.EnsureExec` (check, then repair, in a Pod; credentials from the container's environment). All actions: `/opt/sdo/sdo/skills/sdo-playbook-authoring/references/sdk-card.md`. `program.Escalate` alone repairs nothing.
 - Use the fastest supported operation with equivalent effects, including cache invalidation.
 - Ensure serving processes use the new state. Replace them if needed.
-- Check diagnoses and plans against recorded evidence. Use supported cause classes and plan forms.
+- Fix plan advisories from the recorded check.
 - Set the known-good value directly, not from controller history a repeat may lack.
-- Carry a source restore you ran as `program.SetField` with `program.FromSource`. Omit changes that did not help.
+- Carry a whole source restore as `program.ReconcileFromSource`. Omit changes that did not help.
 - Memory is for this application and may name its own tables, resources and commands; generalize over what varies, not away from the application. A program for just the mechanical part beats none; leave judgement to the README. No `RunScript`, no passwords.
 
 If the cause has a signal of its own, add a detector that names the playbook: [detector.md](detector.md).

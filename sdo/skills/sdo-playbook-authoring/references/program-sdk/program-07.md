@@ -153,10 +153,9 @@ type Verdict struct {
 	Reads []ReadStep `json:"reads,omitempty"`
 }
     Verdict is what Diagnose returns; NeedsJudgement requires a Question.
-    CauseClass and Reach state the diagnosed cause in the responder's closed
-    vocabulary (CauseClasses, ReachInScope or ReachOutOfReach); a Match whose
-    Reach is out-of-reach lets the automatic stage escalate the incident instead
-    of repairing it (see Escalate).
+    CauseClass is a cause label. Unrecognized labels count as other. A Match
+    whose Reach is out-of-reach lets the automatic stage escalate the incident
+    instead of repairing it (see Escalate).
 
 func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadline time.Duration) (verdict Verdict)
     RunDiagnose runs a Diagnose over v with a deadline and the read rules every

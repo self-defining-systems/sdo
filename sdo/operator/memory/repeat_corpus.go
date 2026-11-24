@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path"
@@ -120,6 +121,10 @@ func RecordCorpus(root, captures, incidentID string, instances map[string][]prog
 			encoded, err = json.MarshalIndent(label, "", "  ")
 			if err != nil {
 				return nil, err
+			}
+			if generatedCaseHasCredential(opened, fixed, recordings, encoded) {
+				slog.Warn("corpus_case_not_recorded", "incident", incidentID, "playbook", id, "reason", "capture contains credential-shaped material")
+				continue
 			}
 			// The healthy snapshot is the verified fixed one; the case references it.
 			cases[name] = map[string][]byte{"open.json": opened, "fixed.json": fixed, "recordings.json": recordings, "labels.json": encoded}

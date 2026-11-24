@@ -136,3 +136,19 @@ func TestRecordCorpusWritesAProgramsFirstCaseWithoutAPeer(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordCorpusOmitsGeneratedCaseWithCredential(t *testing.T) {
+	root, captures := t.TempDir(), t.TempDir()
+	for _, name := range []string{"fixed.json", "open@detect.json"} {
+		writeCaptureFile(t, filepath.Join(captures, name), "{}")
+	}
+	canary := "glpat-" + "synthetic_token_for_test_only"
+	writeCaptureFile(t, filepath.Join(captures, "open@detect-recordings.json"), `[{"result":"`+canary+`"}]`)
+	paths, err := RecordCorpus(root, captures, "incident-1", map[string][]program.Bindings{"fix": {{}}}, nil, CaseContext{})
+	if err != nil || len(paths) != 0 {
+		t.Fatalf("RecordCorpus = %v, %v, want omitted case", paths, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, layout.CorpusDir)); !os.IsNotExist(err) {
+		t.Fatalf("generated corpus exists or could not be checked: %v", err)
+	}
+}

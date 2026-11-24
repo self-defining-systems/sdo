@@ -36,7 +36,7 @@ func TestCheckPlanValidRefusesAPlanTheHostWillRefuse(t *testing.T) {
 	if err := CheckPlanValid(planMitigator{plan: repairPlan("SET status = 0")}, CorpusCase{}); err != nil {
 		t.Fatalf("valid plan: %v", err)
 	}
-	err := CheckPlanValid(planMitigator{plan: repairPlan("status = 0")}, CorpusCase{})
+	err := CheckPlanValid(planMitigator{plan: repairPlan("UPDATE packages")}, CorpusCase{})
 	if err == nil || !strings.Contains(err.Error(), "program.plan-invalid") || !strings.Contains(err.Error(), "SET clause") {
 		t.Fatalf("invalid statement: %v", err)
 	}
@@ -61,11 +61,11 @@ func TestCheckPlansOnIncidentRunsMitigateOnTheCapturedOpenState(t *testing.T) {
 	if unverified, err := CheckPlansOnIncident(planMitigator{plan: repairPlan("SET status = 0")}, dir); err != nil || len(unverified) != 0 {
 		t.Fatalf("valid plan: %v, %v", unverified, err)
 	}
-	_, err = CheckPlansOnIncident(planMitigator{plan: repairPlan("status = 0")}, dir)
+	_, err = CheckPlansOnIncident(planMitigator{plan: repairPlan("UPDATE packages")}, dir)
 	if err == nil || !strings.Contains(err.Error(), "program.plan-invalid") || !strings.Contains(err.Error(), "open@detect.json") {
 		t.Fatalf("invalid plan: %v", err)
 	}
-	if unverified, err := CheckPlansOnIncident(planMitigator{plan: repairPlan("status = 0")}, t.TempDir()); err != nil || len(unverified) != 0 {
+	if unverified, err := CheckPlansOnIncident(planMitigator{plan: repairPlan("UPDATE packages")}, t.TempDir()); err != nil || len(unverified) != 0 {
 		t.Fatalf("no capture, nothing to check: %v, %v", unverified, err)
 	}
 }

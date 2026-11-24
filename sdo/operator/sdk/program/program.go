@@ -235,8 +235,7 @@ type Evidence struct {
 }
 
 // Verdict is what Diagnose returns; NeedsJudgement requires a Question.
-// CauseClass and Reach state the diagnosed cause in the responder's closed
-// vocabulary (CauseClasses, ReachInScope or ReachOutOfReach); a Match whose
+// CauseClass is a cause label. Unrecognized labels count as other. A Match whose
 // Reach is out-of-reach lets the automatic stage escalate the incident instead
 // of repairing it (see Escalate).
 type Verdict struct {
@@ -516,6 +515,7 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
 		if err := got.verdict.Validate(); err != nil {
 			return traced(unknown(err))
 		}
+		got.verdict.CauseClass = normalizeCauseClass(got.verdict.CauseClass)
 		return traced(withReadFailures(got.verdict, got.failures))
 	}
 }

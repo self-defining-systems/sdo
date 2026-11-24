@@ -21,13 +21,17 @@ var causeClasses = []string{
 	"state-lost", "data-corrupt", "data-missing", "read-only", "code-defect", "other",
 }
 
-// CauseClasses lists the values Verdict.CauseClass may take besides "".
+// CauseClasses lists the categories used to summarize diagnosed causes.
 func CauseClasses() []string { return slices.Clone(causeClasses) }
 
-func validateCause(class, reach string) error {
+func normalizeCauseClass(class string) string {
 	if class != "" && !slices.Contains(causeClasses, class) {
-		return fmt.Errorf("cause class %q is not one of %s", class, strings.Join(causeClasses, ", "))
+		return "other"
 	}
+	return class
+}
+
+func validateCause(class, reach string) error {
 	switch reach {
 	case "", ReachInScope, ReachOutOfReach:
 	default:

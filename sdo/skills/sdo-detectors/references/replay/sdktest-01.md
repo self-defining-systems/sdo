@@ -60,7 +60,7 @@ func CheckPlanValid(m program.Mitigator, c CorpusCase) error
     could have caught. A Mitigate that cannot run on the recorded reads is not a
     failure; planOnState says it was unverified.
 
-func CheckPlansOnIncident(m program.Mitigator, dir string) (unverified []string, err error)
+func CheckPlansOnIncident(m program.Mitigator, dir string, preview ...func(program.Mitigator, CorpusCase) string) (unverified []string, err error)
     CheckPlansOnIncident runs CheckPlanValid on the incident's own captured open
     state: the controller's open@* snapshots in dir, with their recorded reads.
     The closing turn's check has them before Go writes any corpus case,
@@ -212,13 +212,4 @@ const (
 	// holds an error for, a binding it cannot supply, or no capture at all.
 	OwnIncidentUnverified OwnIncidentOutcome = "unverified"
 )
-type OwnIncidentResult struct {
-	ProgramID string             `json:"program_id"`
-	Outcome   OwnIncidentOutcome `json:"outcome"`
-	Capture   string             `json:"capture,omitempty"`
-	Reason    string             `json:"reason,omitempty"`
-}
-    OwnIncidentResult is one playbook's own-incident replay verdict. Capture
-    names the open@* snapshot the outcome comes from; Reason says why a failed
-    or unverified outcome is one.
 ```

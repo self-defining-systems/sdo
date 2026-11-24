@@ -19,7 +19,8 @@ func TestRepairStatementLiteralsAreCheckedAsTheEngineWillApplyThem(t *testing.T)
 		{"delete", `"delete"`, "1", "32", ""},
 		{"redis command", `"SREM member"`, "1", "32", ""},
 		{"mongodb update document", "`{\"$set\": {\"a\": 1}}`", "1", "32", ""},
-		{"bare assignment that no engine applies", `"status = 0"`, "1", "32", "no store engine"},
+		{"bare assignment", `"status = 0"`, "1", "32", ""},
+		{"whole statement", `"UPDATE packages"`, "1", "32", "no store engine"},
 		{"expectation that changes nothing", `"delete"`, "0", "0", "ExpectMax"},
 		{"inverted expectation", `"delete"`, "5", "2", "ExpectMin"},
 	} {

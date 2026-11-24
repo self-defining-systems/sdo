@@ -834,10 +834,11 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			}
 		}
 		if capture != "" && len(negative) > 0 {
-			if _, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative, origins); err != nil {
+			paths, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative, origins)
+			if err != nil {
 				return nil, err
 			}
-			negativePrepared = true
+			negativePrepared = len(paths) > 0
 		}
 		if !hasResponderSession(closed) {
 			// No agent ran, so there is no session to ask: what Go settled above is the whole record.

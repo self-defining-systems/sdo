@@ -42,7 +42,7 @@ func repairStatementDiagnostics(root string, paths []string) []Diagnostic {
 			line := fset.Position(literal.Pos()).Line
 			for _, problem := range repairLiteralProblems(literal) {
 				diagnostics = append(diagnostics, Diagnostic{Rule: RuleProgramPlanInvalid, Path: path, Line: line, Message: "RepairData " + problem,
-					Hint: "the plan fails on apply, not here: use \"delete\", a SET clause (postgres, mysql), an update document (mongodb) or a single-key write (redis)"})
+					Hint: "the plan fails on apply, not here: use \"delete\", an assignment list (postgres, mysql), an update document (mongodb) or a single-key write (redis)"})
 			}
 			return true
 		})
