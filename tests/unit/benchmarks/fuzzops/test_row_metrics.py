@@ -10,7 +10,7 @@ from benchmarks.fuzzops.row_metrics import main, measure
 
 
 def at(second: int) -> str:
-    return f"2026-01-01T00:00:{second:02d}Z"
+    return f"2026-01-01T00:{second // 60:02d}:{second % 60:02d}Z"
 
 
 def put(run: Path, name: str, value: object) -> None:
@@ -459,15 +459,17 @@ def test_a_fix_within_the_client_timeout_of_the_last_bad_second_counts(tmp_path:
 ARMS = ("vanilla", "sealed", "open")
 
 
-def arm_row(run: Path, arm: str, calls: list[tuple[int, int, str, bool, str]]):
+def arm_row(run: Path, arm: str, calls: list[tuple[int, int, str, bool, str]], last_bad: int = 29, ended: int = 50):
     """The same transcript from +5 s as a plain-agent row or an SDO row (sealed or still open incident)."""
     grade(run)
+    record = json.loads((run / "record.json").read_text())
+    put(run, "record.json", record | {"last_bad_second": last_bad})
     if arm == "vanilla":
-        put(run, "operator/done.json", {"started_at": at(5), "ended_at": at(50)})
+        put(run, "operator/done.json", {"started_at": at(5), "ended_at": at(ended)})
         transcript(run, "operator/transcript.jsonl", calls)
         return measure(run)
     folder = hashlib.sha256(b"app-1").hexdigest()[:32] if arm == "sealed" else "open"
-    sealed = {"incident": "app-1", "opened_at": at(5), "health_cleared_at": at(50), "resolution_path": "responder"}
+    sealed = {"incident": "app-1", "opened_at": at(5), "health_cleared_at": at(ended), "resolution_path": "responder"}
     put(
         run,
         "operator/evidence-manifest.json",
@@ -536,3 +538,23 @@ def test_the_fixing_write_rule_is_the_same_for_both_arms(
 ) -> None:
     calls = [(s, s + 1, "kubectl delete pod web-1", False, 'pod "web-1" deleted') for s in seconds]
     assert arm_row(tmp_path, arm, calls).ttf_s == expected
+
+
+@pytest.mark.parametrize("arm", ARMS)
+def test_a_write_in_the_slack_wins_when_users_failed_long_after_the_earlier_one(tmp_path: Path, arm: str) -> None:
+    # Two faults: the first fix at +8 left users failing (last bad second 59, past a clean gap); the second fix starts
+    # in the slack (the harm is intermittent, so the last bad second is earlier than the fix).
+    calls = [
+        (8, 9, "kubectl delete pod web-1", False, 'pod "web-1" deleted'),
+        (63, 64, "kubectl delete pod web-2", False, 'pod "web-2" deleted'),
+    ]
+    assert arm_row(tmp_path, arm, calls, last_bad=59, ended=90).ttf_s == 58
+
+
+@pytest.mark.parametrize("arm", ARMS)
+def test_a_cleanup_write_after_the_recovery_never_wins(tmp_path: Path, arm: str) -> None:
+    calls = [
+        (50, 51, "kubectl delete pod web-1", False, 'pod "web-1" deleted'),
+        (62, 63, "kubectl delete pod probe", False, 'pod "probe" deleted'),
+    ]
+    assert arm_row(tmp_path, arm, calls, last_bad=59, ended=90).ttf_s == 45
