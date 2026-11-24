@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -102,5 +103,43 @@ func TestAPIProxyAddressIsLocalToEachPod(t *testing.T) {
 	}
 	if first["SDO_API_PROXY_URL"] == second["SDO_API_PROXY_URL"] {
 		t.Fatalf("agents in different Pods share proxy %q", first["SDO_API_PROXY_URL"])
+	}
+}
+
+func TestProjectedScriptIdentityVolume(t *testing.T) {
+	const namespace = "app"
+	runtime := &Runtime{cluster: &Cluster{Token: "synthetic-token", Client: fake.NewSimpleClientset(
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "root-ca"}, Data: map[string]string{"ca.crt": "synthetic-ca", "unused": "ignored"}},
+	)}}
+	mode := int32(0600)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace},
+		Spec: corev1.PodSpec{AutomountServiceAccountToken: new(bool), Volumes: []corev1.Volume{
+			{Name: "identity", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+				DefaultMode: &mode,
+				Sources: []corev1.VolumeProjection{
+					{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token"}},
+					{ConfigMap: &corev1.ConfigMapProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "root-ca"}, Items: []corev1.KeyToPath{{Key: "ca.crt", Path: "trust/ca.crt"}}}},
+				},
+			}}},
+		}},
+	}
+	volumes, err := runtime.prepareVolumes(context.Background(), pod, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"token": "synthetic-token", "trust/ca.crt": "synthetic-ca"} {
+		path := filepath.Join(volumes["identity"], name)
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != want {
+			t.Fatalf("%s = %q, %v; want %q", name, data, err, want)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0600 {
+			t.Fatalf("file permissions for %s: %v, %v", name, info, err)
+		}
+	}
+	if _, ok := volumes["__serviceaccount"]; ok {
+		t.Fatal("explicit projected credentials must not enable automatic mounting")
 	}
 }
