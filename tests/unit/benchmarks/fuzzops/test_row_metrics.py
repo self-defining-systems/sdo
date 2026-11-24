@@ -342,3 +342,28 @@ def test_first_failure_episode_ends_at_a_30_second_clean_gap(tmp_path: Path) -> 
 def test_first_failure_episode_is_absent_without_per_second_users(tmp_path: Path) -> None:
     grade(tmp_path)
     assert measure(tmp_path).first_episode_end_s is None
+
+
+def test_vanilla_cache_writes_count_as_fixing_writes(tmp_path: Path) -> None:
+    # Cache state is app state: expiring a Rails cache or deleting a Redis key is a fixing write, reads are not.
+    grade(tmp_path)
+    put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+    transcript(
+        tmp_path,
+        "operator/transcript.jsonl",
+        [
+            (5, 6, "kubectl exec redis-0 -- sh -c 'redis-cli smembers cache:branch_names:x'", False, "master"),
+            (9, 10, "kubectl exec redis-0 -- sh -c 'redis-cli DEL cache:branch_names:x'", False, "(integer) 1"),
+            (
+                14,
+                15,
+                "kubectl exec deploy/toolbox -- gitlab-rails runner "
+                "'Project.find_each{|p| p.repository.expire_branches_cache}'",
+                False,
+                "",
+            ),
+            (17, 18, "kubectl exec deploy/toolbox -- gitlab-rails runner 'p Project.count'", False, "3"),
+        ],
+    )
+    row = measure(tmp_path)
+    assert (row.ttf_s, row.last_write_source) == (11, "claude_tool_start")

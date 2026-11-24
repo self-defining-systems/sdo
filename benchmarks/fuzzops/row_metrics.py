@@ -194,11 +194,15 @@ _SQL_WRITE = re.compile(
 _RUBY_WRITE = re.compile(
     r"\.(?:update(?:_all|_columns|_column)?|save|create|destroy(?:_all)?|delete(?:_all)?|touch)"
     r"(?:!\b|!?(?=\W|$))|\.execute\([^)]*\b\w+:"
+    # Cache state is app state: expiring or deleting a cached value changes what users get.
+    r"|\.expire_\w+|\bRails\.cache\.(?:delete|delete_matched|clear|write)\b"
 )
 _EXEC_WRITE = re.compile(
     r"(?:^|[;&|]\s*)(?:rm|mv|cp|mkdir|chmod|chown|install|truncate|tee|touch)\s"
     r"|\bsed\s+-i\b|(?<![\d<>=])>{1,2}\s*/(?!dev/null\b)"
     r"|\bcurl\b[^;&|]*\s(?:-X\s*|--request[= ])(?:POST|PUT|PATCH|DELETE)\b"
+    r"|\bredis-cli\b[^;&|]*?\s(?i:del|unlink|set|setex|mset|expire|persist|flushdb|flushall|sadd|srem|hset|hdel"
+    r"|lpush|rpush|lrem|zadd|zrem|rename)\s"
 )
 _NO_EFFECT = re.compile(
     r"(?im)^\s*(?:UPDATE|DELETE|INSERT\s+0)\s+0\s*$|"
