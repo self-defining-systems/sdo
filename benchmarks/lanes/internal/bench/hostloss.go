@@ -93,7 +93,7 @@ func (m *Manager) retryTeardown(ctx context.Context, l *LaneFile, ref *StepRef) 
 	del := ref.DeleteCluster || ref.Phase.deleting()
 	prev := l.Prepared
 	if ref.Phase.deleting() {
-		prev = nil // operator teardown already ran
+		prev = nil // teardown hooks already ran
 	}
 	if (!del && prev == nil) || !m.start(ctx, l, Step{Kind: StepRelease, Prev: prev, DeleteCluster: del}) {
 		return false
