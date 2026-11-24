@@ -192,6 +192,10 @@ const ExistingMembersKey = "sdo.existing-members"
     ExistingMembersKey is the State key a ReadsExistingRecords step saves the
     JSON array of the member values it read, for the engine's exercised note.
 
+const HTTPReceiptWindowID = "@http-requests"
+    HTTPReceiptWindowID is the reserved observation key for process-wide HTTP
+    receipts. It cannot be the name of a workload.
+
 const MaxExecStderr = 512
     MaxExecStderr bounds the standard error of an EXEC kept for a failure
     reason.
@@ -219,10 +223,4 @@ const MethodExec = "EXEC"
 const RuleIDPrefix = "scenario-slo."
     RuleIDPrefix prefixes the rule ID of each scenario finding
     ("scenario-slo.<id>").
-
-const StateNow = "sdo.now"
-    StateNow is the State key holding the start time of the iteration, RFC
-    3339 in UTC. The engine sets it and records the same instant as Sample.At,
-    so replaying an iteration with that time rebuilds the same requests.
-    Build reads the time from here and never from a clock.
 ```

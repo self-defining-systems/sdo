@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
@@ -68,21 +69,24 @@ func plannedRequestMetrics(root string) (requestmetrics.Config, bool) {
 		cfg.Entries = append(cfg.Entries, requestmetrics.Entry{
 			Service: s, Metric: e.Metric, Selector: e.SelectorText(),
 			RouteLabel: e.Labels.Route, MethodLabel: e.Labels.Method, StatusLabel: e.Labels.Status,
-			Recent:   e.IncreaseByOperation("30s", ""),
+			Recent:   e.RecentWithProbeCoverage(rule.Window, rule.Lookback, requestmetrics.ProbeScrapeInset, requestmetrics.ProbeCoverageLabel),
 			Baseline: e.IncreaseByOperation(requestMetricsBaselineWindow, requestMetricsBaselineOffset),
 			Presence: e.SeriesByOperation(), Background: parsed.Background(e),
 		})
 	}
 	for _, op := range parsed.Operations {
 		o := requestmetrics.Operation{ID: op.ID, Service: op.Entry.Service, Route: op.RouteValue(), Method: op.Entry.Method}
-		e, has := parsed.EntryFor(op.Entry.Service)
+		if strings.HasPrefix(op.Entry.Path, "/") && op.Entry.Method != appmap.MethodExec {
+			o.ProbePath, o.ProbePort = op.Entry.Path, op.Entry.Port
+		}
+		_, has := parsed.EntryFor(op.Entry.Service)
 		switch {
 		case !has:
 			o.Unmeasurable = fmt.Sprintf("no entries record for service %s: declare its request metric and route, method and status labels", op.Entry.Service)
 		case !kept[op.Entry.Service]:
 			o.Unmeasurable = fmt.Sprintf("service %s is beyond the %d entry services the request-metrics detector reads", op.Entry.Service, MaxRequestMetricEntries)
 		}
-		if has && (parsed.Internal(op) || e.Labels.Method == "") {
+		if has && parsed.Internal(op) {
 			o.Method = ""
 		}
 		cfg.Operations = append(cfg.Operations, o)
@@ -117,7 +121,7 @@ func requestMetricsSource(cfg requestmetrics.Config) string {
 			e.Service, e.Metric, e.Selector, e.RouteLabel, e.MethodLabel, e.StatusLabel, e.ServerErrors, e.Recent, e.Baseline, e.Presence, e.Background)
 	}
 	for _, o := range cfg.Operations {
-		fmt.Fprintf(&operations, "\t\t{ID: %q, Service: %q, Route: %q, Method: %q, Unmeasurable: %q},\n", o.ID, o.Service, o.Route, o.Method, o.Unmeasurable)
+		fmt.Fprintf(&operations, "\t\t{ID: %q, Service: %q, Route: %q, Method: %q, Unmeasurable: %q, ProbePath: %q, ProbePort: %d},\n", o.ID, o.Service, o.Route, o.Method, o.Unmeasurable, o.ProbePath, o.ProbePort)
 	}
 	return fmt.Sprintf(`package requestmetrics
 

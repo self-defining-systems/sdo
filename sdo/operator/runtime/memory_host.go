@@ -24,6 +24,7 @@ import (
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
 	"sdo.dev/operator/sdk/vantage"
 )
@@ -442,6 +443,11 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 	if v, ok := source.AlertsResult(); ok {
 		out.Alerts, err = wireStruct(v)
 		if err != nil {
+			return nil, err
+		}
+	}
+	if receipts, ok := source.TrafficWindows()[traffic.HTTPReceiptWindowID]; ok {
+		if out.Traffic[traffic.HTTPReceiptWindowID], err = wireStruct(receipts); err != nil {
 			return nil, err
 		}
 	}

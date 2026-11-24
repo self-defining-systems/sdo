@@ -1,10 +1,14 @@
 package appmap
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"sdo.dev/operator/sdk/metrics"
 )
 
 // Rule IDs for the entries and reasons sections.
@@ -188,6 +192,33 @@ func (e MetricEntry) IncreaseByOperation(window, offset string) string {
 		offset = " offset " + offset
 	}
 	return "sum by (" + e.groupBy() + ") (increase(" + e.Metric + e.matchers() + "[" + window + "]" + offset + "))"
+}
+
+// RecentWithProbeCoverage adds one marker series per route, method and status
+// when every raw series observed in the window brackets its inset interval.
+// The counter increase itself is unchanged.
+func (e MetricEntry) RecentWithProbeCoverage(window, lookback, inset time.Duration, label string) string {
+	counts := e.IncreaseByOperation(window.String(), "")
+	if e.Background || e.Labels.Status == "" || window <= 2*inset ||
+		e.Labels.Route == label || e.Labels.Method == label || e.Labels.Status == label {
+		return counts
+	}
+	selector := e.Metric + e.matchers()
+	brackets := fmt.Sprintf(
+		`(timestamp(%[1]s offset %[2]s) > time() - %[3]g) and (timestamp(%[1]s) > time() - %[4]g) and (resets(%[1]s[%[5]s]) == 0)`,
+		selector, (window - inset).String(), window.Seconds(), inset.Seconds(), window.String())
+	rangeSelector := selector + "[" + window.String() + "]"
+	coverage := fmt.Sprintf(`count by (%[1]s) (%[2]s) == count by (%[1]s) (present_over_time(%[3]s))`, e.groupBy(), brackets, rangeSelector)
+	// Bound the union over the entire range, even when different series
+	// appear at different steps. Without room, return only the count series.
+	horizon := (window + max(lookback, window)).String()
+	budget := fmt.Sprintf(`count(count by (%s) (present_over_time(%s[%s] @ end()))) <= %d`,
+		e.groupBy(), selector, horizon, metrics.MaxSeries/2)
+	recent := counts + fmt.Sprintf(` or label_replace((%s and on() (%s)), %q, "bracketed", "__name__", ".*")`, coverage, budget, label)
+	if len(recent) > metrics.MaxExprBytes {
+		return counts
+	}
+	return recent
 }
 
 // SeriesByOperation is the metric total per route, method and status value,

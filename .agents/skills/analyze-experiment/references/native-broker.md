@@ -169,3 +169,8 @@ The current report is also exposed as the `sdo-operability` ConfigMap in the con
 `install-existing` prepares the tree before reading the accepted head: when the generic, traffic-probe or request-metrics detectors are missing or stale it commits them as a human commit (`SDO-Origin: install-existing`, message `sdo: prepare the generic detectors`), using the same policy (the environment's provided sources included) as memory check, publication and `onboarding check`. Startup upkeep keeps an agent-authored diagnostics module name.
 
 Deployment evidence `container_images[]` entries may carry `live`: the deployer left that tag in the pod template because every running pod already ran the pinned digest in `applied`/`digest` (adoption must not roll; the pin takes effect at the next deploy that changes the template for another reason). Receipt `images` list the pins; observed workloads hold the `live` form. A rolled-out adoption (every workload restarted with tag-to-digest as the only change) means this path was not taken: look for `deploy_adoption_live_images_failed`, a pod on a different digest, or an applier without live reads.
+
+Request-metrics replay takes probe receipts from the optional `traffic["@http-requests"].httpRequests`
+capture window and scrape-coverage markers from the recent metric results. Counts in a finding are
+the residuals. `probe_discount_total` and `probe_discount_failed` describe the reported step when
+a discount applied. Older captures lack one or both inputs and use the raw counts.

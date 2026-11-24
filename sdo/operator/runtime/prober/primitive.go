@@ -77,7 +77,14 @@ func (p *Prober) Primitive(ctx context.Context, request PrimitiveRequest) (progr
 	for key, value := range request.HTTP.Headers {
 		httpRequest.Header.Set(key, value)
 	}
+	sentAt := p.config.Clock.Now()
 	response, err := p.config.Client.Do(httpRequest)
+	receipt := traffic.HTTPReceipt{Service: request.To.Name, Port: int(request.Port), PathKey: traffic.HTTPPathKey(httpRequest.URL.Path),
+		Method: httpRequest.Method, SentAt: sentAt.UTC(), Answered: p.config.Clock.Now().UTC()}
+	if response != nil && err == nil {
+		receipt.Status = response.StatusCode
+	}
+	p.httpRequests.record(receipt)
 	if err != nil {
 		return program.ProbeResult{Detail: err.Error()}, nil
 	}

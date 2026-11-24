@@ -221,9 +221,11 @@ func Pass() Verdict
     Pass accepts a response.
 
 type Window struct {
-	Workload   Workload               `json:"workload"`
-	ObservedAt time.Time              `json:"observedAt"`
-	Scenarios  []ScenarioObservations `json:"scenarios"`
+	// HTTPRequests carries bounded request receipts for request-metrics replay.
+	HTTPRequests []HTTPReceipt          `json:"httpRequests,omitempty"`
+	Workload     Workload               `json:"workload"`
+	ObservedAt   time.Time              `json:"observedAt"`
+	Scenarios    []ScenarioObservations `json:"scenarios"`
 	// Links holds a link-probe workload's per-edge observations.
 	Links []LinkObservations `json:"links,omitempty"`
 	// Skipped counts arrivals dropped because MaxInFlight iterations were running.
@@ -232,8 +234,4 @@ type Window struct {
 	LoadError string `json:"loadError,omitempty"`
 }
     Window is what the prober has observed for one workload at ObservedAt.
-
-func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)
-    WindowFrom returns the observations of workload, when the context carries
-    them.
 ```

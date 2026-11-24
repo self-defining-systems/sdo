@@ -12,6 +12,7 @@ import (
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/requestmetrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -94,7 +95,18 @@ func (o *TrafficObserver) Reconfigure(workloads []string) {
 // Poll reads the prober once and reports whether any consumed workload holds
 // a failed iteration within its SLO window.
 func (o *TrafficObserver) Poll(ctx context.Context) bool {
+	clock := timerClock(o.Clock)
+	start := clock.Now()
 	windows, err := o.api.Windows(ctx)
+	if receipts, ok := windows[traffic.HTTPReceiptWindowID]; ok {
+		// The receipt interval and the metric clock only share the skew
+		// allowance if the prober itself could have answered in that time.
+		skew := requestmetrics.ProbeClockSkew
+		if receipts.ObservedAt.Before(start.Add(-skew)) || receipts.ObservedAt.After(clock.Now().Add(skew)) {
+			windows = maps.Clone(windows)
+			delete(windows, traffic.HTTPReceiptWindowID)
+		}
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if err != nil {
@@ -340,6 +352,10 @@ func (o *TrafficObserver) warm() bool {
 func (o *TrafficObserver) Windows() map[string]traffic.Window {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	return o.workloadWindows()
+}
+
+func (o *TrafficObserver) workloadWindows() map[string]traffic.Window {
 	windows := make(map[string]traffic.Window, len(o.workloads))
 	for _, name := range o.workloads {
 		window, ok := o.windows[name]
@@ -351,6 +367,17 @@ func (o *TrafficObserver) Windows() map[string]traffic.Window {
 		case ok:
 			windows[name] = window
 		}
+	}
+	return windows
+}
+
+// snapshotWindows includes the request receipts alongside the workload verdicts.
+func (o *TrafficObserver) snapshotWindows() map[string]traffic.Window {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	windows := o.workloadWindows()
+	if window, ok := o.windows[traffic.HTTPReceiptWindowID]; ok && o.failure == "" {
+		windows[traffic.HTTPReceiptWindowID] = window
 	}
 	return windows
 }
@@ -426,7 +453,7 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	}
 	windows := map[string]traffic.Window{}
 	if p.Observer != nil {
-		windows = p.Observer.Windows()
+		windows = p.Observer.snapshotWindows()
 	}
 	var reachability *servicehealth.ReachabilityWindow
 	if p.Reachability != nil {

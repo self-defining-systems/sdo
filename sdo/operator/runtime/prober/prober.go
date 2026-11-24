@@ -123,12 +123,13 @@ type probe struct {
 // Prober continuously runs the health-probe workloads and runs verify bursts
 // on demand.
 type Prober struct {
-	config Config
-	mu     sync.Mutex
-	probes map[string]*probe
-	links  map[string]*linkProbe
-	bursts map[string]traffic.Workload
-	next   uint64
+	config       Config
+	mu           sync.Mutex
+	probes       map[string]*probe
+	links        map[string]*linkProbe
+	bursts       map[string]traffic.Workload
+	next         uint64
+	httpRequests httpJournal
 	// setups is the engine whose record of completed setup steps every
 	// engine of this prober shares, so a verify burst never writes setup
 	// data the continuous probe already wrote (and may since have lost).
@@ -242,6 +243,7 @@ func (p *Prober) warming(name string) bool {
 // controller restart). The caller holds p.mu once the prober runs.
 func (p *Prober) shareSetup(engine *traffic.Engine) {
 	engine.UseSetupLock(p.config.SetupLock)
+	engine.UseHTTPRecorder(p.httpRequests.record)
 	if p.setups == nil {
 		p.setups = engine
 		return
@@ -321,6 +323,9 @@ func (p *Prober) Windows() map[string]traffic.Window {
 	}
 	for name, probe := range p.links {
 		windows[name] = p.linkWindowLocked(probe, now)
+	}
+	if receipts := p.httpRequests.recent(now); len(receipts) != 0 {
+		windows[traffic.HTTPReceiptWindowID] = traffic.Window{ObservedAt: now, HTTPRequests: receipts}
 	}
 	return windows
 }

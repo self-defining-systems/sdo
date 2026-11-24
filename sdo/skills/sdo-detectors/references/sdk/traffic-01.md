@@ -42,6 +42,7 @@ const DefaultRateLimitWait = time.Minute
 const DefectRateLimited = "rate_limited"
 const DefectResponseTruncated = "response_truncated"
 const ExistingMembersKey = "sdo.existing-members"
+const HTTPReceiptWindowID = "@http-requests"
 const MaxExecStderr = 512
 const MaxKnownBrokenReason = 200
 const MaxLinkExcerpt = 256
@@ -60,6 +61,7 @@ func DefaultLatencyNote(id string) string
 func DefaultLatencyScenarios(workloads []Workload) []string
 func FailingUserScenarios(ctx sdk.DetectionContext) []string
 func FromSeedPair(key string, count int, first func(index int) string, ...) (Param, Param)
+func HTTPPathKey(path string) string
 func KnownBrokenChanges(window Window) string
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, ...) (sdk.Finding, bool)
 func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting, ...) (sdk.Finding, bool)
@@ -93,6 +95,7 @@ type HTTPEndpoint struct{ ... }
     func GET(path string, query Params) *HTTPEndpoint
     func POST(path string, query Params) *HTTPEndpoint
     func PUT(path string, query Params) *HTTPEndpoint
+type HTTPReceipt struct{ ... }
 type IdentityPendingError struct{ ... }
 type KnownBroken struct{ ... }
 type Link struct{ ... }
