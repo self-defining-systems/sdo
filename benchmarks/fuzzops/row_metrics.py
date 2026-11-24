@@ -267,6 +267,11 @@ _RECEIPT = re.compile(
 )
 
 
+_REDIS_WRITE = re.compile(r"(?i)\bredis-cli\b[^;&|]*?\s(?:del|unlink|hdel|srem|zrem|lrem|expire|persist|set|flushdb)\b")
+#: Redis answers a changing command with a count or OK, on a line of its own.
+_REDIS_REPLY = re.compile(r"(?m)^(?:\(integer\) )?[1-9]\d*$|^OK$")
+
+
 def _without_comments(command: str) -> str:
     """The command without shell comments. A `#` inside a word or a quote (`${#x}`, "a # b") is no comment."""
     out, quote, skipping, i = [], "", False, 0
@@ -443,7 +448,8 @@ def _transcript(path: Path) -> Iterator[Write]:
     writes: list[Write] = []
     stamps: set[datetime] = set()
     for call, end, provider, output, error in _tool_results(path):
-        if (error or _NO_EFFECT.search(output)) and not _RECEIPT.search(output):
+        acknowledged = _RECEIPT.search(output) or (_REDIS_WRITE.search(call.command) and _REDIS_REPLY.search(output))
+        if (error or _NO_EFFECT.search(output)) and not acknowledged:
             continue
         if output.strip() and all(
             line.endswith((" unchanged", " not patched")) for line in output.strip().splitlines()
@@ -530,7 +536,7 @@ def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Documen
         for w in _transcript(path)
         if start <= w.at
     ]
-    last = _last_write(writes, *_capped(_recovery_bounds(row, inject), end))
+    last = _last_write(writes, *_capped(_recovery_bounds(row, inject), end), _last_bad(row, inject))
     if last:
         _record_write(row, start, last, observed)
         row.ttf_s, row.ttf_source = row.anchor_to_last_write_s, last.source
@@ -552,18 +558,36 @@ def _recovery_bounds(row: Row, inject: datetime | None) -> tuple[datetime | None
     return bound, bound + timedelta(seconds=RECOVERY_SLACK_S)
 
 
-def _capped(bounds: tuple[datetime | None, datetime | None], end: datetime | None) -> tuple[datetime | None, ...]:
+def _last_bad(row: Row, inject: datetime | None) -> datetime | None:
+    if not row.fixed_in_window or inject is None or row.inject_to_last_bad_s is None:
+        return None
+    return inject + timedelta(seconds=row.inject_to_last_bad_s)
+
+
+def _capped(
+    bounds: tuple[datetime | None, datetime | None], end: datetime | None
+) -> tuple[datetime | None, datetime | None]:
     """The recovery bounds, no later than the end of the agent session or incident that wrote."""
     if end is None:
         return bounds
-    return tuple(min(x, end) if x is not None else end for x in bounds)
+    bound, slack = bounds
+    return min(bound, end) if bound else end, min(slack, end) if slack else end
 
 
-def _last_write(writes: Iterable[Write], bound: datetime | None, slack: datetime | None) -> Write | None:
-    """The last write within the bound; only when nothing precedes it, the last one within the slack."""
+def _last_write(
+    writes: Iterable[Write], bound: datetime | None, slack: datetime | None, last_bad: datetime | None
+) -> Write | None:
+    """The last write within the bound. A write in the slack is preferred when none precedes it, or when the one that
+    does ended more than a clean gap before the last bad second: users still failed then, so it was not the fix (a
+    second fault, or harm that shows only now and then)."""
     started = [w for w in writes if bound is None or (w.tool_start or w.at) <= (slack or bound)]
     within = [w for w in started if bound is None or (w.tool_start or w.at) <= bound]
-    return max(within or started, key=lambda w: w.at, default=None)
+    last = max(within, key=lambda w: w.at, default=None)
+    if last is None or bound is None:
+        return last or max(started, key=lambda w: w.at, default=None)
+    stale = last_bad is not None and (last_bad - (last.tool_end or last.at)).total_seconds() > EPISODE_GAP_S
+    later = [w for w in started if w not in within]
+    return max(later, key=lambda w: w.at) if stale and later else last
 
 
 def first_episode_end(record: Document, inject: datetime | None) -> float | None:
@@ -798,7 +822,9 @@ def _sdo(
                 (_read(p) for p in sorted((run / "operator/memory/.sdo/outcomes").glob(f"{folder.name}*.json"))), {}
             )
         # One rule for both arms: the write that explains the graded recovery, never a later one.
-        if last := _last_write([w for w in _incident_writes(doc, paths) if start <= w.at], bound, slack):
+        if last := _last_write(
+            [w for w in _incident_writes(doc, paths) if start <= w.at], bound, slack, _last_bad(row, inject)
+        ):
             writes.append((start, last))
         for priority, (marker, at) in enumerate(
             (
@@ -824,7 +850,7 @@ def _sdo(
             bound, slack = _recovery_bounds(row, inject)
             paths = [*folder.glob("claude/projects/**/*.jsonl"), *folder.rglob("rollout-*.jsonl")]
             found = [w for w in _incident_writes({}, paths) if page <= w.at]
-            if last := _last_write(found, bound, slack):
+            if last := _last_write(found, bound, slack, _last_bad(row, inject)):
                 writes.append((page, last))
     for sessions in investigators.values():
         # An investigator can be collected even when the parent evidence was lost.
