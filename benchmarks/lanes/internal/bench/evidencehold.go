@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -215,7 +216,11 @@ func (m *Manager) checked(l *LaneFile, res Result, dir string) {
 			l.Hold.Evidence = &Evidence{Reasons: []string{"the check left no answer: " + res.Reason}}
 		}
 		if l.Hold.owes() == "" {
-			if err := overlay(run, l.Hold.Dir); err != nil {
+			err := overlay(run, l.Hold.Dir)
+			if err == nil {
+				err = rewriteManifest(l.Hold.Dir)
+			}
+			if err != nil {
 				l.Hold.Evidence = &Evidence{Reasons: []string{"verified, not home: " + err.Error()}}
 			}
 		}
@@ -235,6 +240,17 @@ func overlay(src, dst string) error {
 		}
 		return os.Rename(p, filepath.Join(dst, rel))
 	})
+}
+
+// rewriteManifest makes the run directory's manifest describe what is there now: what a check collected again replaced
+// files the step's own manifest lists.
+func rewriteManifest(dir string) error {
+	m, err := StepManifest(dir)
+	if err != nil {
+		return err
+	}
+	m = slices.DeleteFunc(m, func(e ManifestEntry) bool { return e.Path == "manifest.json" || e.Path == "run.json" })
+	return writeJSON(filepath.Join(dir, "manifest.json"), m)
 }
 
 // erases: a step of this kind changes or deletes what the lane's cluster still holds of a run's evidence. Recover only
