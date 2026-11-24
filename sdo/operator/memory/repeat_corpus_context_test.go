@@ -137,18 +137,66 @@ func TestRecordCorpusWritesAProgramsFirstCaseWithoutAPeer(t *testing.T) {
 	}
 }
 
-func TestRecordCorpusOmitsGeneratedCaseWithCredential(t *testing.T) {
-	root, captures := t.TempDir(), t.TempDir()
-	for _, name := range []string{"fixed.json", "open@detect.json"} {
-		writeCaptureFile(t, filepath.Join(captures, name), "{}")
-	}
-	canary := "glpat-" + "synthetic_token_for_test_only"
-	writeCaptureFile(t, filepath.Join(captures, "open@detect-recordings.json"), `[{"result":"`+canary+`"}]`)
-	paths, err := RecordCorpus(root, captures, "incident-1", map[string][]program.Bindings{"fix": {{}}}, nil, CaseContext{})
-	if err != nil || len(paths) != 0 {
-		t.Fatalf("RecordCorpus = %v, %v, want omitted case", paths, err)
-	}
-	if _, err := os.Stat(filepath.Join(root, layout.CorpusDir)); !os.IsNotExist(err) {
-		t.Fatalf("generated corpus exists or could not be checked: %v", err)
+func TestGeneratedCorpusOmitsOnlyContaminatedRecordings(t *testing.T) {
+	for _, negative := range []bool{false, true} {
+		name := "positive"
+		if negative {
+			name = "fixed-no-match"
+		}
+		t.Run(name, func(t *testing.T) {
+			root, captures := t.TempDir(), t.TempDir()
+			for _, name := range []string{"fixed.json", "open@detect.json", "open@pre-apply.json"} {
+				writeCaptureFile(t, filepath.Join(captures, name), "{}")
+			}
+			canary := "glpat-" + "synthetic_token_for_test_only"
+			writeCaptureFile(t, filepath.Join(captures, "open@detect-recordings.json"), `[{"result":"`+canary+`"}]`)
+			const clean = `[{"method":"Log"}]`
+			writeCaptureFile(t, filepath.Join(captures, "open@pre-apply-recordings.json"), clean)
+			instances := map[string][]program.Bindings{"dirty": {{}}, "clean": {{}}}
+			origins := map[string]string{CapturedInstanceKey("clean", program.Bindings{}): "pre-apply"}
+			record := func() ([]string, error) {
+				if negative {
+					return RecordFixedNoMatchCorpus(root, captures, "incident-1", instances, origins)
+				}
+				return RecordCorpus(root, captures, "incident-1", instances, origins, CaseContext{})
+			}
+			paths, err := record()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]int{}
+			var cleanPath string
+			for _, path := range paths {
+				if filepath.Base(path) != "recordings.json" {
+					continue
+				}
+				raw, err := os.ReadFile(filepath.Join(root, path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				got[string(raw)]++
+				if string(raw) == clean {
+					cleanPath = path
+				}
+			}
+			if len(got) != 2 || got["[]"] != 1 || got[clean] != 1 {
+				t.Fatal("expected both cases with only the contaminated recordings discarded")
+			}
+			if err := ValidateCapturedCorpusDirectory(captures, root, "incident-1", paths); err != nil {
+				t.Fatalf("generated cases failed provenance: %v", err)
+			}
+			writeCaptureFile(t, filepath.Join(root, cleanPath), `[{"method":"Other"}]`)
+			if err := ValidateCapturedCorpusDirectory(captures, root, "incident-1", paths); err == nil {
+				t.Fatal("changed clean recordings passed provenance")
+			}
+			contaminated, err := json.Marshal(sdktest.Snapshot{NamespaceName: canary})
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeCaptureFile(t, filepath.Join(captures, "fixed.json"), string(contaminated))
+			if paths, err := record(); err != nil || len(paths) != 0 {
+				t.Fatalf("contaminated fixed snapshot yielded %d files, err = %v", len(paths), err)
+			}
+		})
 	}
 }

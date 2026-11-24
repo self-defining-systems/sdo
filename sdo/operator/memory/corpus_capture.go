@@ -254,6 +254,7 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 				exact := false
 				for _, phase := range []string{"detect", "pre-apply"} {
 					want, err := os.ReadFile(filepath.Join(trusted, "open@"+phase+"-recordings.json"))
+					want, _ = corpusRecordings(want)
 					exact = exact || (err == nil && string(got) == string(want))
 				}
 				if !exact {
@@ -269,8 +270,11 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 			if err != nil {
 				return err
 			}
-			same := string(got) == string(want)
-			if name != "recordings.json" {
+			same := false
+			if name == "recordings.json" {
+				want, _ = corpusRecordings(want)
+				same = string(got) == string(want)
+			} else {
 				// Snapshots compare by content: an earlier capture layout and the
 				// objects-only form of the same snapshot are equal.
 				gotDigest, gotErr := sdktest.SnapshotDigest(got)

@@ -35,9 +35,6 @@ func TestIncidentCaptureStagesAPlanTestForEveryMitigator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(source), "replay.CheckMitigationPreview") {
-		t.Fatal("the shared incident plan check does not run the production preview")
-	}
 	if !strings.Contains(string(source), `check("fix")`) || strings.Contains(string(source), "diag-only") {
 		t.Fatalf("generated test = %s", source)
 	}

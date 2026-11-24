@@ -312,7 +312,7 @@ func planOnState(m program.Mitigator, c CorpusCase) (unverified string, err erro
 // open@* snapshots in dir, with their recorded reads. The closing turn's check has them before Go writes any
 // corpus case, so a brand-new program's plan is built and validated on real state. A program that needs bindings
 // the capture does not carry cannot run there, which CheckPlanValid treats as unverified.
-func CheckPlansOnIncident(m program.Mitigator, dir string, preview ...func(program.Mitigator, CorpusCase) string) (unverified []string, err error) {
+func CheckPlansOnIncident(m program.Mitigator, dir string) (unverified []string, err error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "open@*.json"))
 	if err != nil {
 		return nil, err
@@ -340,11 +340,6 @@ func CheckPlansOnIncident(m program.Mitigator, dir string, preview ...func(progr
 		why, err := planOnState(m, c)
 		if err != nil {
 			return unverified, fmt.Errorf("%s: %w", filepath.Base(path), err)
-		}
-		if len(preview) > 0 {
-			if note := preview[0](m, c); note != "" {
-				why = note
-			}
 		}
 		if why != "" {
 			unverified = append(unverified, filepath.Base(path)+": "+why)

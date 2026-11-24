@@ -107,9 +107,6 @@ var ErrReplicaSetScaleRefused = errors.New("replicaset_scale_refused")
     ErrReplicaSetScaleRefused marks a program plan that scales a ReplicaSet it
     may not retire.
 
-var ErrValuePathUnavailable = errors.New("value path unavailable")
-    ErrValuePathUnavailable means the selected object lacks the requested field.
-
 
 FUNCTIONS
 

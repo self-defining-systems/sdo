@@ -149,14 +149,6 @@ func (e PlanExecutor) clock() func() time.Time {
 	return lifecycleio.Now
 }
 
-// PreviewMitigation checks receipt encoding before dry-running a learned plan.
-func (e PlanExecutor) PreviewMitigation(ctx context.Context, incident IncidentRequest, plan program.Plan) (PlanApplicationResult, error) {
-	if _, err := (PlanApplicationResult{Plan: plan}).Proto(); err != nil {
-		return PlanApplicationResult{}, &NonExecutablePlanError{Cause: err}
-	}
-	return e.Apply(ctx, incident, plan, true)
-}
-
 // Apply writes the plan and reports. A version conflict before anything was
 // written (a status or controller bump since the pre-image read) is not a
 // refusal: the plan is applied again against the fresh object, up to

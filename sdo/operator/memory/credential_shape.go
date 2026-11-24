@@ -1,6 +1,9 @@
 package memory
 
-import "regexp"
+import (
+	"log/slog"
+	"regexp"
+)
 
 var (
 	pemPrivateKey = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----`)
@@ -20,11 +23,25 @@ func CredentialShape(data []byte) string {
 	}
 }
 
-func generatedCaseHasCredential(files ...[]byte) bool {
-	for _, data := range files {
-		if CredentialShape(data) != "" {
-			return true
+func prepareCorpusCase(files map[string][]byte, incident, playbook string) bool {
+	for name, data := range files {
+		if name != "recordings.json" && CredentialShape(data) != "" {
+			slog.Warn("corpus_case_not_recorded", "incident", incident, "playbook", playbook, "omitted_cases", 1)
+			return false
 		}
 	}
-	return false
+	if data, omitted := corpusRecordings(files["recordings.json"]); omitted {
+		slog.Warn("corpus_recordings_omitted", "incident", incident, "playbook", playbook, "omitted_files", 1)
+		files["recordings.json"] = data
+	}
+	return true
+}
+
+// corpusRecordings drops the contaminated observation file's contents. An empty
+// array keeps the case loadable without altering the captured snapshots.
+func corpusRecordings(raw []byte) ([]byte, bool) {
+	if CredentialShape(raw) != "" {
+		return []byte("[]"), true
+	}
+	return raw, false
 }

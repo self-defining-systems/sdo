@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -44,12 +43,11 @@ func RecordFixedNoMatchCorpus(root, captures, incident string, instances map[str
 			if err != nil {
 				return nil, err
 			}
-			if generatedCaseHasCredential(fixed, recordings, raw) {
-				slog.Warn("corpus_case_not_recorded", "incident", incident, "playbook", id, "reason", "capture contains credential-shaped material")
+			// Open and healthy are this fixed snapshot; the case references it.
+			files := map[string][]byte{"fixed.json": fixed, "labels.json": raw, "recordings.json": recordings}
+			if !prepareCorpusCase(files, incident, id) {
 				continue
 			}
-			// Open and healthy are this fixed snapshot; the case references it.
-			files := map[string][]byte{"fixed.json": fixed, "recordings.json": recordings, "labels.json": raw}
 			for _, name := range slices.Sorted(maps.Keys(files)) {
 				if err := safefs.WriteFile(root, filepath.ToSlash(filepath.Join(relative, name)), files[name], 0644); err != nil {
 					return nil, err

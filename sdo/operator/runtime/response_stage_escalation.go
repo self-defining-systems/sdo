@@ -21,7 +21,7 @@ const stageEscalated = "escalated"
 // on it, and a playbook with a mitigation escalates when Mitigate returns an
 // Escalate plan. Any other plan proceeds through ordinary planning.
 func stageEscalation(ctx context.Context, mitigator program.Mitigator, canMitigate bool, view program.ReadView, bindings program.Bindings, verdict program.Verdict, deadline time.Duration) (program.Escalate, bool, error) {
-	if verdict.Result != program.Match || verdict.Reach != program.ReachOutOfReach || verdict.Validate() != nil {
+	if !verdict.CanEscalate() {
 		return program.Escalate{}, false, nil
 	}
 	if !canMitigate {

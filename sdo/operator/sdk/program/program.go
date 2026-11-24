@@ -515,8 +515,7 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
 		if err := got.verdict.Validate(); err != nil {
 			return traced(unknown(err))
 		}
-		got.verdict.CauseClass = normalizeCauseClass(got.verdict.CauseClass)
-		return traced(withReadFailures(got.verdict, got.failures))
+		return traced(withReadFailures(normalizeCause(got.verdict), got.failures))
 	}
 }
 

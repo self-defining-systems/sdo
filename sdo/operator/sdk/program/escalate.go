@@ -24,11 +24,19 @@ var causeClasses = []string{
 // CauseClasses lists the categories used to summarize diagnosed causes.
 func CauseClasses() []string { return slices.Clone(causeClasses) }
 
-func normalizeCauseClass(class string) string {
-	if class != "" && !slices.Contains(causeClasses, class) {
-		return "other"
+// CanEscalate reports whether a diagnosis may drive automatic escalation.
+func (v Verdict) CanEscalate() bool {
+	return v.Result == Match && v.Reach == ReachOutOfReach && slices.Contains(causeClasses, v.CauseClass) && v.Validate() == nil
+}
+
+func normalizeCause(v Verdict) Verdict {
+	if v.CauseClass != "" && !slices.Contains(causeClasses, v.CauseClass) {
+		if v.Reach == ReachOutOfReach {
+			v.Reach = ""
+		}
+		v.CauseClass = "other"
 	}
-	return class
+	return v
 }
 
 func validateCause(class, reach string) error {

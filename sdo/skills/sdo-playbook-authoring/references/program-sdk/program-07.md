@@ -173,6 +173,9 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
         the outcome and the audit see what the program did not observe;
       - Unknown and NeedsJudgement are unchanged.
 
+func (v Verdict) CanEscalate() bool
+    CanEscalate reports whether a diagnosis may drive automatic escalation.
+
 func (v Verdict) Validate() error
 
 type WaitFor struct {
