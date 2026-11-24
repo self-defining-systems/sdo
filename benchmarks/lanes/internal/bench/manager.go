@@ -510,6 +510,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			if l.Step == nil || l.Step.ID != steps[lane] {
 				continue
 			}
+			if ph := pr.Phases[lane]; ph != nil {
+				l.Step.Phase = ph
+			}
 			switch state {
 			case StepFinished:
 				id := l.Step.ID
@@ -519,7 +522,6 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			case StepDead:
 				m.died(ctx, l)
 			case StepRunning:
-				l.Step.Phase = pr.Phases[lane]
 				m.cancelRemoved(ctx, l)
 				m.enforceBound(ctx, l)
 			}
@@ -862,7 +864,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		// probe decides. A step that never ran shows as dead and is followed by a recover step.
 		m.logf("lane %s: start %s: %v (the probe decides whether it runs)", l.Lane, s.ID, err)
 	}
-	l.Step = &StepRef{ID: s.ID, Kind: s.Kind, Started: m.now().UTC(), Run: s.Run, Bound: Seconds(stepBound(s.Kind, limitSpec).Seconds())}
+	l.Step = &StepRef{ID: s.ID, Kind: s.Kind, DeleteCluster: s.DeleteCluster, Started: m.now().UTC(), Run: s.Run, Bound: Seconds(stepBound(s.Kind, limitSpec).Seconds())}
 	if s.Run != nil {
 		l.Step.RunID = s.Run.ID
 	}
@@ -1500,6 +1502,9 @@ func (m *Manager) died(ctx context.Context, l *LaneFile) {
 	dead := l.Step
 	m.logf("lane %s: step %s died %s", l.Lane, dead.ID, dead.Killed)
 	l.Step = nil
+	if m.retryTeardown(ctx, l, dead) {
+		return
+	}
 	if dead.Kind == StepRecover {
 		m.setState(l, LaneDown, "recover step died")
 		return
@@ -1574,6 +1579,13 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 	m.logf("lane %s: %s finished ok=%v %s", l.Lane, ref.ID, res.OK, res.Reason)
 	if res.Gate != nil && x != nil {
 		_ = appendJSONL(m.Root.GatesPath(x.Name), res.Gate)
+	}
+	var phase Phase
+	if readJSON(filepath.Join(tmp, phaseFile), &phase) == nil {
+		ref.Phase = &phase
+	}
+	if res.LaneDown != "" && res.Exit < 0 && m.retryTeardown(ctx, l, ref) {
+		return nil
 	}
 	before := l.Prepared
 	l.Prepared = res.Prepared

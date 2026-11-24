@@ -10,7 +10,7 @@ import (
 // Phase is what a running step is doing now: <step dir>/phase.json, rewritten
 // whenever it changes. The probe reports it and the manager keeps it in the
 // lane file (StepRef.Phase), so `status` and the dashboard can say whether a
-// lane is gating, in its window or undoing. Display only: nothing decides on it.
+// lane is gating, in its window or undoing, and the manager can protect teardown.
 type Phase struct {
 	Name   string    `json:"phase"`
 	Since  time.Time `json:"since"`
@@ -34,6 +34,10 @@ const (
 	// PhaseLaneWait: the build waits for the lane's cores or memory on its host (detail: who holds what).
 	PhaseLaneWait = "lane-wait"
 )
+
+func (p *Phase) deleting() bool { return p != nil && p.Name == "cluster-down" }
+
+func (p *Phase) teardown() bool { return p.deleting() || p != nil && p.Name == "teardown" }
 
 const phaseFile = "phase.json"
 
