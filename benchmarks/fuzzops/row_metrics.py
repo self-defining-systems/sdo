@@ -208,7 +208,10 @@ _KUBE_FLAGS_WITH_VALUE = {
 }
 _SQL_WRITE = re.compile(
     r"(?i)\b(?:update\s+[\w.\"]+\s+set|insert\s+into|delete\s+from|truncate\s+(?:table\s+)?\w"
-    r"|alter\s+table|create\s+table|drop\s+table)\b"
+    # Schema changes are app state too: any DDL on a table, trigger, function, index, view, rule, policy or role.
+    r"|(?:alter|create(?:\s+or\s+replace)?|drop)\s+(?:table|trigger|function|procedure|index|view|rule|policy"
+    r"|sequence|type|role|user|schema|extension)"
+    r"|grant\s|revoke\s|comment\s+on|vacuum\s+full|reindex)\b"
 )
 _RUBY_WRITE = re.compile(
     r"\.(?:update(?:_all|_columns|_column)?|save|create|destroy(?:_all)?|delete(?:_all)?|touch)"
