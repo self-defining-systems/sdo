@@ -41,9 +41,10 @@ type HeadPoller struct {
 
 // headPollState is the controller's bookkeeping of one head deploy at a time.
 type headPollState struct {
-	poller              *HeadPoller
-	running             bool
-	nextAt              time.Time
+	poller  *HeadPoller
+	running bool
+	nextAt  time.Time
+
 	lastObservedReceipt string
 }
 
