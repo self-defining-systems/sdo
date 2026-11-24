@@ -34,10 +34,10 @@ def test_a_long_window_is_read_in_bounded_slices_and_joined(tmp_path: Path) -> N
     assert receipt["status"] == "ok"
     assert len(prom.queries) >= 4
     assert max(e - s for _, s, e in prom.queries) <= capture.SLICE.total_seconds()
-    line = json.loads(gzip.decompress((tmp_path / receipt["files"][0]).read_bytes()).decode().splitlines()[0])
-    assert line["metric"] == "http_requests_total"
-    (series,) = line["result"]
-    times = [v[0] for v in series["values"]]
+    chunks = list(capture.read_lines(tmp_path / receipt["files"][0]))
+    assert {chunk["metric"] for chunk in chunks} == {"http_requests_total"}
+    assert receipt["series"] == 1
+    times = [v[0] for chunk in chunks for series in chunk["result"] for v in series["values"]]
     assert times == sorted(set(times)), "slices must join in order without repeated samples"
     assert times[0] == w.start.timestamp()
     assert times[-1] >= w.end.timestamp() - capture.STEP_S
@@ -49,7 +49,7 @@ def test_many_small_metrics_cost_few_queries(tmp_path: Path) -> None:
     receipt = capture.capture_prometheus(prom, tmp_path, a_window(10))  # type: ignore[arg-type]
     assert receipt["queries"] == len(prom.queries) <= 60
     lines = gzip.decompress((tmp_path / receipt["files"][0]).read_bytes()).splitlines()
-    assert len(lines) == 1000, "one line per metric, whatever was read together"
+    assert {json.loads(line)["metric"] for line in lines} == set(prom.series)
 
 
 def test_no_query_asks_for_more_points_than_its_bound() -> None:
@@ -104,3 +104,19 @@ def test_a_file_over_its_bound_is_not_kept(tmp_path: Path, monkeypatch: pytest.M
     with pytest.raises(capture.CaptureError, match="10 byte bound"):
         capture.capture_prometheus(FakePrometheus({"m": 1}), tmp_path, a_window(20))  # type: ignore[arg-type]
     assert not list((tmp_path / "observability").iterdir())
+
+
+def test_capture_partitions_cardinality_queries_and_writes_each_slice(tmp_path: Path) -> None:
+    class GroupedPrometheus(FakePrometheus):
+        def get(self, path: str) -> bytes:
+            if path.startswith("/api/v1/query?"):
+                from urllib.parse import parse_qs, urlparse
+
+                query = parse_qs(urlparse(path).query)["query"][0]
+                assert '{__name__=~".+"}' not in query, "cardinality planning must not materialize the full store"
+            return super().get(path)
+
+    prom = GroupedPrometheus({"http_requests_total": 1})
+    receipt = capture.capture_prometheus(prom, tmp_path, a_window(31))  # type: ignore[arg-type]
+    lines = gzip.decompress((tmp_path / receipt["files"][0]).read_bytes()).splitlines()
+    assert len(lines) == len(prom.queries) > 1, "flush each slice before reading the next"

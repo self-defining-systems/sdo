@@ -18,6 +18,7 @@ capture ``status``:
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import re
@@ -44,9 +45,8 @@ PROMETHEUS = ("sdo-prometheus", "9090")
 JAEGER = ("sdo-jaeger", "16686")
 STEP_S = 15
 #: The longest span one Prometheus range query reads, the most series one query asks for (a metric with more is a query
-#: of its own) and the most points one query returns: they bound what the lane's 1 GiB Prometheus holds for one answer
-#: whatever the window and the cardinality. One query runs at a time; the metrics of a small lane fit a few queries, so
-#: the capture costs tens of API calls, not one per metric.
+#: of its own), and a point budget estimated from observed cardinality. One query runs at a time, and each answer
+#: is written before the next is fetched. Prometheus also enforces its sample budget on actual query evaluation.
 SLICE = timedelta(minutes=10)
 QUERY_SERIES = 5_000
 QUERY_METRICS = 40
@@ -299,8 +299,8 @@ def plan_queries(series: dict[str, int], start: datetime, end: datetime) -> list
 
 def _selector(metrics: tuple[str, ...]) -> str:
     if len(metrics) == 1:
-        return '{__name__="' + metrics[0] + '"}'
-    return '{__name__=~"' + "|".join(metrics) + '"}'
+        return "{__name__=" + json.dumps(metrics[0], ensure_ascii=False) + "}"
+    return "{__name__=~" + json.dumps("|".join(re.escape(name) for name in metrics), ensure_ascii=False) + "}"
 
 
 def _api(proxy: Proxy, path: str, **params: Any) -> Any:
@@ -312,38 +312,28 @@ def series_counts(proxy: Proxy, w: Window) -> dict[str, int]:
     """The metrics the store holds for the window (minus runtime noise), each with its series count at the window's
     edges."""
     names = _api(proxy, "label/__name__/values", start=w.start.timestamp(), end=w.end.timestamp())
+    wanted = sorted(name for name in names if not SKIP_METRICS.match(name))
     counts: dict[str, int] = {}
-    for at in (w.start, w.end):
-        answer = _api(proxy, "query", query='count by (__name__) ({__name__=~".+"})', time=at.timestamp())
-        for item in answer["result"]:
-            name = item["metric"].get("__name__", "")
-            counts[name] = max(counts.get(name, 0), int(float(item["value"][1])))
-    return {n: counts.get(n, UNCOUNTED_SERIES) for n in names if not SKIP_METRICS.match(n)}
-
-
-def joined(results: list[list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
-    """Range-query results of consecutive slices by metric name: each series' values in time order."""
-    series: dict[str, dict[str, Any]] = {}
-    for result in results:
-        for item in result:
-            key = json.dumps(item.get("metric", {}), sort_keys=True)
-            series.setdefault(key, {"metric": item.get("metric", {}), "values": []})["values"].extend(
-                item.get("values", [])
-            )
-    out: dict[str, list[dict[str, Any]]] = {}
-    for item in series.values():
-        item["values"].sort(key=lambda v: float(v[0]))
-        out.setdefault(str(item["metric"].get("__name__", "")), []).append(item)
-    return out
+    for offset in range(0, len(wanted), QUERY_METRICS):
+        group = tuple(wanted[offset : offset + QUERY_METRICS])
+        for at in (w.start, w.end):
+            query = f"count by (__name__) ({_selector(group)})"
+            answer = _api(proxy, "query", query=query, time=at.timestamp())
+            for item in answer["result"]:
+                name = item["metric"]["__name__"]
+                counts[name] = max(counts.get(name, 0), int(float(item["value"][1])))
+    return {name: counts.get(name, UNCOUNTED_SERIES) for name in wanted}
 
 
 def verified_series(path: Path, w: Window) -> dict[str, Any]:
     """Read the written file back: whole, not empty, and with samples from the run's start to the window's end."""
-    first, last, series = float("inf"), float("-inf"), 0
+    first, last = float("inf"), float("-inf")
+    series: set[bytes] = set()
     for line in read_lines(path):
         for item in line["result"]:
             if values := item["values"]:
-                series += 1
+                identity = json.dumps(item["metric"], sort_keys=True).encode()
+                series.add(hashlib.blake2b(identity, digest_size=16).digest())
                 first, last = min(first, float(values[0][0])), max(last, float(values[-1][0]))
     if not series:
         raise CaptureError("the file holds no sample")
@@ -354,24 +344,26 @@ def verified_series(path: Path, w: Window) -> dict[str, Any]:
         )
     if last < w.end.timestamp() - slack:
         raise CaptureError(f"the store's samples end {w.end.timestamp() - last:.0f} s before the window does")
-    return {"series": series}
+    return {"series": len(series)}
 
 
 def capture_prometheus(proxy: Proxy, dest: Path, w: Window) -> dict[str, Any]:
-    """Every metric's series over the window (minus runtime noise), one gzip JSON-lines file: {metric, result}."""
+    """Every metric's series over the window, in consecutive gzip JSON-line chunks per metric."""
     queries = plan_queries(series_counts(proxy, w), w.start, w.end)
     calls = 0
 
     def lines() -> Iterator[str]:
         nonlocal calls
         for q in queries:
-            parts = []
+            selector = _selector(q.metrics)
             for s, e in q.spans:
-                answer = _api(proxy, "query_range", query=_selector(q.metrics), start=s, end=e, step=STEP_S)
-                parts.append(answer["result"])
+                answer = _api(proxy, "query_range", query=selector, start=s, end=e, step=STEP_S)
                 calls += 1
-            for name, result in sorted(joined(parts).items()):
-                yield json.dumps({"metric": name, "result": result}, separators=(",", ":"))
+                by_metric: dict[str, list[dict[str, Any]]] = {}
+                for item in answer["result"]:
+                    by_metric.setdefault(item["metric"]["__name__"], []).append(item)
+                for name, result in sorted(by_metric.items()):
+                    yield json.dumps({"metric": name, "result": result}, separators=(",", ":"))
 
     if not queries:
         return {"status": "empty", "detail": "the store holds no metric for the window"}
