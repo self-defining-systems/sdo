@@ -100,6 +100,15 @@ operator config overlay passed after the baseline's; it may not set `agent.provi
 or `evidence`, which the hook sets). The operator images must already be
 built on the host (`scripts/build_sdo_images.sh`); `prepare` fails clearly when one is missing.
 
+### Detector-first paging
+
+FuzzOps SDO fault rows give SDO's detectors 120 seconds from injection to open an incident. If no incident has opened, the
+watch hook sends one namespace-only user report through the controller's normal paging inbox. The controller keeps
+evaluating detectors, joining alerts and verifying recovery. The injection clock comes from the first sample in
+`FUZZOPS_TRAFFIC`, so this requires a FuzzOps pin that publishes that stream. Set `settings.fallback_page: false` to
+disable the fallback or `settings.fallback_page_seconds` to change the delay. Healthy runs send no fallback page.
+The explicit `settings.harness_page` arm uses its fixed schedule.
+
 ### Baselines
 
 A baseline directory (outside the repository, in sdo-exp) holds the accepted memory as a Git bundle, the render it was

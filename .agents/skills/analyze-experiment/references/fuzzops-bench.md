@@ -65,6 +65,11 @@ overlay files it passed are under the lane's `sdo-config/`.
 
 ## Reading it
 
+- Detector-first SDO rows record RFC 3339 `inject_at`, `sdo_page_at` (controller incident opening),
+  `page_source` (`own` or `fallback`), and `fallback_page_at` (inbox write acknowledgement, or observed opening
+  if the write acknowledgement is lost) in `operator/collect.json`. Fields with no observed event are null.
+  `fallback_id` correlates the inbox write with its controller acknowledgement. The watch copy is
+  `exec/*/sdo-page.json`. The 120 s default delay starts at `FUZZOPS_TRAFFIC`'s `inject_at`.
 - Only `done` runs are graded. `invalid` reasons: `capped: <idle reason>` (SDO was still busy at the cap, often a
   queued reflection), `lane lost`, `inject failed`, a fuzzops invalid reason, `host interference`, `sequence broken`.
   Not-ready gates are lane events (in `gates.jsonl` and the lane timeline), not runs.

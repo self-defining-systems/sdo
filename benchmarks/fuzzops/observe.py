@@ -22,17 +22,79 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+import uuid
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from benchmarks.fuzzops.cellevidence import atomic_write_json
 from benchmarks.fuzzops.evidence import EvidenceError, EvidenceTarget, snapshot, snapshot_id_for
-from benchmarks.fuzzops.page import DEFAULT_ENTRY, PageConfig, Pager, fuzzops_check, kubectl_apply
+from benchmarks.fuzzops.page import (
+    DEFAULT_ENTRY,
+    PageConfig,
+    Pager,
+    fallback_message,
+    fuzzops_check,
+    inbox_manifest,
+    kubectl_apply,
+)
+from benchmarks.fuzzops.sink import incident_id_time
 from benchmarks.fuzzops.window import concerns, fault_targets
 
 STATE_CONFIGMAP = "sdo-controller-state"
 STATE_KEY = "runtime-state.json"
+PAGE_EVIDENCE = "sdo-page.json"
+
+
+@dataclass
+class PageEvidence:
+    """First incident opened in this run and the harness's inbox submission, if any."""
+
+    inject_at: str | None = None
+    sdo_page_at: str | None = None
+    page_source: str | None = None
+    fallback_page_at: str | None = None
+    fallback_id: str | None = None
+
+    def observe(self, state: dict[str, Any]) -> bool:
+        if self.sdo_page_at or (inject := _parse_time(self.inject_at)) is None:
+            return False
+        closure = _get(state, "pending_closure") or {}
+        request = _get(state, "incident_request") or _get(closure, "request") or {}
+        if _get(request, "external_message"):
+            return False  # the explicitly configured fixed-schedule arm
+        detected = _get(state, "incident_detected_at") or _get(closure, "detected_at")
+        opened = _parse_time(detected)
+        # A fast recovery may already have been acknowledged between two polls.
+        ack = incident_id_time(str(_get(state, "last_acknowledged_incident_id") or ""))
+        if ack is not None and ack >= inject and (opened is None or ack < opened):
+            detected = _stamp(ack)
+            opened = ack
+            fallback = self.fallback_id is not None and _get(state, "last_page_id") == self.fallback_id
+        else:
+            fallback = bool(self.fallback_id and _get(request, "page") and not _get(request, "opening_keys"))
+        if opened is None or opened < inject:
+            return False
+        self.sdo_page_at = str(detected)
+        self.page_source = "fallback" if fallback else "own"
+        if fallback and self.fallback_page_at is None:
+            # The API write can succeed even when kubectl times out waiting.
+            self.fallback_page_at = self.sdo_page_at
+        return True
+
+
+def traffic_inject_at(path: Path) -> str | None:
+    """FuzzOps puts its exact injection clock in the first live traffic sample."""
+    with path.open() as traffic:
+        line = traffic.readline()
+    if not line.endswith("\n"):
+        return None
+    value = json.loads(line)["inject_at"]
+    if _parse_time(value) is None:
+        raise ValueError(f"invalid inject_at in {path}")
+    return value
+
 
 _KIND_PREFIX = {
     "Deployment": "deploy",
@@ -349,7 +411,11 @@ def timeline_events(watcher: Watcher, emitted: set[str]) -> list[dict[str, Any]]
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return _stamp(datetime.now(UTC))
+
+
+def _stamp(at: datetime) -> str:
+    return at.isoformat().replace("+00:00", "Z")
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -415,6 +481,26 @@ def start_pager(a: argparse.Namespace, context: str, out: Path) -> threading.Thr
     return thread
 
 
+def submit_fallback(paging: PageEvidence, receipt: Path, args: argparse.Namespace, context: str) -> None:
+    if paging.fallback_id is None:
+        paging.fallback_id = f"fallback-{uuid.uuid4().hex}"
+        atomic_write_json(receipt, asdict(paging))
+    try:
+        message = fallback_message(args.page_namespace)
+        kubectl_apply(
+            inbox_manifest(args.control_namespace, paging.fallback_id, args.page_namespace, message),
+            args.kubeconfig,
+            context,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        # Retry the same id if the write timed out. The controller accepts an id once.
+        print(f"fallback page failed: {exc}", file=sys.stderr, flush=True)
+        return
+    paging.fallback_page_at = _stamp(datetime.fromtimestamp(time.time(), UTC))
+    atomic_write_json(receipt, asdict(paging))
+    print("sdo: fallback page sent", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--control-namespace", required=True)
@@ -437,6 +523,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--operator-binary", type=Path, help="seal an evidence snapshot when the incident closes")
     p.add_argument("--controller-image", default="", help="with --operator-binary: the controller image")
     p.add_argument("--page", default="", help="the harness-paged arm: PageConfig as JSON (see page.py)")
+    p.add_argument("--fallback-page-after", type=float, help="seconds from inject before sending a generic page")
     p.add_argument("--page-pack", type=Path, help="with --page: the fuzzops pack (journeys.yaml)")
     p.add_argument("--page-namespace", default="", help="with --page: the application namespace")
     p.add_argument("--page-fuzzops", type=Path, help="with --page: the fuzzops binary (default: FUZZOPS_BIN or PATH)")
@@ -455,19 +542,44 @@ def main(argv: list[str] | None = None) -> int:
     emitted: set[str] = set()
     out = Path(os.environ.get("FUZZOPS_OUT") or ".")
     out.mkdir(parents=True, exist_ok=True)
+    traffic = os.environ.get("FUZZOPS_TRAFFIC", "")
+    if a.fallback_page_after is not None and (not traffic or not a.page_namespace):
+        raise ValueError("fallback paging needs the application namespace and a FuzzOps pin with FUZZOPS_TRAFFIC")
     if a.page:
         start_pager(a, context, out)
+    paging = PageEvidence()
+    receipt = out / PAGE_EVIDENCE
+    deadline: float | None = None
     watcher = Watcher(started=datetime.now(UTC) - timedelta(seconds=a.lookback), targets=fault_targets(a.fault))
     last_raw = ""
     closed_at: float | None = None
     n = 0
     while closed_at is None or time.monotonic() - closed_at < a.linger:
+        if traffic and paging.inject_at is None and (injected := traffic_inject_at(Path(traffic))):
+            paging.inject_at = injected
+            inject = datetime.fromisoformat(injected)
+            watcher.started = inject
+            atomic_write_json(receipt, asdict(paging))
+            if a.fallback_page_after is not None:
+                deadline = inject.timestamp() + a.fallback_page_after
+        read_started = time.time()
         try:
             state = read_state(context, a.control_namespace, a.kubeconfig)
         except (subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
             print(f"state read failed: {exc}", file=sys.stderr, flush=True)
             state = None
         if state is not None:
+            if paging.observe(state):
+                atomic_write_json(receipt, asdict(paging))
+            if (
+                deadline is not None
+                and read_started >= deadline
+                and paging.sdo_page_at is None
+                and paging.fallback_page_at is None
+                and not _get(state, "incident_open")
+                and not _get(state, "pending_closure")
+            ):
+                submit_fallback(paging, receipt, a, context)
             raw = json.dumps(state, sort_keys=True)
             if raw != last_raw:
                 last_raw = raw
@@ -492,7 +604,11 @@ def main(argv: list[str] | None = None) -> int:
                 closed_at = time.monotonic()
                 if evidence is not None:
                     seal_boundary(evidence, watcher.incident)
-        time.sleep(a.interval)
+        # Poll at the deadline even when it falls between two normal reads.
+        sleep = a.interval
+        if deadline is not None and read_started < deadline and paging.sdo_page_at is None:
+            sleep = min(sleep, max(0.0, deadline - time.time()))
+        time.sleep(sleep)
     return 0
 
 
