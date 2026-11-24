@@ -110,7 +110,7 @@ def test_a_fault_after_a_commit_runs_through_the_fuzzops_workload_too(tmp_path: 
     assert entry is not None
     builtin = ["sh", "-c", f'echo "$FUZZOPS_ENTRY_HOST" > {marker}; echo \'{{"valid": true}}\'', "wrapped"]
     env = {"WORKLOAD_ACTION": "run", "BENCH_ENTRY_HOST": "10.1.2.3", "WORKLOAD_BUILTIN": json.dumps(builtin)}
-    record = adapter.inject_fault(builtin, {}, entry, "fault-x", io.StringIO(), env)
+    record = adapter.inject_fault(builtin, entry, "fault-x", env)
     assert record == {"valid": True}
     assert marker.read_text().strip() == "10.1.2.3"
 
@@ -276,3 +276,162 @@ def test_the_observation_clock_is_the_newest_detector_evaluation() -> None:
     assert newest_evaluation({}) is None
     with pytest.raises(ValueError, match="not an RFC 3339 time"):
         rfc3339_seconds("yesterday")
+
+
+#: Commit 1, a fault, commit 2, commit 3: position 2 is the fault, position 3 pushes commit 2.
+EVENTS = [{"commit": 1}, {"fault": "fault-x"}, {"commit": 2}, {"commit": 3}]
+FAULT_RECORD = {
+    "valid": True,
+    "fault": "fault-x",
+    "recovered_in_window": True,
+    "window": {"BadSeconds": 12},
+    "last_bad_second": 40,
+    "lifecycle": {"inject_at": "2026-11-24T00:00:00Z"},
+}
+
+
+def fault_series(tmp_path: Path, events: list[dict[str, object]] = EVENTS) -> Path:
+    """A series with fault events and an absolute fault file that lists ``fault-x``; returns the instances file."""
+    path = instances(tmp_path)
+    (tmp_path / "demo.json").write_text(json.dumps({**SPEC, "events": events}))
+    (tmp_path / "faults.json").write_text(json.dumps({"ids": ["fault-x"], "instances": []}))
+    path.write_text(json.dumps({**json.loads(path.read_text()), "fault_instances": str(tmp_path / "faults.json")}))
+    return path
+
+
+def wrapped(tmp_path: Path, output: str, *flags: str) -> str:
+    """A wrapped workload command line that records its arguments and prints ``output``."""
+    script = f"echo \"$@\" > {tmp_path / 'wrapped-args'}; echo '{output}'"
+    return json.dumps(["sh", "-c", script, "wrapped", *flags])
+
+
+def series_env(tmp_path: Path, position: int) -> dict[str, str]:
+    """A run of ``position`` for the fault series, built after ``fault_series`` wrote its files."""
+    run_env = env(tmp_path, position)
+    builtin = wrapped(tmp_path, json.dumps(FAULT_RECORD), "--instance-file", "series.json", "--instance", "demo")
+    return {**run_env, "WORKLOAD_ACTION": "run", "WORKLOAD_BUILTIN": builtin}
+
+
+def test_a_fault_event_prints_the_fault_runs_record_as_the_positions_record(tmp_path: Path) -> None:
+    """A fault event is its own position: the wrapped workload's run for that fault is the run, with no commit pushed,
+    and settle is not told the position waited for its own incident (it waits for SDO to be idle, then collect
+    resets the incidents, as after any fault run)."""
+    run_env = series_env(tmp_path, 2)
+    fault_series(tmp_path)
+    lane = Lane("accepted")
+    out = io.StringIO()
+    assert adapter.run(run_env, out, ops=lane) == 0  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert record == {
+        **FAULT_RECORD,
+        "series": "demo",
+        "index": 2,
+        "event": "fault",
+        "fault_id": "fault-x",
+        "after_commit": 1,
+    }
+    assert lane.pushed == ""
+    assert not (tmp_path / "settle-work-only.json").exists()
+    args = (tmp_path / "wrapped-args").read_text().split()
+    assert args == ["--instance-file", str(tmp_path / "faults.json"), "--instance", "fault-x"]
+
+
+def test_a_commit_event_after_a_fault_pushes_its_commit_and_records_both_numbers(tmp_path: Path) -> None:
+    first_env, run_env = series_env(tmp_path, 1), series_env(tmp_path, 3)
+    fault_series(tmp_path)
+    lane = Lane("accepted")
+    out = io.StringIO()
+    adapter.run(first_env, io.StringIO(), ops=lane)  # type: ignore[arg-type]
+    before = lane.t
+    adapter.run(run_env, out, ops=lane)  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert (record["index"], record["event"], record["commit_index"], record["commit"]) == (3, "commit", 2, "c2")
+    assert record["outcome"] == "accepted"
+    assert "fault" not in record
+    assert lane.pushed == "sha2"
+    assert lane.t - before >= 29  # commit 2's schedule offset, not position 3's
+    assert (tmp_path / "settle-work-only.json").is_file()
+
+
+def test_a_plain_series_position_is_a_commit_event(tmp_path: Path) -> None:
+    out = io.StringIO()
+    adapter.run(env(tmp_path, 2), out, ops=Lane("accepted"))  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert (record["index"], record["event"], record["commit_index"]) == (2, "commit", 2)
+
+
+def test_a_fault_event_the_fault_file_does_not_list_is_refused_before_anything_is_pushed(tmp_path: Path) -> None:
+    run_env = env(tmp_path, 1)
+    fault_series(tmp_path, [{"commit": 1}, {"fault": "fault-z"}, {"commit": 2}, {"commit": 3}])
+    lane = Lane("accepted")
+    out = io.StringIO()
+    adapter.run(run_env, out, ops=lane)  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert record["valid"] is False
+    assert "fault-z" in record["invalid_reason"]
+    assert lane.pushed == ""
+
+
+def test_a_position_past_the_last_event_is_an_invalid_run(tmp_path: Path) -> None:
+    out = io.StringIO()
+    adapter.run(env(tmp_path, 4), out, ops=Lane("accepted"))  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert record["valid"] is False
+    assert "position 4" in record["invalid_reason"]
+
+
+def test_grade_writes_one_row_per_event(tmp_path: Path) -> None:
+    rows = [
+        {"series": "demo", "index": 1, "event": "commit", "commit_index": 1, "commit": "c1" * 6, "outcome": "accepted"},
+        {**FAULT_RECORD, "series": "demo", "index": 2, "event": "fault", "fault_id": "fault-x", "after_commit": 1},
+        {"series": "demo", "index": 3, "event": "commit", "commit_index": 2, "commit": "c2" * 6, "outcome": "held"},
+    ]
+    (tmp_path / "runs.jsonl").write_text("\n".join(json.dumps(r) for r in reversed(rows)) + "\n")
+    assert adapter.grade({"WORKLOAD_RESULTS": str(tmp_path)}, io.StringIO()) == 0
+    report = (tmp_path / "report.md").read_text().splitlines()
+    assert report[2].startswith("| demo | 1 | commit 1 | c1c1c1c1c1c1 | accepted |")
+    assert report[3].startswith("| demo | 2 | fault fault-x |")
+    assert "| True | True | 12 | 40 |" in report[3]
+    assert report[4].startswith("| demo | 3 | commit 2 | c2c2c2c2c2c2 | held |")
+
+
+def call_safety(tmp_path: Path, action: str, answer: str, capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+    args = ["--file", str(tmp_path / "instances.json"), "--id", "demo", "--pack", "/p", "--namespace", "fg1"]
+    builtin = wrapped(tmp_path, answer, "--file", "series.json", "--id", "demo", "--pack", "/p")
+    out = io.StringIO()
+    call_env = {
+        "WORKLOAD_ACTION": action,
+        "WORKLOAD_ARGS": json.dumps(args),
+        "WORKLOAD_BUILTIN": builtin,
+        "BENCH_LANE_DIR": str(tmp_path),
+    }
+    assert adapter.main(["run"], call_env, out) == 0
+    lines = [x for x in (out.getvalue() + capsys.readouterr().out).splitlines() if x.strip()]
+    return json.loads(lines[-1])
+
+
+def test_the_safety_check_after_a_fault_position_asks_the_wrapped_workload_about_that_fault(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The platform does not pass the position to ``run active`` / ``run undo``: the run leaves its event in the lane
+    directory, so a fault SDO did not fix is found and undone before the next push."""
+    run_env = series_env(tmp_path, 2)
+    fault_series(tmp_path)
+    adapter.run(run_env, io.StringIO(), ops=Lane("accepted"))  # type: ignore[arg-type]
+    for action in ("active", "undo"):
+        (tmp_path / "wrapped-args").unlink(missing_ok=True)
+        assert call_safety(tmp_path, action, "active=true", capsys) == {"active": True}
+        args = (tmp_path / "wrapped-args").read_text().split()
+        assert args[:4] == ["--file", str(tmp_path / "faults.json"), "--id", "fault-x"]
+
+
+def test_the_safety_check_after_a_commit_position_answers_inactive_without_the_wrapped_workload(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fault_env, run_env = series_env(tmp_path, 2), series_env(tmp_path, 3)
+    fault_series(tmp_path)
+    adapter.run(fault_env, io.StringIO(), ops=Lane("accepted"))  # type: ignore[arg-type]
+    adapter.run(run_env, io.StringIO(), ops=Lane("accepted"))  # type: ignore[arg-type]
+    (tmp_path / "wrapped-args").unlink(missing_ok=True)
+    assert call_safety(tmp_path, "active", "active=true", capsys) == {"active": False}
+    assert not (tmp_path / "wrapped-args").exists()

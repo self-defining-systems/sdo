@@ -1,15 +1,15 @@
-"""The commit-series workload adapter: `run` walks one commit of a series; other verbs are the wrapped workload's.
+"""The commit-series workload adapter: `run` runs one event of a series; other verbs are the wrapped workload's.
 
 A lane experiment names this adapter as its ``workload`` command and lists a series in the instances file::
 
     {"ids": ["toy-series"], "series": {"toy-series": {"spec": "toy.json", "verdict_s": 600, "steady_s": 60}},
-     "fault_instances": "faults.json"}
+     "fault_instances": "/abs/faults.json"}
 
-with ``sequences: [[1, 2, 3]]``: the seeds are the commit numbers, run in order on one lane that nothing resets between
-them. Position *i* pushes commit *i* of the series to the branch SDO deploys from
+with ``sequences: [[1, 2, ..., N]]``: the seeds are the positions of the series' events, run in order on one lane that
+nothing resets between them. A commit event pushes its commit to the branch SDO deploys from
 (``$BENCH_LANE_DIR/source-branch.json``, written by the subject's prepare), waits for SDO's verdict and prints the
-commit's record as the run record. A fault
-listed at that point in the spec is injected afterwards through the wrapped workload (``fault_instances``).
+commit's record as the run record. A fault event is the wrapped workload's run of that fault (``fault_instances``):
+its record is the run record, and the platform's settle and collect follow it as after any fault run.
 
 The adapter knows nothing of lanes beyond the contract's environment, and SDO nothing of it.
 """
@@ -43,6 +43,9 @@ from benchmarks.sregym.fastloop.toy_scenarios import AcceptedCommit, HoldRecord
 from benchmarks.sregym.fastloop.toy_upstream import BASE_PATH, REPOSITORY, SERVICE, UpstreamLayout, forwarded_remote
 
 SOURCE_BRANCH_FILE = "source-branch.json"
+#: Written by every series position with the event it runs: the platform's ``run active`` / ``run undo`` after a run
+#: name the series, not the position, and read it to check the fault a fault event injected.
+SERIES_EVENT_FILE = "series-event.json"
 #: The control-namespace ConfigMaps SDO keeps its one refused branch head and its newest deployed head in
 #: (``sdo/operator/runtime/head_poll.go``).
 HEAD_HOLD_CONFIGMAP = "sdo-head-hold"
@@ -78,8 +81,9 @@ class Entry:
     fault_instances: Path | None
 
     @classmethod
-    def find(cls, instances_file: Path, instance: str) -> Entry | None:
-        """The entry for ``instance``, or None when the instances file lists no series by that id."""
+    def find(cls, instances_file: Path, instance: str, *, check: bool = True) -> Entry | None:
+        """The entry for ``instance``, or None when the instances file lists no series by that id. ``check`` refuses
+        one whose faults cannot be injected (``check_faults``)."""
         data = json.loads(instances_file.read_text())
         raw = (data.get("series") or {}).get(instance)
         if raw is None:
@@ -97,14 +101,15 @@ class Entry:
         }
         faults = data.get("fault_instances")
         entry = cls(series, Bounds(**options), base / faults if faults else None)
-        entry.check_faults()
+        if check:
+            entry.check_faults()
         return entry
 
     def check_faults(self) -> None:
         """Refuse, before anything is pushed, a series whose faults cannot be injected: no fault file, one that is not
         there (the lane platform stores the instances file alone, so a fault file named relative to it is missing
-        at run time: name it by absolute path) or one that does not list a fault the series names."""
-        if not self.series.faults:
+        at run time: name it by absolute path) or one that does not list a fault event of the series."""
+        if not self.series.fault_ids:
             return
         if self.fault_instances is None:
             raise AdapterError(
@@ -117,7 +122,7 @@ class Entry:
                 f"fault file {self.fault_instances} cannot be read ({exc}); the lane platform stores the instances "
                 "file alone, so give fault_instances as an absolute path"
             ) from exc
-        if missing := sorted(set(self.series.faults.values()) - listed):
+        if missing := sorted(set(self.series.fault_ids) - listed):
             raise AdapterError(f"fault file {self.fault_instances} does not list {', '.join(missing)}")
 
 
@@ -286,23 +291,25 @@ def _git(args: Any, cwd: Any = None, stdin: Any = None, env: Any = None) -> subp
     return run_git(args, cwd, stdin, {**_GIT_ENV, **(env or {})})
 
 
-def inject_fault(
-    builtin: list[str], flags: dict[str, str], entry: Entry, fault: str, stdout: IO[str], env: dict[str, str]
-) -> dict[str, Any]:
+def retarget(builtin: list[str], file_flag: str, file: Path, id_flag: str, instance: str) -> list[str]:
+    """The wrapped workload's command line for the call, aimed at ``instance`` of ``file`` instead of the series."""
+    command = list(builtin)
+    for name, value in ((file_flag, str(file)), (id_flag, instance)):
+        if name in command:
+            command[command.index(name) + 1] = value
+        else:
+            command += [name, value]
+    return command
+
+
+def inject_fault(builtin: list[str], entry: Entry, fault: str, env: dict[str, str]) -> dict[str, Any]:
     """Run the wrapped workload's ``run`` for ``fault`` (its own instances file); returns its record.
 
     The wrapped workload is fuzzops' python workload (``benchmarks.fuzzops.workload``), which adds a lane provider's
     environment to the bare fuzzops binary in ``builtin``; the fault goes through it like any other call."""
     if entry.fault_instances is None:
-        raise AdapterError(
-            f"the series puts fault {fault!r} after a commit but the instances file has no fault_instances"
-        )
-    command = list(builtin)
-    for name, value in (("--instance-file", str(entry.fault_instances)), ("--instance", fault)):
-        if name in command:
-            command[command.index(name) + 1] = value
-        else:
-            command += [name, value]
+        raise AdapterError(f"the series injects fault {fault!r} but the instances file has no fault_instances")
+    command = retarget(builtin, "--instance-file", entry.fault_instances, "--instance", fault)
     done = subprocess.run(
         [sys.executable, "-m", "benchmarks.fuzzops.workload", "run"],
         env={**env, "WORKLOAD_BUILTIN": json.dumps(command)},
@@ -312,15 +319,21 @@ def inject_fault(
     )
     sys.stderr.write(done.stderr)
     lines = [line for line in done.stdout.splitlines() if line.strip()]
-    if not lines:
+    try:
+        record = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        record = None
+    if not isinstance(record, dict):
         return {"valid": False, "invalid_reason": f"fault run exited {done.returncode} with no record"}
-    return json.loads(lines[-1])
+    return record
 
 
 def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -> int:
     args = json.loads(env.get("WORKLOAD_ARGS", "[]"))
     flags = parse_flags(args)
     builtin = json.loads(env["WORKLOAD_BUILTIN"]) if env.get("WORKLOAD_BUILTIN") else []
+    if env.get("BENCH_LANE_DIR"):
+        (Path(env["BENCH_LANE_DIR"]) / SERIES_EVENT_FILE).unlink(missing_ok=True)  # no earlier position's event
     try:
         entry = (
             Entry.find(Path(flags["instance-file"]), flags["instance"])
@@ -334,31 +347,51 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
     if entry is None:
         return delegate("run", env)
     lane_dir = Path(env["BENCH_LANE_DIR"])
-    index = int(flags["seed"])
+    position = int(flags["seed"])
+    try:
+        event = entry.series.event(position)
+    except ValueError as exc:
+        return invalid(stdout, entry, position, str(exc))
+    marker = {"instance": flags["instance"], "position": position, "event": event.kind, "fault": event.fault}
+    (lane_dir / SERIES_EVENT_FILE).write_text(json.dumps(marker) + "\n")
     lane = LaneOps(lane_dir, Path(env["KUBECONFIG"]), entry.series) if ops is None else None
     ops = ops or lane
     assert ops is not None
-    if lane is not None and index == 1 and (problems := lane.start_problems(env, lane_dir)):
-        return invalid(stdout, entry, index, "the lane is not at the series start: " + "; ".join(problems))
-    start = wall_start(lane_dir, entry.series.name, ops.now(), first=index == 1)
-    ahead = start + entry.series.offset(index) - ops.now()
+    if lane is not None and position == 1 and (problems := lane.start_problems(env, lane_dir)):
+        return invalid(stdout, entry, position, "the lane is not at the series start: " + "; ".join(problems))
+    start = wall_start(lane_dir, entry.series.name, ops.now(), first=position == 1)
+    total = len(entry.series.events)
+    if lane is not None:
+        capture.write_series_position(lane_dir, position=position, total=total, started=_iso_epoch(start))
+    if event.kind == "fault":
+        # The fault's own run, as any fault run: no settle-work-only record, so settle waits for SDO to be idle (the
+        # incident closed, its closing turn done) within the run cap, and collect then resets the incidents.
+        record = inject_fault(builtin, entry, event.fault, env)
+        record.update(
+            series=entry.series.name,
+            index=position,
+            event="fault",
+            fault_id=event.fault,
+            after_commit=entry.series.commits_before(position),
+        )
+        stdout.write(json.dumps(record, sort_keys=True) + "\n")
+        return 0
+    ahead = start + entry.series.offset(event.commit) - ops.now()
     if ahead > 0:
         ops.sleep(ahead)
-    total = len(entry.series.commits)
-    if lane is not None:
-        capture.write_series_position(lane_dir, position=index, total=total, started=_iso_epoch(start))
     try:
-        record = run_commit(ops, entry.series, index, entry.bounds.at(index, total), flags.get("operator", ""))
+        record = run_commit(
+            ops,
+            entry.series,
+            event.commit,
+            entry.bounds.at(position, total),
+            flags.get("operator", ""),
+            position=position,
+        )
     except ClusterReadTimeout as exc:
-        return invalid(stdout, entry, index, f"harness failure: {exc}", harness_failure=True)
+        return invalid(stdout, entry, position, f"harness failure: {exc}", harness_failure=True)
     # The record carries the position's own bounded wait for its incident; settle waits only for work in flight.
-    (lane_dir / SETTLE_WORK_ONLY_RECORD).write_text(json.dumps({"position": index}) + "\n")
-    if fault := entry.series.faults.get(index):
-        injected = inject_fault(builtin, flags, entry, fault, stdout, env)
-        record["fault"] = injected
-        record["valid"] = bool(record["valid"] and injected.get("valid", False))
-        if "lifecycle" in injected:
-            record["lifecycle"] = injected["lifecycle"]
+    (lane_dir / SETTLE_WORK_ONLY_RECORD).write_text(json.dumps({"position": position}) + "\n")
     stdout.write(json.dumps(record, sort_keys=True) + "\n")
     return 0
 
@@ -388,9 +421,10 @@ def main(argv: list[str], env: dict[str, str] | None = None, stdout: IO[str] | N
     verb, action = (argv[0] if argv else env.get("WORKLOAD_VERB", "")), env.get("WORKLOAD_ACTION", "")
     if verb == "run" and action == "run":
         return run(env, out)
-    if verb == "run" and action in ("active", "undo") and _is_series(env):
-        out.write(json.dumps({"active": False}) + "\n")
-        return 0
+    if verb == "run" and action in ("active", "undo"):
+        flags = parse_flags(json.loads(env.get("WORKLOAD_ARGS", "[]")))
+        if (entry := _series_entry(flags)) is not None:
+            return fault_check(env, entry, flags, out)
     if verb == "grade":
         return grade(env, out)
     return delegate(verb, env)
@@ -398,29 +432,72 @@ def main(argv: list[str], env: dict[str, str] | None = None, stdout: IO[str] | N
 
 def _series_entry(flags: dict[str, str]) -> Entry | None:
     """The series a call names. A run names it with ``--instance-file/--instance``; the platform's ``active`` and
-    ``undo`` checks after a run use ``--file/--id``."""
+    ``undo`` checks after a run use ``--file/--id``. A series whose faults the run refused is still that series."""
     file = flags.get("instance-file") or flags.get("file")
     instance = flags.get("instance") or flags.get("id")
-    return Entry.find(Path(file), instance) if file and instance else None
+    return Entry.find(Path(file), instance, check=False) if file and instance else None
 
 
-def _is_series(env: dict[str, str]) -> bool:
-    return _series_entry(parse_flags(json.loads(env.get("WORKLOAD_ARGS", "[]")))) is not None
+def fault_check(env: dict[str, str], entry: Entry, flags: dict[str, str], out: IO[str]) -> int:
+    """``run active`` / ``run undo`` after a series position. The platform names the series, not the position: the
+    position's event (``SERIES_EVENT_FILE``) says which fault it injected, and the wrapped workload answers for that
+    fault, so one SDO did not fix is undone before the next push. A commit event injected nothing: inactive."""
+    lane = env.get("BENCH_LANE_DIR")
+    marker = Path(lane) / SERIES_EVENT_FILE if lane else None
+    ran = json.loads(marker.read_text()) if marker is not None and marker.is_file() else {}
+    fault = ran.get("fault", "") if ran.get("instance") == (flags.get("id") or flags.get("instance")) else ""
+    if not fault or entry.fault_instances is None:
+        out.write(json.dumps({"active": False}) + "\n")
+        return 0
+    if not env.get("WORKLOAD_BUILTIN"):
+        return delegate("run", env)
+    command = retarget(json.loads(env["WORKLOAD_BUILTIN"]), "--file", entry.fault_instances, "--id", fault)
+    return fuzzops_workload.main(["run"], {**env, "WORKLOAD_BUILTIN": json.dumps(command)})
 
 
 def grade(env: dict[str, str], stdout: IO[str]) -> int:
-    """Series records are their own grade: a table of commits beside them. Anything else is the wrapped grader's."""
+    """Series records are their own grade: a table of events (one row per position) beside them. Anything else is the
+    wrapped grader's."""
     directory = Path(env.get("WORKLOAD_RESULTS") or json.loads(env.get("WORKLOAD_ARGS", "[]"))[0])
     lines = [json.loads(x) for x in (directory / "runs.jsonl").read_text().splitlines() if x.strip()]
     if not lines or not all("series" in rec for rec in lines):
         return delegate("grade", env)
-    rows = ["| series | # | commit | outcome | deploy s | incident | agent tasks |", "|---|---|---|---|---|---|---|"]
+    rows = [
+        "| series | # | event | commit | outcome | deploy s | incident | agent tasks | valid | recovered in window "
+        "| window bad s | last bad s |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
     ordered = sorted(lines, key=lambda r: (r["series"], r["index"]))
-    rows.extend(
-        f"| {r['series']} | {r['index']} | {r['commit'][:12]} | {r['outcome']} | {r.get('deploy_seconds', '')} "
-        f"| {r.get('incident_opened', '')} | {r.get('agent_tasks', '')} |"
-        for r in ordered
-    )
+    rows.extend(_grade_row(r) for r in ordered)
     (directory / "report.md").write_text("\n".join(rows) + "\n")
     (directory / "grades.json").write_text(json.dumps(lines, indent=1, sort_keys=True) + "\n")
     return 0
+
+
+def _grade_row(r: dict[str, Any]) -> str:
+    """A commit event's row (commit, outcome, times) or a fault event's (fault id, whether users recovered)."""
+    if r.get("event") == "fault":
+        window = r.get("window")
+        window = window if isinstance(window, dict) else {}
+        cells = [
+            f"fault {r.get('fault_id', '')}",
+            *([""] * 5),
+            r.get("valid", ""),
+            r.get("recovered_in_window", ""),
+            window.get("BadSeconds", ""),
+            r.get("last_bad_second", ""),
+        ]
+    else:
+        cells = [
+            f"commit {r.get('commit_index', r['index'])}",
+            str(r.get("commit", ""))[:12],
+            r.get("outcome", ""),
+            r.get("deploy_seconds", ""),
+            r.get("incident_opened", ""),
+            r.get("agent_tasks", ""),
+            r.get("valid", ""),
+            "",
+            "",
+            "",
+        ]
+    return "| " + " | ".join(str(c) for c in [r["series"], r["index"], *cells]) + " |"
