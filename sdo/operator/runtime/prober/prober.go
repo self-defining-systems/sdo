@@ -211,15 +211,12 @@ func New(config Config) (*Prober, error) {
 		prober.shareSetup(engine)
 		state := newProbe(engine)
 		name := workload.Name
-		if readOnly(workload, config.Catalog) {
-			// Only a workload whose every scenario only reads warms up at the floor interval: write scenarios
-			// read back their own writes through shared synthetic users, and at the floor rate they overlap with
-			// each other and with other workloads' writes (fast-eks9b: social's compose-read read another
-			// sample's post, the write probe fired and the install's onboarding was rejected). A writing
-			// workload keeps the interval its designer chose.
-			state.warmUntil = config.Clock.Now().Add(engine.Workload().WarmupBound())
-			engine.UseWarmup(func() bool { return prober.warming(name) })
-		}
+		// Every health probe warms up at the floor interval. Writing samples
+		// that act on one synthetic identity run one at a time across the
+		// prober's engines (traffic.Engine.Iterate), so the faster pace does not
+		// make a read-back see another sample's write.
+		state.warmUntil = config.Clock.Now().Add(engine.Workload().WarmupBound())
+		engine.UseWarmup(func() bool { return prober.warming(name) })
 		prober.probes[name] = state
 	}
 	return prober, nil
@@ -628,19 +625,4 @@ func (p *Prober) Summary() map[string]map[string]string {
 		summary[name] = scenarios
 	}
 	return summary
-}
-
-// readOnly reports whether every scenario of the workload only reads
-// application state (traffic.SideEffectRead).
-func readOnly(workload traffic.Workload, catalog traffic.Catalog) bool {
-	effects := make(map[string]traffic.SideEffect, len(catalog))
-	for _, scenario := range catalog {
-		effects[scenario.ID] = scenario.SideEffect
-	}
-	for _, scenario := range workload.Scenarios {
-		if effects[scenario.ID] != traffic.SideEffectRead {
-			return false
-		}
-	}
-	return true
 }
