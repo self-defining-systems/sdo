@@ -247,10 +247,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		applicationID := fmt.Sprintf("%s-r%d", attempt, round)
 		description := MenuRoundExecution{OptionID: selection.OptionId, ProgramID: entry.programID, RoundIndex: round, ApplicationID: applicationID, Plan: &contracts.Plan{Rationale: plan.Rationale}}
 		for _, action := range plan.Actions {
-			converted, convertErr := planActionProto(action)
-			if convertErr == nil {
-				description.Plan.Actions = append(description.Plan.Actions, converted)
-			}
+			description.Plan.Actions = append(description.Plan.Actions, historicalActionProto(action))
 		}
 		planned = append(planned, plan)
 		executor := l.Executor
@@ -284,10 +281,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		// Automatic dependency recovery is part of the actual executed plan.
 		description.Plan.Actions = nil
 		for _, action := range result.Plan.Actions {
-			converted, convertErr := planActionProto(action)
-			if convertErr == nil {
-				description.Plan.Actions = append(description.Plan.Actions, converted)
-			}
+			description.Plan.Actions = append(description.Plan.Actions, historicalActionProto(action))
 		}
 		description.ActionResults = result.ActionReports
 		description.ChangesRemain = result.Applied && !result.RolledBack

@@ -242,6 +242,7 @@ type Controller struct {
 	closureState            contracts.ClosureState
 	closureReceipt          *ClosureReceipt
 	closureFailure          *ClosureFailure
+	lastClosureFreezeError  string
 	failedClosures          []*contracts.FailedIncidentClosure
 	dispatchFailureAttempts int
 	dispatchNextRetryAt     time.Time
@@ -2148,7 +2149,6 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			cleared := c.closureStableSince
 			healthClearedAt = &cleared
 		}
-		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
 	windowUsed := time.Duration(0)
 	if requiresStability {
@@ -2230,6 +2230,21 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	sortTimeline(closure.DetectorTimeline)
 	closure.LearnedDetectorFiredBeforeDispatch, closure.LearnedDetectorFiredAfterDispatch,
 		closure.NoLearnedDetectorFired = timelineSummary(closure.DetectorTimeline)
+	projected, err := incidentClosureContract(closure)
+	if err == nil {
+		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected})
+	}
+	if err != nil {
+		key := closure.Request.IncidentID + ": " + err.Error()
+		first := key != c.lastClosureFreezeError
+		c.lastClosureFreezeError = key
+		c.mu.Unlock()
+		if first {
+			c.reportBrokerError("freeze closure", err)
+		}
+		return false
+	}
+	c.lastClosureFreezeError = ""
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
 		HealthClearedAt:               optionalContractTimestamp(closure.HealthClearedAt),
@@ -2239,15 +2254,21 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		AfterDispatchFindingKeys:      afterDispatchKeys(closure.DetectorTimeline),
 	})
 	c.timeline = nil
-	projected, err := incidentClosureContract(closure)
-	if err == nil {
-		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected})
+	if verified {
+		logIncidentVerified(closure.Request.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
-	if err != nil {
-		c.mu.Unlock()
-		c.reportBrokerError("freeze closure", err)
-		return false
+	for _, evidence := range projected.GetResult().GetVerificationEvidence() {
+		if evidence.GetName() == "unencodable_result_evidence" {
+			slog.Warn("incident_result_evidence_unencodable", "incident_id", closure.Request.IncidentID)
+			break
+		}
 	}
+	for _, app := range projected.GetResult().GetPlanApplications() {
+		if slices.ContainsFunc(app.GetPlan().GetActions(), hasUnencodableAction) || slices.ContainsFunc(app.GetActionsApplied(), hasUnencodableAction) {
+			slog.Warn("incident_action_evidence_unencodable", "incident_id", closure.Request.IncidentID, "application_id", app.GetApplicationId())
+		}
+	}
+
 	if early {
 		c.incidentOpen = false
 		c.publishHeldLocked()

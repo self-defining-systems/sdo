@@ -469,8 +469,17 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	}
 	if closure.Result != nil {
 		message.Result, err = incidentResultContract(*closure.Result)
+		if err == nil {
+			_, err = proto.Marshal(message.Result)
+		}
 		if err != nil {
-			return nil, fmt.Errorf("closure result: %w", err)
+			if closure.HealthClearedAt == nil {
+				return nil, fmt.Errorf("closure result: %w", err)
+			}
+			message.Result = &contracts.IncidentResult{SchemaVersion: ProtocolSchemaVersion,
+				IncidentId: request.GetIncidentId(), Status: string(closure.Result.Status),
+				Timing:               &contracts.TimingMetrics{StartedAt: message.DispatchedAt, CompletedAt: message.ResponderCompletedAt},
+				VerificationEvidence: []*contracts.VerificationEvidence{{Name: "unencodable_result_evidence", ObservedAt: message.VerifiedAt}}}
 		}
 	}
 	if closure.DispatchError != "" {
