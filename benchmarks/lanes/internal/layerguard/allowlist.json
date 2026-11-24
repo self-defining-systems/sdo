@@ -190,8 +190,8 @@
       "reason": "step runner: fuzzops env, recover text, hook operator file, StepUnhold (audit A7, B3, B7, B8)",
       "terms": {
         "fuzzops": 37,
-        "incident": 16,
-        "operator": 71,
+        "incident": 14,
+        "operator": 70,
         "sdo": 2,
         "sdo-config": 1
       }

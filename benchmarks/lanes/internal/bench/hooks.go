@@ -14,13 +14,15 @@ import (
 	"time"
 )
 
+const verbUnhold = "reset-incidents"
+
 // Hook verbs and their time limits (docs/bench.md, "Hook contract").
 var hookTimeouts = map[string]time.Duration{
-	"check":           time.Minute,
-	"prepare":         30 * time.Minute,
-	"idle":            time.Minute,
-	"collect":         10 * time.Minute,
-	"reset-incidents": 5 * time.Minute,
+	"check":    time.Minute,
+	"prepare":  30 * time.Minute,
+	"idle":     time.Minute,
+	"collect":  10 * time.Minute,
+	verbUnhold: 5 * time.Minute,
 	// reset: the hooks' own bound is a controller resumed with up to 15 minutes to start, a second pass and the
 	// app restore (about 25 minutes at worst); the limit is above it so the manager's kill never lands between the
 	// hook stopping the controller and its restart in a finally.
@@ -55,7 +57,7 @@ var hookTimeouts = map[string]time.Duration{
 }
 
 // SubjectVerbs are the verbs of the subject contract (docs/contract.md): the operator under test.
-var SubjectVerbs = []string{"check", "prepare", "swap", "idle", "watch", "collect", "snapshot", "reset", "teardown", "transcripts",
+var SubjectVerbs = []string{"check", "prepare", "swap", "idle", "watch", "collect", "snapshot", "reset", "teardown", "transcripts", verbUnhold,
 	"describe", "check-input", "preflight", "export-artifact", "verify-artifact", "reseed", "verify-start"}
 
 // Unsupported reports that the hook does not implement the verb: exit 64, a last stdout line {"unsupported":true},
