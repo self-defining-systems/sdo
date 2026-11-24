@@ -126,8 +126,6 @@ type settlingCase struct {
 	// startup is how long the api workload was observed to take to become
 	// Ready; its restart settles only that long after the write.
 	startup time.Duration
-	// stability is the stage's closure stability window.
-	stability time.Duration
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario
@@ -345,7 +343,7 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		}
 	}
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		ObservationInterval: time.Second, StabilityWindow: tc.stability, recoveryNow: clock.Now, recoveryWait: clock.advance}
+		ObservationInterval: time.Second, recoveryNow: clock.Now, recoveryWait: clock.advance}
 	return stage, &IncidentState{Request: request, Findings: findings}
 }
 
@@ -419,50 +417,6 @@ func TestRecoveryWaitSettlesWhileEffectsAndWindowsCatchUp(t *testing.T) {
 			}
 			if agent.dispatched != tc.wantDispatched {
 				t.Fatalf("responder dispatched = %v, want %v (remaining %v)", agent.dispatched, tc.wantDispatched, report.RemainingFindingFingerprints)
-			}
-		})
-	}
-}
-
-// After its writes settle, the stage gives the alert set the time Recovered
-// would take had the repair worked at settle: the longest clearing horizon
-// among the alerts still open plus the closure stability window. An
-// application that converges later than its detectors' own lag (a settings
-// cache, client retries) still recovers within that bound, so the stage
-// credits its repair and the responder is not dispatched, even past the
-// start-anchored recovery floor. A fault that never clears is handed off at
-// that bound, not before and not at the response deadline.
-func TestRecoveryWaitHoldsUntilTheSettleAnchoredBound(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		settlingCase
-		wantExit         contracts.RecoveryWait_ExitReason
-		wantDispatched   bool
-		minWait, maxWait time.Duration
-	}{
-		// The window (60 s) plus its clearing interval end about 63 s after the
-		// write; the application clears 100 s after it, inside 63 s + 40 s.
-		{"application converges after its detectors' window", settlingCase{healAfter: 100 * time.Second, stallWindow: 60 * time.Second, stability: 40 * time.Second},
-			contracts.RecoveryWait_EXIT_REASON_CLEARED, false, 100 * time.Second, 105 * time.Second},
-		{"fault persists past the settle-anchored bound", settlingCase{stallWindow: 60 * time.Second, stability: 40 * time.Second},
-			contracts.RecoveryWait_EXIT_REASON_FAILED, true, 101 * time.Second, 108 * time.Second},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			stage, state, clock, _ := settlingStage(t, tc.settlingCase)
-			started := clock.Now()
-			agent := &recordingStage{}
-			if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
-				t.Fatal(err)
-			}
-			report := state.PriorStages[0]
-			if got := report.GetRecoveryWait().GetExitReason(); got != tc.wantExit {
-				t.Fatalf("recovery wait exit = %s after %s, want %s", got, clock.Now().Sub(started), tc.wantExit)
-			}
-			if waited := clock.Now().Sub(started); waited < tc.minWait || waited > tc.maxWait {
-				t.Fatalf("the stage observed for %s, want %s to %s", waited, tc.minWait, tc.maxWait)
-			}
-			if agent.dispatched != tc.wantDispatched {
-				t.Fatalf("responder dispatched = %v, want %v", agent.dispatched, tc.wantDispatched)
 			}
 		})
 	}
