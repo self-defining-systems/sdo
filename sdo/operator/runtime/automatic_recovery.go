@@ -173,9 +173,9 @@ func (c *Controller) awaitingAutomaticRecoveryLocked() *contracts.StageReport {
 	return report
 }
 
-// Bound the observation without spending the controller's persistence or
-// dispatch context. A deadline wake gets one ordinary observation opportunity;
-// it cannot introduce another recovery wait.
+// An observation already in progress may supply the first clear sample at
+// handoff. Use ordinary read budgets and the response deadline, leaving the
+// automatic deadline to govern writes and the decision after observation.
 func (c *Controller) automaticObservationContext(ctx context.Context, now time.Time) (context.Context, context.CancelFunc) {
 	c.mu.Lock()
 	report := c.awaitingAutomaticRecoveryLocked()
@@ -183,14 +183,8 @@ func (c *Controller) automaticObservationContext(ctx context.Context, now time.T
 		c.mu.Unlock()
 		return ctx, func() {}
 	}
-	bound := c.automaticDeadlineLocked(report)
 	response := c.currentIncidentRequest.ResponseDeadline
 	c.mu.Unlock()
-	// Before expiry, wake at the handoff deadline. At expiry use the normal
-	// snapshot/detector budgets, with the remaining response budget as a cap.
-	if now.Before(bound) && (response.IsZero() || bound.Before(response)) {
-		response = bound
-	}
 	if response.IsZero() {
 		return ctx, func() {}
 	}

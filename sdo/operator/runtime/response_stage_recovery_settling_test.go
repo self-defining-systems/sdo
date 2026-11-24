@@ -155,6 +155,11 @@ func (w *settlingWorld) Snapshot(ctx context.Context) (sdk.DetectionContext, err
 		return view, err
 	}
 	snapshot := view.(sdktest.Snapshot)
+	sets, err := w.client.AppsV1().StatefulSets("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	snapshot.StatefulSetList = sets.Items
 	if w.startup > 0 {
 		snapshot.ObservedStartupTimes = map[string]time.Duration{"Deployment/api": w.startup}
 	}

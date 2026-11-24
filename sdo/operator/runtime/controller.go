@@ -1953,7 +1953,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	}
 	pageNeedsResponder := pageOpened(c.currentIncidentRequest) &&
 		stageOnlyClosure(IncidentClosure{Request: *c.currentIncidentRequest, Result: c.currentIncidentResult})
-	prerequisites := !pageNeedsResponder && !restorePending && safe && (guard == nil || !guard.Pending) && len(source.Rollouts) == 0 && len(source.Effects) == 0 && recovery.verdict == recoveryVerified
+	prerequisites := !pageNeedsResponder && safe && (guard == nil || !guard.Pending) && len(source.Rollouts) == 0 && len(source.Effects) == 0 && recovery.verdict == recoveryVerified
 	verified := healthVerified && prerequisites
 	if !prerequisites {
 		c.recoverySafetyLost = true
@@ -2070,7 +2070,14 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		if !early && c.currentIncidentResult != nil {
 			input.Result, input.Stages = cloneIncidentResult(c.currentIncidentResult), cloneStageReports(c.currentIncidentRequest.PriorStages)
 			if c.awaitingAutomaticRecoveryLocked() != nil && playbookApplied(input.Stages) && c.escalatedAt.IsZero() {
-				markAutomaticRecovery(deterministicStageReport(input.Stages), now, contracts.RecoveryWait_EXIT_REASON_CLEARED)
+				stage := deterministicStageReport(input.Stages)
+				markAutomaticRecovery(stage, now, contracts.RecoveryWait_EXIT_REASON_CLEARED)
+				if restorePending {
+					if stage.Error != "" {
+						stage.Error += ". "
+					}
+					stage.Error += "StatefulSet restore continuation was incomplete at recovery"
+				}
 			}
 		}
 		if early {
