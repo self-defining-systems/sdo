@@ -84,7 +84,7 @@ func TestRemovedBuildTeardown(t *testing.T) {
 				}
 				return
 			}
-			if l.State != LaneFree || l.BuildFailures != 0 || len(o.started) != 1 || !o.started[0].DeleteCluster {
+			if l.State != LaneFree || l.BuildFailures != 0 || len(o.started) != 1 || !o.started[0].ResumeDelete {
 				t.Fatalf("interrupted delete did not restart: lane=%+v steps=%+v", l, o.started)
 			}
 		})

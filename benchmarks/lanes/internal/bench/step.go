@@ -82,6 +82,7 @@ type Step struct {
 	Create        bool     `json:"create,omitempty"`
 	Recreate      bool     `json:"recreate,omitempty"`
 	DeleteCluster bool     `json:"delete_cluster,omitempty"`
+	ResumeDelete  bool     `json:"resume_delete,omitempty"`
 	// Virtual: the host is an eks host whose lanes are vclusters (eks_vcluster.go).
 	Virtual bool `json:"virtual,omitempty"`
 	// Evidence is the lane's evidence directory on the host, mounted on every node at EvidenceNode.
@@ -1701,7 +1702,7 @@ func (r *stepRunner) checkResidue(ctx context.Context, p *Prepared) {
 // release tears the lane's operator down.
 func (r *stepRunner) release(ctx context.Context) {
 	missing := r.distrustPrepared(ctx)
-	if missing && !r.s.DeleteCluster {
+	if missing && !r.s.ResumeDelete {
 		// The cluster is gone, and with it the operator: there is nothing to tear down or reset.
 		r.res.OK, r.res.Prepared, r.res.Gone = true, nil, r.s.ClusterUp != ""
 		r.freeLaneCores()

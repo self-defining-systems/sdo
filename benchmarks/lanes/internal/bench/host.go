@@ -116,7 +116,7 @@ func ProbeStaging(staging string, steps map[string]string, fuzzops []string) Pro
 			p.Steps[lane] = StepDead
 		}
 		var ph Phase
-		if readJSON(filepath.Join(dir, phaseFile), &ph) == nil {
+		if p.Steps[lane] != StepFinished && readJSON(filepath.Join(dir, phaseFile), &ph) == nil {
 			if p.Phases == nil {
 				p.Phases = map[string]*Phase{}
 			}
