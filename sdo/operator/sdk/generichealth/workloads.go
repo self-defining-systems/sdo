@@ -10,6 +10,7 @@ import (
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/internal/workloadreadiness"
 )
 
 // Kubernetes allows standard five-field schedules and descriptors; time zones
@@ -24,9 +25,9 @@ func (e *evaluation) workloads() {
 		if v.Spec.Replicas != nil {
 			desired = *v.Spec.Replicas
 		}
-		unready, created := e.ownedPodTimes("StatefulSet", v.Name, v.CreationTimestamp.Time)
+		pods, created := e.ownedPods("StatefulSet", v.Name, v.CreationTimestamp.Time)
 		r := ref("StatefulSet", "apps/v1", &v)
-		if v.Status.ReadyReplicas < desired && sdk.HeldPastSelfHeal(e.ctx, unready) && !e.ownedPodStarting("StatefulSet", v.Name) {
+		if unready, held := workloadreadiness.Deficit(e.ctx, time.Time{}, pods); v.Status.ReadyReplicas < desired && held {
 			e.emit("statefulset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.ReadyReplicas, desired, unready.UTC().Format(time.RFC3339)), true)
 		}
 		// OnDelete and partitioned updates intentionally retain old revisions.
@@ -38,9 +39,9 @@ func (e *evaluation) workloads() {
 		if v.Namespace != ns || v.DeletionTimestamp != nil || v.Generation > v.Status.ObservedGeneration {
 			continue
 		}
-		unready, created := e.ownedPodTimes("DaemonSet", v.Name, v.CreationTimestamp.Time)
+		pods, created := e.ownedPods("DaemonSet", v.Name, v.CreationTimestamp.Time)
 		r := ref("DaemonSet", "apps/v1", &v)
-		if v.Status.NumberReady < v.Status.DesiredNumberScheduled && sdk.HeldPastSelfHeal(e.ctx, unready) && !e.ownedPodStarting("DaemonSet", v.Name) {
+		if unready, held := workloadreadiness.Deficit(e.ctx, time.Time{}, pods); v.Status.NumberReady < v.Status.DesiredNumberScheduled && held {
 			e.emit("daemonset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.NumberReady, v.Status.DesiredNumberScheduled, unready.UTC().Format(time.RFC3339)), true)
 		}
 		if v.Spec.UpdateStrategy.Type != apps.OnDeleteDaemonSetStrategyType && v.Status.UpdatedNumberScheduled < v.Status.DesiredNumberScheduled && sdk.HeldPastSelfHeal(e.ctx, created) {
@@ -92,42 +93,20 @@ func (e *evaluation) workloads() {
 	}
 }
 
-// ownedPodTimes returns, for the Pods a workload owns, the newest unready
-// Pod's Ready transition (the hold of an unready rule) and the newest Pod
-// creation (the hold of an old-revision rule: no Pod was replaced since). A
-// workload with no unready Pod, or no Pod, falls back to the newest creation
-// and then to the workload's own creation.
-func (e *evaluation) ownedPodTimes(kind, name string, workloadCreated time.Time) (unready, created time.Time) {
-	created = workloadCreated
+// ownedPods returns the Pods and the last creation used by the separate
+// old-revision rule. Terminating Pods still date a readiness deficit.
+func (e *evaluation) ownedPods(kind, name string, created time.Time) ([]core.Pod, time.Time) {
+	var pods []core.Pod
 	for _, p := range e.ctx.Pods() {
-		if p.Namespace != e.ctx.Namespace() || p.DeletionTimestamp != nil || !ownedByName(p.OwnerReferences, kind, name) {
+		if p.Namespace != e.ctx.Namespace() || !ownedByName(p.OwnerReferences, kind, name) {
 			continue
 		}
-		if p.CreationTimestamp.After(created) {
+		pods = append(pods, p)
+		if p.DeletionTimestamp == nil && p.CreationTimestamp.After(created) {
 			created = p.CreationTimestamp.Time
 		}
-		for _, c := range p.Status.Conditions {
-			if c.Type == core.PodReady && c.Status != core.ConditionTrue && c.LastTransitionTime.After(unready) {
-				unready = c.LastTransitionTime.Time
-			}
-		}
 	}
-	if unready.IsZero() {
-		unready = created
-	}
-	return unready, created
-}
-
-// ownedPodStarting reports whether an unready pod of the workload is still
-// inside its own startup (sdk.PodStarting), so the workload is starting, not
-// failing past Kubernetes' self-healing.
-func (e *evaluation) ownedPodStarting(kind, name string) bool {
-	for _, p := range e.ctx.Pods() {
-		if p.Namespace == e.ctx.Namespace() && ownedByName(p.OwnerReferences, kind, name) && sdk.PodStarting(e.ctx, p) {
-			return true
-		}
-	}
-	return false
+	return pods, created
 }
 
 func ownedBy(owners []meta.OwnerReference, kind string) bool {

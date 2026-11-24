@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/internal/workloadreadiness"
 )
 
 // Rule IDs are stable. A finding is emitted once per rule and primary
@@ -350,22 +351,24 @@ func (e *evaluation) deployment(deployment appsv1.Deployment, pods []corev1.Pod)
 		return
 	}
 	available := deploymentCondition(deployment, appsv1.DeploymentAvailable)
-	if available == nil || available.Status != corev1.ConditionFalse || !e.held(available.LastTransitionTime.Time) {
+	if available == nil || available.Status != corev1.ConditionFalse {
 		return
 	}
-	// Availability is a fallback when no pod explains the failure. A pod
-	// still within its startup allowance must not page via this fallback.
+	var owned []corev1.Pod
 	for _, pod := range pods {
-		if pod.Namespace != ref.Namespace {
-			continue
+		if pod.Namespace == ref.Namespace {
+			if owner, _, ok := e.owner(pod); ok && owner == ref {
+				owned = append(owned, pod)
+			}
 		}
-		if owner, _, ok := e.owner(pod); ok && owner == ref && sdk.PodStarting(e.ctx, pod) {
-			return
-		}
+	}
+	since, held := workloadreadiness.Deficit(e.ctx, available.LastTransitionTime.Time, owned)
+	if !held {
+		return
 	}
 	e.addDeployment(RuleDeploymentUnavailable, ref, deployment, pods, fmt.Sprintf(
 		"Deployment %s has %s; unavailable since %s.%s%s", deployment.Name, availability,
-		available.LastTransitionTime.UTC().Format(time.RFC3339), replicaFailure(deployment), e.deploymentEvents(deployment)), "Unavailable")
+		since.UTC().Format(time.RFC3339), replicaFailure(deployment), e.deploymentEvents(deployment)), "Unavailable")
 }
 
 func (e *evaluation) addDeployment(rule string, ref sdk.ObjectRef, deployment appsv1.Deployment, pods []corev1.Pod, item, reason string) {
