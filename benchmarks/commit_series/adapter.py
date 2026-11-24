@@ -96,7 +96,29 @@ class Entry:
             if v
         }
         faults = data.get("fault_instances")
-        return cls(series, Bounds(**options), base / faults if faults else None)
+        entry = cls(series, Bounds(**options), base / faults if faults else None)
+        entry.check_faults()
+        return entry
+
+    def check_faults(self) -> None:
+        """Refuse, before anything is pushed, a series whose faults cannot be injected: no fault file, one that is not
+        there (the lane platform stores the instances file alone, so a fault file named relative to it is missing
+        at run time: name it by absolute path) or one that does not list a fault the series names."""
+        if not self.series.faults:
+            return
+        if self.fault_instances is None:
+            raise AdapterError(
+                f"series {self.series.name} injects faults but the instances file has no fault_instances"
+            )
+        try:
+            listed = set(json.loads(self.fault_instances.read_text()).get("ids") or [])
+        except (OSError, ValueError) as exc:
+            raise AdapterError(
+                f"fault file {self.fault_instances} cannot be read ({exc}); the lane platform stores the instances "
+                "file alone, so give fault_instances as an absolute path"
+            ) from exc
+        if missing := sorted(set(self.series.faults.values()) - listed):
+            raise AdapterError(f"fault file {self.fault_instances} does not list {', '.join(missing)}")
 
 
 def _iso_epoch(epoch: float) -> str:
@@ -299,11 +321,16 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
     args = json.loads(env.get("WORKLOAD_ARGS", "[]"))
     flags = parse_flags(args)
     builtin = json.loads(env["WORKLOAD_BUILTIN"]) if env.get("WORKLOAD_BUILTIN") else []
-    entry = (
-        Entry.find(Path(flags["instance-file"]), flags["instance"])
-        if "instance-file" in flags and "instance" in flags
-        else None
-    )
+    try:
+        entry = (
+            Entry.find(Path(flags["instance-file"]), flags["instance"])
+            if "instance-file" in flags and "instance" in flags
+            else None
+        )
+    except AdapterError as exc:
+        record = {"index": int(flags.get("seed", "0")), "valid": False, "invalid_reason": str(exc)}
+        stdout.write(json.dumps(record, sort_keys=True) + "\n")
+        return 0
     if entry is None:
         return delegate("run", env)
     lane_dir = Path(env["BENCH_LANE_DIR"])

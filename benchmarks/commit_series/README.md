@@ -34,7 +34,7 @@ for the whole series and nothing resets them between positions. For each positio
    every outcome SDO can have; only an infrastructure problem makes a run invalid (which breaks the rest of the sequence).
 
 A fault listed at a position in the spec (`faults: {"3": "<fault id>"}`) is injected after that commit through the
-wrapped fuzzops workload (`fault_instances` in the instances file); its record is kept under `fault`.
+wrapped fuzzops workload (`fault_instances` in the instances file); its record is kept under `fault`. The lane platform stores the instances file alone, so name the fault file (and the series spec) by absolute path; a position whose fault file is missing or does not list a fault of the series is refused before anything is pushed.
 
 Grading is per commit: the run's record is its grade (`grade` writes `report.md`, a table of commits). `lanes plan results
 NAME --tsv --grade-fields outcome,deploy_seconds,incident_opened,agent_tasks` gives **one row per commit** (column
