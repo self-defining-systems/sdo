@@ -26,8 +26,8 @@ takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound i
   (fuzzops hooks and install, the SREGym adapter and fastloop). It holds only the fields that differ from production
   defaults ([`docs/config.md`](../../docs/config.md)): `response.repair_policy: recorded-actions`. `config.py` builds
   the `--config` arguments and `SDO_*` variables and translates format-1 baseline flags.
-- `observe.py`: the command of `exec:sdo`. It polls `sdo-controller-state`, prints one line per SDO step (fuzzops
-  records them as actions), writes `$FUZZOPS_REPORT` from the detector findings and then from the responder's
+- `observe.py`: the command of `exec:sdo`. It polls `sdo-controller-state`, prints applied plans and successful repairs to stdout (fuzzops
+  records them as actions) and lifecycle notices to stderr, writes `$FUZZOPS_REPORT` from the detector findings and then from the responder's
   confirmed root causes, keeps every state snapshot under `$FUZZOPS_OUT`, and exits after closure.
 - `window.py`: which incidents belong to a run: detected in the window, or open at the inject with findings, causes
   or repair actions naming the faulted component by resource ref. `table.py` and `observe.py` (`--fault`) share it.

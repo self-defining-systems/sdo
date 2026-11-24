@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from benchmarks.fuzzops import observe
-from benchmarks.fuzzops.observe import Watcher, classify, component, report_from_result
+from benchmarks.fuzzops.observe import Watcher, WatchLine, classify, component, report_from_result
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -98,7 +98,9 @@ def test_watcher_reports_each_step_once_and_closes() -> None:
     }
     lines, report = w.step(base)
     assert lines == [
-        "sdo: incident opened at 12:00:05 (workload-ready: Deployment web has 0/1 ready pods: ImagePullBackOff)"
+        WatchLine(
+            "sdo: incident opened at 12:00:05 (workload-ready: Deployment web has 0/1 ready pods: ImagePullBackOff)"
+        )
     ]
     assert report is not None
     assert report["component"] == "deploy/web"
@@ -106,21 +108,21 @@ def test_watcher_reports_each_step_once_and_closes() -> None:
     assert w.step(base) == ([], None)
 
     dispatched = {**base, "incident_dispatched_at": _at(10)}
-    assert w.step(dispatched)[0] == ["sdo: responder dispatched"]
+    assert w.step(dispatched)[0] == [WatchLine("sdo: responder dispatched")]
 
     done = {**dispatched, "incident_result": _result(), "responder_done": True}
     lines, report = w.step(done)
     assert lines == [
-        "sdo repair (ok): patch Deployment/web: restore the source image",
-        "sdo diagnosis: SDO responder: web was rolled out with an image tag that cannot be pulled",
-        "sdo: responder done (mitigated)",
+        WatchLine("sdo repair (ok): patch Deployment/web: restore the source image", action=True),
+        WatchLine("sdo diagnosis: SDO responder: web was rolled out with an image tag that cannot be pulled"),
+        WatchLine("sdo: responder done (mitigated)"),
     ]
     assert report is not None
     assert report["summary"].startswith("SDO responder")
     assert w.step(done) == ([], None)
 
     closed = {"incident_open": False, "closure_receipt": {"incident_id": "inc-1"}}
-    assert w.step(closed)[0] == ["sdo: incident inc-1 closed"]
+    assert w.step(closed)[0] == [WatchLine("sdo: incident inc-1 closed")]
     assert w.closed
 
 
@@ -145,7 +147,9 @@ def test_incident_opened_line_names_the_opening_alerts_not_the_clues() -> None:
     lines, report = Watcher(started=START).step(state)
     assert report is not None
     assert report["summary"].startswith("SDO detector traffic-probe-call:")
-    assert lines == ["sdo: incident opened at 12:00:05 (traffic-probe-call: scenario commit-call violates its SLO)"]
+    assert lines == [
+        WatchLine("sdo: incident opened at 12:00:05 (traffic-probe-call: scenario commit-call violates its SLO)")
+    ]
     camel = {
         **state,
         "incidentRequest": {**state["incident_request"], "openingKeys": state["incident_request"]["opening_keys"]},
@@ -176,7 +180,7 @@ def test_watcher_reads_lower_camel_protojson() -> None:
             "incidentRequest": {"incidentId": "inc-2", "findings": [{"detectorId": "d", "summary": "s"}]},
         }
     )
-    assert lines == ["sdo: incident opened at 12:00:01 (d: s)"]
+    assert lines == [WatchLine("sdo: incident opened at 12:00:01 (d: s)")]
 
 
 def test_typed_cause_class_and_reach_reach_the_report() -> None:
@@ -269,7 +273,7 @@ def test_an_incident_already_in_closure_when_the_watcher_starts_is_reported() ->
         "closure_state": "CLOSURE_STATE_PENDING",
     }
     lines, _ = w.step(state)
-    assert any("incident opened" in line for line in lines)
+    assert any("incident opened" in line.text for line in lines)
     assert w.stamps["detected_at"] == detected
 
 
@@ -308,7 +312,7 @@ def test_legacy_incident_with_no_opening_keys_reports_from_findings() -> None:
 
 @pytest.mark.parametrize("opened", [30, 119, None])
 def test_watch_pages_only_if_sdo_has_not_opened_an_incident(
-    opened: int | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    opened: int | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # The watcher starts ten seconds after injection. The deadline falls
     # between two regular polls, and a deadline read must see the +119 page.
@@ -359,6 +363,9 @@ def test_watch_pages_only_if_sdo_has_not_opened_an_incident(
         )
         == 0
     )
+    streams = capsys.readouterr()
+    assert streams.out == ""
+    assert ("fallback page sent" in streams.err) is (opened is None)
     record = json.loads((tmp_path / "sdo-page.json").read_text())
     assert record["inject_at"] == _at(0)
     assert record["sdo_page_at"] == _at(opened if opened is not None else 122)
@@ -382,3 +389,73 @@ def test_a_page_that_closed_between_polls_still_counts_as_own() -> None:
     assert evidence.observe({"last_acknowledged_incident_id": f"app-{int(START.timestamp() + 30) * 10**9}"})
     assert evidence.page_source == "own"
     assert evidence.sdo_page_at == _at(30)
+
+
+def test_exec_stdout_carries_only_applied_changes_and_reports_still_reach_fuzzops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out, report, timeline = (tmp_path / name for name in ("out", "report.json", "timeline.jsonl"))
+    monkeypatch.setenv("FUZZOPS_OUT", str(out))
+    monkeypatch.setenv("FUZZOPS_REPORT", str(report))
+    monkeypatch.setenv("FUZZOPS_TIMELINE", str(timeline))
+    base = {
+        "incident_open": True,
+        "incident_detected_at": datetime.now(UTC).isoformat(),
+        "incident_request": {"incident_id": "inc-1", "findings": [_finding()]},
+        "incident_dispatched_at": _at(10),
+    }
+    result = _result()
+    result["plan_applications"] = [
+        {"program_id": "rejected"},
+        {"program_id": "preview", "applied": True, "dry_run": True},
+        {"program_id": "applied", "applied": True},
+    ]
+    result["repair_actions"].insert(
+        0, {"action_id": "failed", "kind": "patch", "target": "Deployment/web", "summary": "denied", "success": False}
+    )
+    states = iter(
+        [
+            base,
+            {**base, "incident_result": result, "responder_done": True},
+            {"last_acknowledged_incident_id": "inc-1"},
+        ]
+    )
+    monkeypatch.setattr(observe, "read_state", lambda *_: next(states))
+    monkeypatch.setattr(observe, "snapshot", lambda *_: {"snapshot_id": "evidence", "bytes": 1})
+
+    assert (
+        observe.main(
+            [
+                "--control-namespace",
+                "app-sdo",
+                "--interval",
+                "0",
+                "--linger",
+                "0",
+                "--operator-binary",
+                "sdo-operator",
+                "--controller-image",
+                "controller",
+            ]
+        )
+        == 0
+    )
+    streams = capsys.readouterr()
+    assert streams.out.splitlines() == [
+        "sdo automatic stage: applied applied",
+        "sdo repair (ok): patch Deployment/web: restore the source image",
+    ]
+    for notice in (
+        "incident opened",
+        "dispatched",
+        "rejected",
+        "preview",
+        "denied",
+        "diagnosis",
+        "done",
+        "closed",
+        "sealed",
+    ):
+        assert notice in streams.err
+    assert json.loads(report.read_text())["summary"].startswith("SDO responder:")
+    assert "diagnosed" in [json.loads(line)["event"] for line in timeline.read_text().splitlines()]
