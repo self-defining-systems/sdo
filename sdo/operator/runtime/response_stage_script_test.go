@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -36,6 +37,12 @@ func (c *countingScriptClient) RunScript(_ context.Context, request ScriptExecut
 	}
 	exit := int32(0)
 	return ScriptExecutionResult{ApplicationID: request.ApplicationID, JobName: "synthetic-job", ScriptDigest: program.ScriptDigest(request.Script), ExitCode: &exit}, nil
+}
+
+func (c *countingScriptClient) RecoverScript(_ context.Context, request ScriptExecutionRequest) (ScriptExecutionResult, error) {
+	exit := int32(0)
+	return ScriptExecutionResult{ApplicationID: request.ApplicationID, JobName: "synthetic-job", JobUID: "uid", ExitCode: &exit,
+		Receipts: []ScriptAPIReceipt{{Method: "delete", Status: 200, Written: []sdk.ObjectRef{{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "changed"}}, WrittenUIDs: map[string]string{"changed": "pod-uid"}}}}, nil
 }
 
 func stageScriptRegistry(t *testing.T, verdict program.Result) program.ProgramRegistry {
@@ -112,4 +119,12 @@ func TestStageRestartDoesNotReapplyInFlightScript(t *testing.T) {
 	if script.runs != 1 || len(report.GetMitigations()) != 1 {
 		t.Fatalf("restart repeated a reserved script: %d script invocations", script.runs)
 	}
+	attempt := report.GetMitigations()[0]
+	if len(attempt.GetTouchedObjects()) != 1 || attempt.GetTouchedObjects()[0].GetName() != "changed" || len(attempt.GetApplyReceipt().GetObjectEffects()) != 1 || attempt.GetApplyReceipt().GetObjectEffects()[0].GetUid() != "pod-uid" {
+		t.Fatalf("restart did not reattach script effects: %v", attempt)
+	}
+	if rows := fresh.incidentWrites(); len(rows) == 0 || rows[0].ReaderOrObject != "Pod/changed" {
+		t.Fatalf("recovered write missing in responder view: %v", rows)
+	}
+
 }

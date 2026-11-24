@@ -98,7 +98,7 @@ func (l *ResponderLoop) incidentWrites() []IncidentChange {
 			}
 		}
 	}
-	for _, application := range l.applicationsLog {
+	for _, application := range l.applicationEvidenceLocked() {
 		// The agent applies through `sdo mitigate` (menu attempts); SDO's
 		// automatic stage applies plans and verification records equivalent repairs.
 		actor, writer := ActorAgent, "sdo mitigate"
@@ -110,6 +110,9 @@ func (l *ResponderLoop) incidentWrites() []IncidentChange {
 				summary := fmt.Sprintf("script ran in %d ms; exit status unavailable", script.DurationMS)
 				if script.ExitCode != nil {
 					summary = fmt.Sprintf("script ran in %d ms; exit %d", script.DurationMS, *script.ExitCode)
+				}
+				if report.FailureReason == "outcome_unknown" {
+					summary += "; effects unknown"
 				}
 				refs := scriptWriteRefs(script)
 				if len(refs) == 0 {

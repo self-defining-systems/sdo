@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"path"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
@@ -16,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk/program"
@@ -57,11 +59,151 @@ func scriptJobStopped(ctx context.Context, client kubernetes.Interface, namespac
 	return true
 }
 
+// The warm-up is started independently of controller readiness.
+func prewarmScriptImage(ctx context.Context, client kubernetes.Interface, namespace, node, image string, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	digest := sha256.Sum256([]byte(node + "\x00" + image))
+	name := fmt.Sprintf("sdo-script-prewarm-%x", digest[:8])
+	zero, ttl, deadline, no := int32(0), int32(60), int64(45), false
+	_, err := client.BatchV1().Jobs(namespace).Create(ctx, &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: batchv1.JobSpec{BackoffLimit: &zero, TTLSecondsAfterFinished: &ttl, ActiveDeadlineSeconds: &deadline,
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeName: node, AutomountServiceAccountToken: &no, RestartPolicy: corev1.RestartPolicyNever,
+				Containers: []corev1.Container{{Name: "prewarm", Image: image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/true"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no}}}}}},
+	}, metav1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		logger.Warn("script image prewarm failed; continuing", "error", err)
+		return
+	}
+	ticker := lifecycleio.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + name})
+		if err == nil {
+			for _, pod := range pods.Items {
+				if pod.Status.Phase == corev1.PodSucceeded {
+					return
+				}
+				for _, status := range pod.Status.ContainerStatuses {
+					if waiting := status.State.Waiting; waiting != nil && (waiting.Reason == "ErrImagePull" || waiting.Reason == "ImagePullBackOff") {
+						logger.Warn("script image prewarm failed; continuing", "image", image, "reason", waiting.Reason)
+						return
+					}
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			logger.Warn("script image prewarm did not finish; continuing", "image", image)
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+const scriptStopMargin = 10 * time.Second
+
+// RecoverScript only reads a prior reservation. It cannot dispatch another Job.
+func (c TypedPlanClient) RecoverScript(ctx context.Context, r ScriptExecutionRequest) (ScriptExecutionResult, error) {
+	r.recoverOnly = true
+	lookup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	return c.RunScript(lookup, r)
+}
+
+func (c TypedPlanClient) finishInterruptedScript(ctx context.Context, deadline time.Time, out ScriptExecutionResult) (ScriptExecutionResult, error) {
+	ctx = context.WithoutCancel(ctx)
+	wait, cancel := context.WithDeadline(ctx, deadline.Add(scriptStopMargin))
+	defer cancel()
+	ticker := lifecycleio.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	stopped := false
+	for wait.Err() == nil {
+		probe, stop := context.WithTimeout(wait, 2*time.Second)
+		stopped = scriptJobStopped(probe, c.Client, c.ScriptNamespace, out.JobName)
+		stop()
+		if stopped {
+			break
+		}
+		select {
+		case <-wait.Done():
+		case <-ticker.C:
+		}
+	}
+	read, stop := context.WithTimeout(ctx, 3*time.Second)
+	defer stop()
+	maps := c.Client.CoreV1().ConfigMaps(c.ScriptNamespace)
+	if !stopped {
+		stopped = scriptJobStopped(read, c.Client, c.ScriptNamespace, out.JobName)
+	}
+	index, readErr := maps.Get(read, out.JobName, metav1.GetOptions{})
+	final := false
+	if readErr == nil {
+		for _, key := range []string{"result.json", "capture.json"} {
+			if raw := index.Data[key]; raw != "" {
+				if recovered, err := decodeScriptResult(out, raw); err == nil {
+					out, final = recovered, key == "result.json" && recovered.ExitCode != nil
+					break
+				}
+			}
+		}
+		if out.JobUID == "" {
+			out.JobUID = index.Data["job_uid"]
+		}
+	}
+	if out.JobUID == "" {
+		job, err := c.Client.BatchV1().Jobs(c.ScriptNamespace).Get(read, out.JobName, metav1.GetOptions{})
+		if err == nil && job.Annotations["sdo.dev/script-application"] == out.ApplicationID && job.Annotations["sdo.dev/script-digest"] == out.ScriptDigest {
+			out.JobUID = string(job.UID)
+		}
+	}
+	records, receiptErr := maps.List(read, metav1.ListOptions{LabelSelector: "sdo.dev/script-capture=" + out.JobName})
+	if receiptErr == nil && out.JobUID != "" {
+		seen := map[string]bool{}
+		for _, receipt := range out.Receipts {
+			raw, _ := json.Marshal(receipt)
+			seen[string(raw)] = true
+		}
+		for _, record := range records.Items {
+			raw := record.Data["receipt.json"]
+			var receipt ScriptAPIReceipt
+			if record.Data["job_uid"] == out.JobUID && !seen[raw] && json.Unmarshal([]byte(raw), &receipt) == nil {
+				out.Receipts = append(out.Receipts, receipt)
+				seen[raw] = true
+			}
+		}
+		sort.SliceStable(out.Receipts, func(i, j int) bool { return out.Receipts[i].CompletedAt.Before(out.Receipts[j].CompletedAt) })
+	}
+	if !stopped {
+		deletion, done := context.WithTimeout(ctx, 3*time.Second)
+		defer done()
+		policy := metav1.DeletePropagationForeground
+		options := metav1.DeleteOptions{PropagationPolicy: &policy}
+		if out.JobUID != "" {
+			uid := types.UID(out.JobUID)
+			options.Preconditions = &metav1.Preconditions{UID: &uid}
+		}
+		if err := c.Client.BatchV1().Jobs(c.ScriptNamespace).Delete(deletion, out.JobName, options); err != nil && !apierrors.IsNotFound(err) {
+			return out, fmt.Errorf("script effects unknown: stop Job: %w", err)
+		}
+		return out, fmt.Errorf("script effects unknown: Job exceeded its shutdown bound")
+	}
+	if final && receiptErr == nil {
+		return out, nil
+	}
+	return out, fmt.Errorf("script effects unknown: final result or API receipt inventory unavailable")
+}
+
 // RunScript reserves a durable application before creating a nonretrying Job.
 // A reservation with a missing Job is uncertain and can never launch a replacement.
 func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest) (out ScriptExecutionResult, err error) {
 	out = ScriptExecutionResult{ApplicationID: r.ApplicationID, ScriptDigest: program.ScriptDigest(r.Script)}
-	if err := c.ScriptReady(); err != nil {
+	if r.recoverOnly {
+		if c.Client == nil || c.ScriptNamespace == "" {
+			return out, fmt.Errorf("script receipt transport unavailable")
+		}
+	} else if err := c.ScriptReady(); err != nil {
 		return out, err
 	}
 	if r.ApplicationID == "" || r.IncidentID == "" || r.Namespace == "" {
@@ -81,6 +223,9 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	index, getErr := maps.Get(ctx, out.JobName, metav1.GetOptions{})
 	provenance, _ := json.Marshal(r.Inputs)
 	fresh := false
+	if r.recoverOnly && apierrors.IsNotFound(getErr) {
+		return ScriptExecutionResult{}, nil
+	}
 	if apierrors.IsNotFound(getErr) {
 		deadline := lifecycleio.Now().Add(r.Timeout)
 		if !r.Deadline.IsZero() && r.Deadline.Before(deadline) {
@@ -99,6 +244,9 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		err = getErr
 	}
 	if err != nil {
+		if !r.recoverOnly && ctx.Err() != nil {
+			return c.RecoverScript(ctx, r)
+		}
 		return out, err
 	}
 	if index.Data["application_id"] != r.ApplicationID || index.Data["incident_id"] != r.IncidentID || index.Data["namespace"] != r.Namespace || index.Data["script_digest"] != out.ScriptDigest {
@@ -106,34 +254,23 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	}
 	out.JobUID = index.Data["job_uid"]
 	_ = json.Unmarshal([]byte(index.Data["inputs"]), &out.Inputs)
+	deadline, err := time.Parse(time.RFC3339Nano, index.Data["deadline"])
+	if err != nil {
+		return out, err
+	}
+	if r.recoverOnly {
+		return c.finishInterruptedScript(ctx, deadline, out)
+	}
 	if raw := index.Data["result.json"]; raw != "" {
 		return decodeScriptResult(out, raw)
 	}
-	// A result is published only after the runner drains. On other exits wait
-	// for the Job's active deadline, including when the caller was cancelled.
 	defer func() {
-		if err == nil {
-			return
-		}
-		wait := context.WithoutCancel(ctx)
-		ticker := lifecycleio.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			probe, cancel := context.WithTimeout(wait, 2*time.Second)
-			stopped := scriptJobStopped(probe, c.Client, c.ScriptNamespace, out.JobName)
-			cancel()
-			if stopped {
-				return
-			}
-			<-ticker.C
+		if err != nil || ctx.Err() != nil {
+			out, err = c.finishInterruptedScript(ctx, deadline, out)
 		}
 	}()
 	job, getErr := jobs.Get(ctx, out.JobName, metav1.GetOptions{})
 	if apierrors.IsNotFound(getErr) && fresh {
-		deadline, parseErr := time.Parse(time.RFC3339Nano, index.Data["deadline"])
-		if parseErr != nil {
-			return out, parseErr
-		}
 		seconds := int64(math.Ceil(lifecycleio.Until(deadline).Seconds()))
 		if seconds < 1 {
 			return out, fmt.Errorf("script deadline expired before Job creation")
@@ -221,10 +358,6 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
 				return out, fmt.Errorf("script Job failed without result: %s", condition.Reason)
 			}
-		}
-		deadline, parseErr := time.Parse(time.RFC3339Nano, index.Data["deadline"])
-		if parseErr != nil {
-			return out, parseErr
 		}
 		if !lifecycleio.Now().Before(deadline) {
 			out.TimedOut = true

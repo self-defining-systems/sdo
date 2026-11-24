@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"slices"
 	"sort"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 // ScriptExecutionRequest exists only at the process boundary. Resolved values
 // never become part of durable plan or provenance records.
 type ScriptExecutionRequest struct {
+	recoverOnly   bool
 	ApplicationID string
 	IncidentID    string
 	Namespace     string
@@ -83,7 +85,7 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 	if id == "" {
 		id = fmt.Sprintf("%x", sha256.Sum256([]byte(incident.IncidentID+"\x00"+program.ScriptDigest(a.Script))))
 	}
-	id = fmt.Sprintf("%s-script-%d", id, e.scriptActionIndex)
+	id = scriptApplicationID(id, e.scriptActionIndex)
 	inputs := map[string]program.ValueProvenance{}
 	for i, key := range keys {
 		inputs[key] = r.ActionReports[0].Values[i]
@@ -95,6 +97,17 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 			r.ActionReports[0].Values = append(r.ActionReports[0].Values, run.Inputs[key])
 		}
 	}
+	resultErr := r.attachScriptResult(incident, a, 0, run, runErr)
+	if e.RecordPrimitive != nil && run.JobName != "" {
+		raw, _ := json.Marshal(r.ActionReports[0].Script)
+		if recordErr := e.RecordPrimitive(sdktest.PrimitiveCall{Method: "RunScriptReceipt", Arguments: json.RawMessage("[]"), Result: raw}); recordErr != nil {
+			r.ActionReports[0].RecordingError = "script receipt capture unavailable"
+		}
+	}
+	return r, resultErr
+}
+
+func (r *PlanApplicationResult) attachScriptResult(incident IncidentRequest, a program.RunScript, index int, run ScriptExecutionResult, runErr error) error {
 	public := run
 	for _, finding := range incident.Findings {
 		if finding.PrimaryResource.Kind != "" {
@@ -106,15 +119,27 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 	for _, object := range run.Objects {
 		public.Objects = append(public.Objects, ScriptObjectCapture{Ref: object.Ref, Written: object.Written, ImagesRef: object.ImagesRef, BeforeAbsent: object.BeforeAbsent, AfterAbsent: object.AfterAbsent})
 	}
-	r.ActionReports[0].Script = &public
-	r.ActionReports[0].ExitCode = run.ExitCode
+	r.ActionReports[index].Script = &public
+	r.ActionReports[index].ExitCode = run.ExitCode
 	if run.JobName != "" {
 		r.Applied = true
-		r.ActionsApplied = []program.Action{a}
-		r.ActionReports[0].Status = "unknown"
-		r.Patches = []PlanPatch{{Ref: sdk.ObjectRef{APIVersion: "batch/v1", Kind: "Job", Namespace: incident.Namespace, Name: run.JobName}, Operation: "run-script", Irreversible: true}}
+		if !slices.ContainsFunc(r.ActionsApplied, func(other program.Action) bool {
+			script, ok := concreteExternalAction(other).(program.RunScript)
+			return ok && program.ScriptDigest(script.Script) == run.ScriptDigest
+		}) {
+			r.ActionsApplied = append(r.ActionsApplied, a)
+		}
+		r.ActionReports[index].Status = "unknown"
+		r.Patches = append(r.Patches, PlanPatch{Ref: sdk.ObjectRef{APIVersion: "batch/v1", Kind: "Job", Namespace: incident.Namespace, Name: run.JobName}, Operation: "run-script", Irreversible: true})
 	}
-	operations := map[sdk.ObjectRef]string{}
+	seen := map[sdk.ObjectRef]bool{}
+	addEffect := func(ref sdk.ObjectRef, operation, uid string) {
+		seen[ref] = true
+		effect := PlanObjectEffect{Ref: ref, Operation: operation, UID: uid, Confirmed: true, State: "applied", Irreversible: true}
+		if !slices.Contains(r.ObjectEffects, effect) {
+			r.ObjectEffects = append(r.ObjectEffects, effect)
+		}
+	}
 	for _, receipt := range run.Receipts {
 		operation := "patch"
 		if receipt.Subresource == "" {
@@ -126,41 +151,81 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 			}
 		}
 		for _, ref := range receipt.Written {
-			operations[ref] = operation
+			if ref.Kind != "" && ref.Name != "" {
+				addEffect(ref, operation, receipt.WrittenUIDs[ref.Name])
+			}
 		}
 	}
 	for _, ref := range scriptWriteRefs(&run) {
-		operation := operations[ref]
-		if operation == "" {
-			operation = "patch"
+		if !seen[ref] {
+			addEffect(ref, "patch", "")
 		}
-		r.ObjectEffects = append(r.ObjectEffects, PlanObjectEffect{Ref: ref, Operation: operation, Confirmed: true, State: "applied", Irreversible: true})
 	}
 	for _, object := range run.Objects {
 		if object.Before != nil || object.BeforeAbsent {
 			r.PreImages = append(r.PreImages, newPlanPreImage(object.Ref, object.Before))
 		}
 	}
-	if e.RecordPrimitive != nil && run.JobName != "" {
-		raw, _ := json.Marshal(public)
-		if recordErr := e.RecordPrimitive(sdktest.PrimitiveCall{Method: "RunScriptReceipt", Arguments: json.RawMessage("[]"), Result: raw}); recordErr != nil {
-			r.ActionReports[0].RecordingError = "script receipt capture unavailable"
-		}
-	}
 	if runErr != nil {
-		return r, runErr
+		r.ActionReports[index].FailureReason = "outcome_unknown"
+		return runErr
 	}
 	if run.ExitCode == nil {
-		return r, fmt.Errorf("script exit status unavailable")
+		return fmt.Errorf("script exit status unavailable")
 	}
 	if run.TimedOut {
-		return r, fmt.Errorf("script exceeded its incident deadline")
+		return fmt.Errorf("script exceeded its incident deadline")
 	}
 	if *run.ExitCode != 0 {
-		return r, fmt.Errorf("script failed (exit %d)", *run.ExitCode)
+		return fmt.Errorf("script failed (exit %d)", *run.ExitCode)
 	}
-	r.ActionReports[0].Status = "applied"
-	return r, nil
+	r.ActionReports[index].Status = "applied"
+	r.ActionReports[index].FailureReason = ""
+	return nil
+}
+
+func scriptApplicationID(application string, index int) string {
+	return fmt.Sprintf("%s-script-%d", application, index)
+}
+
+func (l *ResponderLoop) recoverInterruptedScripts(ctx context.Context) {
+	client, ok := l.Executor.Client.(interface {
+		RecoverScript(context.Context, ScriptExecutionRequest) (ScriptExecutionResult, error)
+	})
+	if !ok {
+		return
+	}
+	for i := range l.archivedApplications {
+		app := &l.archivedApplications[i]
+		if !hasAppliedScript(app.Result.Plan.Actions) {
+			continue
+		}
+		interrupted := app.Pending && app.CompletedAt.IsZero()
+		if !interrupted && !slices.ContainsFunc(app.Result.ActionReports, func(report PlanActionReport) bool {
+			return report.Script != nil && report.FailureReason == "outcome_unknown"
+		}) {
+			continue
+		}
+		if len(app.Result.ActionReports) != len(app.Result.Plan.Actions) {
+			app.Result.ActionReports = newPlanReports(app.Result.Plan)
+		}
+		for index, action := range app.Result.Plan.Actions {
+			script, ok := concreteExternalAction(action).(program.RunScript)
+			if !ok || !interrupted && app.Result.ActionReports[index].FailureReason != "outcome_unknown" {
+				continue
+			}
+			run, err := client.RecoverScript(ctx, ScriptExecutionRequest{ApplicationID: scriptApplicationID(app.ID, index), IncidentID: l.Request.IncidentID, Namespace: l.Request.Namespace, Script: script.Script, Timeout: program.MaxScriptTimeout})
+			if run.JobName == "" {
+				continue
+			}
+			_ = app.Result.attachScriptResult(l.Request, script, index, run, err)
+		}
+		if interrupted {
+			app.Error = "application interrupted; script effects may be unknown"
+			app.Pending = false
+			app.CompletedAt = l.clock().UTC()
+		}
+	}
 }
 
 func hasAppliedScript(actions []program.Action) bool {

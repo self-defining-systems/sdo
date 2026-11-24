@@ -270,6 +270,15 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			}
 		}
 		started := lifecycleio.Now().UTC()
+		journalIndex := len(l.applicationsLog)
+		scriptPlan := hasAppliedScript(plan.Actions)
+		if scriptPlan {
+			l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: applicationID, ProgramIDs: []string{entry.programID}, Result: PlanApplicationResult{Plan: plan}, StartedAt: started, Pending: true})
+			if err := l.persistToolState(ctx); err != nil {
+				response.Error = err.Error()
+				return
+			}
+		}
 		result, applyErr := executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: entry.programID, bindings: bindings, targetFingerprints: targetFingerprints}}), plan, false)
 		completed := lifecycleio.Now().UTC()
 
@@ -371,7 +380,11 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			application.Error = applyErr.Error()
 		}
 		application.RunningCommit, application.RunningDirty, _ = l.checkoutState(ctx, false, "mitigate")
-		l.applicationsLog = append(l.applicationsLog, application)
+		if scriptPlan {
+			l.applicationsLog[journalIndex] = application
+		} else {
+			l.applicationsLog = append(l.applicationsLog, application)
+		}
 		if hasAppliedScript(plan.Actions) && entry.action == nil {
 			l.recordScriptInvocation(application, entry.programID, bindings, targetVerdict)
 		}

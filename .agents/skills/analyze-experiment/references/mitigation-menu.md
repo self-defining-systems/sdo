@@ -110,6 +110,15 @@ duration and object references from Kubernetes API receipts. First-write preimag
 settled postimages and per-request receipts live in private ConfigMaps owned by the
 nonretrying Job. The Job and its ConfigMaps expire 24 hours after finishing.
 
+On cancellation or controller restart, the controller rejoins the original Job
+reservation and reads the final result and separate API receipts. The script
+deadline plus a fixed shutdown margin bounds that wait. If the Job still has
+live pods, the controller requests foreground deletion and reports unknown
+effects alongside any observed writes. Script image prewarm runs independently
+of controller readiness. Root-squashed storage must grant the trusted runner
+access to the private incident gate directory and its lock through the storage
+UID mapping and permissions. The runner does not change ownership of that directory.
+
 Offline replay does not execute scripts. Live repair credit requires a fresh
 NoMatch diagnosis and clearance of the target findings. Whole-app closure still
 requires global health. Script preimages do not authorize automatic undo.

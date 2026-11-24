@@ -7,14 +7,15 @@ import (
 )
 
 type ScriptAPIReceipt struct {
-	Written     []sdk.ObjectRef `json:"written,omitempty"`
-	Subresource string          `json:"subresource,omitempty"`
-	Method      string          `json:"method"`
-	Path        string          `json:"path"`
-	Status      int             `json:"status"`
-	StartedAt   time.Time       `json:"started_at"`
-	CompletedAt time.Time       `json:"completed_at"`
-	Omission    string          `json:"omission,omitempty"`
+	WrittenUIDs map[string]string `json:"written_uids,omitempty"`
+	Written     []sdk.ObjectRef   `json:"written,omitempty"`
+	Subresource string            `json:"subresource,omitempty"`
+	Method      string            `json:"method"`
+	Path        string            `json:"path"`
+	Status      int               `json:"status"`
+	StartedAt   time.Time         `json:"started_at"`
+	CompletedAt time.Time         `json:"completed_at"`
+	Omission    string            `json:"omission,omitempty"`
 }
 
 type ScriptObjectCapture struct {

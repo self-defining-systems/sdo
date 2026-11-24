@@ -671,6 +671,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if scriptJobImage == "" {
 		scriptJobImage = *responderImage
 	}
+	if !clientInjected && *scriptImage != "" {
+		go prewarmScriptImage(ctx, bootstrapProvider.Client, *controlNamespace, lifecycleio.Getenv("SDO_CONTROLLER_NODE"), *scriptImage, slog.Default())
+	}
 	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {

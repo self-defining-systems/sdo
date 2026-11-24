@@ -395,9 +395,6 @@ func controllerJob(c Config) *batchv1.Job {
 		Resources:       limits("10m", "16Mi", "100m", "64Mi"),
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}},
 	}}
-	if c.ScriptImage != "" {
-		pod.InitContainers = append(pod.InitContainers, corev1.Container{Name: "prewarm-script", Image: c.ScriptImage, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/true"}, SecurityContext: containerSecurity()})
-	}
 	policyJSON, _ := json.Marshal(c.ObservationCeiling)
 	pod.Containers = []corev1.Container{{
 		Name: "controller", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent,

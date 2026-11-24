@@ -145,6 +145,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			return report, err
 		}
 	}
+	loop.locked(func() { loop.recoverInterruptedScripts(ctx) })
 	if loop.stageProgress == nil {
 		loop.stageProgress = map[string]responseStageProgress{}
 	}
@@ -171,11 +172,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	// checkpoint. Recover it by immutable plan identity without repeating it.
 	if progress.Report != nil {
 		for _, attempt := range report.Mitigations {
-			if attempt.PlanId == "" || attempt.ApplyReceipt != nil {
+			if attempt.PlanId == "" {
 				continue
 			}
 			for _, app := range loop.ApplicationEvidence() {
-				if slices.Contains(app.PlanIDs, attempt.PlanId) {
+				if slices.Contains(app.PlanIDs, attempt.PlanId) && (attempt.ApplyReceipt == nil ||
+					app.Result.Applied && hasAppliedScript(app.Result.Plan.Actions) && app.Error != "") {
 					receipt, err := recordedPlanContract(app)
 					if err != nil {
 						return report, err
