@@ -651,6 +651,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	if request.Command == "apply" || request.Command == "mitigate" || request.Command == "rollback" {
 		if l.gateError != nil {
 			response.Error = l.gateError.Error()
+			if request.Command == "mitigate" {
+				l.refuseSelection(&response, "mutation_gate_unavailable", response.Error)
+			}
 			return response
 		}
 		if l.MutationGate != nil {
