@@ -241,7 +241,7 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	c.mu.Unlock()
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), PriorStages: cloneStageReports(request.PriorStages)}
 	earlier := deterministicStageReport(state.PriorStages)
-	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true}
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, StabilityWindow: c.config.ClosureStabilityWindow}
 	if c.tuneMidStage != nil {
 		c.tuneMidStage(stage)
 	}

@@ -95,9 +95,14 @@ type DeterministicResponseStage struct {
 	// recovery wait lasts this long (instead of DefaultMitigationRolloutTimeout)
 	// and its soft give-ups (a finding past its horizon, a program still
 	// matching) no longer end it; a refuted or failed write still does.
-	WaitBound    time.Duration
-	recoveryNow  func() time.Time
-	recoveryWait func(context.Context, time.Duration) error
+	WaitBound time.Duration
+	// StabilityWindow is the closure stability window: once the stage's
+	// writes have settled, the alert set gets its clearing horizon plus this
+	// window to recover before the stage hands off, the same allowance
+	// closure gives Recovered.
+	StabilityWindow time.Duration
+	recoveryNow     func() time.Time
+	recoveryWait    func(context.Context, time.Duration) error
 }
 
 type responseStageProgress struct {
@@ -981,7 +986,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		progress.RecoveryDeadline = deadline
 	}
 	observe, cancel := context.WithDeadline(ctx, progress.RecoveryDeadline)
-	defer cancel()
+	defer func() { cancel() }()
 	interval := stage.ObservationInterval
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
@@ -1117,16 +1122,42 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			} else {
 				settled = -1
 			}
-			for _, finding := range open {
-				fp := FindingFingerprint(finding)
-				if settled >= findingHorizon(finding) && stage.WaitBound <= 0 {
-					branch = "finding " + fp + " persisted past its horizon after the stage's writes settled"
+			// Once SDO's writes have settled, a finding that judges current state
+			// only (no evaluation window) and is still active past its own horizon
+			// says the fault is there now: hand off. Windowed findings and user
+			// tests aggregate over time, and with them the application's own
+			// convergence (caches, retries), so the alert set gets the time
+			// Recovered would take had the repair worked at settle: the longest
+			// clearing horizon among its members still open, plus the closure
+			// stability window (the allowance closure gives Recovered). Only an
+			// alert set still not clear at that bound hands off.
+			if settled >= 0 && stage.WaitBound <= 0 {
+				horizon := check.horizon + 2*interval
+				for _, finding := range open {
+					if _, window := horizonOf(finding.DetectorID); window == 0 && settled >= findingHorizon(finding) {
+						branch = "finding " + FindingFingerprint(finding) + " judges current state and persisted past its horizon after the stage's writes settled"
+						return nil
+					}
+					horizon = max(horizon, findingHorizon(finding))
+				}
+				recoverBy := check.record.GetSince().AsTime().Add(horizon + stage.StabilityWindow)
+				// One more observation at the bound itself decides it.
+				if extended := stage.settledDeadline(progress.RecoveryDeadline, recoverBy.Add(interval), state.Request.ResponseDeadline); extended.After(progress.RecoveryDeadline) {
+					progress.RecoveryDeadline = extended
+					cancel()
+					observe, cancel = context.WithDeadline(ctx, progress.RecoveryDeadline)
+					if err := save(false); err != nil {
+						return err
+					}
+				}
+				if (len(open) > 0 || check.verdict == recoveryPending) && !now().Before(recoverBy) {
+					reason := check.reason
+					if len(open) > 0 {
+						reason = "finding " + FindingFingerprint(open[0]) + " still active"
+					}
+					branch = "not recovered by its settle-anchored bound: " + reason
 					return nil
 				}
-			}
-			if check.verdict == recoveryPending && len(open) == 0 && settled >= check.horizon+2*interval && stage.WaitBound <= 0 {
-				branch = "not recovered within its members' horizon: " + check.reason
-				return nil
 			}
 			if matching != "" && check.verdict != recoveryPending && len(open) == 0 {
 				var window time.Duration
@@ -1177,6 +1208,23 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
+}
+
+// settledDeadline is the recovery deadline once the stage's writes have
+// settled: the settle-anchored bound when it is later than the deadline set
+// before the writes settled, never past the response deadline. A test budget
+// or observation ceiling keeps the deadline it set.
+func (stage *DeterministicResponseStage) settledDeadline(current, recoverBy, responseDeadline time.Time) time.Time {
+	if stage.Budget > 0 || stage.ObservationCeiling > 0 || !recoverBy.After(current) {
+		return current
+	}
+	if !responseDeadline.IsZero() && responseDeadline.Before(recoverBy) {
+		if responseDeadline.Before(current) {
+			return current
+		}
+		return responseDeadline
+	}
+	return recoverBy
 }
 
 // writtenWorkloadsStartup is the longest observed startup of the workloads the
