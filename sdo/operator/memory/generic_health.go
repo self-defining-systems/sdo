@@ -23,6 +23,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/generichealth"
 	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // MetricsAlertsDetectorID names the generic detector that reports firing
@@ -212,7 +213,7 @@ func plannedGenericDetectors(options HealthOptions) []plannedDetector {
 
 // TrafficDetectorPrefix starts the ID of every Go-installed traffic-probe
 // detector; the rest of the ID is the workload it consumes.
-const TrafficDetectorPrefix = "traffic-"
+const TrafficDetectorPrefix = traffic.DetectorIDPrefix
 
 // prepareTrafficDetectors installs one detector per probe workload file and
 // removes the Go-installed ones whose workload is gone or no longer a probe,
@@ -451,6 +452,7 @@ import (
 	"time"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 func New() sdk.Detector {
@@ -484,6 +486,7 @@ import (
 	"time"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 func New() sdk.Detector {

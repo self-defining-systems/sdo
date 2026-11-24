@@ -2181,40 +2181,47 @@ func evaluateOnce(
 		return err
 	}
 	findings := make([]sdk.Finding, 0)
-	var detectorErrors []error
+	var controllerErrors []error
 	controller.now = clock.Now
 	controller.OnEvaluation = func(sample []sdk.Finding) { findings = append([]sdk.Finding{}, sample...) }
-	controller.OnError = func(err error) { detectorErrors = append(detectorErrors, err) }
-	// judge steps the controller once and reports the verdict. When watching,
-	// a detector error is that detector's unavailable entry, so the others
-	// stay judged; a one-shot evaluation fails on it.
+	controller.OnError = func(err error) {
+		if !errors.As(err, new(*detectorEvaluationError)) {
+			controllerErrors = append(controllerErrors, err)
+		}
+	}
+	// judge steps the controller once and reports the verdict. A detector
+	// error is that detector's unavailable entry, so the others stay judged;
+	// whether it holds the verdict is evaluation.StatusWithUnavailable. A
+	// one-shot evaluation fails on any other controller error.
 	judge := func(now time.Time, watching bool) (evaluation.Verdict, error) {
-		detectorErrors = nil
+		controllerErrors = nil
 		if err := controller.Step(ctx, now, nil); err != nil {
 			return evaluation.Verdict{}, err
 		}
 		unavailableNow := append([]evaluation.UnavailableDetector(nil), unavailable...)
-		if len(detectorErrors) > 0 && !watching {
-			return evaluation.Verdict{}, fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
+		if len(controllerErrors) > 0 && !watching {
+			return evaluation.Verdict{}, fmt.Errorf("health detector evaluation failed: %w", controllerErrors[0])
+		}
+		// A detector runs on its own interval, so its latest evaluation (this
+		// pass or an earlier one) is what it currently reports.
+		latest := map[string]DetectorEvaluation{}
+		var order []string
+		for _, observed := range controller.history {
+			if _, seen := latest[observed.DetectorID]; !seen {
+				order = append(order, observed.DetectorID)
+			}
+			latest[observed.DetectorID] = observed
 		}
 		observations := controller.history
 		if watching {
-			// A detector runs on its own interval, so its latest evaluation
-			// (this pass or an earlier one) is what it currently reports.
-			latest := map[string]DetectorEvaluation{}
-			var order []string
-			for _, observed := range controller.history {
-				if _, seen := latest[observed.DetectorID]; !seen {
-					order = append(order, observed.DetectorID)
-				}
-				latest[observed.DetectorID] = observed
-			}
 			observations = nil
-			for _, id := range order {
+		}
+		for _, id := range order {
+			if watching {
 				observations = append(observations, latest[id])
-				if latest[id].Status == DetectorEvaluationError {
-					unavailableNow = append(unavailableNow, evaluation.UnavailableDetector{DetectorID: id, Reason: latest[id].Error})
-				}
+			}
+			if latest[id].Status == DetectorEvaluationError {
+				unavailableNow = append(unavailableNow, evaluation.UnavailableDetector{DetectorID: id, Reason: latest[id].Error})
 			}
 		}
 		status := evaluation.Clear
@@ -2227,9 +2234,7 @@ func evaluateOnce(
 				unconfirmed = append(unconfirmed, evaluation.DetectorState{DetectorID: observed.DetectorID, EvaluatedAt: observed.EvaluatedAt, Status: string(observed.Status), Fingerprints: observed.Fingerprints, Error: observed.Error, Reason: observed.Reason})
 			}
 		}
-		if len(unavailableNow) > 0 {
-			status = evaluation.Unavailable
-		}
+		status = evaluation.StatusWithUnavailable(status, unavailableNow)
 		exercised := 0
 		var environmentWait time.Duration
 		if trafficProvider.Observer != nil {

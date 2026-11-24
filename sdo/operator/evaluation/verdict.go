@@ -12,11 +12,13 @@ import (
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/requestmetrics"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // Status is the bounded command verdict, not a persisted detector observation.
-// Unavailable means this invocation lacks a required capability; Pending means
-// a detector can run but its observation window is incomplete.
+// Unavailable means this invocation cannot read a user test
+// (StatusWithUnavailable); Pending means a detector can run but its
+// observation window is incomplete.
 type Status string
 
 const (
@@ -78,6 +80,32 @@ type DetectorProgress struct {
 // traffic: they never open an incident (runtime opens) and never hold a head or a repair.
 func FindingFires(finding sdk.Finding) bool {
 	return finding.Status == sdk.FindingActive && finding.Metadata[requestmetrics.MetaBackground] != true
+}
+
+// UnavailableHolds reports whether a detector that could not be evaluated
+// keeps a verdict from clearing. Only the acceptance signal waits: the user
+// tests (the traffic-probe detectors) a head and a repair are accepted on.
+// Any other detector whose input this environment cannot serve (resource
+// usage without CFS counters, request metrics, a clue, a detector left out
+// outside the cluster) is a coverage gap: recorded with its reason, never a
+// hold. The same family as FindingFires: what is not an alert never holds.
+func UnavailableHolds(item UnavailableDetector) bool {
+	return strings.HasPrefix(item.DetectorID, traffic.DetectorIDPrefix)
+}
+
+// StatusWithUnavailable is status once the unavailable detectors are counted:
+// unavailable when any of them holds (UnavailableHolds), else unchanged. A
+// firing verdict stays firing.
+func StatusWithUnavailable(status Status, unavailable []UnavailableDetector) Status {
+	if status == Firing {
+		return status
+	}
+	for _, item := range unavailable {
+		if UnavailableHolds(item) {
+			return Unavailable
+		}
+	}
+	return status
 }
 
 // Verdict is the whole --evaluate-once output.

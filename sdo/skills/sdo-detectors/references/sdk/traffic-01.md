@@ -41,6 +41,7 @@ const DefaultHealthMinDuration = 9 * time.Second
 const DefaultRateLimitWait = time.Minute
 const DefectRateLimited = "rate_limited"
 const DefectResponseTruncated = "response_truncated"
+const DetectorIDPrefix = "traffic-"
 const ExistingMembersKey = "sdo.existing-members"
 const MaxExecStderr = 512
 const MaxKnownBrokenReason = 200

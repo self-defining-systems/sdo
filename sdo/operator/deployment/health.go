@@ -244,7 +244,13 @@ func healthEvaluationOf(verdict evaluation.Verdict) HealthEvaluation {
 		result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: state.DetectorID, Status: state.Status, Reason: firstNonEmpty(state.Reason, state.Error)})
 	}
 	for _, item := range verdict.Unavailable {
-		result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: item.DetectorID, Status: "unavailable", Reason: item.Reason})
+		state := lifecycle.DetectorState{DetectorID: item.DetectorID, Status: "unavailable", Reason: item.Reason}
+		if !evaluation.UnavailableHolds(item) {
+			// a coverage gap (not a user test): recorded, never holding
+			result.CoverageNotes = append(result.CoverageNotes, state)
+			continue
+		}
+		result.Detectors = append(result.Detectors, state)
 	}
 	for _, finding := range verdict.Findings {
 		switch {

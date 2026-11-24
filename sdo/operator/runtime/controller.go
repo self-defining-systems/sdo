@@ -1406,9 +1406,23 @@ func (c *Controller) recordDetectorError(detectorID string, now time.Time, err e
 		c.trackClearStreak(detectorID, now, false)
 	}
 	if c.OnError != nil {
-		c.OnError(fmt.Errorf("detector %q: %w", detectorID, err))
+		c.OnError(&detectorEvaluationError{detectorID: detectorID, err: err})
 	}
 }
+
+// detectorEvaluationError is one detector's failed evaluation as OnError
+// reports it, so a caller can tell it from a controller failure: the
+// evaluation verdict records it as that detector's unavailable entry.
+type detectorEvaluationError struct {
+	detectorID string
+	err        error
+}
+
+func (e *detectorEvaluationError) Error() string {
+	return fmt.Sprintf("detector %q: %v", e.detectorID, e.err)
+}
+
+func (e *detectorEvaluationError) Unwrap() error { return e.err }
 
 // noObservation reports that an evaluation produced no observation of health:
 // the memory host still running the previous pass, an abandoned or overrun

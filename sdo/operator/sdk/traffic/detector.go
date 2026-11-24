@@ -22,6 +22,10 @@ type Consumer interface {
 // RuleIDPrefix prefixes the rule ID of each scenario finding ("scenario-slo.<id>").
 const RuleIDPrefix = "scenario-slo."
 
+// DetectorIDPrefix starts the ID of every Go-installed traffic-probe detector
+// (the user tests); the rest of the ID is the workload it consumes.
+const DetectorIDPrefix = "traffic-"
+
 // DefaultHealthMinDuration is how long a health (Class health) traffic
 // detector's failing samples must span, from the first failing sample in the
 // window to the last, before a scenario violation is reported, when its spec

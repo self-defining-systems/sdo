@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/evaluation"
+	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/sdk"
 )
 
@@ -22,7 +23,7 @@ func TestHealthProbeDecodesEveryVerdictTheRuntimeEncodes(t *testing.T) {
 	}{
 		{name: "clear", verdict: evaluation.Verdict{Status: evaluation.Clear, Findings: []sdk.Finding{}}, status: "clear"},
 		{name: "pending", verdict: evaluation.Verdict{Status: evaluation.Pending, DetectorStates: []evaluation.DetectorState{{DetectorID: "traffic", Status: "pending", Reason: "window incomplete"}}}, status: "pending", detector: "traffic", state: "pending", reason: "window incomplete"},
-		{name: "unavailable", verdict: evaluation.Verdict{Status: evaluation.Unavailable, Unavailable: []evaluation.UnavailableDetector{{DetectorID: "traffic", Reason: "prober down"}}}, status: "unavailable", detector: "traffic", state: "unavailable", reason: "prober down"},
+		{name: "unavailable", verdict: evaluation.Verdict{Status: evaluation.Unavailable, Unavailable: []evaluation.UnavailableDetector{{DetectorID: "traffic-web", Reason: "prober down"}}}, status: "unavailable", detector: "traffic-web", state: "unavailable", reason: "prober down"},
 		{name: "firing", verdict: evaluation.Verdict{Status: evaluation.Firing, Findings: []sdk.Finding{{DetectorID: "web", RuleID: "r", Status: sdk.FindingActive, Summary: "web down"}}}, status: "firing", detector: "web", state: "firing", reason: "web down"},
 	}
 	for _, tc := range cases {
@@ -48,6 +49,30 @@ func TestHealthProbeDecodesEveryVerdictTheRuntimeEncodes(t *testing.T) {
 				t.Fatalf("detectors = %+v", got.Detectors)
 			}
 		})
+	}
+}
+
+// A detector this environment cannot read that is not a user test (resource
+// usage without CFS counters, a clue) is a coverage note on a clear verdict,
+// never a detector the verification waits on: a head or a repair is accepted.
+func TestHealthProbeRecordsAnUnavailableNonUserTestAsACoverageNote(t *testing.T) {
+	reason := "resource usage: CFS counters unavailable for store-0/store"
+	stdout, err := json.Marshal(evaluation.Verdict{Status: evaluation.Clear, Findings: []sdk.Finding{}, Unavailable: []evaluation.UnavailableDetector{{DetectorID: "resource-saturation", Reason: reason}, {DetectorID: "cpu-throttling", Reason: reason}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeHealthVerdict(stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Detectors) != 0 {
+		t.Fatalf("detectors = %+v, want none: an unavailable non-user-test detector holds nothing", got.Detectors)
+	}
+	if len(got.CoverageNotes) != 2 || got.CoverageNotes[0].Status != "unavailable" || got.CoverageNotes[0].Reason != reason {
+		t.Fatalf("coverage notes = %+v, want both detectors recorded unavailable with their reason", got.CoverageNotes)
+	}
+	if verdict := verdictOf(got); verdict.Outcome != lifecycle.VerificationClear {
+		t.Fatalf("outcome = %v, want clear", verdict.Outcome)
 	}
 }
 

@@ -33,7 +33,7 @@ func storeReader(t *testing.T, gap bool) sdk.Detector {
 // The deployment gate's evaluation has no promoted baseline, and here no pod
 // read can run at all. A store reader Go installed is then a coverage note on
 // a clear verdict, never an evaluation failure that would stall acceptance;
-// a designer's reader keeps failing loudly.
+// a designer's reader is named unavailable.
 func TestEvaluateOnceReportsAnUnobservedGoStoreReaderAsACoverageNote(t *testing.T) {
 	verdict, err := evaluateOnceClassed(t, []sdk.Detector{storeReader(t, true)})
 	if err != nil || verdict.Status != evaluation.Clear || len(verdict.Findings) != 0 {
@@ -48,7 +48,14 @@ func TestEvaluateOnceReportsAnUnobservedGoStoreReaderAsACoverageNote(t *testing.
 	if !strings.Contains(note, "not observed") {
 		t.Fatalf("detector states = %+v", verdict.DetectorStates)
 	}
-	if _, err := evaluateOnceClassed(t, []sdk.Detector{storeReader(t, false)}); err == nil {
-		t.Fatal("a designer's store reader cleared a read that never ran")
+	// A designer's reader that could not read is named unavailable with its
+	// reason, never cleared; it is not a user test, so it holds nothing
+	// (evaluation.UnavailableHolds).
+	designer, err := evaluateOnceClassed(t, []sdk.Detector{storeReader(t, false)})
+	if err != nil {
+		t.Fatalf("designer reader: %v", err)
+	}
+	if len(designer.Unavailable) != 1 || designer.Unavailable[0].DetectorID != "store-state-kv" || designer.Unavailable[0].Reason == "" {
+		t.Fatalf("a designer's store reader cleared a read that never ran: %+v", designer)
 	}
 }
