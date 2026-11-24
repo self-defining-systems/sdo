@@ -12,7 +12,7 @@ Copy the closer of `examples/template-drift/` or `examples/stuck-pods/` to
   owners, `DiffAgainstSource`) and returns `program.NoMatch` when it is absent.
 - `Diagnose`: test the state your fix changed (a row, setting, key or object field), read live, not a symptom. A log line is the symptom's echo (it can rotate away): never require it; at most `Evidence` once matched. Select the fault's own state exactly as you saw it (column type, constraint text, key).
   Return `program.Match`, `program.NoMatch`, or `program.Unknown` (failed read, unbaselined store, unscanned `ScanTruncated`). It must Match its own incident before you save it; stay `NoMatch` on a healthy install or another fault. An absent object is not a failed read. Check its list.
-- Secret drift: use `DiffAgainstSource` and its key names in `Sides()`. Changed keys appear on both sides.
+- Secret drift: test only declared keys via `DiffAgainstSource`. Deliberate rotation can match and be reverted.
 - `Mitigate`: the changes that fixed it, in order: `program.DeletePod`,
   `program.RestartRollout`, `program.SetField`; for an `sdo mitigate X`, the same
   `program.X` with the same fields.

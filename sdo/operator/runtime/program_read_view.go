@@ -414,7 +414,9 @@ func projectSourceFields(observed, declared any) any {
 	}
 }
 
-// Keep the raw reads inside the operator. Only key names enter the diff.
+var errSecretDiffRender = sdk.Classified("accepted Secret render failed", sdk.ErrUnavailable)
+
+// Keep the raw reads inside the operator. Only key names and fixed markers enter the diff.
 func (v LiveReadView) diffSecretAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
 	source, ok := v.Source.(secretDataSource)
 	if ref.Namespace == "" || ref.Namespace != v.Namespace() || ref.APIVersion != "v1" || ref.Name == "" {
@@ -426,40 +428,61 @@ func (v LiveReadView) diffSecretAgainstSource(ref sdk.ObjectRef) (program.Diff, 
 	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
 	defer cancel()
 	accepted, err := source.AcceptedSecretData(ctx, v.SourceCommit, v.Namespace(), ref)
+	if errors.Is(err, rendered.ErrSecretSourceHook) || errors.Is(err, rendered.ErrSecretSourceNoLiteral) {
+		return program.Diff{}, sdk.Classified("accepted Secret has no comparable literal data", sdk.ErrUnavailable)
+	}
 	sourceAbsent := errors.Is(err, ErrAcceptedManifestAbsent)
-	if err != nil && !sourceAbsent && !errors.Is(err, rendered.ErrSecretSourceNoLiteral) {
-		return program.Diff{}, errors.New("accepted Secret data unavailable")
+	if err != nil && !sourceAbsent {
+		return program.Diff{}, secretDiffReadError(err, errSecretDiffRender)
 	}
 	secret, err := v.Client.CoreV1().Secrets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	liveAbsent := apierrors.IsNotFound(err)
 	if err != nil && !liveAbsent {
-		return program.Diff{}, errors.New("live Secret data unavailable")
+		return program.Diff{}, secretDiffReadError(err, sdk.ErrUnavailable)
 	}
 	var live map[string][]byte
 	if !liveAbsent {
 		live = secret.Data
 	}
-	before, after := map[string]any{}, map[string]any{}
+	before, after := map[string]bool{}, map[string]bool{}
 	for key, value := range accepted {
-		if other, present := live[key]; !present || !bytes.Equal(value, other) {
-			before[key] = nil
+		other, present := live[key]
+		if !present || !bytes.Equal(value, other) {
+			before[key] = true
+			if present {
+				after[key] = false
+			}
 		}
 	}
-	for key, value := range live {
-		if other, present := accepted[key]; !present || !bytes.Equal(value, other) {
-			after[key] = nil
+	extra := map[string]bool{}
+	for key := range live {
+		if _, declared := accepted[key]; !declared {
+			extra[key] = true
 		}
 	}
-	return program.Diff{SourceAbsent: sourceAbsent, LiveAbsent: liveAbsent,
-		Changed: sourceAbsent != liveAbsent || len(before)+len(after) > 0,
-		Text:    sdk.SourceComparisonText(secretDiffSide(before, sourceAbsent), secretDiffSide(after, liveAbsent))}, nil
+	return program.Diff{SourceAbsent: sourceAbsent, LiveAbsent: liveAbsent, Changed: len(before) > 0,
+		Text: sdk.SourceComparisonText(secretDiffSide(before, nil, sourceAbsent), secretDiffSide(after, extra, liveAbsent))}, nil
 }
 
-func secretDiffSide(keys map[string]any, absent bool) []byte {
+func secretDiffReadError(err, fallback error) error {
+	switch {
+	case apierrors.IsForbidden(err):
+		return sdk.Classified("Secret comparison forbidden", sdk.ErrRefused)
+	case errors.Is(err, context.DeadlineExceeded), apierrors.IsTimeout(err), apierrors.IsServerTimeout(err):
+		return sdk.Classified("Secret comparison timed out", context.DeadlineExceeded)
+	default:
+		return fallback
+	}
+}
+
+func secretDiffSide(keys, extra map[string]bool, absent bool) []byte {
 	if absent {
 		return []byte("null")
 	}
-	text, _ := json.Marshal(map[string]any{"data": keys})
+	text, _ := json.Marshal(struct {
+		Data  map[string]bool `json:"data"`
+		Extra map[string]bool `json:"extra_keys,omitempty"`
+	}{keys, extra})
 	return text
 }
 
