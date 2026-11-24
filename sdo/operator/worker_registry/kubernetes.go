@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -322,6 +323,7 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 	ticker := pollClock.NewTicker(e.PollInterval)
 	defer ticker.Stop()
 	observed := map[string]bool{}
+	var resultSeenAt time.Time
 	for {
 		if e.OnPhase != nil && !observed["pod_ready"] {
 			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
@@ -381,6 +383,9 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 				}
 				observed["worker_result_written"] = true
 			}
+			if resultSeenAt.IsZero() {
+				resultSeenAt = workerio.Now()
+			}
 			data, ok := resultMap.Data[ResultDataKey]
 			if !ok {
 				return nil, fmt.Errorf("result ConfigMap %q has no %s", resultName, ResultDataKey)
@@ -397,25 +402,44 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 			// reports the Job completed (a condition the Job controller derives
 			// from the pod seconds later).
 			if jobErr == nil && jobCompleted(job) {
+				logWorkerExit(task, resultSeenAt)
 				return result, nil
 			}
 			// A failed pod listing leaves the Job condition to decide.
 			if exited, err := e.workerExited(ctx, jobName); jobErr == nil && err == nil && exited {
+				logWorkerExit(task, resultSeenAt)
 				return result, nil
 			}
 		}
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("get agent result ConfigMap: %w", err)
 		}
+		wake := ticker.C()
+		stopWake := func() {}
+		if !resultSeenAt.IsZero() {
+			// The result is final and only the worker's exit is awaited: look at
+			// the pod often, not once per poll interval.
+			exitCheck := pollClock.NewTimer(min(e.PollInterval, workerExitPollInterval))
+			stopWake, wake = func() { exitCheck.Stop() }, exitCheck.C()
+		}
 		select {
 		case <-ctx.Done():
+			stopWake()
 			if bounded && !workerio.Now().Before(deadline) {
 				return nil, &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
 			}
 			return nil, ctx.Err()
-		case <-ticker.C():
+		case <-wake:
+			stopWake()
 		}
 	}
+}
+
+// workerExitPollInterval is how often the executor checks for the worker's exit once its result exists.
+const workerExitPollInterval = 200 * time.Millisecond
+
+func logWorkerExit(task *contracts.AgentTask, resultSeenAt time.Time) {
+	slog.Info("agent_worker_exit_timing", "task_id", task.GetTaskId(), "result_seen_to_exit_ms", workerio.Now().Sub(resultSeenAt).Milliseconds())
 }
 
 // RequestComponents lists the request's largest populated top-level fields with their encoded sizes.

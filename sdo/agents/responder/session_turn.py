@@ -61,8 +61,15 @@ def branch_correction(branch: TurnBranch) -> str:
     )
 
 
-def session_output_schema() -> dict[str, object]:
-    """One strict root object whose nullable branches carry each turn's own result schema."""
+def session_output_schema(provider: str = "codex") -> dict[str, object]:
+    """One strict root object whose nullable branches carry each turn's own result schema.
+
+    Codex's strict mode needs every property listed in ``required``. Claude's own output
+    check rejects an answer that omits the other branch's key, which costs a resumed
+    retry turn for nothing: ``unwrap_branch`` already reads a missing branch as null, so
+    Claude's wrapper requires none of its branches and keeps the same properties (the
+    tool-schema prefix stays identical across the responder and closing turns).
+    """
 
     # Imported here: both modules import this one for their turn options.
     from sdo.agents.responder.codex import _incident_result_schema
@@ -79,7 +86,7 @@ def session_output_schema() -> dict[str, object]:
     return {
         "type": "object",
         "properties": properties,
-        "required": list(properties),
+        "required": list(properties) if provider != "claude" else [],
         "additionalProperties": False,
     }
 
@@ -96,7 +103,7 @@ def session_turn_options(
         "session_ownership_directory": Path(os.environ["SDO_SESSION_DIR"]) / "thread-ownership"
         if os.environ.get("SDO_SESSION_DIR")
         else None,
-        "output_schema": session_output_schema(),
+        "output_schema": session_output_schema(provider),
     }
 
 
