@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -121,93 +124,133 @@ func (g *GenericCapture) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Un
 	}
 	ctx, cancel := context.WithTimeout(g.context(), 45*time.Second)
 	defer cancel()
-	namespaces := map[string]bool{g.Namespace: true}
+	namespaceSet := map[string]bool{g.Namespace: true}
 	for _, ref := range refs {
-		if ref.Namespace != "" {
-			namespaces[ref.Namespace] = true
+		namespaceSet[ref.Namespace] = true
+	}
+	var namespaces []string
+	for namespace := range namespaceSet {
+		if namespace != "" {
+			namespaces = append(namespaces, namespace)
 		}
 	}
-	var out []unstructured.Unstructured
-	for _, r := range resources {
+	sort.Strings(namespaces)
+
+	// Each collection is independent. Limit outstanding requests while
+	// preserving each collection's pagination and the client's rate limit.
+	slots := make(chan struct{}, 8)
+	results := make([][]unstructured.Unstructured, len(resources))
+	var workers sync.WaitGroup
+	var firstFailure sync.Once
+	var captureErr error
+collect:
+	for i, r := range resources {
 		if !captureVerb(r.resource, "list") {
 			continue
 		}
-		if r.resource.Namespaced {
-			names := make([]string, 0, len(namespaces))
-			for ns := range namespaces {
-				if ns != "" {
-					names = append(names, ns)
-				}
-			}
-			sort.Strings(names)
-			for _, ns := range names {
-				// Continue pagination until the entire collection is frozen.
-				token := ""
-				for {
-					list, err := g.Client.Resource(r.gvr).Namespace(ns).List(ctx, metav1.ListOptions{Limit: 500, Continue: token})
-					if err != nil {
-						return nil, fmt.Errorf("capture %s in namespace %s: %w", r.gvr, ns, err)
-					}
-					for _, o := range list.Items {
-						o.SetAPIVersion(r.gvr.GroupVersion().String())
-						o.SetKind(r.resource.Kind)
-						out = append(out, o)
-					}
-					token = list.GetContinue()
-					if token == "" {
-						break
-					}
-				}
-			}
-		} else {
-			// Cluster resources require an explicit incident reference; no cluster sweep.
-			names := map[string]bool{}
-			for _, ref := range refs {
-				if ref.Namespace == "" && captureMatch(r, ref) {
-					names[ref.Name] = true
-				}
-			}
-			if names[""] {
-				token := ""
-				for {
-					list, err := g.Client.Resource(r.gvr).List(ctx, metav1.ListOptions{Limit: 500, Continue: token})
-					if err != nil {
-						return nil, err
-					}
-					for _, o := range list.Items {
-						o.SetAPIVersion(r.gvr.GroupVersion().String())
-						o.SetKind(r.resource.Kind)
-						out = append(out, o)
-					}
-					token = list.GetContinue()
-					if token == "" {
-						break
-					}
-				}
-			} else {
-				sorted := make([]string, 0, len(names))
-				for name := range names {
-					sorted = append(sorted, name)
-				}
-				sort.Strings(sorted)
-				for _, name := range sorted {
-					o, err := g.Client.Resource(r.gvr).Get(ctx, name, metav1.GetOptions{})
-					if apierrors.IsNotFound(err) {
-						continue
-					}
-					if err != nil {
-						return nil, fmt.Errorf("capture %s/%s: %w", r.gvr, name, err)
-					}
-					o.SetAPIVersion(r.gvr.GroupVersion().String())
-					o.SetKind(r.resource.Kind)
-					out = append(out, *o)
-				}
-			}
+		select {
+		case <-ctx.Done():
+			break collect
+		case slots <- struct{}{}:
 		}
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			defer func() { <-slots }()
+			if ctx.Err() != nil {
+				return
+			}
+			objects, err := g.captureResourceObjects(ctx, r, namespaces, refs)
+			if err != nil {
+				firstFailure.Do(func() {
+					captureErr = err
+					cancel()
+				})
+				return
+			}
+			results[i] = objects
+		}()
 	}
+	workers.Wait()
+	if captureErr != nil {
+		return nil, captureErr
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	out := slices.Concat(results...)
 	sdk.SortObjects(out)
 	return out, nil
 }
+
+func (g *GenericCapture) captureResourceObjects(ctx context.Context, r captureResource, namespaces []string, refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	resource := g.Client.Resource(r.gvr)
+	var out []unstructured.Unstructured
+	if r.resource.Namespaced {
+		for _, ns := range namespaces {
+			items, err := r.captureList(ctx, resource.Namespace(ns))
+			if err != nil {
+				return nil, fmt.Errorf("capture %s in namespace %s: %w", r.gvr, ns, err)
+			}
+			out = append(out, items...)
+		}
+		return out, nil
+	}
+
+	// Cluster resources require an explicit incident reference; no cluster sweep.
+	names := map[string]bool{}
+	for _, ref := range refs {
+		if ref.Namespace == "" && captureMatch(r, ref) {
+			names[ref.Name] = true
+		}
+	}
+	if names[""] {
+		items, err := r.captureList(ctx, resource)
+		if err != nil {
+			return nil, fmt.Errorf("capture %s: %w", r.gvr, err)
+		}
+		return items, nil
+	}
+	sorted := make([]string, 0, len(names))
+	for name := range names {
+		sorted = append(sorted, name)
+	}
+	sort.Strings(sorted)
+	for _, name := range sorted {
+		o, err := resource.Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("capture %s/%s: %w", r.gvr, name, err)
+		}
+		o.SetAPIVersion(r.gvr.GroupVersion().String())
+		o.SetKind(r.resource.Kind)
+		out = append(out, *o)
+	}
+	return out, nil
+}
+
+func (r captureResource) captureList(ctx context.Context, client dynamic.ResourceInterface) ([]unstructured.Unstructured, error) {
+	var out []unstructured.Unstructured
+	token := ""
+	for {
+		list, err := client.List(ctx, metav1.ListOptions{Limit: 500, Continue: token})
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range list.Items {
+			o.SetAPIVersion(r.gvr.GroupVersion().String())
+			o.SetKind(r.resource.Kind)
+			out = append(out, o)
+		}
+		token = list.GetContinue()
+		if token == "" {
+			return out, nil
+		}
+	}
+}
+
 func (g *GenericCapture) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	if strings.EqualFold(ref.Kind, "Secret") {
 		return nil, errors.New("Secret reads forbidden")

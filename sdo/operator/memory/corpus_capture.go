@@ -297,6 +297,16 @@ func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk
 	if err != nil {
 		return err
 	}
+	if phase == "open@detect" && view != nil && namespace != "" && view.Namespace() == namespace {
+		// The create-only snapshot was published after the recordings file.
+		// A later diagnosis can append recordings without recollecting state
+		// that could never replace the original opening observation.
+		snapshot, snapshotErr := os.Lstat(filepath.Join(dir, phase+".json"))
+		recordings, recordingsErr := os.Lstat(filepath.Join(dir, phase+"-recordings.json"))
+		if snapshotErr == nil && snapshot.Mode().IsRegular() && recordingsErr == nil && recordings.Mode().IsRegular() {
+			return nil
+		}
+	}
 	refs, err = CapturedSessionRefs(filepath.Dir(dir), refs)
 	if err != nil {
 		return err
