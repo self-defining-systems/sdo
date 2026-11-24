@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -111,4 +112,77 @@ func TestProgramPanicRecordsReplayableInputsAndStack(t *testing.T) {
 			}
 		})
 	}
+}
+
+type readLimitFixture struct{}
+
+func (readLimitFixture) Spec() program.ProgramSpec { return program.ProgramSpec{ID: "read-limit"} }
+func (readLimitFixture) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
+	_ = v.Pods()
+	return program.Verdict{Result: program.Match}, nil
+}
+func (readLimitFixture) Mitigate(_ context.Context, v program.ReadView, _ program.Bindings) (program.Plan, error) {
+	_ = v.Pods()
+	return program.Plan{}, errors.New("mitigation continued after oversized read")
+}
+
+func TestOversizedErrorlessReadDoesNotRecordProgramPanic(t *testing.T) {
+	var logs bytes.Buffer
+	prior := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer slog.SetDefault(prior)
+
+	server, err := NewServer("accepted", "binary", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := program.NewRegistry([]program.Diagnoser{readLimitFixture{}}, []program.Mitigator{readLimitFixture{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.WithPrograms(registry)
+	for _, operation := range []pb.MemoryProgramInvocation_Operation{
+		pb.MemoryProgramInvocation_OPERATION_DIAGNOSE, pb.MemoryProgramInvocation_OPERATION_MITIGATE,
+	} {
+		stream := &readLimitStream{request: &pb.RunProgramRequest{
+			Frame: &pb.RunProgramRequest_Invocation{Invocation: &pb.MemoryProgramInvocation{ProgramId: "read-limit", Operation: operation}},
+		}}
+		err := server.RunProgram(stream)
+		response := stream.result
+		if err != nil || !strings.Contains(response.String(), "program read result exceeds the memory-host message limit") || strings.Contains(response.String(), "panic") {
+			t.Errorf("%s = %v, %v", operation, response, err)
+		}
+	}
+	if logs.Len() != 0 {
+		t.Errorf("oversized read logged a program panic: %s", logs.String())
+	}
+}
+
+// Drive both sides of the stream protocol without sockets or a wall clock.
+type readLimitStream struct {
+	pb.MemoryHostService_RunProgramServer
+	request *pb.RunProgramRequest
+	result  *pb.RunProgramResponse
+}
+
+func (*readLimitStream) Context() context.Context               { return context.Background() }
+func (s *readLimitStream) Recv() (*pb.RunProgramRequest, error) { return s.request, nil }
+func (s *readLimitStream) Send(response *pb.RunProgramResponse) error {
+	if call := response.GetRead(); call != nil {
+		return replyToProgram(s.Context(), readLimitClient{stream: s}, call, func(programread.Message) programread.Message {
+			return programread.Message{Values: []json.RawMessage{[]byte("[" + strings.Repeat(" ", MaxMessageBytes) + "]")}}
+		})
+	}
+	s.result = response
+	return nil
+}
+
+type readLimitClient struct {
+	pb.MemoryHostService_RunProgramClient
+	stream *readLimitStream
+}
+
+func (c readLimitClient) Send(request *pb.RunProgramRequest) error {
+	c.stream.request = request
+	return nil
 }

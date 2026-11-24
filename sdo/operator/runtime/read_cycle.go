@@ -43,7 +43,7 @@ func NewCycleReadView(view program.ReadView) *CycleReadView {
 			view = freeze(*live)
 		}
 	}
-	cached := &cachedReadView{ReadView: view, entries: map[string]*cachedRead{}}
+	cached := &cachedReadView{ReadView: view, readCache: &readCache{entries: map[string]*cachedRead{}}}
 	return &CycleReadView{RecordingReadView: &sdktest.RecordingReadView{ReadView: cached}}
 }
 func (v *CycleReadView) ObservedView() (sdk.DetectionContext, func() error) {
@@ -70,6 +70,10 @@ type cachedRead struct {
 }
 type cachedReadView struct {
 	program.ReadView
+	*readCache
+}
+
+type readCache struct {
 	mu      sync.Mutex
 	entries map[string]*cachedRead
 }

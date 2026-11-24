@@ -80,7 +80,12 @@ type ProgramRPC interface {
 }
 
 func (s *Server) ExecuteProgram(ctx context.Context, invocation *pb.MemoryProgramInvocation, read func(programread.Message) programread.Message) (*pb.RunProgramResponse, error) {
-	return s.executeProgram(ctx, invocation, func(call programread.Message) (programread.Message, error) { return read(call), nil })
+	return s.executeProgram(ctx, invocation, func(call programread.Message) (programread.Message, error) {
+		answer := read(call)
+		bounded, _ := boundProgramReadReply(answer)
+		recordProgramRead(answer, bounded)
+		return bounded, nil
+	})
 }
 
 func (s *Server) executeProgram(ctx context.Context, invocation *pb.MemoryProgramInvocation, exchange func(programread.Message) (programread.Message, error)) (response *pb.RunProgramResponse, err error) {
@@ -99,9 +104,17 @@ func (s *Server) executeProgram(ctx context.Context, invocation *pb.MemoryProgra
 		}
 		return answer, err
 	}}
-	record := func(value any) { s.recordProgramPanic(invocation, trace, value) }
+	record := func(value any) {
+		if value != sdk.ErrReadReplyLimit {
+			s.recordProgramPanic(invocation, trace, value)
+		}
+	}
 	defer func() {
 		if value := recover(); value != nil {
+			if value == sdk.ErrReadReplyLimit {
+				response, err = programError(sdk.ErrReadReplyLimit), nil
+				return
+			}
 			record(value)
 			response, err = programError(fmt.Errorf("program panic: %v", value)), nil
 		}
@@ -124,6 +137,9 @@ func (s *Server) executeProgram(ctx context.Context, invocation *pb.MemoryProgra
 			return programError(err), nil
 		}
 		plan, err := mitigate(ctx, p, view, bindings)
+		if aborted := view.ReadAbortError(); aborted != nil {
+			err = aborted
+		}
 		if err != nil {
 			return programError(err), nil
 		}
