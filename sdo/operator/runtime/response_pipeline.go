@@ -90,17 +90,36 @@ func (d agentLifecycleDispatcher) Dispatch(ctx context.Context, request Incident
 	return c.dispatcher.Dispatch(ctx, request)
 }
 
-func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRequest) dispatchCompletion {
-	dispatcher := agentLifecycleDispatcher{controller: c}
-	// A direct responder uses the original frozen task and result path.
-	if pageOpened(&request) && deterministicStageReport(request.PriorStages) == nil ||
+type responseEntry int
+
+const (
+	runAutomaticStages responseEntry = iota
+	dispatchDirectResponder
+	dispatchStagedHandoff
+)
+
+// Choose the entry before launching background work. The same choice decides
+// whether automatic execution can still hold the controller's recovery checks.
+func (c *Controller) responseEntry(request IncidentRequest) responseEntry {
+	report := deterministicStageReport(request.PriorStages)
+	if pageOpened(&request) && report == nil ||
 		len(c.codePath.Selection.ResponseStages) > 0 && c.codePath.Selection.ResponseStages[0] == "agent" {
+		return dispatchDirectResponder
+	}
+	if report.GetHandoffSelected() || report != nil && (request.PreparedAgentTask != "" || pageOpened(&request)) {
+		return dispatchStagedHandoff
+	}
+	return runAutomaticStages
+}
+
+func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRequest, entry responseEntry) dispatchCompletion {
+	dispatcher := agentLifecycleDispatcher{controller: c}
+	switch entry {
+	case dispatchDirectResponder:
 		result, err := dispatcher.Dispatch(ctx, request)
 		return dispatchCompletion{result: result, err: err}
-	}
-	// Rejoin the frozen handoff with no claim-time health observation.
-	report := deterministicStageReport(request.PriorStages)
-	if report.GetHandoffSelected() || report != nil && (request.PreparedAgentTask != "" || pageOpened(&request)) {
+	case dispatchStagedHandoff:
+		// Rejoin the frozen handoff with no claim-time health observation.
 		result, err := dispatcher.Dispatch(ctx, stageDispatchRequest(request))
 		state := &IncidentState{Request: request, PriorStages: cloneStageReports(request.PriorStages), Result: &result}
 		merged, encodeErr := responsePipelineResult(state, result.Timing.StartedAt, result.Timing.CompletedAt)

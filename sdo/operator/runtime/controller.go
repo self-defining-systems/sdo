@@ -1373,7 +1373,8 @@ func (c *Controller) nextWake() (time.Time, string) {
 		earlyDeadline = c.earlyReportWakeLocked()
 		earlyReason = "early report"
 	}
-	externalCompleted := c.config.ExternalIncidentsOnly && c.incidentOpen && c.responderDone
+	incidentOpen := c.incidentOpen
+	externalCompleted := c.config.ExternalIncidentsOnly && incidentOpen && c.responderDone
 	retireDeadline := c.retirementWakeLocked(c.clock())
 	c.mu.Unlock()
 	if externalCompleted {
@@ -1393,6 +1394,11 @@ func (c *Controller) nextWake() (time.Time, string) {
 	}
 	if retry := c.driftRetryWake(next); !retry.Equal(next) {
 		next, why = retry, "drift retry"
+	}
+	if next.IsZero() && incidentOpen {
+		// Event-only incidents can have no detector or deadline scheduled.
+		// Keep a finite wake without a zero-delay loop.
+		return c.clock().Add(time.Second), "open incident poll"
 	}
 	return next, why
 }
