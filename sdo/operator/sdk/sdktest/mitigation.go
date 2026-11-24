@@ -52,34 +52,6 @@ func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (Mi
 	if err := program.CheckReplicaSetScales(plan, c.Open); err != nil {
 		return result, fmt.Errorf("program.mitigation-unreplayable: %w", err)
 	}
-	scripted := false
-	for _, action := range plan.Actions {
-		var script program.RunScript
-		ok := false
-		switch a := action.(type) {
-		case program.RunScript:
-			script, ok = a, true
-		case *program.RunScript:
-			if a != nil {
-				script, ok = *a, true
-			}
-		}
-		if ok {
-			scripted = true
-			if _, err := ScriptOrigin(script, c); err != nil {
-				return result, fmt.Errorf("program.mitigation-not-repaired: %w", err)
-			}
-		}
-	}
-	if scripted {
-		before := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings, 5*time.Second)
-		after := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: c.Fixed, Calls: c.PhaseRecordings("fixed")}, c.Bindings, 5*time.Second)
-		if before.Result != program.Match || after.Result != program.NoMatch {
-			return result, fmt.Errorf("program.mitigation-not-repaired: observed script transition must diagnose Match then NoMatch")
-		}
-		result.Status = MitigationReplayObservedTransition
-		return result, nil
-	}
 	for _, action := range plan.Actions {
 		switch a := action.(type) {
 		case program.SetField:
@@ -295,6 +267,9 @@ func CheckPlanValid(m program.Mitigator, c CorpusCase) error {
 // planOnState is CheckPlanValid with the reason the plan could not be checked ("" when it was): Mitigate failed on
 // the recorded reads (a binding or a read the capture lacks), or it yielded no action there.
 func planOnState(m program.Mitigator, c CorpusCase) (unverified string, err error) {
+	if err := program.ValidateBindings(m.Spec(), c.Bindings); err != nil {
+		return "Mitigate could not bind the captured state: " + err.Error(), nil
+	}
 	plan, err := replayMitigation(m, &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
 	if err != nil {
 		return "Mitigate could not run on it: " + err.Error(), nil

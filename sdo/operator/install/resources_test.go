@@ -29,3 +29,13 @@ func TestControllerPodGracePeriodOutlastsTheChildStop(t *testing.T) {
 		t.Fatalf("terminationGracePeriodSeconds = %d, not above the child's stop grace %v", *grace, builder.ControllerStopGrace)
 	}
 }
+
+func TestControllerPrewarmsDedicatedScriptImage(t *testing.T) {
+	job := controllerJob(Config{Namespace: "app", Application: "synthetic", ControllerImage: "controller", ScriptImage: "script-tools"})
+	for _, init := range job.Spec.Template.Spec.InitContainers {
+		if init.Name == "prewarm-script" && init.Image == "script-tools" && init.ImagePullPolicy == corev1.PullIfNotPresent {
+			return
+		}
+	}
+	t.Fatal("controller does not prewarm its dedicated script image")
+}

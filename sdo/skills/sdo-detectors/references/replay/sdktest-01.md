@@ -106,12 +106,6 @@ func ProjectCapturedObject(raw []byte) ([]byte, error)
     last-applied copies and volatile write metadata. Discovery callers exclude
     Secrets entirely; this also protects recorded JSON.
 
-func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginReceipt, error)
-    ScriptOrigin checks linkage to an original successful timed receipt of
-    the case's incident. Every recorded mutation path qualifies (RunScript,
-    observed API writes); when the receipt recorded script bytes, they must be
-    these bytes.
-
 func SnapshotDigest(raw []byte) (string, error)
     SnapshotDigest hashes a snapshot's canonical form, so provenance compares
     snapshot content rather than one file layout.
@@ -131,7 +125,6 @@ func ValidateCorpusProvenance(dir string) error
 TYPES
 
 type CorpusCase struct {
-	ScriptOrigins       map[string]string `json:"script_origins,omitempty"`
 	Open                Snapshot
 	Fixed               Snapshot
 	Healthy             Snapshot

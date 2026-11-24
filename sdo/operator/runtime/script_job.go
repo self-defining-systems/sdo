@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"path"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strconv"
@@ -15,23 +16,55 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk/program"
 )
 
 const ScriptServiceAccount = "sdo-script"
 
 func (c TypedPlanClient) ScriptReady() error {
-	if c.Client == nil || c.ScriptImage == "" {
-		return fmt.Errorf("script Job transport requires a configured tool image and Kubernetes client")
+	if c.Client == nil || c.ScriptImage == "" || c.ScriptNamespace == "" || c.ScriptRepositoryMount == "" || c.ScriptRepositoryPVC == "" {
+		return fmt.Errorf("script Job transport requires tools, Kubernetes and shared incident storage")
 	}
 	return nil
+}
+
+// A terminal Job and its terminated pods cannot admit another mutation.
+func scriptJobStopped(ctx context.Context, client kubernetes.Interface, namespace, name string) bool {
+	job, err := client.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		if err != nil {
+			return false
+		}
+		terminal := false
+		for _, condition := range job.Status.Conditions {
+			terminal = terminal || condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed)
+		}
+		if !terminal {
+			return false
+		}
+	}
+	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + name})
+	if err != nil {
+		return false
+	}
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			return false
+		}
+	}
+	return true
 }
 
 // RunScript reserves a durable application before creating a nonretrying Job.
 // A reservation with a missing Job is uncertain and can never launch a replacement.
 func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest) (out ScriptExecutionResult, err error) {
 	out = ScriptExecutionResult{ApplicationID: r.ApplicationID, ScriptDigest: program.ScriptDigest(r.Script)}
-	if c.Client == nil || c.ScriptImage == "" || r.ApplicationID == "" || r.IncidentID == "" || r.Namespace == "" {
+	if err := c.ScriptReady(); err != nil {
+		return out, err
+	}
+	if r.ApplicationID == "" || r.IncidentID == "" || r.Namespace == "" {
 		return out, fmt.Errorf("script Job requires configured image and application/incident/namespace identity")
 	}
 	if err = c.checkPlanNamespace(r.Namespace); err != nil {
@@ -42,8 +75,9 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(r.IncidentID+"\x00"+r.ApplicationID)))
 	out.JobName = "sdo-script-" + digest[:32]
-	maps := c.Client.CoreV1().ConfigMaps(r.Namespace)
-	jobs := c.Client.BatchV1().Jobs(r.Namespace)
+	out.ResultRef = "ConfigMap/" + c.ScriptNamespace + "/" + out.JobName
+	maps := c.Client.CoreV1().ConfigMaps(c.ScriptNamespace)
+	jobs := c.Client.BatchV1().Jobs(c.ScriptNamespace)
 	index, getErr := maps.Get(ctx, out.JobName, metav1.GetOptions{})
 	provenance, _ := json.Marshal(r.Inputs)
 	fresh := false
@@ -55,7 +89,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 			deadline = d
 		}
-		index, err = maps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: out.JobName, Namespace: r.Namespace, Labels: map[string]string{"sdo.dev/script-application": digest[:32], "app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"application_id": r.ApplicationID, "incident_id": r.IncidentID, "script_digest": out.ScriptDigest, "deadline": deadline.UTC().Format(time.RFC3339Nano), "phase": "creating", "inputs": string(provenance)}}, metav1.CreateOptions{})
+		index, err = maps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: out.JobName, Namespace: c.ScriptNamespace, Labels: map[string]string{"sdo.dev/script-application": digest[:32], "app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"application_id": r.ApplicationID, "incident_id": r.IncidentID, "script_digest": out.ScriptDigest, "deadline": deadline.UTC().Format(time.RFC3339Nano), "phase": "creating", "inputs": string(provenance), "namespace": r.Namespace}}, metav1.CreateOptions{})
 		if apierrors.IsAlreadyExists(err) {
 			index, err = maps.Get(ctx, out.JobName, metav1.GetOptions{})
 		} else {
@@ -67,7 +101,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	if err != nil {
 		return out, err
 	}
-	if index.Data["application_id"] != r.ApplicationID || index.Data["incident_id"] != r.IncidentID || index.Data["script_digest"] != out.ScriptDigest {
+	if index.Data["application_id"] != r.ApplicationID || index.Data["incident_id"] != r.IncidentID || index.Data["namespace"] != r.Namespace || index.Data["script_digest"] != out.ScriptDigest {
 		return out, fmt.Errorf("script application identity conflict")
 	}
 	out.JobUID = index.Data["job_uid"]
@@ -75,6 +109,25 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	if raw := index.Data["result.json"]; raw != "" {
 		return decodeScriptResult(out, raw)
 	}
+	// A result is published only after the runner drains. On other exits wait
+	// for the Job's active deadline, including when the caller was cancelled.
+	defer func() {
+		if err == nil {
+			return
+		}
+		wait := context.WithoutCancel(ctx)
+		ticker := lifecycleio.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			probe, cancel := context.WithTimeout(wait, 2*time.Second)
+			stopped := scriptJobStopped(probe, c.Client, c.ScriptNamespace, out.JobName)
+			cancel()
+			if stopped {
+				return
+			}
+			<-ticker.C
+		}
+	}()
 	job, getErr := jobs.Get(ctx, out.JobName, metav1.GetOptions{})
 	if apierrors.IsNotFound(getErr) && fresh {
 		deadline, parseErr := time.Parse(time.RFC3339Nano, index.Data["deadline"])
@@ -86,7 +139,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 			return out, fmt.Errorf("script deadline expired before Job creation")
 		}
 		zero := int32(0)
-		env := []corev1.EnvVar{{Name: "SDO_SCRIPT_TEXT", Value: r.Script}, {Name: "SDO_SCRIPT_INDEX", Value: out.JobName}, {Name: "SDO_SCRIPT_NAMESPACE", Value: r.Namespace}}
+		env := []corev1.EnvVar{{Name: "SDO_SCRIPT_TEXT", Value: r.Script}, {Name: "SDO_SCRIPT_INDEX", Value: out.JobName}, {Name: "SDO_SCRIPT_NAMESPACE", Value: r.Namespace}, {Name: "SDO_SCRIPT_STORAGE_NAMESPACE", Value: c.ScriptNamespace}}
 		keys := make([]string, 0, len(r.Env))
 		for key := range r.Env {
 			keys = append(keys, key)
@@ -95,7 +148,11 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		for _, key := range keys {
 			env = append(env, corev1.EnvVar{Name: key, Value: r.Env[key]})
 		}
-		job, err = jobs.Create(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: out.JobName, Namespace: r.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}, Annotations: map[string]string{"sdo.dev/script-application": r.ApplicationID, "sdo.dev/script-digest": out.ScriptDigest}}, Spec: batchv1.JobSpec{BackoffLimit: &zero, ActiveDeadlineSeconds: &seconds, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"sdo.dev/script-application": digest[:32], "app.kubernetes.io/managed-by": "sdo"}}, Spec: corev1.PodSpec{ServiceAccountName: ScriptServiceAccount, RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "script", Image: c.ScriptImage, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/sdo-operator", "script-runner"}, Env: env}}}}}}, metav1.CreateOptions{})
+		sub, prepareErr := memory.PrepareIncidentSession(c.ScriptRepositoryMount, c.ScriptRepositorySubPath, r.IncidentID)
+		if prepareErr != nil {
+			return out, prepareErr
+		}
+		job, err = jobs.Create(ctx, scriptJob(c, out.JobName, r.ApplicationID, out.ScriptDigest, digest[:32], seconds, zero, env, sub), metav1.CreateOptions{})
 		if apierrors.IsAlreadyExists(err) {
 			job, err = jobs.Get(ctx, out.JobName, metav1.GetOptions{})
 		}
@@ -121,6 +178,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		if previous := index.Data["job_uid"]; previous != "" && previous != out.JobUID {
 			return out, fmt.Errorf("script application Job UID conflict")
 		}
+		index.OwnerReferences = []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID}}
 		index.Data["job_uid"] = out.JobUID
 		index.Data["phase"] = "started"
 		_, err = maps.Update(ctx, index, metav1.UpdateOptions{})
@@ -180,6 +238,38 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		}
 	}
 }
+
+// Only the trusted runner mounts the incident fence and service account token.
+// The runner drops credentials before executing authored shell code.
+func scriptJob(c TypedPlanClient, name, application, scriptDigest, label string, seconds int64, zero int32, env []corev1.EnvVar, session string) *batchv1.Job {
+	no, root, mode := false, int64(0), int32(0600)
+	replace := batchv1.Failed
+	ttl := int32(24 * 60 * 60)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.ScriptNamespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}, Annotations: map[string]string{"sdo.dev/script-application": application, "sdo.dev/script-digest": scriptDigest}},
+		Spec: batchv1.JobSpec{TTLSecondsAfterFinished: &ttl, BackoffLimit: &zero, ActiveDeadlineSeconds: &seconds, PodReplacementPolicy: &replace,
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"sdo.dev/script-application": label, "app.kubernetes.io/managed-by": "sdo"}}, Spec: corev1.PodSpec{
+				ServiceAccountName: ScriptServiceAccount, AutomountServiceAccountToken: &no, NodeName: c.ScriptNode, RestartPolicy: corev1.RestartPolicyNever,
+				Containers: []corev1.Container{{Name: "script", Image: c.ScriptImage, ImagePullPolicy: corev1.PullIfNotPresent,
+					Command: []string{"/usr/local/bin/sdo-operator", "script-runner"}, Env: env,
+					SecurityContext: &corev1.SecurityContext{RunAsUser: &root, AllowPrivilegeEscalation: &no},
+					VolumeMounts: []corev1.VolumeMount{
+						{Name: "incident", MountPath: "/sdo/history", SubPath: path.Join(session, "api-history")},
+						{Name: "identity", MountPath: "/var/run/secrets/kubernetes.io/serviceaccount", ReadOnly: true},
+					},
+				}},
+				Volumes: []corev1.Volume{
+					{Name: "incident", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: c.ScriptRepositoryPVC}}},
+					{Name: "identity", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{DefaultMode: &mode, Sources: []corev1.VolumeProjection{
+						{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token"}},
+						{ConfigMap: &corev1.ConfigMapProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "kube-root-ca.crt"}, Items: []corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}}}},
+					}}}},
+				},
+			}},
+		},
+	}
+}
+
 func decodeScriptResult(identity ScriptExecutionResult, raw string) (ScriptExecutionResult, error) {
 	var out ScriptExecutionResult
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
@@ -188,13 +278,6 @@ func decodeScriptResult(identity ScriptExecutionResult, raw string) (ScriptExecu
 	if out.ApplicationID != identity.ApplicationID || out.JobName != identity.JobName || out.JobUID == "" || identity.JobUID != "" && out.JobUID != identity.JobUID || out.ScriptDigest != identity.ScriptDigest {
 		return identity, fmt.Errorf("script result identity mismatch")
 	}
-	if len(out.Stdout) > program.MaxScriptOutputBytes {
-		out.Stdout = out.Stdout[:program.MaxScriptOutputBytes]
-		out.StdoutTruncated = true
-	}
-	if len(out.Stderr) > program.MaxScriptOutputBytes {
-		out.Stderr = out.Stderr[:program.MaxScriptOutputBytes]
-		out.StderrTruncated = true
-	}
+	out.ResultRef = identity.ResultRef
 	return out, nil
 }

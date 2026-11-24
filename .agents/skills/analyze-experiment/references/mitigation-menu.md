@@ -105,23 +105,14 @@ are first-class learnable mitigations; typed actions remain optional upgrades.
 `ActionReport.script_result_json` retains the application ID, Job name/UID, script
 digest, input provenance, API receipt metadata, selected repair scope and touched
 object references. Scope identifies the selected repair and is not proof that an
-object was written. Raw output and captured preimages/postimages stay in the
-application-local private result ConfigMap named by `result_ref`; complete object
-images use `images_ref` manifests and binary chunks labelled by script application,
-with immutable first-write preimages and explicit settled absence. Request receipts
-also have private per-request records. Output is capped
-at 64 KiB per stream with truncation flags. Script Jobs have no retries or TTL;
-a durable reservation and Job UID forbid replacement after uncertain execution.
+object was written. Script output is discarded. The stage reports the exit status,
+duration and object references from Kubernetes API receipts. First-write preimages,
+settled postimages and per-request receipts live in private ConfigMaps owned by the
+nonretrying Job. The Job and its ConfigMaps expire 24 hours after finishing.
 
-A memory-check note with `STATUS_OBSERVED_TRANSITION` means open Diagnose matched,
-fixed Diagnose returned NoMatch, bindings/inputs validated, and the authored script
-digest links to an original successful timed controller `RepairReceipt` in the
-same incident. The corpus label `script_origins` maps digest to receipt ID. This
-basis neither executes bash offline nor proves the rewritten script ran or caused
-every observed change. Fixed captures are never simulator action replies. At live
-application time, script exit zero alone gives no verified program credit:
-Diagnose must return NoMatch and targeted findings must clear. Whole-app closure
-still requires global health. Script preimages do not authorize automatic undo.
+Offline replay does not execute scripts. Live repair credit requires a fresh
+NoMatch diagnosis and clearance of the target findings. Whole-app closure still
+requires global health. Script preimages do not authorize automatic undo.
 
 At final settlement, `PlanApplication.final_verification_basis` is
 `observed-transition` only after a fresh bound Diagnose NoMatch and scoped health

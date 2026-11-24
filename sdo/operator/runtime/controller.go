@@ -126,6 +126,7 @@ type Controller struct {
 	signals           *incidentSignals
 	ExternalIncidents func(context.Context) (*ExternalIncident, error)
 	memoryRefresh     func(context.Context) (bool, error)
+	incidentGate      func(string) (*apihistory.MutationGate, error)
 	config            ControllerConfig
 	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
 	closureRecheckIdentity string
@@ -1896,8 +1897,19 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		if safe {
 			guard = closureGuard.observation
 		}
-	} else if loop != nil && observationErr == nil {
-		guard, observationErr = loop.observeMutations()
+	} else if observationErr == nil {
+		if loop != nil {
+			guard, observationErr = loop.observeMutations()
+		} else if c.incidentGate != nil {
+			var gate *apihistory.MutationGate
+			gate, observationErr = c.incidentGate(request.IncidentID)
+			if observationErr == nil {
+				guard, observationErr = gate.TryObserve()
+				if observationErr == nil && guard == nil {
+					observationErr = errors.New("incident mutation observation is busy")
+				}
+			}
+		}
 		if guard != nil {
 			release = func() { guard.Close() }
 		}
@@ -2131,10 +2143,25 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			}
 		}
 	}
-	if verified && guard != nil {
-		if err := guard.Fence(now); err != nil {
+	if !verified && guard == nil && c.incidentGate != nil {
+		gate, err := c.incidentGate(request.IncidentID)
+		if err == nil {
+			guard, err = gate.TryObserve()
+		}
+		if err != nil || guard == nil {
 			c.mu.Unlock()
-			c.reportBrokerError("fence verified responder", err)
+			return false
+		}
+		defer guard.Close()
+	}
+	if guard != nil {
+		fence := guard.Seal
+		if verified {
+			fence = func() error { return guard.Fence(now) }
+		}
+		if err := fence(); err != nil {
+			c.mu.Unlock()
+			c.reportBrokerError("fence incident writes", err)
 			return false
 		}
 	}

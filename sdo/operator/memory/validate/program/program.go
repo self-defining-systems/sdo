@@ -176,38 +176,10 @@ func inspect(workspace, module, detectors string, adoption bool) ([]Spec, error)
 			return nil, err
 		}
 		item.Cases = Cases
-		if err := validateScriptDigests(base, filepath.Join(workspace, "corpus"), item); err != nil {
-			return nil, fmt.Errorf("playbook %s: %w", ID, err)
-		}
 		programs = append(programs, item)
 	}
 	sort.Slice(programs, func(i, j int) bool { return programs[i].ID < programs[j].ID })
 	if !adoption {
-		allCases := map[string]bool{}
-		for _, item := range programs {
-			for _, id := range item.Cases {
-				allCases[id] = true
-			}
-		}
-		var shared Spec
-		for id := range allCases {
-			shared.Cases = append(shared.Cases, id)
-		}
-		sort.Strings(shared.Cases)
-		if err := filepath.WalkDir(filepath.Join(workspace, "lib"), func(path string, entry os.DirEntry, walkErr error) error {
-			if os.IsNotExist(walkErr) {
-				return nil
-			}
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() {
-				return validateScriptDigests(path, filepath.Join(workspace, "corpus"), shared)
-			}
-			return nil
-		}); err != nil {
-			return nil, fmt.Errorf("shared script provenance: %w", err)
-		}
 		if err := checkCorpusLabels(filepath.Join(workspace, "corpus"), programs, retired); err != nil {
 			return nil, err
 		}

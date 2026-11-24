@@ -107,5 +107,5 @@ Full [SDK](program-sdk.md).
 
 ## Corpus receipt links
 
-- `type ScriptOriginReceipt struct{ScriptDigest string; ID string; IncidentID string; Success bool; StartedAt time.Time; CompletedAt time.Time; Resources []sdk.ObjectRef}`: is protected evidence of a learned step's original successful repair.
+- `type RecordedRepairReceipt struct{ScriptDigest string; ID string; IncidentID string; Success bool; StartedAt time.Time; CompletedAt time.Time; Resources []sdk.ObjectRef}`: is evidence of a successful repair.
 - `func ScriptDigest(script string) string`: identifies exact script bytes; application inputs belong in Env.

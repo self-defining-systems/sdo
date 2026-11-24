@@ -87,7 +87,7 @@ func TestScriptCaptureSecretCollectionOmitsKind(t *testing.T) {
 				checkpoint = objects
 				return nil
 			}
-			recorder.Record(apihistory.Event{Phase: "start", Verb: "deletecollection", Version: "v1", Namespace: "app", Resource: "secrets"}, nil)
+			recorder.Record(apihistory.Event{Phase: "start", Verb: "delete", Version: "v1", Namespace: "app", Resource: "secrets"}, nil)
 			recorder.Record(apihistory.Event{Phase: "end", Verb: "list", Version: "v1", Namespace: "app", Resource: "secrets", Status: 200},
 				[]byte(`{"apiVersion":"v1","kind":"SecretList","items":[{`+identity+`}]}`))
 			var result program.ScriptExecutionResult
@@ -113,5 +113,17 @@ func TestScriptCaptureSecretCollectionOmitsKind(t *testing.T) {
 				t.Fatal("Secret projection missing or retained credential material")
 			}
 		})
+	}
+}
+
+func TestScriptAPIReceiptDistinguishesCreateAndDryRun(t *testing.T) {
+	for _, dry := range []bool{false, true} {
+		u, _ := url.Parse("https://synthetic.invalid")
+		r := newScriptRecorder(t.Context(), u, nil)
+		r.Record(apihistory.Event{Phase: "end", Verb: "post", Version: "v1", Namespace: "app", Resource: "configmaps", Status: 201, DryRun: dry},
+			[]byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"namespace":"app","name":"created"}}`))
+		if len(r.receipts) != 1 || (len(r.receipts[0].Written) == 1) == dry {
+			t.Fatalf("dry run=%v: %+v", dry, r.receipts)
+		}
 	}
 }

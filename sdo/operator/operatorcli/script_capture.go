@@ -76,11 +76,12 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 	if path == "" {
 		return
 	}
-	write := e.Verb != "get" && e.Verb != "list" && e.Verb != "watch" || e.Subresource == "exec" || e.Subresource == "attach"
+	write := apihistory.WriteClass(e)
+	deleteCollection := e.Verb == "delete" && e.Name == ""
 	if e.Phase == "start" && write {
 		if e.Name != "" {
 			r.preimage(path, e)
-		} else if e.Verb == "deletecollection" {
+		} else if deleteCollection {
 			object, err := r.read(path)
 			if err != nil || object == nil {
 				r.gap("collection preimages unavailable")
@@ -103,16 +104,6 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 		return
 	}
 	receipt := program.ScriptAPIReceipt{Method: e.Verb, Path: path, Subresource: e.Subresource, Status: e.Status, StartedAt: e.Started, CompletedAt: e.Finished, Omission: e.Omission}
-	if r.persistReceipt != nil {
-		if err := r.persistReceipt(r.ctx, receipt); err != nil {
-			r.gap("private API receipt storage unavailable")
-		}
-	}
-	if len(r.receipts) < 512 {
-		r.receipts = append(r.receipts, receipt)
-	} else {
-		r.gap("inline API receipt inventory clipped; complete receipts remain in private capture storage")
-	}
 	if e.Omission != "" && e.Omission != "upgrade_metadata_only" && e.Omission != "redacted_stream_metadata_only" && e.Omission != "redacted_log_metadata_only" {
 		r.gap("API response capture omitted: " + e.Omission)
 	}
@@ -121,7 +112,7 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 		if object.UnmarshalJSON(raw) == nil && object.GetName() != "" && object.GetKind() != "Status" {
 			if e.Name == "" {
 				path += "/" + url.PathEscape(object.GetName())
-				if write && e.Verb == "create" {
+				if write && e.Verb == "post" {
 					r.written[path] = true
 					if r.objects[path] == nil {
 						r.objects[path] = &program.ScriptObjectCapture{BeforeAbsent: true}
@@ -134,10 +125,23 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 	}
 	if write && (e.Status >= 200 && e.Status < 300 || e.Status == 101) {
 		for target, capture := range r.objects {
-			if target == path || e.Verb == "deletecollection" && strings.HasPrefix(target, path+"/") {
+			if target == path || deleteCollection && strings.HasPrefix(target, path+"/") {
 				capture.Written = true
+				if capture.Ref.Name != "" {
+					receipt.Written = append(receipt.Written, capture.Ref)
+				}
 			}
 		}
+	}
+	if r.persistReceipt != nil {
+		if err := r.persistReceipt(r.ctx, receipt); err != nil {
+			r.gap("private API receipt storage unavailable")
+		}
+	}
+	if len(r.receipts) < 512 {
+		r.receipts = append(r.receipts, receipt)
+	} else {
+		r.gap("inline API receipt inventory clipped; complete receipts remain in private capture storage")
 	}
 
 }

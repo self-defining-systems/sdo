@@ -42,9 +42,7 @@ func TestRelationDerivedScriptAndObservedDiagnosis(t *testing.T) {
 			t.Fatalf("%s has no live relation provenance", name)
 		}
 	}
-	if _, err := sdktest.ScriptOrigin(script, c); err != nil {
-		t.Fatal(err)
-	}
+
 }
 
 func TestMissingOrAmbiguousInitializationRelationRemainsUnknown(t *testing.T) {

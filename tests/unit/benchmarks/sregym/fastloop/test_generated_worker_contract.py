@@ -34,7 +34,7 @@ def _accepted_app(tmp_path: Path, *, verified: bool = False) -> Path:
     shutil.rmtree(memory / "playbooks/service-targetport-mismatch")
     shutil.rmtree(memory / "corpus/targetport-mismatch")
     shutil.rmtree(memory / "diagnostics/detectors/learned/routing-relations")
-    (memory / "schema-version").write_text("13\n")
+    (memory / "schema-version").write_text("14\n")
     (memory / "goal.md").write_text("---\nschema_version: 1\nowner: human\n---\n\nKeep the app healthy.\n")
     (memory / "arch.md").write_text("---\nschema_version: 1\nowner: health_judge\n---\n\nOne service.\n")
     (memory / "playbooks/README.md").write_text("# Playbooks\n\n- [missing-configmap](missing-configmap/README.md)\n")
@@ -127,9 +127,13 @@ def _captured_repair_receipts(app: Path) -> str:
     )
 
 
-@pytest.mark.parametrize("drift", [False, True], ids=["ordinary-repair", "verified-drift-repair"])
+@pytest.mark.parametrize(
+    ("drift", "application"),
+    [(False, ""), (True, ""), (False, "toy")],
+    ids=["ordinary-repair", "verified-drift-repair", "toy-script"],
+)
 def test_scripted_reflector_writes_program_that_passes_real_memory_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path, drift: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path, drift: bool, application: str
 ) -> None:
     app = _accepted_app(tmp_path, verified=True)
     fixture = APP_FIXTURE / ".sdo/corpus/targetport-mismatch"
@@ -162,6 +166,7 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
 
     closure = IncidentClosure()
     closure.request.namespace = "demo"
+    closure.request.application = application
     if drift:
         closure.request.drift_events.add(investigation_verdict="bug")
     script = reflection_script(
@@ -186,6 +191,7 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     assert changed_playbooks(app) == [scripts.PROGRAM_ID]
     program = app / ".sdo/playbooks" / scripts.PROGRAM_ID
     assert (program / "diagnose.go").is_file()
+    assert ("program.RunScript" in (program / "mitigate.go").read_text()) == (application == "toy")
     assert "originating_incident: scripted-incident" in (program / "README.md").read_text()
     labels = json.loads(next((app / ".sdo/corpus").glob("*/labels.json")).read_text())
     assert labels["provenance"]["incident_id"] == "scripted-incident"

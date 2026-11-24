@@ -93,3 +93,20 @@ func TestRetiredSetupQuarantineIsDroppedFromStoredDocuments(t *testing.T) {
 		})
 	}
 }
+
+func TestDurableScriptGateReasonsMigrate(t *testing.T) {
+	data := []byte(`{"playbook_id":"synthetic","result":"skipped","skip_reason":"script_unprovenanced"}`)
+	var stage contracts.StageMitigation
+	if err := Unmarshal(data, &stage); err == nil {
+		t.Fatal("live contract accepted retired script gate reason")
+	}
+	if err := UnmarshalDurable(data, &stage); err != nil || stage.GetSkipReason() != "plan_not_executable" {
+		t.Fatalf("durable stage did not preserve the historical skip: %v", err)
+	}
+
+	data = []byte(`{"action_id":"synthetic","kind":"run-script","target":"script","summary":"refused","details":"historical refusal","started_at":"2026-01-01T00:00:00Z","completed_at":"2026-01-01T00:00:00Z","failure_reason":"script_unprovenanced"}`)
+	var action contracts.RepairActionReceipt
+	if err := UnmarshalDurable(data, &action); err != nil || action.GetFailureReason() != "authorization_denied" {
+		t.Fatalf("durable receipt did not preserve the historical refusal: %v", err)
+	}
+}

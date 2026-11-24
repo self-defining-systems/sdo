@@ -102,11 +102,6 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 			public.TargetFindings = append(public.TargetFindings, FindingFingerprint(finding))
 		}
 	}
-	public.ResultRef = "ConfigMap/" + incident.Namespace + "/" + run.JobName
-	public.StdoutBytes = len(run.Stdout)
-	public.StderrBytes = len(run.Stderr)
-	public.Stdout = ""
-	public.Stderr = ""
 	public.Objects = make([]ScriptObjectCapture, 0, len(run.Objects))
 	for _, object := range run.Objects {
 		public.Objects = append(public.Objects, ScriptObjectCapture{Ref: object.Ref, Written: object.Written, ImagesRef: object.ImagesRef, BeforeAbsent: object.BeforeAbsent, AfterAbsent: object.AfterAbsent})
@@ -118,6 +113,28 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 		r.ActionsApplied = []program.Action{a}
 		r.ActionReports[0].Status = "unknown"
 		r.Patches = []PlanPatch{{Ref: sdk.ObjectRef{APIVersion: "batch/v1", Kind: "Job", Namespace: incident.Namespace, Name: run.JobName}, Operation: "run-script", Irreversible: true}}
+	}
+	operations := map[sdk.ObjectRef]string{}
+	for _, receipt := range run.Receipts {
+		operation := "patch"
+		if receipt.Subresource == "" {
+			switch receipt.Method {
+			case "post":
+				operation = "create"
+			case "delete":
+				operation = "delete"
+			}
+		}
+		for _, ref := range receipt.Written {
+			operations[ref] = operation
+		}
+	}
+	for _, ref := range scriptWriteRefs(&run) {
+		operation := operations[ref]
+		if operation == "" {
+			operation = "patch"
+		}
+		r.ObjectEffects = append(r.ObjectEffects, PlanObjectEffect{Ref: ref, Operation: operation, Confirmed: true, State: "applied", Irreversible: true})
 	}
 	for _, object := range run.Objects {
 		if object.Before != nil || object.BeforeAbsent {
@@ -161,8 +178,15 @@ func scriptRepairResources(report PlanActionReport) []sdk.ObjectRef {
 	if report.Script == nil {
 		return nil
 	}
-	refs := append([]sdk.ObjectRef(nil), report.Script.Scope...)
-	for _, object := range report.Script.Objects {
+	return append(append([]sdk.ObjectRef(nil), report.Script.Scope...), scriptWriteRefs(report.Script)...)
+}
+
+func scriptWriteRefs(run *ScriptExecutionResult) []sdk.ObjectRef {
+	var refs []sdk.ObjectRef
+	for _, receipt := range run.Receipts {
+		refs = append(refs, receipt.Written...)
+	}
+	for _, object := range run.Objects {
 		if object.Written {
 			refs = append(refs, object.Ref)
 		}

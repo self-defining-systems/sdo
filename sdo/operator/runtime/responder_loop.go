@@ -224,7 +224,6 @@ type ResponderLoop struct {
 	// BuiltinRestoreAuto lets the automatic stage apply the built-in
 	// source-restore playbook; off, the responder decides (response.builtin_restore_auto).
 	BuiltinRestoreAuto bool
-	scriptRefusals     map[string]error
 
 	stageProgress       map[string]responseStageProgress
 	dataWorkloads       dataHolders
@@ -1277,10 +1276,6 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		if err != nil {
 			response.Error = err.Error()
 			response.FailureReason = ""
-			var provenanceError *ScriptUnprovenancedError
-			if errors.As(err, &provenanceError) {
-				response.FailureReason = "script_unprovenanced"
-			}
 			return
 		}
 	}

@@ -708,7 +708,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				memoryCatalogMu.RLock()
 				defer memoryCatalogMu.RUnlock()
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage}, Objects: genericCapture}, Source: planSource,
+					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage, ScriptNamespace: *controlNamespace, ScriptNode: lifecycleio.Getenv("SDO_CONTROLLER_NODE"), ScriptRepositoryMount: *repositoryMountPath, ScriptRepositoryPVC: *repositoryPVC, ScriptRepositorySubPath: *repositoryPVCSubPath}, Objects: genericCapture}, Source: planSource,
 
 					Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: time.Duration(policy.Response.VerificationTimeout), PollInterval: time.Second}, Observer: kubernetesCache,
 				}, policy.Response.MaxLoops)
@@ -758,7 +758,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.IncidentStatus = func() *apihistory.IncidentVerified { return controller.incidentVerificationWarning(request.IncidentID) }
 				if options.NativeBroker != nil {
-					gate, err := memory.IncidentMutationGate(*repositoryMountPath, request.IncidentID)
+					gate, err := controller.incidentGate(request.IncidentID)
 					if err != nil {
 						loop.gateError = err
 					} else {
@@ -898,6 +898,18 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return &ExternalIncident{ID: alert.Id, Namespace: alert.Namespace, Message: alert.Message}, nil
 	}
 	if options.NativeBroker != nil {
+		controller.incidentGate = func(incidentID string) (*apihistory.MutationGate, error) {
+			gate, err := memory.IncidentMutationGate(*repositoryMountPath, incidentID)
+			if err == nil {
+				gate.ScriptJobStopped = func(name string) bool {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					return scriptJobStopped(ctx, bootstrapProvider.Client, *controlNamespace, name)
+				}
+			}
+			return gate, err
+		}
+
 		if err := attachNativeBroker(controller, options.NativeBroker); err != nil {
 			return err
 		}

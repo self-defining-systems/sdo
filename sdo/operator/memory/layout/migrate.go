@@ -185,6 +185,8 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 		}
 		return nil
 	},
+	// Version 14 readers ignore retired script linkage. Keep captured cases immutable.
+	14: func(*schemaPlan) error { return nil },
 }
 
 const (

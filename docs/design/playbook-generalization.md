@@ -11,7 +11,7 @@ Learned memory is organized per (symptom x service) and binds too widely:
    bind a hard-coded Deployment name. Hint bindings apply to every program with a `deployment` role,
    and the learned stall diagnoses ("matches source, not yet restarted") match any healthy Deployment.
    Result: 3-6 restarts across every service on the failing journey.
-2. `RunScript` must be byte-identical to a receipted command, so a recorded
+2. Historically, `RunScript` had to be byte-identical to a receipted command, so a recorded
    `kubectl exec <live-pod-name>` was frozen into a program and later hit the wrong Redis.
 3. Reflection publishes a second copy of the same repair for a second service, and folds a new repair
    method (Redis ACL restore) into each symptom-named playbook. Adding a required `redis-pod` role that
