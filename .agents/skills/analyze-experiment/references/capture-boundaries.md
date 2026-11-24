@@ -212,3 +212,9 @@ the reflection tool `capture_fields` serves typed sections for both forms.
 Provenance digests name snapshot content. `sdktest.SnapshotDigest` hashes the
 canonical form, so the version 1 and version 2 files of one capture have the
 same digest; a label digest of the exact old file bytes also still matches.
+
+Secret repair comparisons record only key references and a boolean or classified
+failure. Accepted-source restores carry an identity and restored key names.
+Script capture retains Secret identity only and reports a capture gap. New
+responder tool-call evidence retains plan/apply linkage and a fixed rejection
+message. Historical raw request records may still contain credentials.

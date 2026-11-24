@@ -177,11 +177,14 @@ func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstruc
 		candidate.Ref = ref
 	}
 	if candidate.Before == nil && before != nil {
-		candidate.Before = before.DeepCopy()
+		candidate.Before = scriptCaptureImage(before, ref.Kind).DeepCopy()
 	}
 	if after != nil {
-		candidate.After = after.DeepCopy()
+		candidate.After = scriptCaptureImage(after, ref.Kind).DeepCopy()
 		candidate.AfterAbsent = false
+	}
+	if strings.EqualFold(ref.Kind, "Secret") {
+		r.gap("Secret capture contains identity only")
 	}
 	if r.persistImage != nil {
 		ref, err := r.persistImage(r.ctx, path, candidate)

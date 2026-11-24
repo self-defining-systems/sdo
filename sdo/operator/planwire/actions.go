@@ -30,7 +30,7 @@ func ActionProto(action program.Action) (*contracts.Action, error) {
 	if wire, ok, err := contractActionProto(action); ok {
 		return wire, err
 	}
-	if IsGeneralAction(action) {
+	if IsGeneralAction(action) && !IsSecretRestore(action) {
 		if _, legacyDelete := GeneralAction(action).(program.DeleteObject); !legacyDelete {
 			return generalActionProto(action)
 		}

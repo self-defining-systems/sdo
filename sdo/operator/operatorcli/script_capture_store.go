@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	typedcore "k8s.io/client-go/kubernetes/typed/core/v1"
+	"sdo.dev/operator/render"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -51,14 +54,14 @@ func (s scriptCaptureStore) save(ctx context.Context, path string, capture progr
 	manifest.Data["ref"] = string(ref)
 	for _, stage := range []struct {
 		name      string
-		image     any
+		image     *unstructured.Unstructured
 		present   bool
 		immutable bool
 	}{{"before", capture.Before, capture.Before != nil, true}, {"after", capture.After, capture.After != nil, false}} {
 		if !stage.present || stage.immutable && manifest.Data[stage.name+"_chunks"] != "" {
 			continue
 		}
-		raw, err := json.Marshal(stage.image)
+		raw, err := json.Marshal(scriptCaptureImage(stage.image, capture.Ref.Kind))
 		if err != nil {
 			return "", err
 		}
@@ -88,6 +91,13 @@ func (s scriptCaptureStore) save(ctx context.Context, path string, capture progr
 		return "", err
 	}
 	return "ConfigMap/" + s.namespace + "/" + name, nil
+}
+
+func scriptCaptureImage(image *unstructured.Unstructured, kind string) *unstructured.Unstructured {
+	if image != nil && (strings.EqualFold(kind, "Secret") || strings.EqualFold(image.GetKind(), "Secret")) {
+		return &unstructured.Unstructured{Object: render.SecretIdentity(image.Object)}
+	}
+	return image
 }
 
 func (s scriptCaptureStore) receipt(ctx context.Context, receipt program.ScriptAPIReceipt) error {

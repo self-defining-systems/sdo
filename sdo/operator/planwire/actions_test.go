@@ -5,6 +5,7 @@ import (
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -43,6 +44,20 @@ func TestNonObjectEffectKinds(t *testing.T) {
 	} {
 		if got := HasNonObjectEffect([]program.Action{tc.action}); got != tc.nonObject {
 			t.Errorf("%T: non-object effect = %v, want %v", tc.action, got, tc.nonObject)
+		}
+	}
+}
+
+func TestSecretRestoreWireRoundTrip(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "credentials"}
+	action := program.ReconcileFromSource{Ref: ref}
+	for _, a := range []program.Action{action, &action} {
+		wire, err := ActionProto(a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := wire.GetReconcileFromSource().GetRef(); got.GetKind() != ref.Kind || got.GetName() != ref.Name || got.GetNamespace() != ref.Namespace {
+			t.Fatalf("restore reference = %v", got)
 		}
 	}
 }

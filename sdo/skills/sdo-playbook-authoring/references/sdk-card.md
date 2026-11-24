@@ -26,7 +26,7 @@ Full [SDK](program-sdk.md).
 
 ## Reads (ReadView)
 
-- `type ReadView interface: inputs.Sources, WebhookCAMatchesSecret, AdmissionWebhooksFor, ObjectReader, DetectionContext, ScopedObservationSource, ObservationClock, StatefulSets, HorizontalPodAutoscalers, PodDisruptionBudgets, metrics.Source, metrics.AlertSource, metrics.QuerySource, traffic.Source, AppMap, datacheck.Accepted, servicehealth.ReachabilitySource, Logs, LogsWithOptions, LogMatches, metrics.UsageSource, ProbeTCP, ProbeHTTP, DiffAgainstSource, DiffAgainstBaseline, DatabaseUsers, Observe, KubernetesRead, Read`: is a program's frozen, recorded read access to the incident namespace; every read is replayed from the corpus at check time.
+- `type ReadView interface: inputs.Sources, WebhookCAMatchesSecret, SecretEqual, AdmissionWebhooksFor, ObjectReader, DetectionContext, ScopedObservationSource, ObservationClock, StatefulSets, HorizontalPodAutoscalers, PodDisruptionBudgets, metrics.Source, metrics.AlertSource, metrics.QuerySource, traffic.Source, AppMap, datacheck.Accepted, servicehealth.ReachabilitySource, Logs, LogsWithOptions, LogMatches, metrics.UsageSource, ProbeTCP, ProbeHTTP, DiffAgainstSource, DiffAgainstBaseline, DatabaseUsers, Observe, KubernetesRead, Read`: is a program's frozen, recorded read access to the incident namespace; every read is replayed from the corpus at check time.
 - `type DetectionContext interface: StatefulSets, DaemonSets, Jobs, CronJobs, PersistentVolumeClaims, ServiceAccounts, HorizontalPodAutoscalers, PodDisruptionBudgets, Ingresses, Nodes, Secrets, DiffAgainstSource, PodAdmission, Namespace, ConfigMaps, Services, Pods, Deployments, ReplicaSets, Endpoints, EndpointSlices, NetworkPolicies, Events, ReadyEndpointCountForService, PodsForService, RecentEventsFor`: is the frozen snapshot read by detectors and, through ReadView, by programs.
 - `ObjectReader.Object(ObjectRef) (*unstructured.Unstructured, error)`: reads one exact object by kind, namespace and name.
 - `ReadView.LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)`: reads bounded container logs; Previous selects the last terminated instance.
@@ -47,6 +47,12 @@ Full [SDK](program-sdk.md).
 - `type DeleteObject struct{Ref sdk.ObjectRef; Reason string}`: irreversibly deletes a named object in the incident namespace.
 - `type PatchObject struct{Ref sdk.ObjectRef; Type string; Patch json.RawMessage; Edits []ListEdit; Reason string}`: patches any nonsecret Kubernetes object.
 - `type Rollback struct{Ref sdk.ObjectRef; ToRevision string}`: restores a workload's fields from an explicit earlier revision.
+
+## Secret key differs from accepted source
+
+- `type SecretKey struct{Ref sdk.ObjectRef; Key string; Accepted bool}`: identifies a v1 Secret key in the application namespace.
+- `ReadView.SecretEqual(left, right SecretKey) (bool, error)`: compares two Secret keys without exposing their values.
+- `type ReconcileFromSource struct{ Ref sdk.ObjectRef }`: restores a whole source-owned object to accepted source, removing additions SourceDiff reports; prefer SetField for one field.
 
 ## Admission webhook CA or policy blocks Pod creation
 

@@ -91,6 +91,10 @@ a handoff snapshot alone does not justify a rewrite.
 - `SetField` restores one schema-checked field; named list selectors (`env[name=X]`) and ConfigMap
   JSON/YAML entries (`DocumentFormat`, `DocumentPath`) preserve unrelated values. A missing final
   `env[name=X]` entry is inserted.
+- Diagnose Secret drift with `SecretEqual(live, other)` using `program.SecretKey{Ref: ref, Key: key}`.
+  Set `Accepted: true` on the second key to compare against the accepted render. A mismatch
+  is observable even with zero endpoints. A read error leaves the diagnosis Unknown.
+  Restore accepted Secret data with `ReconcileFromSource` and restart readers that need it.
 - `ReconcileFromSource` restores a whole source-owned object and removes reported additions;
   `CreateFromSource` restores a named missing object. `DeleteObject` is irreversible; a delete-style Diagnose
   matches on `diff.PresentButNotInSource()`, a recreate-style one on `diff.MissingButInSource()`

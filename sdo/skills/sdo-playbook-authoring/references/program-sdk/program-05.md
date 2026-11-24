@@ -23,6 +23,8 @@ type ReadView interface {
 	inputs.Sources
 	// WebhookCAMatchesSecret reports whether one webhook's caBundle equals a Secret key without exposing either value.
 	WebhookCAMatchesSecret(WebhookCA) (bool, error)
+	// SecretEqual compares two Secret keys without exposing their values. The left key is live.
+	SecretEqual(left, right SecretKey) (bool, error)
 	// AdmissionWebhooksFor lists the webhooks admitting Pods for a Namespace or workload.
 	// Cluster webhook names need no observation grant.
 	AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)

@@ -607,7 +607,6 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		if response.Error != "" {
 			response.Summary = response.Error
 		}
-		requestJSON, _ := json.Marshal(request)
 		if l.Request.ExternalMessage != "" {
 			response.Healthy = false
 			response.DetectorStates = nil
@@ -636,8 +635,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			return
 		}
 		l.stampProvenance(ctx, request, &response)
-		responseJSON := recordedToolResponseJSON(response, applied)
-		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
+		l.recordToolCall(request, response, applied)
 		persistStarted := l.clock()
 		err := l.persistToolState(ctx)
 		l.timing.persist = l.clock().Sub(persistStarted)
@@ -907,6 +905,31 @@ type truncatedToolResponse struct {
 	ProgramRevisionsCount int                  `json:"program_revisions_count"`
 	DetectorStatesCount   int                  `json:"detector_states_count"`
 	PatchesCount          int                  `json:"patches_count"`
+}
+
+// recordToolCall is the durable projection of responder tool input. Only
+// plan/apply causality uses request arguments. Never persist arbitrary inputs
+// or rejected response text, which can echo them.
+func (l *ResponderLoop) recordToolCall(request ToolRequest, response ToolResponse, applied []selectedPlan) {
+	projected := ToolRequest{Command: request.Command}
+	if response.Error != "" {
+		response = ToolResponse{Command: response.Command, Error: "tool call rejected"}
+	} else {
+		switch request.Command {
+		case "plan":
+			if plan, ok := l.plans[response.PlanID]; ok {
+				projected.ProgramID = plan.programID
+				projected.Bindings = plan.bindings
+			}
+		case "apply":
+			projected.PlanIDs = request.PlanIDs
+		}
+	}
+	raw, _ := json.Marshal(projected)
+	l.calls = append(l.calls, ToolCall{
+		Command: projected.Command, At: l.clock().UTC(), RequestJSON: string(raw),
+		ResponseJSON: string(recordedToolResponseJSON(response, applied)), Error: response.Error, Summary: response.Summary,
+	})
 }
 
 // recordedToolResponseJSON caps the stored response. An apply record keeps every

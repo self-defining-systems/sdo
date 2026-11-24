@@ -11,6 +11,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -58,7 +59,7 @@ func (c TypedPlanClient) RestoreSecretData(ctx context.Context, ref sdk.ObjectRe
 		return err
 	}
 	if _, err := c.Client.CoreV1().Secrets(ref.Namespace).Patch(ctx, ref.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
-		return fmt.Errorf("write Secret %s/%s: %w", ref.Namespace, ref.Name, err)
+		return fmt.Errorf("write Secret %s/%s failed", ref.Namespace, ref.Name)
 	}
 	return nil
 }
@@ -88,7 +89,12 @@ func (e PlanExecutor) secretRestoreStep(ctx context.Context, incident IncidentRe
 	}
 	data, err := source.AcceptedSecretData(ctx, incident.SourceCommit, incident.Namespace, a.Ref)
 	if err != nil {
-		return r, fmt.Errorf("restore Secret %s/%s from accepted source: %w", a.Ref.Namespace, a.Ref.Name, err)
+		for _, refusal := range []error{rendered.ErrSecretSourceNoLiteral, rendered.ErrSecretSourceNondeterministic, rendered.ErrAcceptedManifestAbsent} {
+			if errors.Is(err, refusal) {
+				return r, refusal
+			}
+		}
+		return r, fmt.Errorf("read accepted Secret %s/%s failed", a.Ref.Namespace, a.Ref.Name)
 	}
 	if dry {
 		return r, nil

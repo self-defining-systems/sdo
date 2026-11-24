@@ -2,11 +2,14 @@ package runtime
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,7 +19,9 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 const (
@@ -54,6 +59,13 @@ func secretRestoreFixture() (*fake.Clientset, sdk.ObjectRef, sdk.ObjectRef, Inci
 	return fake.NewSimpleClientset(secret, web), secretRef, webRef, incident
 }
 
+type learnedSecretRestore struct{ actions []program.Action }
+
+func (learnedSecretRestore) Spec() program.ProgramSpec { return program.ProgramSpec{ID: "restore"} }
+func (p learnedSecretRestore) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
+	return program.Plan{Actions: p.actions}, nil
+}
+
 // ReconcileFromSource of a Secret writes the accepted literal data and nothing
 // else is read or recorded: the receipt holds key names, never a value, and the
 // readers listed after it are restarted.
@@ -62,10 +74,14 @@ func TestReconcileFromSourceRestoresASecretThenRestartsItsReaders(t *testing.T) 
 	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Source: secretSource{data: map[string][]byte{"key": []byte(acceptedSyntheticValue)}},
 		Rollouts: recordedRollouts{new([]sdk.ObjectRef)}, Verifier: passingVerifier{}, Now: func() time.Time { return at }}
-	plan := program.Plan{Actions: []program.Action{
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client, Source: executor.Source, SourceCommit: incident.SourceCommit}
+	plan, err := BuildMitigationPlan(context.Background(), learnedSecretRestore{[]program.Action{
 		program.ReconcileFromSource{Ref: secretRef},
 		program.RestartRollout{Ref: webRef, Reason: "readers hold the foreign value"},
-	}}
+	}}, view, program.Bindings{}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err := executor.Apply(context.Background(), incident, plan, false)
 	if err != nil || !result.Applied || len(result.ActionsApplied) != 2 {
 		t.Fatalf("Apply = %+v, %v", result, err)
@@ -74,14 +90,32 @@ func TestReconcileFromSourceRestoresASecretThenRestartsItsReaders(t *testing.T) 
 	if err != nil || string(got.Data["key"]) != acceptedSyntheticValue {
 		t.Fatalf("Secret after restore: %v, %v", got, err)
 	}
+	live := program.SecretKey{Ref: secretRef, Key: "key"}
+	accepted := program.SecretKey{Ref: secretRef, Key: "key", Accepted: true}
+	if equal, err := view.SecretEqual(live, accepted); err != nil || !equal {
+		t.Fatalf("SecretEqual after restore = %t, %v", equal, err)
+	}
 	web, _ := client.AppsV1().Deployments("app").Get(context.Background(), "web", metav1.GetOptions{})
 	if web.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] == "" {
 		t.Fatal("the readers were not restarted")
 	}
-	encoded, _ := json.Marshal(result)
-	for _, value := range []string{acceptedSyntheticValue, foreignSyntheticValue, "c3ludGhldGlj"} {
-		if strings.Contains(string(encoded), value) {
-			t.Fatalf("the application result carries Secret data %q: %s", value, encoded)
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := result.Proto()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := protojson.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{acceptedSyntheticValue, foreignSyntheticValue} {
+		for _, data := range [][]byte{encoded, wire} {
+			if strings.Contains(string(data), value) || strings.Contains(string(data), base64.StdEncoding.EncodeToString([]byte(value))) {
+				t.Fatal("the application result or wire receipt carries Secret data")
+			}
 		}
 	}
 	if report := result.ActionReports[0]; report.Status != "applied" {
@@ -128,5 +162,36 @@ func TestSecretRestoreRefusesOtherNamespaces(t *testing.T) {
 	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Source: secretSource{data: map[string][]byte{"key": []byte("x")}}, Rollouts: recordedRollouts{new([]sdk.ObjectRef)}, Verifier: passingVerifier{}}
 	if result, err := executor.Apply(context.Background(), incident, program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: other}}}, false); err == nil || result.Applied {
 		t.Fatalf("Apply = %+v, %v; want refusal", result, err)
+	}
+}
+
+func TestSecretEqualReadsWithoutServiceEndpoints(t *testing.T) {
+	client, ref, _, incident := secretRestoreFixture()
+	view := LiveReadView{
+		Carrier: inputs.New(sdktest.Snapshot{NamespaceName: incident.Namespace}),
+		Client:  client, SourceCommit: incident.SourceCommit,
+		Source: secretSource{data: map[string][]byte{"key": []byte(acceptedSyntheticValue)}},
+	}
+	other := ref
+	other.Name = "other"
+	if _, err := client.CoreV1().Secrets(ref.Namespace).Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: other.Name, Namespace: other.Namespace},
+		Data:       map[string][]byte{"key": []byte(foreignSyntheticValue)},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	live := program.SecretKey{Ref: ref, Key: "key"}
+	accepted := program.SecretKey{Ref: ref, Key: "key", Accepted: true}
+	for _, tc := range []struct {
+		right program.SecretKey
+		equal bool
+	}{{live, true}, {program.SecretKey{Ref: other, Key: "key"}, true}, {accepted, false}} {
+		if equal, err := view.SecretEqual(live, tc.right); err != nil || equal != tc.equal {
+			t.Fatalf("SecretEqual = %t, %v; want %t", equal, err, tc.equal)
+		}
+	}
+	accepted.Key = "missing"
+	if _, err := view.SecretEqual(live, accepted); !errors.Is(err, sdk.ErrUnavailable) {
+		t.Fatalf("missing accepted key = %v", err)
 	}
 }

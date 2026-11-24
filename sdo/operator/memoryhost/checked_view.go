@@ -58,3 +58,9 @@ func (v *checkedView) DiffAgainstBaseline(r sdk.ObjectRef) (program.Diff, error)
 	v.check(err)
 	return got, err
 }
+
+func (v *checkedView) SecretEqual(left, right program.SecretKey) (bool, error) {
+	equal, err := v.ReadView.SecretEqual(left, right)
+	v.check(err)
+	return equal, err
+}

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -81,5 +83,56 @@ func TestANewPlaybookThatMatchesItsOwnIncidentIsRecordedAsAMatch(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("gaps = %v, want a match note", gaps)
+	}
+}
+
+func TestSecretRestorePassesSharedMemoryCheck(t *testing.T) {
+	root, capture := ownIncidentRoot(t, `package fresh
+
+import (
+	"context"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+)
+
+type Program struct{}
+
+var credential = sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "credentials"}
+
+func (Program) Spec() program.ProgramSpec { return program.ProgramSpec{ID: "fresh"} }
+
+func (Program) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
+	equal, err := v.SecretEqual(program.SecretKey{Ref: credential, Key: "key"}, program.SecretKey{Ref: credential, Key: "key", Accepted: true})
+	if err != nil {
+		return program.Verdict{}, err
+	}
+	if equal {
+		return program.Verdict{Result: program.NoMatch}, nil
+	}
+	return program.Verdict{Result: program.Match}, nil
+}
+
+func (Program) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
+	return program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: credential}}}, nil
+}
+`)
+	args, err := json.Marshal([]program.SecretKey{
+		{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "credentials"}, Key: "key"},
+		{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "credentials"}, Key: "key", Accepted: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, err := json.Marshal([]sdktest.PrimitiveCall{{Method: "SecretEqual", Arguments: args, Result: json.RawMessage("false")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(capture, "open@detect-recordings.json"), calls, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := compileRequest(root)
+	request.OwnIncidentDirectory = capture
+	if diagnostics := diagnose(t, request); len(diagnostics) != 0 {
+		t.Fatalf("shared memory check refused the Secret restore: %v", diagnostics)
 	}
 }

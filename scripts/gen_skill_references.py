@@ -92,6 +92,14 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
+        "Secret key differs from accepted source",
+        (
+            "program.SecretKey",
+            "program.ReadView.SecretEqual",
+            "program.ReconcileFromSource",
+        ),
+    ),
+    (
         "Admission webhook CA or policy blocks Pod creation",
         (
             "sdk.DetectionContext.PodAdmission",

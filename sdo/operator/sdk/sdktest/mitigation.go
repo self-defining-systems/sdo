@@ -94,6 +94,15 @@ func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (Mi
 			result.Effects = append(result.Effects, fmt.Sprintf("%T", action))
 		}
 	}
+	if observesSecretRestore(plan, c) {
+		before := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings, 5*time.Second)
+		after := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: c.Fixed, Calls: c.PhaseRecordings("fixed")}, c.Bindings, 5*time.Second)
+		if before.Result != program.Match || after.Result != program.NoMatch {
+			return result, fmt.Errorf("program.mitigation-not-repaired: observed Secret restore must diagnose Match then NoMatch")
+		}
+		result.Status = MitigationReplayObservedTransition
+		return result, nil
+	}
 	if len(result.Effects) > 0 {
 		result.Status = MitigationReplaySkippedUnreplayableEffect
 		return result, nil
