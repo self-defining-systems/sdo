@@ -140,6 +140,12 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   per stage and per named grade field; `--final` keeps each node's last attempt, `--done` only done rows).
   `lanes status` prints one line per plan and the recent alarms.
 
+  `faults.instances` can also name the output of `fuzzops composites expand`, or a JSON object combining its
+  `composites` and `composite_ids` with the `instances` and `ids` from `fuzzops instances`. Use the exact
+  generated IDs in `faults.ids` and quote composite IDs in YAML. The staged file is used for both the run and
+  post-run safety checks, so the pinned fuzzops binary must support composite IDs in `active-instance` and
+  `undo-instance`.
+
 Replaces the hand-rolled twopass drivers: `driver.py` (chaining pass 2 after a verified pass-1 archive, the `-x<n>` rerun
 suffix), `mkspec.py`, `lanewatch.py` and `poolgate.py` (retry and park policy, stalled-lane detection), `collect.py`/`mkresults.sh` (`plan results --tsv`) and `tick.sh`.
 

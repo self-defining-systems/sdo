@@ -10,8 +10,8 @@ The verdict is read from a fuzzops checkout, never listed by hand: a fault templ
 optionally ``NodeLevel``.
 
 ``python -m benchmarks.fuzzops.eks_faults matrix --fuzzops DIR --points points.tsv [--out F]`` writes the matrix;
-``... filter --fuzzops DIR ID...`` prints the instance ids an EKS lane can run, in order. Instance ids look like
-``template@target?params``.
+``... filter --fuzzops DIR ID...`` prints the instance ids an EKS lane can run, in order. A composite is
+kept only when every member is compatible.
 """
 
 from __future__ import annotations
@@ -103,8 +103,23 @@ def classify(fuzzops: Path, instance_ids: Iterable[str]) -> dict[str, Verdict]:
 
 
 def keep_eks_ok(fuzzops: Path, instance_ids: Sequence[str]) -> list[str]:
-    verdicts = classify(fuzzops, instance_ids)
-    return [i for i in instance_ids if verdicts[template_of(i)].ok]
+    members = [_member_ids(instance_id) for instance_id in instance_ids]
+    verdicts = classify(fuzzops, (member for group in members for member in group))
+    return [
+        instance_id
+        for instance_id, group in zip(instance_ids, members, strict=True)
+        if all(verdicts[template_of(member)].ok for member in group)
+    ]
+
+
+def _member_ids(instance_id: str) -> list[str]:
+    name, bracket, payload = instance_id.partition("[")
+    if not name or not bracket or "@" in name:
+        return [instance_id]
+    members = payload.removesuffix("]").split("&")
+    if not payload.endswith("]") or len(members) < 2 or any("@" not in member for member in members):
+        raise FaultSpecError(f"invalid composite instance id: {instance_id!r}")
+    return members
 
 
 def read_points(path: Path) -> list[tuple[str, str, str]]:
