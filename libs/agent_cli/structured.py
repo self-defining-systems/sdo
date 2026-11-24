@@ -83,10 +83,11 @@ from libs.agent_cli.claude_usage import (
 from libs.agent_cli.errors import (
     AccountAuthenticationFailed,
     AccountExhausted,
+    CapacityConfigurationError,
     ProviderRateLimited,
     StructuredTurnError,
 )
-from libs.agent_cli.provider_capacity import ProviderCapacity, is_claude_rate_limit
+from libs.agent_cli.provider_capacity import ProviderCapacity, is_claude_rate_limit, uses_metered_claude_backend
 from libs.agent_cli.session_ownership import (
     HANDOFF_TIMEOUT_SECONDS,
     SessionOwnership,
@@ -332,7 +333,8 @@ def run_structured_turn(
     """
     if timeout_seconds is not None and timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
-    capacity = provider_capacity or ProviderCapacity(environment={**os.environ, **(environment or {})})
+    cli_environment = {**os.environ, **(environment or {})}
+    capacity = provider_capacity or ProviderCapacity(environment=cli_environment)
     account_mode = provider == "claude" and (
         bool(capacity.environment.get("SDO_CLAUDE_ACCOUNTS_DIR"))
         or capacity.environment.get("SDO_OPUS_POOL_MODE") == "per_account"
@@ -344,10 +346,12 @@ def run_structured_turn(
         if account_mode
         else None
     )
+    # A configured account router selects subscription credentials itself.
+    metered_backend = provider == "claude" and router is None and uses_metered_claude_backend(cli_environment)
     if router is not None:
         workspace = Path(cwd).resolve()
         if router.directory.is_relative_to(workspace) or router.pool_directory.is_relative_to(workspace):
-            raise AccountExhausted("account references and pool must be outside workspace", retryable=False)
+            raise CapacityConfigurationError("account references and pool must be outside the agent workspace")
     started = capacity.monotonic()
     session_id = resume_session_id
     prior_usage: dict[str, int | float] = {}
@@ -399,7 +403,7 @@ def run_structured_turn(
                             account_alias=lease.alias,
                             reason="primary" if lease.alias == router.primary else "fallback",
                         )
-                    else:
+                    elif not metered_backend:
                         scope.enter_context(capacity.opus_session(model, workspace=Path(cwd)))
                     if capacity.wait_deadline is not None:
                         if capacity.remaining_seconds <= 0:

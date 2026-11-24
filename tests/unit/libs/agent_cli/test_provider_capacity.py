@@ -13,6 +13,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+from libs.agent_cli.errors import CapacityConfigurationError
 from libs.agent_cli.provider_capacity import OpusPool, ProviderCapacity, ProviderRateLimited, RateLimitPolicy
 from libs.agent_cli.structured import StructuredTurnError, run_structured_turn
 from tests.structured_turns import ScriptedAgent, failure, reply, write_stream_claude
@@ -82,8 +83,9 @@ def test_host_worker_never_starts_without_its_token(tmp_path: Path, fault: str) 
         policy=RateLimitPolicy(max_wait_seconds=2),
     )
     agent = ScriptedAgent(lambda _: reply("claude", {"answer": "ok"}, session_id="s-1"))
+    expected_error = ProviderRateLimited if fault == "full" else CapacityConfigurationError
     try:
-        with pytest.raises((ProviderRateLimited, ValueError)):
+        with pytest.raises(expected_error):
             run_structured_turn(
                 "claude",
                 "prompt",
@@ -95,6 +97,7 @@ def test_host_worker_never_starts_without_its_token(tmp_path: Path, fault: str) 
                 provider_capacity=manager,
             )
         assert not agent.requests
+        assert clock.seconds == (2 if fault == "full" else 0)
     finally:
         for handle in held:
             assert handle is not None
@@ -344,17 +347,46 @@ def test_tool_output_mentioning_a_rate_limit_is_not_a_provider_error(tmp_path: P
     assert len(agent.requests) == 1
 
 
-def test_opus_refuses_to_run_without_shared_pool(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "backend", ["CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_API_KEY"]
+)
+@pytest.mark.parametrize("model", ["claude-opus-5-5", None])
+def test_metered_claude_reaches_provider_and_retries_without_pool(
+    tmp_path: Path, backend: str, model: str | None
+) -> None:
+    clock = Clock()
+    attempts = iter([failure(stderr=LIMITS[1]), reply("claude", {"answer": "ok"}, session_id="s-1")])
+    agent = ScriptedAgent(lambda _: next(attempts))
+    turn = run_structured_turn(
+        "claude",
+        "prompt",
+        output_schema=SCHEMA,
+        cwd=tmp_path,
+        access="read-only",
+        model=model,
+        executor=agent.executor,
+        environment={backend: "1"},
+        provider_capacity=capacity(tmp_path, clock),
+    )
+    assert json.loads(turn.output_json) == {"answer": "ok"}
+    assert len(agent.requests) == 2
+    assert turn.rate_limit_wait_seconds == 30
+    assert turn.concurrency_wait_seconds == 0
+
+
+@pytest.mark.parametrize("model", ["claude-opus-5-5", None])
+def test_opus_refuses_to_run_without_shared_pool(tmp_path: Path, model: str | None) -> None:
     agent = ScriptedAgent(lambda _: reply("claude", {"answer": "ok"}, session_id="s-1"))
-    with pytest.raises(ProviderRateLimited, match="shared.*pool"):
+    with pytest.raises(CapacityConfigurationError, match="capacity_configuration_error:.*shared.*pool"):
         run_structured_turn(
             "claude",
             "prompt",
             output_schema=SCHEMA,
             cwd=tmp_path,
             access="read-only",
-            model="claude-opus-5-5",
+            model=model,
             executor=agent.executor,
+            environment={"CLAUDE_CODE_USE_VERTEX": "0", "CLAUDE_CODE_OAUTH_TOKEN": "synthetic-oauth"},
             provider_capacity=capacity(tmp_path, Clock()),
         )
     assert not agent.requests
@@ -379,13 +411,12 @@ def test_a_misprovisioned_host_pool_fails_the_turn_with_the_named_pool_error(tmp
     }
     try:
         with (
-            pytest.raises(ProviderRateLimited, match=r"shared Opus pool unavailable \(") as raised,
+            pytest.raises(CapacityConfigurationError, match=r"shared Opus pool unavailable \("),
             ProviderCapacity(environment=environment).opus_session("claude-opus-5-5"),
         ):
             pass
     finally:
         (pool / "capacity").chmod(0o664)
-    assert not raised.value.retryable
 
 
 @pytest.mark.parametrize("location", ["checkout", "child", "symlink"])
@@ -399,7 +430,7 @@ def test_pool_metadata_cannot_enter_the_agent_checkout(tmp_path: Path, location:
         directory = link
     manager = ProviderCapacity(environment={"SDO_OPUS_POOL_DIR": str(directory)})
     agent = ScriptedAgent(lambda _: reply("claude", {"answer": "ok"}, session_id="s-1"))
-    with pytest.raises(ProviderRateLimited, match="outside.*workspace"):
+    with pytest.raises(CapacityConfigurationError, match="outside.*workspace"):
         run_structured_turn(
             "claude",
             "prompt",

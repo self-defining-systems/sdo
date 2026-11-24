@@ -32,6 +32,15 @@ class ProviderRateLimited(StructuredTurnError):
     failure_reason = "rate_limited"
 
 
+class CapacityConfigurationError(StructuredTurnError):
+    """The configured admission pool cannot serve this worker."""
+
+    failure_reason = "capacity_configuration_error"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"{self.failure_reason}: {reason}")
+
+
 class AccountExhausted(ProviderRateLimited):
     """No registered healthy Claude account remains; infrastructure, not agent quality."""
 
@@ -52,12 +61,18 @@ class AccountCredentialUnavailable(AccountAuthenticationFailed):
 
 
 def rate_limit_failure(exc: BaseException) -> ProviderRateLimited | None:
-    """Preserve typed provider failure through role-specific exception wrappers."""
+    """Preserve typed throttling through role-specific exception wrappers."""
+    failure = provider_capacity_failure(exc)
+    return failure if isinstance(failure, ProviderRateLimited) else None
+
+
+def provider_capacity_failure(exc: BaseException) -> ProviderRateLimited | CapacityConfigurationError | None:
+    """Preserve the capacity failure through role-specific exception wrappers."""
     seen: set[int] = set()
     cause: BaseException | None = exc
     while cause is not None and id(cause) not in seen:
         seen.add(id(cause))
-        if isinstance(cause, ProviderRateLimited):
+        if isinstance(cause, (ProviderRateLimited, CapacityConfigurationError)):
             return cause
         cause = cause.__cause__ or cause.__context__
     return None

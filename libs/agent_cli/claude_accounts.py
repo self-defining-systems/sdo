@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
-from libs.agent_cli.errors import AccountCredentialUnavailable, AccountExhausted
+from libs.agent_cli.errors import AccountCredentialUnavailable, AccountExhausted, CapacityConfigurationError
 from libs.agent_cli.provider_capacity import OpusPool, prepare_host_pool
 
 if TYPE_CHECKING:
@@ -150,15 +150,18 @@ class AccountRouter:
     @classmethod
     def from_environment(cls, environment: Mapping[str, str], **kwargs: Any) -> AccountRouter:
         if not environment.get("SDO_CLAUDE_ACCOUNTS_DIR") or not environment.get("SDO_OPUS_POOL_DIR"):
-            raise AccountExhausted("account references and host pool are required", retryable=False)
-        return cls(
-            Path(environment["SDO_CLAUDE_ACCOUNTS_DIR"]).resolve(),
-            Path(environment["SDO_OPUS_POOL_DIR"]).resolve(),
-            environment.get("SDO_CLAUDE_ACCOUNT_PRIMARY", ""),
-            int(environment.get("SDO_CLAUDE_ACCOUNT_MAX_SESSIONS", "2")),
-            float(environment.get("SDO_CLAUDE_ACCOUNT_COOLDOWN_SECONDS", "300")),
-            **kwargs,
-        )
+            raise CapacityConfigurationError("per_account requires SDO_CLAUDE_ACCOUNTS_DIR and SDO_OPUS_POOL_DIR")
+        try:
+            return cls(
+                Path(environment["SDO_CLAUDE_ACCOUNTS_DIR"]).resolve(),
+                Path(environment["SDO_OPUS_POOL_DIR"]).resolve(),
+                environment.get("SDO_CLAUDE_ACCOUNT_PRIMARY", ""),
+                int(environment.get("SDO_CLAUDE_ACCOUNT_MAX_SESSIONS", "2")),
+                float(environment.get("SDO_CLAUDE_ACCOUNT_COOLDOWN_SECONDS", "300")),
+                **kwargs,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise CapacityConfigurationError("invalid Claude account pool configuration") from exc
 
     def _state(self, account: Account, *, failure: str = "") -> bool:
         # Persist in the locked inode. Atomic replacement would split hard-link

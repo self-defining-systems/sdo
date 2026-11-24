@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from libs.agent_cli.errors import rate_limit_failure
+from libs.agent_cli.errors import provider_capacity_failure
 from libs.agent_cli.startup import mark_startup
 from sdo.agents.responder import page_only
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
@@ -70,16 +70,16 @@ def run_worker_task(
         # An investigation is the same task with a Go brief: its own role, and a report instead of a response.
         result = execute_investigation(request) if request.investigator_brief else executor(request)
     except RuntimeError as exc:
-        limited = rate_limit_failure(exc)
-        if limited is None:
+        failure = provider_capacity_failure(exc)
+        if failure is None:
             raise
         envelope = AgentResult(
             schema_version=SCHEMA_VERSION,
             task_id=task.task_id,
             status="failed",
             proposal_id=task.workspace.proposal_id,
-            failure_reason=limited.failure_reason,
-            error_summary=str(limited),
+            failure_reason=failure.failure_reason,
+            error_summary=str(failure),
         )
         publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(envelope))
         return envelope
