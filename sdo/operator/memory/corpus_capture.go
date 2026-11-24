@@ -121,7 +121,7 @@ func firstObservationKey(call sdktest.PrimitiveCall) (string, bool, error) {
 			return "", false, err
 		}
 		return identity, true, nil
-	case "DiffAgainstSource", "DiffAgainstBaseline", "AdmissionWebhooksFor", "WebhookCAMatchesSecret":
+	case "DiffAgainstSource", "DiffAgainstBaseline", "AdmissionWebhooksFor", "WebhookCAMatchesSecret", "SecretEqual":
 		return phase + "\x00" + recordedReadKey(call), true, nil
 	}
 	return "", false, nil

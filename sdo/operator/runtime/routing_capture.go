@@ -366,8 +366,8 @@ func routingLiveView(view program.ReadView) (LiveReadView, bool) {
 			view = v.ReadView
 		case *cachedReadView:
 			view = v.ReadView
-		case onboardingReadView:
-			view = v.ReadView
+		case interface{ UnderlyingReadView() program.ReadView }:
+			view = v.UnderlyingReadView()
 		default:
 			return LiveReadView{}, false
 		}

@@ -67,7 +67,6 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "Reads (ReadView)",
         (
             "program.ReadView:names",
-            "sdk.DetectionContext:names",
             "sdk.ObjectReader.Object",
             "program.ReadView.LogsWithOptions",
         ),
@@ -89,6 +88,13 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "program.DeleteObject",
             "program.PatchObject",
             "program.Rollback",
+        ),
+    ),
+    (
+        "Secret key differs from accepted source",
+        (
+            "program.SecretKey",
+            "program.ReadView.SecretEqual",
         ),
     ),
     (

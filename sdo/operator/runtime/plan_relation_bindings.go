@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 
+	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -13,6 +14,16 @@ import (
 func bindPlanRelations(plan program.Plan, view program.ReadView) (program.Plan, error) {
 	plan.Actions = append([]program.Action(nil), plan.Actions...)
 	for index, action := range plan.Actions {
+		if planwire.IsSecretRestore(action) {
+			restore := generalSecretRestore(action)
+			if live, ok := routingLiveView(view); ok {
+				if err := live.bindSecretRestore(&restore); err != nil {
+					return program.Plan{}, err
+				}
+				plan.Actions[index] = restore
+			}
+			continue
+		}
 		var ca program.SyncWebhookCA
 		switch value := action.(type) {
 		case program.SyncWebhookCA:

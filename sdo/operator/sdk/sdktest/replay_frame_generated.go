@@ -412,6 +412,13 @@ func (v *replayFrameView) ScopedServices(a0 string) (r0 []p6.Service, r1 error) 
 	}
 	return v.ReadView.ScopedServices(a0)
 }
+func (v *replayFrameView) SecretEqual(a0 p2.SecretKey, a1 p2.SecretKey) (r0 bool, r1 error) {
+	if v.limited("SecretEqual", []any{a0, a1}) {
+		r1 = p0.ErrReadReplyLimit
+		return
+	}
+	return v.ReadView.SecretEqual(a0, a1)
+}
 func (v *replayFrameView) Secrets() (r0 []p0.SecretMetadata) {
 	if v.limited("Secrets", []any{}) {
 		v.abort()

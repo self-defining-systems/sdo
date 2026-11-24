@@ -155,6 +155,9 @@ message PlanObjectEffect {
 
 message ReconcileFromSource {
   ObjectRef ref = 1 [(buf.validate.field).required = true];
+  repeated string keys = 2;
+  string secret_resource_version = 3;
+  string secret_commit = 4;
 }
 
 message Rollback {

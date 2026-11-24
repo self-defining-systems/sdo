@@ -1495,10 +1495,13 @@ func (x *PlanObjectEffect) GetReason() string {
 }
 
 type ReconcileFromSource struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Ref                   *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Keys                  []string               `protobuf:"bytes,2,rep,name=keys,proto3" json:"keys,omitempty"`
+	SecretResourceVersion string                 `protobuf:"bytes,3,opt,name=secret_resource_version,json=secretResourceVersion,proto3" json:"secret_resource_version,omitempty"`
+	SecretCommit          string                 `protobuf:"bytes,4,opt,name=secret_commit,json=secretCommit,proto3" json:"secret_commit,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *ReconcileFromSource) Reset() {
@@ -1536,6 +1539,27 @@ func (x *ReconcileFromSource) GetRef() *ObjectRef {
 		return x.Ref
 	}
 	return nil
+}
+
+func (x *ReconcileFromSource) GetKeys() []string {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+func (x *ReconcileFromSource) GetSecretResourceVersion() string {
+	if x != nil {
+		return x.SecretResourceVersion
+	}
+	return ""
+}
+
+func (x *ReconcileFromSource) GetSecretCommit() string {
+	if x != nil {
+		return x.SecretCommit
+	}
+	return ""
 }
 
 type Rollback struct {
@@ -6309,9 +6333,12 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\tconfirmed\x18\x05 \x01(\bR\tconfirmed\x12\"\n" +
 	"\firreversible\x18\x06 \x01(\bR\firreversible\x12C\n" +
 	"\x11deleted_pre_image\x18\a \x01(\v2\x17.google.protobuf.StructR\x0fdeletedPreImage\x12\x16\n" +
-	"\x06reason\x18\b \x01(\tR\x06reason\"U\n" +
+	"\x06reason\x18\b \x01(\tR\x06reason\"\xc6\x01\n" +
 	"\x13ReconcileFromSource\x12>\n" +
-	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"t\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x12\n" +
+	"\x04keys\x18\x02 \x03(\tR\x04keys\x126\n" +
+	"\x17secret_resource_version\x18\x03 \x01(\tR\x15secretResourceVersion\x12#\n" +
+	"\rsecret_commit\x18\x04 \x01(\tR\fsecretCommit\"t\n" +
 	"\bRollback\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12(\n" +
 	"\vto_revision\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +

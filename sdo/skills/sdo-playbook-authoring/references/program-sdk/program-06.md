@@ -153,6 +153,14 @@ type ScriptOriginReceipt struct {
     successful repair. Any recorded mutation qualifies; ScriptDigest, when
     present, names the exact RunScript bytes that ran.
 
+type SecretKey struct {
+	Ref      sdk.ObjectRef `json:"ref"`
+	Key      string        `json:"key"`
+	Accepted bool          `json:"accepted,omitempty"`
+}
+    SecretKey identifies a v1 Secret key in the application namespace. Accepted
+    selects the incident's accepted rendered source instead of the live object.
+
 type SetField struct {
 	Ref    sdk.ObjectRef
 	Path   string

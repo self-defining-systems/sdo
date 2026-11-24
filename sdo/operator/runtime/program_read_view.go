@@ -42,7 +42,8 @@ type PrimitiveProber interface {
 // LiveReadView adds read-only primitives to one detector snapshot. Its
 // dependencies expose reads only; no program receives a Kubernetes writer.
 type LiveReadView struct {
-	objects *memoryhost.ObjectIndex
+	secretComparisons *secretComparisons
+	objects           *memoryhost.ObjectIndex
 	inputs.Carrier
 	Context            context.Context
 	Client             kubernetes.Interface

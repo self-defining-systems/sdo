@@ -256,10 +256,16 @@ class PlanObjectEffect(_message.Message):
     def __init__(self, operation: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., uid: _Optional[str] = ..., state: _Optional[str] = ..., confirmed: _Optional[bool] = ..., irreversible: _Optional[bool] = ..., deleted_pre_image: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class ReconcileFromSource(_message.Message):
-    __slots__ = ("ref",)
+    __slots__ = ("ref", "keys", "secret_resource_version", "secret_commit")
     REF_FIELD_NUMBER: _ClassVar[int]
+    KEYS_FIELD_NUMBER: _ClassVar[int]
+    SECRET_RESOURCE_VERSION_FIELD_NUMBER: _ClassVar[int]
+    SECRET_COMMIT_FIELD_NUMBER: _ClassVar[int]
     ref: _common_pb2.ObjectRef
-    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ...) -> None: ...
+    keys: _containers.RepeatedScalarFieldContainer[str]
+    secret_resource_version: str
+    secret_commit: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., keys: _Optional[_Iterable[str]] = ..., secret_resource_version: _Optional[str] = ..., secret_commit: _Optional[str] = ...) -> None: ...
 
 class Rollback(_message.Message):
     __slots__ = ("ref", "to_revision")

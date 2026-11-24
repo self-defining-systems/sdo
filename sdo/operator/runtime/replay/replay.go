@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
+	"sdo.dev/operator/planwire"
 	operator "sdo.dev/operator/runtime"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -161,7 +162,11 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if err != nil {
 		return fail(mitigationBuildError(err))
 	}
-	if containsScript(plan) {
+	privateSecret := slices.ContainsFunc(plan.Actions, planwire.IsSecretRestore)
+	if privateSecret {
+		r.Effects = append(r.Effects, "skipped: private Secret restore effect")
+	}
+	if containsScript(plan) && !privateSecret {
 		return observedScriptTransition(ctx, p, c, plan, source, r)
 	}
 	client, err := newCluster(c.Corpus.Open)

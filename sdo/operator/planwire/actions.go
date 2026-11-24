@@ -57,7 +57,7 @@ func ActionProto(action program.Action) (*contracts.Action, error) {
 			return ActionProto(*a)
 		}
 	case program.ReconcileFromSource:
-		return &contracts.Action{Kind: &contracts.Action_ReconcileFromSource{ReconcileFromSource: &contracts.ReconcileFromSource{Ref: refProto(a.Ref)}}}, nil
+		return &contracts.Action{Kind: &contracts.Action_ReconcileFromSource{ReconcileFromSource: &contracts.ReconcileFromSource{Ref: refProto(a.Ref), Keys: a.Keys, SecretResourceVersion: a.SecretResourceVersion, SecretCommit: a.SecretCommit}}}, nil
 	case program.Rollback:
 		return &contracts.Action{Kind: &contracts.Action_Rollback{Rollback: &contracts.Rollback{Ref: refProto(a.Ref), ToRevision: a.ToRevision}}}, nil
 	case program.SetField:
@@ -172,7 +172,7 @@ func ActionState(action *contracts.Action) program.Action {
 	case *contracts.Action_DeleteObject:
 		decoded = program.DeleteObject{Ref: objectRefState(kind.DeleteObject.GetRef()), Reason: kind.DeleteObject.GetReason()}
 	case *contracts.Action_ReconcileFromSource:
-		decoded = program.ReconcileFromSource{Ref: objectRefState(kind.ReconcileFromSource.GetRef())}
+		decoded = program.ReconcileFromSource{Ref: objectRefState(kind.ReconcileFromSource.GetRef()), Keys: kind.ReconcileFromSource.GetKeys(), SecretResourceVersion: kind.ReconcileFromSource.GetSecretResourceVersion(), SecretCommit: kind.ReconcileFromSource.GetSecretCommit()}
 	case *contracts.Action_Rollback:
 		decoded = program.Rollback{Ref: objectRefState(kind.Rollback.GetRef()), ToRevision: kind.Rollback.GetToRevision()}
 	case *contracts.Action_SetField:

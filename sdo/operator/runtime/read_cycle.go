@@ -28,6 +28,7 @@ func NewCycleReadView(view program.ReadView) *CycleReadView {
 	// BaselineSource computes the whole namespace's diff. Freeze it once for
 	// this snapshot, before per-object read keys fan out over that same diff.
 	freeze := func(live LiveReadView) program.ReadView {
+		live.secretComparisons = &secretComparisons{versions: map[program.SecretKey]string{}}
 		live.objects = memoryhost.NewObjectIndex(live.DetectionContext, nil)
 		live.Client = snapshotClient(live.Client)
 		if live.BaselineSource != nil {

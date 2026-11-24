@@ -405,6 +405,13 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 			_, _ = recorder.AdmissionWebhooksFor(subject)
 			continue
 
+		case "SecretEqual":
+			var keys []program.SecretKey
+			if err := json.Unmarshal(call.Arguments, &keys); err != nil || len(keys) != 2 {
+				return nil, errors.New("invalid SecretEqual arguments")
+			}
+			_, _ = recorder.SecretEqual(keys[0], keys[1])
+			continue
 		case "WebhookCAMatchesSecret":
 			var target program.WebhookCA
 			if len(args) != 1 {

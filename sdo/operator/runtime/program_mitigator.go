@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -15,6 +16,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -140,6 +142,9 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 			err = readErr
 		}
 		if err == nil {
+			err = isolated.checkComparedSecretKeys(plan)
+		}
+		if err == nil {
 			plan, err = detachExecutablePlan(plan, program.ReadFrom(observed))
 		}
 		if err == nil {
@@ -193,13 +198,37 @@ func detachExecutablePlan(plan program.Plan, view program.ReadView) (program.Pla
 // is how a learned program saw no pod admission and returned an empty plan.
 type mitigationReadView struct {
 	program.ReadView
-	frozen sdktest.Snapshot
-	ctx    context.Context
+	frozen   sdktest.Snapshot
+	ctx      context.Context
+	compared *sync.Map
 }
 
 func newMitigationReadView(ctx context.Context, live program.ReadView) mitigationReadView {
 	frozen := sdktest.Snapshot{NamespaceName: live.Namespace(), ConfigMapList: live.ConfigMaps(), ServiceList: live.Services(), PodList: live.Pods(), DeploymentList: live.Deployments(), ReplicaSetList: live.ReplicaSets(), EndpointList: live.Endpoints(), EndpointSliceList: live.EndpointSlices(), NetworkPolicyList: live.NetworkPolicies(), EventList: live.Events(), StatefulSetList: live.StatefulSets(), HPAList: live.HorizontalPodAutoscalers(), PDBList: live.PodDisruptionBudgets()}
-	return mitigationReadView{ReadView: live, frozen: frozen, ctx: ctx}
+	return mitigationReadView{ReadView: live, frozen: frozen, ctx: ctx, compared: &sync.Map{}}
+}
+
+func (v mitigationReadView) SecretEqual(left, right program.SecretKey) (bool, error) {
+	equal, err := v.ReadView.SecretEqual(left, right)
+	if err == nil && !equal && !left.Accepted && right.Accepted && left.Ref == right.Ref && left.Key == right.Key {
+		v.compared.Store(left, true)
+	}
+	return equal, err
+}
+
+func (v mitigationReadView) checkComparedSecretKeys(plan program.Plan) error {
+	for _, action := range plan.Actions {
+		if !planwire.IsSecretRestore(action) {
+			continue
+		}
+		restore := generalSecretRestore(action)
+		for _, key := range restore.Keys {
+			if _, ok := v.compared.Load(program.SecretKey{Ref: restore.Ref, Key: key}); !ok {
+				return errors.New("Mitigate must compare each restored Secret key with accepted source")
+			}
+		}
+	}
+	return nil
 }
 
 // UnderlyingReadView lets the memory host edge reach the view this one isolates.

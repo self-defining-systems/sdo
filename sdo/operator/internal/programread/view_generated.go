@@ -402,6 +402,11 @@ func (v *View) ScopedServices(a0 string) (r0 []p6.Service, r1 error) {
 	r1 = err
 	return
 }
+func (v *View) SecretEqual(a0 p2.SecretKey, a1 p2.SecretKey) (r0 bool, r1 error) {
+	err := v.call("SecretEqual", []any{a0, a1}, []any{&r0})
+	r1 = err
+	return
+}
 func (v *View) Secrets() (r0 []p0.SecretMetadata) {
 	err := v.call("Secrets", []any{}, []any{&r0})
 	if err != nil {

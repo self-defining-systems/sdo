@@ -117,6 +117,8 @@ func (v *RecordingReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoint
 
 func (v *RecordingReadView) ScopedServices(namespace string) ([]corev1.Service, error)
 
+func (v *RecordingReadView) SecretEqual(left, right program.SecretKey) (bool, error)
+
 func (v *RecordingReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
 
 func (v *RecordingReadView) SnapshotCalls() []PrimitiveCall
@@ -239,8 +241,4 @@ func (v *ReplayReadView) Recorded(method string, arguments any, result any) erro
     Recorded answers a state read from the first matching recorded reply without
     consuming it: a live read view freezes such reads per snapshot, so repeated
     identical reads see the same answer. Missing replies are *UnrecordedError.
-
-func (v *ReplayReadView) ReplayProgramReadView(source program.ReadView) program.ReadView
-    ReplayProgramReadView overlays bounded host replies ahead of any snapshot
-    fallback, including for SDK methods that cannot return an error.
 ```

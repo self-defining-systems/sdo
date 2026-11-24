@@ -145,6 +145,8 @@ type ReadView interface {
 	inputs.Sources
 	// WebhookCAMatchesSecret reports whether one webhook's caBundle equals a Secret key without exposing either value.
 	WebhookCAMatchesSecret(WebhookCA) (bool, error)
+	// SecretEqual compares two Secret keys without exposing their values. The left key is live.
+	SecretEqual(left, right SecretKey) (bool, error)
 	// AdmissionWebhooksFor lists the webhooks admitting Pods for a Namespace or workload.
 	// Cluster webhook names need no observation grant.
 	AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)
@@ -298,19 +300,22 @@ func (DeleteObject) action() {}
 // removing additions SourceDiff reports; prefer SetField for one field.
 // An object accepted source declares that is absent is created from source,
 // exactly as CreateFromSource (the receipt names the create).
-// For a Secret the controller writes the literal data of the accepted render
-// (the keys the source declares; other keys stay) and nothing records a value:
-// the receipt names the keys. It refuses a Secret whose source has no literal
-// data or whose render is not deterministic (a generated password); then
-// Escalate. Restart the readers that started after the foreign change with
-// RestartRollout later in the same plan, because a running Pod keeps the value
-// it started with. Identify readers from their pod template Secret references.
+// A Secret restore writes only the mismatched Keys compared with accepted
+// source in the incident read view. Go checks the comparison version before
+// patching. Restart stale readers in a subsequent action when needed.
 // After it restores a StatefulSet's pod template, each Pod still on another
 // revision than status.updateRevision that is failing (ImagePullBackOff,
 // ErrImagePull, CrashLoopBackOff) or not Ready past a short bound is deleted,
 // one at a time in ordinal order, so the controller recreates it at the
 // restored revision; the receipt names each deleted Pod and why.
-type ReconcileFromSource struct{ Ref sdk.ObjectRef }
+type ReconcileFromSource struct {
+	Ref sdk.ObjectRef
+	// Keys selects the previously compared Secret keys. Other objects leave it empty.
+	Keys []string
+	// SecretResourceVersion and SecretCommit are bound by the controller.
+	SecretResourceVersion string
+	SecretCommit          string
+}
 
 func (ReconcileFromSource) action() {}
 
