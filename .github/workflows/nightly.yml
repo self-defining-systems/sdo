@@ -117,31 +117,37 @@ jobs:
           bwrap --ro-bind / / --dev /dev --proc /proc true
           echo "KUBEBUILDER_ASSETS=$(bash scripts/install_envtest.sh)" >> "$GITHUB_ENV"
       - name: Controller end to end (first incident and repeat, then faults)
+        id: e2e
         env:
           SCENARIO: ${{ inputs.scenario || 'all' }}
         run: bash scripts/test_controller_e2e.sh "$SCENARIO"
+      # Go checks cache contents against their inputs. Keep valid compiler work
+      # even when a scenario fails so the next run can start with a warm cache.
       - name: Trim and measure the sandbox compiler archive
         id: e2e-cache-size
+        if: ${{ !cancelled() && (steps.e2e.conclusion == 'success' || steps.e2e.conclusion == 'failure') }}
         run: |
           export GOCACHE="$HOME/.cache/sdo-e2e/go-build"
+          [[ -d "$GOCACHE" ]] || exit 0
           bash scripts/ci_go_cache.sh trim-build
           family="ci-controller-e2e-v1-$RUNNER_OS-$RUNNER_ARCH"
           limit=$(python3 -c 'import json,sys; print(json.load(open(".github/ci_budgets.json"))["cache"]["families"][sys.argv[1]]["max_mb"])' "$family")
           bash scripts/ci_cache_guard.sh "$limit" "$GOCACHE"
       - name: Save the end-to-end cache
-        if: github.ref == 'refs/heads/main' && (inputs.scenario == '' || inputs.scenario == 'all') && steps.e2e-cache-size.outputs.oversize != 'true'
+        id: e2e-cache-save
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (inputs.scenario == '' || inputs.scenario == 'all') && steps.e2e-cache-size.outputs.oversize == 'false' }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: ~/.cache/sdo-e2e/go-build
           key: ci-controller-e2e-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
       - name: Prune the superseded end-to-end caches
-        if: github.ref == 'refs/heads/main' && (inputs.scenario == '' || inputs.scenario == 'all') && steps.e2e-cache-size.outputs.oversize != 'true'
+        if: ${{ !cancelled() && steps.e2e-cache-save.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 scripts/ci_cache_budget.py prune ci-controller-e2e-v1
       - name: Fail on an oversize end-to-end cache
-        if: steps.e2e-cache-size.outputs.oversize == 'true'
+        if: ${{ !cancelled() && steps.e2e-cache-size.outputs.oversize == 'true' }}
         run: exit 1
       # A failed world keeps its run directory (pod logs, termination messages); a hosted runner
       # discards it, so a failure that only happens there could not be diagnosed.
