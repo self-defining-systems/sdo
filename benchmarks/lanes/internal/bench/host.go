@@ -297,7 +297,7 @@ func (h localHost) Stage(_ context.Context, root Root, in Input) (string, error)
 	return root.path(in.Path), nil
 }
 
-// GCStaging removes under staging every <lane>/<entry> and inputs/<sha> not in keep.
+// GCStaging removes under staging every <lane>/<entry> and inputs/<sha> not in keep; keep may name a whole lane.
 func GCStaging(staging string, keep []string) []string {
 	kept := map[string]bool{}
 	for _, k := range keep {
@@ -306,7 +306,7 @@ func GCStaging(staging string, keep []string) []string {
 	var removed []string
 	lanes, _ := os.ReadDir(staging)
 	for _, l := range lanes {
-		if !l.IsDir() || isPlatformEntry(l.Name()) {
+		if !l.IsDir() || isPlatformEntry(l.Name()) || kept[l.Name()] {
 			continue
 		}
 		ents, _ := os.ReadDir(filepath.Join(staging, l.Name()))

@@ -34,11 +34,40 @@ func TestGCKeepsTheStepLockOfEveryLaneWithAStep(t *testing.T) {
 		Ops: func(string, Host) HostOps { return spy }}
 	m.gcHost(context.Background(), "h1")
 	keep := strings.Join(spy.keep, ",")
-	if !strings.Contains(keep, filepath.Join("new", "step.lock")) {
+	if !strings.Contains(keep, "new") {
 		t.Fatalf("a live step's lock is collectable; keep = %v", spy.keep)
 	}
-	if strings.Contains(keep, filepath.Join("idle", "step.lock")) {
+	if strings.Contains(keep, "idle") {
 		t.Fatalf("a gone lane with no step keeps a lock; keep = %v", spy.keep)
+	}
+}
+
+// gc deletes nothing of a lane with a live step (its staging is the step's working directory and the fingerprint of the
+// fresh app copy it just made) and keeps the fingerprint of every lane that still has its cluster.
+func TestGCLeavesALiveLaneAndEveryFreshFingerprint(t *testing.T) {
+	staging := t.TempDir()
+	files := map[string]bool{ // kept or not
+		"building/lane/app": true, "building/fresh-fingerprint.json": true, "building/anything-new": true,
+		"ready/lane/app": true, "ready/fresh-fingerprint.json": true, "ready/build-old/log": false,
+		"gone/lane/app": false, "gone/fresh-fingerprint.json": false,
+	}
+	for f := range files {
+		must(t, os.MkdirAll(filepath.Join(staging, filepath.Dir(f)), 0o755))
+		must(t, os.WriteFile(filepath.Join(staging, f), nil, 0o644))
+	}
+	m := &Manager{Root: Root(t.TempDir()), inv: Inventory{Hosts: map[string]Host{"h1": {Staging: staging}}},
+		exps: map[string]*Experiment{},
+		lanes: map[string]*LaneFile{
+			"building": {Lane: "building", Host: "h1", Gone: true, State: LaneBuilding, Step: &StepRef{ID: "s1"}},
+			"ready":    {Lane: "ready", Host: "h1", State: LaneReady},
+			"gone":     {Lane: "gone", Host: "h1", Gone: true, State: LaneFree},
+		},
+		Ops: func(string, Host) HostOps { return localHost{staging: staging} }}
+	m.gcHost(context.Background(), "h1")
+	for f, want := range files {
+		if got := fileExists(filepath.Join(staging, f)); got != want {
+			t.Errorf("%s: kept=%v, want %v", f, got, want)
+		}
 	}
 }
 

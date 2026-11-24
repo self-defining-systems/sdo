@@ -56,8 +56,20 @@ func TestBenchRemoteHost(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "remote-staging", "inputs", x.Lock.Instances.SHA256)); err != nil {
 		t.Fatalf("instances not staged on the host: %v", err)
 	}
-	if ents, _ := os.ReadDir(filepath.Join(dir, "remote-staging", "c1")); len(ents) > 3 { // step.lock, lane, fresh-fingerprint.json
-		t.Fatalf("staging not cleaned: %d entries", len(ents))
+	// What stays is the lane's own state and the hook input its prepared record names; no step's directory.
+	hookInputs := 0
+	ents, _ := os.ReadDir(filepath.Join(dir, "remote-staging", "c1"))
+	for _, e := range ents {
+		switch name := e.Name(); {
+		case name == "step.lock" || name == "lane" || name == freshFingerprintName:
+		case strings.HasSuffix(name, hookInputDirName("")):
+			hookInputs++
+		default:
+			t.Errorf("staging not cleaned: %s", name)
+		}
+	}
+	if hookInputs > 1 {
+		t.Errorf("%d hook inputs kept, want at most the prepared one", hookInputs)
 	}
 	l.noFault()
 }
