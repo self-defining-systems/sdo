@@ -36,7 +36,10 @@ func TestBurstOnAHealthProbeSendsTheScheduledRequestNowAndRecordsIt(t *testing.T
 		t.Fatalf("sent samples = %+v", sent)
 	}
 	windows := p.Windows()
-	requests := windows[traffic.HTTPReceiptWindowID].HTTPRequests
+	if len(windows) != 1 {
+		t.Fatalf("workload API returned a non-workload: %+v", windows)
+	}
+	requests := p.observationWindows()[traffic.HTTPReceiptWindowID].HTTPRequests
 	want := traffic.HTTPReceipt{Service: "web", Port: 80, PathKey: traffic.HTTPPathKey("/items"), Method: "GET",
 		SentAt: clock.at, Answered: clock.at, Status: 200}
 	if len(requests) != 1 || requests[0] != want {

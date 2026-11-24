@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // RunTrafficObservation reads the accepted revision's running host. It neither
@@ -47,6 +48,9 @@ func RunTrafficObservation(ctx context.Context, args []string, output io.Writer)
 	if after != commit {
 		return errors.New("accepted revision changed during traffic observation")
 	}
+	// The command reports the workload API. The controller alone consumes
+	// the receipt window that accompanies the internal poll.
+	delete(response.Windows, traffic.HTTPReceiptWindowID)
 	encoded, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(response)
 	if err != nil {
 		return err

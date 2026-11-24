@@ -324,6 +324,14 @@ func (p *Prober) Windows() map[string]traffic.Window {
 	for name, probe := range p.links {
 		windows[name] = p.linkWindowLocked(probe, now)
 	}
+	return windows
+}
+
+// observationWindows extends the internal poll without exposing a non-workload
+// in Windows, whose callers use it to judge whether the workloads are ready.
+func (p *Prober) observationWindows() map[string]traffic.Window {
+	windows := p.Windows()
+	now := p.config.Clock.Now().UTC()
 	if receipts := p.httpRequests.recent(now); len(receipts) != 0 {
 		windows[traffic.HTTPReceiptWindowID] = traffic.Window{ObservedAt: now, HTTPRequests: receipts}
 	}

@@ -77,7 +77,7 @@ func (h *Host) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.TrafficRe
 		h.engine.Reset()
 	case pb.TrafficRequest_OPERATION_WINDOWS:
 		out.Windows = map[string]*structpb.Struct{}
-		for name, window := range h.engine.Windows() {
+		for name, window := range h.engine.observationWindows() {
 			wire, err := trafficStruct(window)
 			if err != nil {
 				return nil, err
