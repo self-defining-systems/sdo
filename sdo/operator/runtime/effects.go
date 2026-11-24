@@ -63,13 +63,6 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		c.incidentDispatchedAt = c.clock()
 	}
 	c.mu.Unlock()
-	// A watch-only dispatch completes locally without claiming a worker.
-	if dispatcher, ok := c.dispatcher.(watchOnlyDispatcher); ok {
-		defer cancel()
-		result, err := dispatcher.Dispatch(actionCtx, effect.Request)
-		c.results <- dispatchCompletion{incidentID: effect.Request.IncidentID, result: result, err: err}
-		return nil
-	}
 	endBy := c.responseEndBound(effect.Request)
 	c.goBackground(func() {
 		defer cancel()

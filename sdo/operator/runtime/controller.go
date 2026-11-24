@@ -388,6 +388,7 @@ func NewController(
 			return nil, fmt.Errorf("watch-only conflicts with external incidents")
 		}
 		config.CodePath.Overrides.ResponseStages = []string{"agent"}
+		dispatcher = watchOnlyDispatcher{}
 	}
 	registry := config.CodePathRegistry
 	if registry == nil {
@@ -400,7 +401,7 @@ func NewController(
 	if provider == nil {
 		return nil, fmt.Errorf("snapshot provider is required")
 	}
-	if dispatcher == nil && !config.WatchOnly {
+	if dispatcher == nil {
 		return nil, fmt.Errorf("dispatcher is required")
 	}
 	// Timing and policy come from the operator configuration (WithSettings);
@@ -468,9 +469,6 @@ func NewController(
 		dispatchJitter: lifecycleio.DispatchJitter,
 		prepareRetries: newRetryLedger(dispatchPrepareRetry(config)),
 		driftRetries:   newRetryLedger(driftRetryPolicy),
-	}
-	if config.WatchOnly {
-		controller.dispatcher = watchOnlyDispatcher{clock: controller.clock}
 	}
 	controller.baseProvider = provider
 	controller.composeProvider()
@@ -1350,7 +1348,7 @@ func (c *Controller) nextWake() (time.Time, string) {
 		consider(c.startup.bound, "start-up bound")
 	}
 	c.mu.Lock()
-	verificationPending := !c.config.WatchOnly && c.incidentOpen && c.responderDone && c.currentIncidentRequest != nil &&
+	verificationPending := c.incidentOpen && c.responderDone && c.currentIncidentRequest != nil &&
 		(c.escalatedAt.IsZero() || pageOpened(c.currentIncidentRequest)) && !c.midStage.running && !c.closurePreparingLocked()
 	verificationDeadline := time.Time{}
 	if verificationPending {
@@ -2063,7 +2061,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			c.mu.Unlock()
 			return false
 		}
-		if c.config.WatchOnly || now.Before(c.recoveryGraceEndsLocked()) {
+		if now.Before(c.recoveryGraceEndsLocked()) {
 			c.mu.Unlock()
 			return false
 		}
@@ -2280,7 +2278,7 @@ func (c *Controller) recoveryGraceEndsLocked() time.Time {
 // escalateLocked records that the incident's responder ended before Recovered.
 // The first escalation time is kept; a restart rejoins it.
 func (c *Controller) escalateLocked(at time.Time) {
-	if !c.config.WatchOnly && c.escalatedAt.IsZero() {
+	if c.escalatedAt.IsZero() {
 		c.escalatedAt = at.UTC()
 		slog.Warn("incident_escalated", "incident_id", c.currentIncidentRequest.IncidentID, "active_health_detectors", c.activeHealthDetectors())
 	}

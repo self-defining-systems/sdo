@@ -232,7 +232,6 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 	// structured result is provisional, and the changes made after it are in the
 	// final one. Wait for the session to finish, bounded by the response
 	// deadline.
-	// Older watch-only controllers persisted this wait without a worker.
 	if !done && !c.config.WatchOnly && now.Before(c.finalResultDeadlineLocked()) {
 		c.mu.Unlock()
 		return
