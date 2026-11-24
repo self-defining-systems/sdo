@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -11,6 +12,24 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
 )
+
+// recoverySample records the scope of a scheduled or on-demand sample so a
+// same-step join cannot reuse a narrower confirmation.
+type recoverySample struct {
+	at    time.Time
+	scope recoveryScope
+}
+
+func (c *Controller) rememberRecoverySample(id string, at time.Time, scope recoveryScope) {
+	if c.recoverySamples == nil {
+		c.recoverySamples = make(map[string]recoverySample)
+	}
+	c.recoverySamples[id] = recoverySample{at, scope}
+}
+
+func (s recoverySample) matches(at time.Time, scope recoveryScope) bool {
+	return s.at.Equal(at) && (s.scope == nil) == (scope == nil) && maps.Equal(s.scope, scope)
+}
 
 type recoveryObservation struct {
 	ID       string
@@ -88,7 +107,7 @@ func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionCo
 		if err := core.ValidateFinding(detector.Spec(), *f); err != nil {
 			return nil, DetectorEvaluationError, err
 		}
-		if f.Status == sdk.FindingActive {
+		if f.Status == sdk.FindingActive && scope.holds(*f) {
 			status = DetectorEvaluationFiring
 		}
 	}
@@ -102,11 +121,11 @@ func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionCo
 // already taken by this controller step are reused; persistence is never counted
 // twice for one observation. Call under observationMu, outside c.mu.
 func (c *Controller) observeRecoveryHealth(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, request IncidentRequest) {
+	scope := newRecoveryScope(alertKeys(&request))
 	var pending []string
 	var detectors []sdk.Detector
 	for _, id := range c.recoveryDetectorIDs(request) {
-		states, _ := c.latestEvaluations([]string{id}, time.Time{}, false)
-		if len(states) > 0 && states[0].EvaluatedAt.Equal(now) {
+		if c.recoverySamples[id].matches(now, scope) {
 			continue
 		}
 		detector := c.detectors[id]
@@ -117,7 +136,6 @@ func (c *Controller) observeRecoveryHealth(ctx context.Context, now time.Time, s
 		pending = append(pending, id)
 		detectors = append(detectors, detector)
 	}
-	scope := c.recoveryScope()
 	reads := readRecoveryDetectors(ctx, detectors, snapshot, scope)
 	for i, id := range pending {
 		read := reads[id]
@@ -127,9 +145,10 @@ func (c *Controller) observeRecoveryHealth(ctx context.Context, now time.Time, s
 
 func (c *Controller) recordRecoveryObservation(ctx context.Context, id string, now time.Time, findings []sdk.Finding, status DetectorEvaluationStatus, err error, reason string, scope recoveryScope) {
 	states, _ := c.latestEvaluations([]string{id}, time.Time{}, false)
-	if len(states) > 0 && states[0].EvaluatedAt.Equal(now) && states[0].Status == status {
+	if c.recoverySamples[id].matches(now, scope) {
 		return
 	}
+	c.rememberRecoverySample(id, now, scope)
 	if err != nil {
 		c.recordDetectorError(id, now, err)
 		return
@@ -137,6 +156,11 @@ func (c *Controller) recordRecoveryObservation(ctx context.Context, id string, n
 	if status == DetectorEvaluationPending {
 		c.history = append(c.history, DetectorEvaluation{DetectorID: id, EvaluatedAt: now, Status: status, Reason: reason})
 		c.trackClearStreak(id, now, false)
+		c.observeAvailableFindings(ctx, id, now, findings, scope)
+	} else if len(states) > 0 && states[0].EvaluatedAt.Equal(now) && states[0].Status != DetectorEvaluationPending && states[0].Status != DetectorEvaluationError {
+		// The tracker already consumed this step's raw findings. Only the
+		// scope of their recovery confirmation changed.
+		c.recordEvaluation(id, now, findings, scope)
 	} else {
 		changes := c.tracker.Observe(now, id, findings)
 		c.batcher.RemoveKeys(changes.Cleared)
@@ -153,4 +177,24 @@ func (c *Controller) recordRecoveryObservation(ctx context.Context, id string, n
 	if len(c.history) > 100 {
 		c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)
 	}
+}
+
+// An unconfirmed alert cannot clear from silence. An independently firing
+// sibling still feeds admission and can join the incident.
+func (c *Controller) observeAvailableFindings(ctx context.Context, id string, now time.Time, findings []sdk.Finding, scope recoveryScope) {
+	if len(findings) == 0 || scope == nil {
+		return
+	}
+	detector := c.detectors[id]
+	if detector == nil {
+		return
+	}
+	changes := c.tracker.observe(now, id, findings, "", scope)
+	c.batcher.RemoveKeys(changes.Cleared)
+	spec := detector.Spec()
+	c.recordFiring(spec, now, findings, changes)
+	for _, finding := range changes.Activated {
+		c.admitActivation(ctx, finding, now, spec)
+	}
+	c.admitUpgrades(ctx, changes.Reruled, now, spec)
 }

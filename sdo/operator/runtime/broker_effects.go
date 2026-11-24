@@ -179,6 +179,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	var unconfirmedReason contracts.ClosureUnconfirmedReason
 	var unconfirmedStates []DetectorEvaluation
 	var verification *contracts.RecoveryVerification
+	var recovery recoveryCheck
 	// Notes are evidence of this one recheck. Only freezing records them; a
 	// frozen closure's retry rechecks for contradiction and never adds notes.
 	var notes []string
@@ -220,14 +221,23 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		if effect.Freeze && recheck.SourceOnly {
 			_ = c.closureRecheckWaitExpired(effect.Identity, recheck.Bound)
 		}
-		if len(effect.Closure.FinalDetectorStates) > 0 && effect.Closure.ClosureStabilityWindow > 0 && (recheck.Verdict == closureRecheckConfirmed || recheck.SourceOnly) {
+		recovery = c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
+		verification = recovery.record
+		if recheck.Verdict != closureRecheckConfirmed && !recheck.SourceOnly || recovery.verdict == recoveryPending {
+			c.resetEarlyStability()
+		}
+		if len(effect.Closure.FinalDetectorStates) > 0 && effect.Closure.ClosureStabilityWindow > 0 && (recheck.Verdict == closureRecheckConfirmed || recheck.SourceOnly) && recovery.verdict == recoveryVerified {
 			// One instant decides the proof, whether its window is running and
 			// the deadline: a window this pass restarted starts at now, so it is
 			// not running and cannot hold the closure past the deadline.
 			c.mu.Lock()
 			now := c.clock()
 			clear := c.recoveryTrackersClear(effect.Closure.Request)
-			stable := clear && c.recoveryProofForEpochLocked(now, recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow))
+			since := effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow)
+			if settled := recovery.record.GetSince(); settled.IsValid() && settled.AsTime().After(since) {
+				since = settled.AsTime()
+			}
+			stable := clear && c.recoveryProofForEpochLocked(now, recheck.States, true, since)
 			if !clear {
 				c.closureStableSince = time.Time{}
 			}
@@ -332,15 +342,13 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		}
 		// The same Recovered predicate closure used: the opening user tests
 		// still pass after SDO's last write settled.
-		check := c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
-		verification = check.record
-		if check.verdict == recoveryPending {
-			if !c.recoveredWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
+		if recovery.verdict == recoveryPending {
+			if !c.recoveredWaitExpired(effect.Identity, recovery.horizon+effect.Closure.ClosureStabilityWindow) {
 				c.scheduleClosureRecheck()
 				cancel()
 				return nil
 			}
-			unconfirmed = "not recovered by the verification bound: " + check.reason
+			unconfirmed = "not recovered by the verification bound: " + recovery.reason
 			unconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
 		}
 		if unconfirmed != "" {
@@ -618,12 +626,6 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		evaluated++
 		read := reads[id]
 		findings, status, err := read.findings, read.status, read.err
-		if status == DetectorEvaluationFiring && len(scope.blocking(findings)) == 0 {
-			status = DetectorEvaluationClear
-			if !detectorConfirmedIn(detector, snapshot, scope) {
-				status = DetectorEvaluationPending
-			}
-		}
 		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReasonIn(detector, snapshot, scope)})
 		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(scope.blocking(findings)), Reason: detectorConfirmationReasonIn(detector, snapshot, scope)}
 		if err != nil {

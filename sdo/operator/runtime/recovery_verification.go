@@ -128,13 +128,15 @@ func recovered(in verificationInput) recoveryCheck {
 		record.Writes = append(record.Writes, &contracts.WriteSettlement{ApplicationId: w.id, SettledAt: optionalTimestamp(w.settledAt), Settled: w.settled})
 	}
 	var pending []string
-	userTests := 0
 	for _, key := range alertKeys(&in.request) {
 		workload, scenario, ok := openingUserTest(in.request, key)
 		if !ok {
+			if detector, fingerprint, found := strings.Cut(key, "\x00"); found &&
+				strings.HasPrefix(detector, memory.TrafficDetectorPrefix) && strings.HasPrefix(fingerprint, detector+"/"+traffic.RuleIDPrefix) {
+				pending = append(pending, "missing user test identity for "+detector)
+			}
 			continue
 		}
-		userTests++
 		passed, detail, horizon := memberPassed(windows[workload], scenario, since, in.stability)
 		check.horizon = max(check.horizon, horizon)
 		if !passed {
@@ -142,9 +144,7 @@ func recovered(in verificationInput) recoveryCheck {
 		}
 	}
 	switch {
-	case !settled && userTests > 0:
-		// A condition opener's closure already waits on pending rollouts of
-		// the written workloads; a user test needs the settle time as since.
+	case !settled:
 		check.verdict, check.reason = recoveryPending, "an SDO write has not settled (its rollout is still pending)"
 	case len(pending) > 0:
 		check.verdict, check.reason = recoveryPending, "not recovered since SDO's last write settled: "+strings.Join(pending, "; ")
@@ -232,7 +232,8 @@ func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWri
 				refs = append(refs, effect.Ref)
 			}
 		}
-		if len(refs) == 0 && (application.Result.Applied || application.Result.RolledBack) {
+		pendingAtCompletion := application.Pending || application.Result.RolloutPending != nil
+		if len(refs) == 0 && pendingAtCompletion && (application.Result.Applied || application.Result.RolledBack) {
 			// No recorded object effect (a rollout still pending when the plan
 			// returned): the objects its actions name are what it wrote.
 			for _, action := range application.Result.Plan.Actions {
@@ -252,7 +253,6 @@ func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWri
 		// written workloads Ready again; without a workload to watch it never
 		// settles. Either way the settle time is never earlier than the
 		// latest Ready transition of the written workloads' Pods.
-		pendingAtCompletion := application.Pending || application.Result.RolloutPending != nil
 		w := sdoWrite{id: id, settledAt: application.CompletedAt, settled: !pendingAtCompletion || len(refs) > 0}
 		for _, ref := range refs {
 			ready, rolling := resolve.readySince(ref)

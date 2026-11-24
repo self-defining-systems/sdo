@@ -87,7 +87,7 @@ func (t *FindingStateTracker) policy(detectorID string) sdk.PersistencePolicy {
 }
 
 func (t *FindingStateTracker) Observe(now time.Time, detectorID string, findings []sdk.Finding) FindingChanges {
-	return t.observe(now, detectorID, findings, "")
+	return t.observe(now, detectorID, findings, "", nil)
 }
 
 // ObserveBinding evaluates only this binding, preserving other bindings' streaks.
@@ -97,10 +97,10 @@ func (t *FindingStateTracker) ObserveBinding(now time.Time, finding sdk.Finding,
 	if matched {
 		findings = []sdk.Finding{finding}
 	}
-	return t.observe(now, finding.DetectorID, findings, FindingFingerprint(finding))
+	return t.observe(now, finding.DetectorID, findings, FindingFingerprint(finding), nil)
 }
 
-func (t *FindingStateTracker) observe(now time.Time, detectorID string, findings []sdk.Finding, binding string) FindingChanges {
+func (t *FindingStateTracker) observe(now time.Time, detectorID string, findings []sdk.Finding, binding string, preserve recoveryScope) FindingChanges {
 	policy := t.policy(detectorID)
 	seen := make(map[string]sdk.Finding)
 	for _, finding := range findings {
@@ -151,6 +151,9 @@ func (t *FindingStateTracker) observe(now time.Time, detectorID string, findings
 			continue
 		}
 		if binding != "" && FindingFingerprint(state.Finding) != binding {
+			continue
+		}
+		if _, ok := preserve[key]; ok {
 			continue
 		}
 		if _, ok := seen[FindingFingerprint(state.Finding)]; ok {

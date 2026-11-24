@@ -213,6 +213,7 @@ type Controller struct {
 	pausedEffectRetryAt     time.Time
 	recoveryObserverStarted time.Time
 	recoverySafetyLost      bool
+	recoverySamples         map[string]recoverySample
 	closureStableSince      time.Time
 	closureMutationRevision string
 	earlyLastMutationAt     time.Time
@@ -695,6 +696,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	snapshot, err := c.provider.Snapshot(ctx)
 	endSnapshot()
 	if err != nil {
+		c.resetEarlyStability()
 		return fmt.Errorf("create detection snapshot: %w", err)
 	}
 	c.timePhase("drift", func() {
@@ -801,6 +803,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		// An open incident confirms only its alert set (nil without one), so the
 		// main loop never breaks the clear streak the closure scope holds intact.
 		scope := c.recoveryScope()
+		c.rememberRecoverySample(spec.ID, now, scope)
 		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err, scope)
 		if detectErr != nil {
 			c.resetGate(spec.ID)
@@ -816,6 +819,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 		if status == DetectorEvaluationPending {
 			c.resetGate(spec.ID)
+			c.observeAvailableFindings(ctx, spec.ID, now, findings, scope)
 			c.history = append(c.history, DetectorEvaluation{DetectorID: spec.ID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationPending, Reason: detectorConfirmationReasonIn(detector, snapshot, scope)})
 			if len(c.history) > 100 {
 				c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)
@@ -1405,6 +1409,12 @@ func (c *Controller) recordDetectorError(detectorID string, now time.Time, err e
 	if !noObservation(err) {
 		c.trackClearStreak(detectorID, now, false)
 	}
+	c.mu.Lock()
+	if c.currentIncidentRequest != nil && slices.Contains(c.recoveryDetectorIDs(*c.currentIncidentRequest), detectorID) {
+		c.closureStableSince = time.Time{}
+		c.recoverySafetyLost = true
+	}
+	c.mu.Unlock()
 	if c.OnError != nil {
 		c.OnError(fmt.Errorf("detector %q: %w", detectorID, err))
 	}
@@ -1413,9 +1423,8 @@ func (c *Controller) recordDetectorError(detectorID string, now time.Time, err e
 // noObservation reports that an evaluation produced no observation of health:
 // the memory host still running the previous pass, an abandoned or overrun
 // evaluation, an unavailable read. That is not evidence the alert returned, so
-// it is recorded but never ends a clear streak; only an active finding in the
-// incident's alert set does. A detector never observed clear has no streak, so
-// the proof still fails closed for it.
+// it keeps the detector's streak for tracking. Recovery requires a new
+// continuous window after a gap in its required observations.
 func noObservation(err error) bool {
 	return errors.Is(err, sdk.ErrUnavailable) || errors.Is(err, context.DeadlineExceeded)
 }
@@ -1772,6 +1781,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	loop := c.responderLoop
+	request := *cloneIncidentRequest(c.currentIncidentRequest)
 	c.mu.Unlock()
 	var guard *apihistory.MutationObservation
 	release := func() {}
@@ -1791,6 +1801,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		var err error
 		guard, err = loop.observeMutations()
 		if err != nil {
+			c.resetEarlyStability()
 			return
 		}
 		if guard != nil {
@@ -1808,7 +1819,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	if snapshotErr == nil {
-		c.observeRecoveryHealth(ctx, now, snapshot, *c.currentIncidentRequest)
+		c.observeRecoveryHealth(ctx, now, snapshot, request)
 	}
 	generation := observationGeneration(snapshot)
 	var rolloutRefs []sdk.ObjectRef
@@ -1855,15 +1866,20 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	finalStates, healthVerified := c.finalVerificationStates()
-	if snapshotErr != nil {
-		finalStates, healthVerified = nil, false
+	scope := c.recoveryScopeLocked()
+	for _, state := range finalStates {
+		if !c.recoverySamples[state.DetectorID].matches(now, scope) {
+			finalStates, healthVerified = nil, false
+			break
+		}
 	}
 	if early && healthVerified && !c.earlyLastMutationAt.IsZero() {
 		ids := c.recoveryDetectorIDs(*c.currentIncidentRequest)
 		finalStates, healthVerified = c.latestEvaluations(ids, c.earlyLastMutationAt, true)
 	}
-	verified := healthVerified && len(source.Rollouts) == 0 && len(source.Effects) == 0
-	if !safe || guard != nil && guard.Pending {
+	prerequisites := safe && (guard == nil || !guard.Pending) && len(source.Rollouts) == 0 && len(source.Effects) == 0 && recovery.verdict == recoveryVerified
+	verified := healthVerified && prerequisites
+	if !prerequisites {
 		c.recoverySafetyLost = true
 	}
 	// A terminal dispatch failure closes as failed: once health permits it, or
@@ -1904,21 +1920,23 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	c.cacheVerificationLocked(verification)
 	if verified && !terminalFailure {
 		requiresStability = true
-		verified = c.recoveryProofLocked(now, finalStates, safe && (guard == nil || !guard.Pending))
-		if verified && recovery.verdict == recoveryPending {
-			// Findings clearing is not Recovered: the opening user tests must
-			// pass again after SDO's last write settled. The stability window
-			// restarts, so the next check has a future wake.
-			verified = false
-			c.closureStableSince = now
-			verification.Summary = recovery.reason
-		} else if !verified {
+		since := c.recoveryObservationEpochLocked()
+		if recovery.record != nil && recovery.record.GetSince().IsValid() {
+			if settled := recovery.record.GetSince().AsTime(); settled.After(since) {
+				since = settled
+			}
+		}
+		verified = c.recoveryProofForEpochLocked(now, finalStates, true, since)
+		if !verified {
 			verification.Summary = recoveryStabilitySummary
 		}
 		verification.Healthy = verified
 		c.cacheVerificationLocked(verification)
 	} else {
 		c.closureStableSince = time.Time{}
+		if recovery.verdict == recoveryPending {
+			verification.Summary = recovery.reason
+		}
 		verification.Healthy = false
 		c.cacheVerificationLocked(verification)
 		if early {

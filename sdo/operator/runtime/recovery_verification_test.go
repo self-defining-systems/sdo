@@ -310,3 +310,28 @@ func TestRecoveredJudgesUserTestsThatJoinedTheAlertSet(t *testing.T) {
 		t.Fatalf("the recovery record names joined keys %v, want %v", got, joinedKeys)
 	}
 }
+
+func TestConditionRecoveryRequiresWrittenWorkloadToSettle(t *testing.T) {
+	world := verifyWorld{now: verifyT0.Add(time.Minute)}
+	view := world.view()
+	for i := range view.PodList {
+		if view.PodList[i].Name == "db-0" {
+			view.PodList[i].Status.Conditions[0].Status = corev1.ConditionFalse
+		}
+	}
+	alert := verifyFinding("workload-health", "StatefulSet", "db", sdk.SeverityCritical)
+	request := IncidentRequest{Namespace: "app", Findings: []sdk.Finding{alert}, OpeningKeys: findingKeys([]sdk.Finding{alert})}
+	check := recovered(verificationInput{view: view, request: request, result: restartOf("StatefulSet", "db", verifyT0), detected: verifyT0})
+	if check.verdict != recoveryPending {
+		t.Fatal("clear condition let recovery pass a pending rollout")
+	}
+}
+
+func TestProbeRecoveryRequiresAlertIdentity(t *testing.T) {
+	view := verifyWorld{now: verifyT0.Add(time.Minute)}.view()
+	request := IncidentRequest{Namespace: "app", OpeningKeys: findingKeys([]sdk.Finding{browseTest()})}
+	check := recovered(verificationInput{view: view, request: request, detected: verifyT0})
+	if check.verdict != recoveryPending {
+		t.Fatal("recovery treated a missing probe identity as a condition")
+	}
+}
