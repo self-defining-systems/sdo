@@ -1075,7 +1075,7 @@ func (l *ResponderLoop) RediagnosePrograms(ctx context.Context, ids map[string]b
 	}
 	runs := SelectKeyedProgramCandidates(ctx, onlyPrograms{ProgramRegistry: l.Programs, ids: ids}, view, l.findings, l.deadline(), KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: true, Restore: sourceRestoreCandidates(view, l.Request, l.findings)})
 	l.stampProgramRuns(runs)
-	l.rememberMatchedViews(ctx, runs, view)
+	l.rememberMatchedViews(ctx, runs, view, true)
 	l.runs = append(l.runs, runs...)
 	return runs
 }
@@ -1124,7 +1124,7 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding, st
 	}
 	runs := l.selectCandidates(ctx, view, findings, stage)
 	l.stampProgramRuns(runs)
-	l.rememberMatchedViews(ctx, runs, view)
+	l.rememberMatchedViews(ctx, runs, view, stage)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
 	if l.capturePhase != "" {
@@ -1183,7 +1183,7 @@ func matchedViewKey(id string, bindings program.Bindings) string {
 	return id + "\x00" + bindingKey(bindings)
 }
 
-func (l *ResponderLoop) rememberMatchedViews(ctx context.Context, runs []ProgramRun, view program.ReadView) {
+func (l *ResponderLoop) rememberMatchedViews(ctx context.Context, runs []ProgramRun, view program.ReadView, automatic bool) {
 	if l.matchedPlanErrors == nil {
 		l.matchedPlanErrors = make(map[string]error)
 	}
@@ -1202,6 +1202,9 @@ func (l *ResponderLoop) rememberMatchedViews(ctx context.Context, runs []Program
 			plan, err := l.runMitigator(ctx, run.ProgramID, mitigator, view, run.Bindings)
 			if err != nil {
 				l.matchedPlanErrors[key] = err
+				if automatic && run.ProgramID != SourceRestoreID && l.terminalPlanError(run.ProgramID, run.Bindings) != nil {
+					return
+				}
 				continue
 			}
 			preview, err := l.Executor.Apply(ctx, l.Request, plan, true)
@@ -1274,6 +1277,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		}
 	}
 	if err := plan.Validate(); err != nil {
+		l.rememberTerminalPlanError(request.ProgramID, l.programRevision(request.ProgramID), request.Bindings, &NonExecutablePlanError{Cause: err})
 		response.Error = err.Error()
 		return
 	}

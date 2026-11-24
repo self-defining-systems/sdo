@@ -265,16 +265,18 @@ class RunProgramRequest(_message.Message):
     def __init__(self, invocation: _Optional[_Union[MemoryProgramInvocation, _Mapping]] = ..., read: _Optional[_Union[ProgramReadReply, _Mapping]] = ...) -> None: ...
 
 class RunProgramResponse(_message.Message):
-    __slots__ = ("read", "verdict", "plan", "error")
+    __slots__ = ("read", "verdict", "plan", "error", "plan_refused")
     READ_FIELD_NUMBER: _ClassVar[int]
     VERDICT_FIELD_NUMBER: _ClassVar[int]
     PLAN_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    PLAN_REFUSED_FIELD_NUMBER: _ClassVar[int]
     read: ProgramReadCall
     verdict: _program_pb2.Verdict
     plan: _program_pb2.Plan
     error: str
-    def __init__(self, read: _Optional[_Union[ProgramReadCall, _Mapping]] = ..., verdict: _Optional[_Union[_program_pb2.Verdict, _Mapping]] = ..., plan: _Optional[_Union[_program_pb2.Plan, _Mapping]] = ..., error: _Optional[str] = ...) -> None: ...
+    plan_refused: bool
+    def __init__(self, read: _Optional[_Union[ProgramReadCall, _Mapping]] = ..., verdict: _Optional[_Union[_program_pb2.Verdict, _Mapping]] = ..., plan: _Optional[_Union[_program_pb2.Plan, _Mapping]] = ..., error: _Optional[str] = ..., plan_refused: _Optional[bool] = ...) -> None: ...
 
 class ProgramReadCall(_message.Message):
     __slots__ = ("method", "arguments")

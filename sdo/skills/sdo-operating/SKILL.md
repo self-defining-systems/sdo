@@ -25,6 +25,7 @@ A listed non-matching playbook may still describe the fix: check its cause, reus
 
 SDO ends work when incident alerts stay clear after writes settle.
 On repair handoff (alert firing or unreadable), check fresh evidence. Returning escalates.
+If automatic plan validation refused a playbook, `sdo detect` shows the playbook and check error.
 
 Never print, copy, log or write a credential value anywhere, including findings and memory. A credential already in a
 pod's environment or mounted files may be used in place (exec into that pod and let its client read it) to check the

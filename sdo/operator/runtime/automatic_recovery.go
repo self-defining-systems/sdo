@@ -19,14 +19,16 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	observedAt := laterObservationTime(now, c.clock())
 	request := c.currentIncidentRequest
 	applied := playbookWrote(report)
+	refused := stagePlanRefused(report)
+	scoped := applied || refused
 	deadline := c.automaticDeadlineLocked(report)
 	if applied && report.RecoveryDeadline == nil {
 		report.RecoveryDeadline = contractTimestamp(deadline)
 	}
-	if applied && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
+	if applied && !refused && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
-	if stabilityOnly && applied {
+	if stabilityOnly && scoped {
 		if report.StabilityDeadline == nil {
 			interval := time.Second
 			for _, id := range c.recoveryDetectorIDs(*request) {
@@ -40,16 +42,18 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	// A fresh scoped clear can remove an alert from the handoff. Missing or
 	// unconfirmed health cannot establish that users recovered.
 	keys := alertKeys(request)
-	if applied {
+	if scoped {
 		keys = c.unresolvedAlertKeysLocked(now, *request)
-		markAutomaticRecovery(report, observedAt, contracts.RecoveryWait_EXIT_REASON_DEADLINE)
-		markUnsettledRollouts(report, check.record, rolloutBlockers)
 	} else if !stageEscalatedIn(request.PriorStages) {
 		keys = findingKeys(request.Findings)
 	}
+	if applied {
+		markAutomaticRecovery(report, observedAt, contracts.RecoveryWait_EXIT_REASON_DEADLINE)
+		markUnsettledRollouts(report, check.record, rolloutBlockers)
+	}
 	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
 		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
-	if !canDispatch || stageEscalatedIn(request.PriorStages) || applied && (!agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) || len(keys) == 0) {
+	if !canDispatch || stageEscalatedIn(request.PriorStages) || !agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) || scoped && len(keys) == 0 {
 		c.escalateLocked(observedAt)
 		return
 	}
@@ -102,6 +106,10 @@ func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRe
 func (c *Controller) automaticDeadlineLocked(report *contracts.StageReport) time.Time {
 	if at := report.GetStabilityDeadline(); at.IsValid() {
 		return at.AsTime()
+	}
+	// A refused plan ends the stage at once, even if an earlier plan wrote.
+	if stagePlanRefused(report) {
+		return c.responderCompletedAt
 	}
 	if at := report.GetRecoveryDeadline(); at.IsValid() {
 		return at.AsTime()
@@ -201,7 +209,7 @@ func (c *Controller) loseAutomaticObservation(now time.Time) {
 	c.resetEarlyStability()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if report := c.awaitingAutomaticRecoveryLocked(); playbookWrote(report) && !c.midStage.running && !c.closurePreparingLocked() {
+	if report := c.awaitingAutomaticRecoveryLocked(); (playbookWrote(report) || stagePlanRefused(report)) && !c.midStage.running && !c.closurePreparingLocked() {
 		c.automaticRecoveryLocked(now, report, false, recoveryCheck{}, nil)
 	}
 }
