@@ -115,6 +115,38 @@ def test_a_fault_after_a_commit_runs_through_the_fuzzops_workload_too(tmp_path: 
     assert marker.read_text().strip() == "10.1.2.3"
 
 
+def test_a_series_whose_fault_file_is_missing_is_refused_before_anything_is_pushed(tmp_path: Path) -> None:
+    """The lane platform stores the instances file alone (by content), so a fault file named relative to it is not
+    there at run time. That used to surface only after the commit was pushed and deployed, as a fault run with no
+    record that broke the rest of the series; the position must refuse at once, naming the file."""
+    run_env = env(tmp_path, 1)
+    (tmp_path / "demo.json").write_text(json.dumps({**SPEC, "faults": {"1": "fault-x"}}))
+    path = tmp_path / "instances.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "fault_instances": "faults.json"}))
+    lane = Lane("accepted")
+    out = io.StringIO()
+    adapter.run(run_env, out, ops=lane)  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert record["valid"] is False
+    assert "faults.json" in record["invalid_reason"]
+    assert lane.pushed == ""  # nothing was pushed
+
+
+def test_a_series_fault_the_fault_file_does_not_list_is_refused_before_anything_is_pushed(tmp_path: Path) -> None:
+    run_env = env(tmp_path, 1)
+    (tmp_path / "demo.json").write_text(json.dumps({**SPEC, "faults": {"2": "fault-y"}}))
+    (tmp_path / "faults.json").write_text(json.dumps({"ids": ["fault-x"], "instances": []}))
+    path = tmp_path / "instances.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "fault_instances": str(tmp_path / "faults.json")}))
+    lane = Lane("accepted")
+    out = io.StringIO()
+    adapter.run(run_env, out, ops=lane)  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert record["valid"] is False
+    assert "fault-y" in record["invalid_reason"]
+    assert lane.pushed == ""  # nothing was pushed
+
+
 def test_the_safety_check_after_a_series_run_answers_inactive_for_the_lane_platforms_flags(tmp_path: Path) -> None:
     """The platform asks `run active` and `run undo` with `--file/--id`, not the run's `--instance-file/--instance`;
     a series has no fault to undo, and passing the call on made the lane go down with `fault still active`."""
