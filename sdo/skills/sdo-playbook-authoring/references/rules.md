@@ -97,3 +97,9 @@ relation-derived Env and digest-to-receipt linkage; README text holds only judge
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,
   provenance, bindings and labels. Do not delete or relabel it; submit new evidence with a new case ID. Enforced by: `program.corpus-immutable`.
 <!-- /replay:on -->
+
+## Frozen inputs
+
+Accepted and working playbooks read frozen objects and telemetry from their own
+controller view. Use `MetricResult` and `LogResult` with the detector's query ID.
+Treat unavailable results as unknown.
