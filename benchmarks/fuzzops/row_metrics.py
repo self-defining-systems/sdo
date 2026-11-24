@@ -476,10 +476,7 @@ def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Documen
         for w in _transcript(path)
         if start <= w.at
     ]
-    bound, slack = _recovery_bounds(row, inject)
-    if end is not None:
-        bound, slack = (min(x, end) if x is not None else end for x in (bound, slack))
-    last = _last_write(writes, bound, slack)
+    last = _last_write(writes, *_capped(_recovery_bounds(row, inject), end))
     if last:
         _record_write(row, start, last, observed)
         row.ttf_s, row.ttf_source = row.anchor_to_last_write_s, last.source
@@ -499,6 +496,13 @@ def _recovery_bounds(row: Row, inject: datetime | None) -> tuple[datetime | None
         return None, None
     bound = inject + timedelta(seconds=row.inject_to_last_bad_s + 1)
     return bound, bound + timedelta(seconds=RECOVERY_SLACK_S)
+
+
+def _capped(bounds: tuple[datetime | None, datetime | None], end: datetime | None) -> tuple[datetime | None, ...]:
+    """The recovery bounds, no later than the end of the agent session or incident that wrote."""
+    if end is None:
+        return bounds
+    return tuple(min(x, end) if x is not None else end for x in bounds)
 
 
 def _last_write(writes: Iterable[Write], bound: datetime | None, slack: datetime | None) -> Write | None:
@@ -722,7 +726,8 @@ def _sdo(
         if start is None:
             continue
         clear = _time(timeline.get("health_cleared_at"))
-        bound = clear or _time(timeline.get("recovered_at")) or _time(timeline.get("closing_turn_dispatch_at"))
+        ended = clear or _time(timeline.get("recovered_at")) or _time(timeline.get("closing_turn_dispatch_at"))
+        bound, slack = _capped(_recovery_bounds(row, inject), ended)
         paths = []
         for agent in _objects(manifest.get("agents")):
             if agent.get("role") == "responder" and agent.get("incident") in {incident, folder.name[:12], folder.name}:
@@ -738,17 +743,16 @@ def _sdo(
             doc = next(
                 (_read(p) for p in sorted((run / "operator/memory/.sdo/outcomes").glob(f"{folder.name}*.json"))), {}
             )
-        writes.extend(
-            (start, w) for w in _incident_writes(doc, paths) if start <= w.at and (bound is None or w.at <= bound)
-        )
+        # One rule for both arms: the write that explains the graded recovery, never a later one.
+        if last := _last_write([w for w in _incident_writes(doc, paths) if start <= w.at], bound, slack):
+            writes.append((start, last))
         for priority, (marker, at) in enumerate(
             (
-                ("health_cleared_at", clear),
                 ("playbook_applied_at", apply),
                 ("first_agent_change_at", _time(timeline.get("first_agent_change_at"))),
             )
         ):
-            if at is not None and start <= at and (bound is None or at <= bound):
+            if at is not None and start <= at and (slack is None or at <= slack):
                 fallbacks.append((priority, at, start, marker))
     for digest in open_ids:
         folder = root / Path(digest).name
