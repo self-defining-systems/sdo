@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	kclock "k8s.io/utils/clock"
@@ -401,4 +403,75 @@ func TestDetectWaitSurvivesAFailedRead(t *testing.T) {
 	detectAlertSet(loop, "traffic.health", "create")
 	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 60})
 	waitWasIdle(t, response, clock, 60)
+}
+
+// blockingDetector can pause the first read or a later poll until its context ends.
+type blockingDetector struct {
+	calls     atomic.Int32
+	blockFrom int32
+}
+
+func (*blockingDetector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "slow.read", Interval: time.Second}
+}
+
+func (d *blockingDetector) Detect(ctx context.Context, _ sdk.DetectionContext) ([]sdk.Finding, error) {
+	if d.calls.Add(1) >= d.blockFrom {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return nil, nil
+}
+
+func TestDetectWaitReturnsWhenTheIncidentRecoversDuringARead(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		read int32
+	}{
+		{"initial read", 1},
+		{"later poll", 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				loop, clock := detectWorldLoop(&detectWorld{})
+				loop.WaitClock = clock.FakeClock
+				detector := &blockingDetector{blockFrom: test.read}
+				loop.Detectors = []sdk.Detector{detector}
+				var recovered atomic.Bool
+				loop.IncidentStatus = func() *apihistory.IncidentVerified {
+					if recovered.Load() {
+						return &apihistory.IncidentVerified{}
+					}
+					return nil
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				done := make(chan ToolResponse, 1)
+				go func() { done <- loop.Handle(ctx, ToolRequest{Command: "detect", WaitSeconds: 60}) }()
+				synctest.Wait()
+				if test.read == 2 {
+					clock.Step(detectPollInterval)
+					synctest.Wait()
+				}
+				if got := detector.calls.Load(); got != test.read {
+					t.Fatalf("detector calls = %d, want %d with the last read blocked", got, test.read)
+				}
+				recovered.Store(true)
+				clock.Step(detectRecoveredWatchInterval)
+				synctest.Wait()
+				select {
+				case response := <-done:
+					first := strings.SplitN(response.Text, "\n", 2)[0]
+					if response.Error != "" || !strings.HasSuffix(first, "recovered: SDO is ending your incident work") {
+						t.Fatalf("detect wait did not report recovery: %+v", response)
+					}
+				default:
+					t.Fatal("detect wait did not return after one recovery watch tick")
+				}
+				if got := detector.calls.Load(); got != test.read {
+					t.Fatalf("recovery triggered an extra detector call: got %d, want %d", got, test.read)
+				}
+			})
+		})
+	}
 }
