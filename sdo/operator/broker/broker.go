@@ -802,6 +802,10 @@ func (b *Broker) lockedAt(path string, fn func() error) error {
 	return b.lockedWith(path, syscall.LOCK_EX, fn)
 }
 
+func (b *Broker) tryLocked(fn func() error) error {
+	return b.lockedWith(b.lockPath, syscall.LOCK_EX|syscall.LOCK_NB, fn)
+}
+
 func (b *Broker) lockedWith(path string, flags int, fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
