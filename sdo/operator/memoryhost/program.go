@@ -2,16 +2,15 @@ package memoryhost
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -48,24 +47,17 @@ func (s *Server) WithTelemetrySources(sources []byte) *Server {
 	return s
 }
 
-func (s *Server) programView(ctx context.Context, input *pb.MemoryProgramInput) (*programRecording, program.Bindings, error) {
-	if input == nil {
-		return nil, program.Bindings{}, errors.New("program input required")
-	}
-	snapshot, err := s.snapshot(input.MirrorSequence)
-	if err != nil {
-		return nil, program.Bindings{}, err
-	}
-	if err = observe(&snapshot, input.Observation); err != nil {
-		return nil, program.Bindings{}, err
-	}
+func programBindings(invocation *pb.MemoryProgramInvocation) (program.Bindings, error) {
 	bindings := program.Bindings{Objects: program.ObjectBindings{}}
-	for _, b := range input.Bindings {
+	for _, b := range invocation.GetBindings() {
+		if b == nil {
+			return program.Bindings{}, errors.New("nil binding")
+		}
 		if _, exists := bindings.Objects[b.Name]; exists {
-			return nil, program.Bindings{}, errors.New("duplicate binding")
+			return program.Bindings{}, errors.New("duplicate binding")
 		}
 		if _, exists := bindings.Values[b.Name]; exists {
-			return nil, program.Bindings{}, errors.New("duplicate binding")
+			return program.Bindings{}, errors.New("duplicate binding")
 		}
 		switch {
 		case b.Object != nil && b.Value == nil:
@@ -76,66 +68,76 @@ func (s *Server) programView(ctx context.Context, input *pb.MemoryProgramInput) 
 			}
 			bindings.Values[b.Name] = b.Value.AsInterface()
 		default:
-			return nil, program.Bindings{}, errors.New("binding requires exactly one of object or value")
+			return program.Bindings{}, errors.New("binding requires exactly one of object or value")
 		}
 	}
-	var view program.ReadView
-	if s.readFactory != nil {
-		view, err = s.readFactory(ctx, snapshot)
-		if err != nil {
-			return nil, program.Bindings{}, err
-		}
-	} else {
-		calls, err := DecodeReceipts(input.Reads)
-		if err != nil {
-			return nil, program.Bindings{}, err
-		}
-		view = &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
-	}
-	if len(input.Reads) > 0 && s.readFactory != nil {
-		calls, err := DecodeReceipts(input.Reads)
-		if err != nil {
-			return nil, program.Bindings{}, err
-		}
-		view = diffReadView{ReadView: view, diffs: &sdktest.ReplayReadView{Calls: calls}, snapshot: snapshot}
-	}
-	recorder := &sdktest.RecordingReadView{ReadView: s.programObjects(view, snapshot)}
-
-	return &programRecording{RecordingReadView: recorder, snapshot: snapshot}, bindings, nil
+	return bindings, nil
 }
-func (s *Server) Diagnose(ctx context.Context, request *pb.DiagnoseRequest) (response *pb.DiagnoseResponse, err error) {
-	response = &pb.DiagnoseResponse{}
-	var view *programRecording
-	var bindings program.Bindings
+
+// ProgramRPC is the transport-neutral playbook entry point on a leased host.
+type ProgramRPC interface {
+	ExecuteProgram(context.Context, *pb.MemoryProgramInvocation, func(programread.Message) programread.Message) (*pb.RunProgramResponse, error)
+}
+
+func (s *Server) ExecuteProgram(ctx context.Context, invocation *pb.MemoryProgramInvocation, read func(programread.Message) programread.Message) (*pb.RunProgramResponse, error) {
+	return s.executeProgram(ctx, invocation, func(call programread.Message) (programread.Message, error) { return read(call), nil })
+}
+
+func (s *Server) executeProgram(ctx context.Context, invocation *pb.MemoryProgramInvocation, exchange func(programread.Message) (programread.Message, error)) (response *pb.RunProgramResponse, err error) {
+	if invocation == nil || s.programs == nil {
+		return programError(errors.New("program invocation and registry required")), nil
+	}
+	bindings, err := programBindings(invocation)
+	if err != nil {
+		return programError(err), nil
+	}
+	trace := &programPanicTrace{}
+	view := &programread.View{Exchange: func(call programread.Message) (programread.Message, error) {
+		answer, err := exchange(call)
+		if err == nil {
+			trace.add(call, answer)
+		}
+		return answer, err
+	}}
+	record := func(value any) { s.recordProgramPanic(invocation, trace, value) }
 	defer func() {
 		if value := recover(); value != nil {
-			s.recordProgramPanic("diagnose", request.GetInput(), view, value)
-			response.Verdict = nil
-			response.Error = fmt.Sprintf("program panic: %v", value)
+			record(value)
+			response, err = programError(fmt.Errorf("program panic: %v", value)), nil
 		}
 	}()
-	view, bindings, err = s.programView(ctx, request.GetInput())
-	if err != nil {
-		return nil, err
-	}
-	if s.programs == nil {
-		return nil, errors.New("program registry unavailable")
-	}
-	p, ok := s.programs.Diagnoser(request.Input.ProgramId)
-	if !ok {
-		return nil, errors.New("diagnoser not registered")
-	}
-	if err = program.ValidateBindings(p.Spec(), bindings); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if response != nil {
-			calls := view.SnapshotCalls()
-			response.WantedMetrics = wantedMetrics(calls)
-			response.Reads, err = EncodeReceipts(calls)
+
+	switch invocation.Operation {
+	case pb.MemoryProgramInvocation_OPERATION_DIAGNOSE:
+		p, ok := s.programs.Diagnoser(invocation.ProgramId)
+		if !ok {
+			return programError(errors.New("diagnoser not registered")), nil
 		}
-	}()
-	verdict := program.RunDiagnose(ctx, recordingDiagnoser{Diagnoser: p, record: func(value any) { s.recordProgramPanic("diagnose", request.GetInput(), view, value) }}, view, bindings, time.Hour)
+		verdict := program.RunDiagnose(ctx, recordingDiagnoser{Diagnoser: p, record: record}, view, bindings, time.Hour)
+		return &pb.RunProgramResponse{Frame: &pb.RunProgramResponse_Verdict{Verdict: verdictProto(verdict)}}, nil
+	case pb.MemoryProgramInvocation_OPERATION_MITIGATE:
+		p, ok := s.programs.Mitigator(invocation.ProgramId)
+		if !ok {
+			return programError(errors.New("mitigator not registered")), nil
+		}
+		if err := program.ValidateBindings(p.Spec(), bindings); err != nil {
+			return programError(err), nil
+		}
+		plan, err := mitigate(ctx, p, view, bindings)
+		if err != nil {
+			return programError(err), nil
+		}
+		return &pb.RunProgramResponse{Frame: &pb.RunProgramResponse_Plan{Plan: plan}}, nil
+	default:
+		return programError(errors.New("invalid program operation")), nil
+	}
+}
+
+func programError(err error) *pb.RunProgramResponse {
+	return &pb.RunProgramResponse{Frame: &pb.RunProgramResponse_Error{Error: err.Error()}}
+}
+
+func verdictProto(verdict program.Verdict) *pb.Verdict {
 	result := pb.Verdict_RESULT_UNKNOWN
 	switch verdict.Result {
 	case program.Match:
@@ -145,48 +147,13 @@ func (s *Server) Diagnose(ctx context.Context, request *pb.DiagnoseRequest) (res
 	case program.NeedsJudgement:
 		result = pb.Verdict_RESULT_NEEDS_JUDGEMENT
 	}
-	response.Verdict = &pb.Verdict{Result: result, Question: verdict.Question}
+	out := &pb.Verdict{Result: result, Question: verdict.Question, CauseClass: verdict.CauseClass, Reach: verdict.Reach}
 	for _, e := range verdict.Evidence {
-		response.Verdict.Evidence = append(response.Verdict.Evidence, &pb.Evidence{Resource: ref(e.Resource), Fact: e.Fact, Observed: e.Observed, Expected: e.Expected})
+		out.Evidence = append(out.Evidence, &pb.Evidence{Resource: ref(e.Resource), Fact: e.Fact, Observed: e.Observed, Expected: e.Expected})
 	}
-	return response, nil
+	return out
 }
-func (s *Server) Mitigate(ctx context.Context, request *pb.MitigateRequest) (response *pb.MitigateResponse, err error) {
-	response = &pb.MitigateResponse{}
-	var view *programRecording
-	var bindings program.Bindings
-	defer func() {
-		if value := recover(); value != nil {
-			s.recordProgramPanic("mitigate", request.GetInput(), view, value)
-			response.Plan = nil
-			response.Error = fmt.Sprintf("program panic: %v", value)
-		}
-	}()
-	view, bindings, err = s.programView(ctx, request.GetInput())
-	if err != nil {
-		return nil, err
-	}
-	if s.programs == nil {
-		return nil, errors.New("program registry unavailable")
-	}
-	p, ok := s.programs.Mitigator(request.Input.ProgramId)
-	if !ok {
-		return nil, errors.New("mitigator not registered")
-	}
-	if err = program.ValidateBindings(p.Spec(), bindings); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if response != nil {
-			calls := view.SnapshotCalls()
-			response.WantedMetrics = wantedMetrics(calls)
-			reads, encodeErr := EncodeReceipts(calls)
-			response.Reads = reads
-			if encodeErr != nil {
-				err = encodeErr
-			}
-		}
-	}()
+func mitigate(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings) (*pb.Plan, error) {
 	checked := &checkedView{ReadView: view}
 	// Programs that honor their context end before the transport gives up, so a
 	// slow program is a plan error and never a failed host.
@@ -200,50 +167,21 @@ func (s *Server) Mitigate(ctx context.Context, request *pb.MitigateRequest) (res
 		err = plan.Validate()
 	}
 	if err != nil {
-		response.Error = err.Error()
-		return response, nil
+		return nil, err
 	}
-	response.Plan = &pb.Plan{Rationale: plan.Rationale}
+	encoded := &pb.Plan{Rationale: plan.Rationale}
 	for _, action := range plan.Actions {
-		out, err := actionProto(action)
+		out, err := planwire.ActionProto(action)
 		if err != nil {
-			return &pb.MitigateResponse{Error: err.Error()}, nil
+			return nil, err
 		}
-		response.Plan.Actions = append(response.Plan.Actions, out)
+		encoded.Actions = append(encoded.Actions, out)
 	}
-	return response, nil
+	return encoded, nil
 }
-func actionProto(action program.Action) (*pb.Action, error) { return planwire.ActionProto(action) }
 
 // WithReadFactory installs host-owned readers before serving; no writer is exposed.
 func (s *Server) WithReadFactory(factory func(context.Context, sdktest.Snapshot) (program.ReadView, error)) *Server {
 	s.readFactory = factory
 	return s
-}
-
-// wantedMetrics lists the on-demand metric queries a program asked for that the
-// frozen observation did not hold. The controller answers them live and sends
-// the request again.
-func wantedMetrics(calls []sdktest.PrimitiveCall) []*structpb.Struct {
-	var wanted []*structpb.Struct
-	seen := map[metrics.Query]bool{}
-	for _, call := range calls {
-		if call.Method != "QueryMetrics" {
-			continue
-		}
-		var result metrics.Result
-		if json.Unmarshal(call.Result, &result) != nil || result.Error != metrics.NotFrozenError || seen[result.Query] {
-			continue
-		}
-		seen[result.Query] = true
-		var fields map[string]any
-		raw, err := json.Marshal(result.Query)
-		if err != nil || json.Unmarshal(raw, &fields) != nil {
-			continue
-		}
-		if value, err := structpb.NewStruct(fields); err == nil {
-			wanted = append(wanted, value)
-		}
-	}
-	return wanted
 }

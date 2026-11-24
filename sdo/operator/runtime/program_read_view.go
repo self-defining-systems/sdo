@@ -652,6 +652,12 @@ func (v LiveReadView) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
 }
 
 func (v LiveReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	guard := TypedPlanClient{ProtectedNamespace: v.ProtectedNamespace}
+	for _, ref := range refs {
+		if err := guard.checkPlanNamespace(ref.Namespace); err != nil {
+			return nil, sdk.Classified(err.Error(), sdk.ErrInvalidRead)
+		}
+	}
 	if source, ok := v.DetectionContext.(sdk.ObjectCaptureSource); ok {
 		return source.CaptureObjects(refs)
 	}

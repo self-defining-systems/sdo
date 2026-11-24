@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -20,6 +19,8 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/programread"
+	"sdo.dev/operator/memoryhost"
 	"time"
 )
 
@@ -90,7 +91,7 @@ func Launch(config LaunchConfig) (*Process, error) {
 	}
 	p := &Process{command: command, directory: directory, done: make(chan struct{})}
 	go func() { _ = command.Wait(); close(p.done) }()
-	conn, err := grpc.NewClient("unix://"+socket, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: 10 * time.Millisecond, Multiplier: 1.5, Jitter: 0.2, MaxDelay: 100 * time.Millisecond}, MinConnectTimeout: time.Second}), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(16<<20), grpc.MaxCallSendMsgSize(16<<20)))
+	conn, err := grpc.NewClient("unix://"+socket, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: 10 * time.Millisecond, Multiplier: 1.5, Jitter: 0.2, MaxDelay: 100 * time.Millisecond}, MinConnectTimeout: time.Second}), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(memoryhost.MaxMessageBytes), grpc.MaxCallSendMsgSize(memoryhost.MaxMessageBytes)))
 	if err != nil {
 		_ = p.Close()
 		return nil, err
@@ -107,11 +108,8 @@ func (p *Process) Ready(ctx context.Context) (*pb.ReadyResponse, error) {
 func (p *Process) Evaluate(ctx context.Context, r *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
 	return p.client.Evaluate(ctx, r)
 }
-func (p *Process) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
-	return p.client.Diagnose(ctx, r)
-}
-func (p *Process) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.MitigateResponse, error) {
-	return p.client.Mitigate(ctx, r)
+func (p *Process) ExecuteProgram(ctx context.Context, invocation *pb.MemoryProgramInvocation, read func(programread.Message) programread.Message) (*pb.RunProgramResponse, error) {
+	return memoryhost.CallProgram(ctx, p.client, invocation, read)
 }
 func (p *Process) ReadState(ctx context.Context, r *pb.ReadStateRequest) (*pb.ReadStateResponse, error) {
 	return p.client.ReadState(ctx, r)
@@ -145,7 +143,7 @@ func Serve(ctx context.Context, socket string, capBytes uint64, server pb.Memory
 	if err = os.Chmod(socket, 0600); err != nil {
 		return err
 	}
-	grpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(16<<20), grpc.MaxSendMsgSize(16<<20), grpc.UnaryInterceptor(boundHeavyCalls(maxHeavyCalls)))
+	grpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(memoryhost.MaxMessageBytes), grpc.MaxSendMsgSize(memoryhost.MaxMessageBytes), grpc.StreamInterceptor(boundProgramCalls(maxHeavyCalls)))
 	pb.RegisterMemoryHostServiceServer(grpcServer, server)
 	finished := make(chan struct{})
 	defer close(finished)
@@ -169,24 +167,22 @@ func (p *Process) WaitExited(ctx context.Context) error {
 	}
 }
 
-// maxHeavyCalls bounds concurrent memory-code calls; each decodes every read receipt of its request.
+// maxHeavyCalls bounds concurrent playbook execution and read decoding.
 const maxHeavyCalls = 4
 
-// boundHeavyCalls queues Diagnose and Mitigate beyond limit instead of letting their decoded
-// receipts pile up in one process; other calls (readiness, evaluation, traffic) are never queued.
-func boundHeavyCalls(limit int) grpc.UnaryServerInterceptor {
+func boundProgramCalls(limit int) grpc.StreamServerInterceptor {
 	slots := make(chan struct{}, limit)
-	return func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if !strings.HasSuffix(info.FullMethod, "/Diagnose") && !strings.HasSuffix(info.FullMethod, "/Mitigate") {
-			return handler(ctx, request)
+	return func(server any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if info.FullMethod != pb.MemoryHostService_RunProgram_FullMethodName {
+			return handler(server, stream)
 		}
 		select {
 		case slots <- struct{}{}:
 			defer func() { <-slots }()
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		case <-stream.Context().Done():
+			return stream.Context().Err()
 		}
-		return handler(ctx, request)
+		return handler(server, stream)
 	}
 }
 

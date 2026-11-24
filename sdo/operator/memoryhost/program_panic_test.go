@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -55,27 +57,26 @@ func TestProgramPanicRecordsReplayableInputsAndStack(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			server.WithPrograms(registry).WithReadFactory(func(_ context.Context, s sdktest.Snapshot) (program.ReadView, error) {
-				return panicReads{program.ReadFrom(s)}, nil
-			})
-			if err := server.Apply(&pb.MirrorRequest{Namespace: "app", Sequence: 1, Complete: true, ResetMirror: true}); err != nil {
-				t.Fatal(err)
+			server.WithPrograms(registry)
+			input := &pb.MemoryProgramInvocation{ProgramId: "panic-fixture", Operation: pb.MemoryProgramInvocation_OPERATION_DIAGNOSE}
+			if operation == "mitigate" {
+				input.Operation = pb.MemoryProgramInvocation_OPERATION_MITIGATE
 			}
-			input := &pb.MemoryProgramInput{ProgramId: "panic-fixture", MirrorSequence: 1}
-			invoke := func() {
-				if operation == "diagnose" {
-					r, e := server.Diagnose(context.Background(), &pb.DiagnoseRequest{Input: input})
-					if e != nil || r.GetVerdict().GetResult() != pb.Verdict_RESULT_UNKNOWN {
-						t.Fatalf("panic became success: %v %v", r, e)
-					}
-				} else {
-					r, e := server.Mitigate(context.Background(), &pb.MitigateRequest{Input: input})
-					if e != nil || !strings.Contains(r.GetError(), "panic") || r.Plan != nil {
-						t.Fatalf("panic became success: %v %v", r, e)
-					}
+			invoke := func(read func(programread.Message) programread.Message) {
+				r, err := server.ExecuteProgram(context.Background(), input, read)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if operation == "diagnose" && r.GetVerdict().GetResult() != pb.Verdict_RESULT_UNKNOWN {
+					t.Fatalf("diagnose panic became success: %v", r)
+				}
+				if operation == "mitigate" && (!strings.Contains(r.GetError(), "panic") || r.GetPlan() != nil) {
+					t.Fatalf("mitigate panic became success: %v", r)
 				}
 			}
-			invoke()
+			invoke(func(call programread.Message) programread.Message {
+				return programread.Read(panicReads{program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"})}, call)
+			})
 			var event struct {
 				Stack        string `json:"stack"`
 				CapturedCase string `json:"captured_case"`
@@ -86,27 +87,25 @@ func TestProgramPanicRecordsReplayableInputsAndStack(t *testing.T) {
 			if !strings.Contains(event.Stack, "panicFixture.fail") {
 				t.Fatalf("missing program stack: %s", event.Stack)
 			}
-			var captured struct {
-				Operation string
-				Input     json.RawMessage
-				Snapshot  sdktest.Snapshot
-				Calls     []sdktest.PrimitiveCall
-			}
+			var captured programPanicCase
 			if err := json.Unmarshal([]byte(event.CapturedCase), &captured); err != nil {
 				t.Fatal(err)
 			}
-			if captured.Operation != operation || captured.Snapshot.NamespaceName != "app" || len(captured.Calls) != 1 {
+			if captured.SchemaVersion != "sdo.program-panic/v2" || captured.Truncated || len(captured.Reads) != 1 {
 				t.Fatalf("incomplete case: %+v", captured)
 			}
-			input = new(pb.MemoryProgramInput)
+			input = new(pb.MemoryProgramInvocation)
 			if err := protojson.Unmarshal(captured.Input, input); err != nil {
 				t.Fatal(err)
 			}
-			server.WithReadFactory(func(context.Context, sdktest.Snapshot) (program.ReadView, error) {
-				return &sdktest.ReplayReadView{Snapshot: captured.Snapshot, Calls: captured.Calls}, nil
-			})
 			logs.Reset()
-			invoke()
+			invoke(func(call programread.Message) programread.Message {
+				if !reflect.DeepEqual(call, captured.Reads[0].Call) {
+					t.Errorf("replay call = %+v, want %+v", call, captured.Reads[0].Call)
+					return programread.Message{Error: "unrecorded call"}
+				}
+				return captured.Reads[0].Reply
+			})
 			if !strings.Contains(logs.String(), "synthetic program crash") {
 				t.Fatalf("captured inputs did not reproduce panic: %s", logs.String())
 			}

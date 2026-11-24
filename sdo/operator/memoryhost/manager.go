@@ -278,39 +278,6 @@ func (m *Manager) recover(generation uint64, prepare func(context.Context) (Host
 	m.mu.Unlock()
 }
 
-// Diagnose and Mitigate lease the same accepted child as detector evaluation.
-// Transport failure is an error, never clearance or an empty authorized plan.
-func (m *Manager) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
-	h := m.pin()
-	if h != nil {
-		defer m.unpin(h)
-	}
-	host, ok := h.(interface {
-		Diagnose(context.Context, *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error)
-	})
-	if !ok {
-		return nil, errors.New("memory host diagnosis unavailable")
-	}
-	ctx, cancel := context.WithTimeout(ctx, m.timeout)
-	defer cancel()
-	return host.Diagnose(ctx, r)
-}
-func (m *Manager) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.MitigateResponse, error) {
-	h := m.pin()
-	if h != nil {
-		defer m.unpin(h)
-	}
-	host, ok := h.(interface {
-		Mitigate(context.Context, *pb.MitigateRequest) (*pb.MitigateResponse, error)
-	})
-	if !ok {
-		return nil, errors.New("memory host mitigation unavailable")
-	}
-	ctx, cancel := context.WithTimeout(ctx, m.timeout)
-	defer cancel()
-	return host.Mitigate(ctx, r)
-}
-
 // ReadState leases the accepted child like Diagnose. A transport failure is an
 // error; the caller records it as a failed read, never as state.
 func (m *Manager) ReadState(ctx context.Context, r *pb.ReadStateRequest) (*pb.ReadStateResponse, error) {

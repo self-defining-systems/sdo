@@ -68,7 +68,7 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 		reply(specs, nil)
 		return
 	}
-	rawView := &jitview.View{Input: decoder, Output: encoder}
+	rawView := jitview.PipeView(decoder, encoder)
 	observed, readFailure := program.CheckReads(rawView)
 	view := program.ReadFrom(observed)
 	ctx := context.Background()

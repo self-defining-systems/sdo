@@ -22,8 +22,8 @@ import (
 )
 
 // Model the live normalization transport missing from the original tool-speed
-// benchmark. Discovery is shared by kind, but SSA answers remain fresh for each
-// object in every new snapshot.
+// benchmark. Discovery and normalization are shared by detectors watching the
+// same Deployments. Diagnoses that read no diffs add no API calls.
 func TestReadSnapshotDiscoveryBudget(t *testing.T) {
 	var discoveries, normalizations atomic.Int32
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,11 +56,11 @@ func TestReadSnapshotDiscoveryBudget(t *testing.T) {
 		if response.Error != "" {
 			t.Fatal(response.Error)
 		}
-		if got := discoveries.Load(); got != 2*cycle {
-			t.Errorf("discovery must be once per API version per fresh snapshot: got %d want %d", got, 2*cycle)
+		if got := discoveries.Load(); got != cycle {
+			t.Errorf("discovery must be once per API version per fresh snapshot: got %d want %d", got, cycle)
 		}
-		if got := normalizations.Load(); got != 150*cycle {
-			t.Errorf("live SSA must remain once per object per fresh snapshot: got %d", got)
+		if got := normalizations.Load(); got != 30*cycle {
+			t.Errorf("live SSA must remain once per watched Deployment per fresh snapshot: got %d", got)
 		}
 	}
 }

@@ -15,6 +15,11 @@ A program directory contains diagnose.go, optional mitigate.go, Go tests and a R
 fault class and originating incident. Preserve accepted provenance; SDO lists it in the generated playbook index.
 The authoring reference tool supplies the routing example.
 
+## Frozen inputs
+
+- Read frozen objects and telemetry through the controller's cycle view. For an existing detector's
+  input, use its query ID with `MetricResult` or `LogResult`. Treat unavailable results as unknown.
+
 ## Bindings and values
 
 - `bindings.Objects[role]` holds resource identities; `bindings.Parameter(spec, name)` returns a scalar

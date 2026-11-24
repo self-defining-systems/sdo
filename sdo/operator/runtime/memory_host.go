@@ -6,14 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"time"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
@@ -33,13 +32,11 @@ import (
 // child during each call. The controller only receives findings and plans.
 type MemoryHostRPC interface {
 	Evaluate(context.Context, *pb.EvaluateRequest) (*pb.EvaluateResponse, error)
-	Diagnose(context.Context, *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error)
-	Mitigate(context.Context, *pb.MitigateRequest) (*pb.MitigateResponse, error)
+	memoryhost.ProgramRPC
 }
 
-// MirroredMemoryRPC holds the exact frozen-view barrier for each remote call.
+// MirroredMemoryRPC leases the accepted host, publishing a barrier for detector views.
 type MirroredMemoryRPC interface {
-	MemoryHostRPC
 	Capture(context.Context, sdk.DetectionContext) (memoryhost.Host, uint64, func(), error)
 }
 type RemoteMemory struct {
@@ -392,64 +389,6 @@ func observationSource(view sdk.DetectionContext) inputs.Carrier {
 	return inputs.New(sourceView)
 }
 
-// programObservation is the cycle's observation plus every frozen result the
-// controller's own view holds, so a program in the host reads the cycle inputs
-// the controller's view would answer, not only those a host detector declared.
-func (r *RemoteMemory) programObservation(view sdk.DetectionContext) (*pb.MemoryObservation, error) {
-	shared, err := r.observation(view)
-	if err != nil {
-		return nil, err
-	}
-	// The observation is shared across the cycle's detectors: extend a copy.
-	out := proto.Clone(shared).(*pb.MemoryObservation)
-	source := observationSource(view)
-	if out.Metrics, err = carryAll(out.Metrics, source.MetricResults(), nil); err != nil {
-		return nil, err
-	}
-	if out.Traffic, err = carryAll(out.Traffic, source.TrafficWindows(), nil); err != nil {
-		return nil, err
-	}
-	if out.PodReads, err = carryAll(out.PodReads, source.PodReadResults(), nil); err != nil {
-		return nil, err
-	}
-	if out.Vantage, err = carryAll(out.Vantage, source.VantageResults(), nil); err != nil {
-		return nil, err
-	}
-	out.AppState, err = carryAll(out.AppState, source.AppStateResults(), func(v carried.Result) any {
-		return boundAppState(v, appStateObservationBudget)
-	})
-	return out, err
-}
-
-// carryAll adds every result of set that into does not hold yet, in key order.
-func carryAll[T any](into map[string]*structpb.Struct, set map[string]T, project func(T) any) (map[string]*structpb.Struct, error) {
-	if len(set) == 0 {
-		return into, nil
-	}
-	if into == nil {
-		into = map[string]*structpb.Struct{}
-	}
-	ids := make([]string, 0, len(set))
-	for id := range set {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if _, held := into[id]; held {
-			continue
-		}
-		var value any = set[id]
-		if project != nil {
-			value = project(set[id])
-		}
-		wire, err := wireStruct(value)
-		if err != nil {
-			return nil, err
-		}
-		into[id] = wire
-	}
-	return into, nil
-}
 func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryObservation, error) {
 	source := observationSource(view)
 	out := &pb.MemoryObservation{Traffic: map[string]*structpb.Struct{}, Metrics: map[string]*structpb.Struct{}, Logs: map[string]*structpb.Struct{}, PodReads: map[string]*structpb.Struct{}, Vantage: map[string]*structpb.Struct{}, AppState: map[string]*structpb.Struct{}}
@@ -564,202 +503,57 @@ type remoteProgram struct {
 
 func (p *remoteProgram) Spec() program.ProgramSpec { return p.spec }
 
-// reads freezes the source and baseline diffs of every object the program may inspect, and the accepted
-// application map and data checks. It runs before the host lease and mirror barrier are taken, because a
-// diff may call the API server.
-func (p *remoteProgram) reads(view program.ReadView, b program.Bindings) ([]*pb.MemoryReadReceipt, error) {
+func (p *remoteProgram) execute(ctx context.Context, view program.ReadView, b program.Bindings, operation pb.MemoryProgramInvocation_Operation) (*pb.RunProgramResponse, error) {
 	if err := program.ValidateBindings(p.spec, b); err != nil {
 		return nil, err
 	}
-	refs, err := snapshotMemoryRefs(view)
+	rpc, _, release, err := p.remote.capture(ctx, nil)
 	if err != nil {
 		return nil, err
-	}
-	seen := map[sdk.ObjectRef]bool{}
-	for _, ref := range refs {
-		seen[ref] = true
-	}
-	names := make([]string, 0, len(b.Objects))
-	for name := range b.Objects {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		if ref := b.Objects[name]; !seen[ref] {
-			refs = append(refs, ref)
-			seen[ref] = true
-		}
-	}
-	reads, err := frozenMemoryReads(view, refs)
-	if err != nil {
-		return nil, err
-	}
-	absence, err := absenceInputs(view, seen, nil)
-	if err != nil {
-		return nil, err
-	}
-	reads = append(reads, absence...)
-	accepted, err := memoryhost.EncodeReceipts(acceptedMemoryInputs(view))
-	if err != nil {
-		return nil, err
-	}
-	return append(reads, accepted...), nil
-}
-func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequence uint64, reads []*pb.MemoryReadReceipt) (*pb.MemoryProgramInput, error) {
-	observation, err := p.remote.programObservation(view)
-	if err != nil {
-		return nil, err
-	}
-	return &pb.MemoryProgramInput{ProgramId: p.spec.ID, MirrorSequence: sequence, Observation: observation, Reads: reads, Bindings: programBindingsContract(b)}, nil
-}
-func recordHostReads(view program.ReadView, reads []*pb.MemoryReadReceipt) error {
-	calls, err := memoryhost.DecodeReceipts(reads)
-	if err != nil {
-		return err
-	}
-	if len(calls) == 0 {
-		return nil
-	}
-	sink, ok := view.(interface{ RecordExternalCalls([]sdktest.PrimitiveCall) })
-	if !ok {
-		if wrapper, wrapped := view.(interface{ UnderlyingReadView() program.ReadView }); wrapped {
-			return recordHostReads(wrapper.UnderlyingReadView(), reads)
-		}
-		return errors.New("remote program read receipts have no evidence sink")
-	}
-	sink.RecordExternalCalls(calls)
-	return nil
-}
-
-// maxMetricRounds bounds how often a program may ask the controller for more
-// on-demand metric queries (each answer can lead to the next query).
-const maxMetricRounds = 4
-
-// answerWantedMetrics evaluates the on-demand metric queries a host program
-// asked for through the controller's own view, which holds the metrics source,
-// and adds the results to the input's observation. It reports whether any
-// query was newly answered, so the request should be sent again.
-func answerWantedMetrics(view program.ReadView, input *pb.MemoryProgramInput, wanted []*structpb.Struct) (bool, error) {
-	if len(wanted) == 0 {
-		return false, nil
-	}
-	// The observation may be shared across the cycle's programs: extend a copy.
-	observation := proto.Clone(input.Observation).(*pb.MemoryObservation)
-	if observation.Metrics == nil {
-		observation.Metrics = map[string]*structpb.Struct{}
-	}
-	added := false
-	for _, value := range wanted {
-		raw, err := value.MarshalJSON()
-		if err != nil {
-			return false, err
-		}
-		var q metrics.Query
-		if err := json.Unmarshal(raw, &q); err != nil {
-			return false, fmt.Errorf("host metric query: %w", err)
-		}
-		if _, held := observation.Metrics[q.ID]; held {
-			continue
-		}
-		answer, err := wireStruct(view.QueryMetrics(q))
-		if err != nil {
-			return false, err
-		}
-		observation.Metrics[q.ID] = answer
-		added = true
-	}
-	if added {
-		input.Observation = observation
-	}
-	return added, nil
-}
-func (p *remoteProgram) Diagnose(ctx context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
-	reads, err := p.reads(view, b)
-	if err != nil {
-		return program.Verdict{}, err
-	}
-	rpc, sequence, release, err := p.remote.scopedCapture(ctx, view)
-	if err != nil {
-		return program.Verdict{}, err
 	}
 	defer release()
-	input, err := p.input(view, b, sequence, reads)
+	invocation := &pb.MemoryProgramInvocation{ProgramId: p.spec.ID, Bindings: programBindingsContract(b), Operation: operation}
+	response, err := rpc.ExecuteProgram(ctx, invocation, func(call programread.Message) programread.Message {
+		return programread.Read(view, call)
+	})
 	if err != nil {
-		return program.Verdict{}, err
+		return nil, err
 	}
-	response, err := rpc.Diagnose(ctx, &pb.DiagnoseRequest{Input: input})
-	for round := 0; err == nil && response != nil && round < maxMetricRounds; round++ {
-		more, extendErr := answerWantedMetrics(view, input, response.WantedMetrics)
-		if extendErr != nil || !more {
-			err = extendErr
-			break
-		}
-		response, err = rpc.Diagnose(ctx, &pb.DiagnoseRequest{Input: input})
+	if response.GetError() != "" {
+		return nil, errors.New(response.GetError())
 	}
+	return response, nil
+}
+
+func (p *remoteProgram) Diagnose(ctx context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
+	response, err := p.execute(ctx, view, b, pb.MemoryProgramInvocation_OPERATION_DIAGNOSE)
 	if err != nil {
 		return program.Verdict{}, fmt.Errorf("memory host diagnose: %w", err)
 	}
-	if response == nil {
-		return program.Verdict{}, errors.New("empty host diagnosis")
-	}
-	if err = recordHostReads(view, response.Reads); err != nil {
-		return program.Verdict{}, err
-	}
-	if response.Error != "" {
-		return program.Verdict{}, errors.New(response.Error)
-	}
-	if response.Verdict == nil {
+	if response.GetVerdict() == nil {
 		return program.Verdict{}, errors.New("missing host verdict")
 	}
-	verdict := programRunState(&pb.ProgramRun{Verdict: response.Verdict}).Verdict
+	verdict := programRunState(&pb.ProgramRun{Verdict: response.GetVerdict()}).Verdict
 	return verdict, verdict.Validate()
 }
+
 func (p *remoteProgram) Mitigate(ctx context.Context, view program.ReadView, b program.Bindings) (program.Plan, error) {
-	reads, err := p.reads(view, b)
-	if err != nil {
-		return program.Plan{}, err
-	}
-	rpc, sequence, release, err := p.remote.scopedCapture(ctx, view)
-	if err != nil {
-		return program.Plan{}, err
-	}
-	defer release()
-	input, err := p.input(view, b, sequence, reads)
-	if err != nil {
-		return program.Plan{}, err
-	}
-	response, err := rpc.Mitigate(ctx, &pb.MitigateRequest{Input: input})
-	for round := 0; err == nil && response != nil && round < maxMetricRounds; round++ {
-		more, extendErr := answerWantedMetrics(view, input, response.WantedMetrics)
-		if extendErr != nil || !more {
-			err = extendErr
-			break
-		}
-		response, err = rpc.Mitigate(ctx, &pb.MitigateRequest{Input: input})
-	}
+	response, err := p.execute(ctx, view, b, pb.MemoryProgramInvocation_OPERATION_MITIGATE)
 	if err != nil {
 		return program.Plan{}, fmt.Errorf("memory host mitigate: %w", err)
 	}
-	if response == nil {
-		return program.Plan{}, errors.New("empty host mitigation")
-	}
-	if err = recordHostReads(view, response.Reads); err != nil {
-		return program.Plan{}, err
-	}
-	if response.Error != "" {
-		return program.Plan{}, errors.New(response.Error)
-	}
-	if response.Plan == nil {
+	result := response.GetPlan()
+	if result == nil {
 		return program.Plan{}, errors.New("missing host plan")
 	}
-	plan := program.Plan{Rationale: response.Plan.Rationale}
-	for _, a := range response.Plan.Actions {
+	plan := program.Plan{Rationale: result.Rationale}
+	for _, a := range result.Actions {
 		plan.Actions = append(plan.Actions, planActionState(a))
 	}
 	return plan, plan.Validate()
 }
 
-// capture retains the active host lease and exact mirror barrier through the RPC.
+// capture retains the active host lease and any requested mirror barrier through the RPC.
 func (r *RemoteMemory) capture(ctx context.Context, view sdk.DetectionContext) (MemoryHostRPC, uint64, func(), error) {
 	if cycle := memoryCycle(view); cycle != nil {
 		view = cycle

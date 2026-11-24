@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
@@ -26,6 +27,9 @@ type speedHost struct {
 
 func (*speedHost) MemoryCommit() string { return "accepted" }
 func (h *speedHost) Capture(_ context.Context, v sdk.DetectionContext) (memoryhost.Host, uint64, func(), error) {
+	if v == nil {
+		return h, 1, func() {}, nil
+	}
 	h.captures.Add(1)
 	// Exercise the same whole-snapshot serialization as mirror publication.
 	if _, err := memoryhost.SnapshotRefs(v); err != nil {
@@ -36,11 +40,11 @@ func (h *speedHost) Capture(_ context.Context, v sdk.DetectionContext) (memoryho
 func (*speedHost) Evaluate(_ context.Context, r *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
 	return &pb.EvaluateResponse{Results: []*pb.MemoryDetectorResult{{DetectorId: r.DetectorIds[0], Findings: []*pb.Finding{{Status: "active"}}}}}, nil
 }
-func (*speedHost) Diagnose(context.Context, *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
-	return &pb.DiagnoseResponse{Verdict: &pb.Verdict{Result: pb.Verdict_RESULT_NO_MATCH}}, nil
-}
-func (*speedHost) Mitigate(context.Context, *pb.MitigateRequest) (*pb.MitigateResponse, error) {
-	panic("read command planned a mitigation")
+func (*speedHost) ExecuteProgram(_ context.Context, invocation *pb.MemoryProgramInvocation, _ func(programread.Message) programread.Message) (*pb.RunProgramResponse, error) {
+	if invocation.GetOperation() != pb.MemoryProgramInvocation_OPERATION_DIAGNOSE {
+		panic("read command planned a mitigation")
+	}
+	return &pb.RunProgramResponse{Frame: &pb.RunProgramResponse_Verdict{Verdict: &pb.Verdict{Result: pb.Verdict_RESULT_NO_MATCH}}}, nil
 }
 
 func speedLoop() (*ResponderLoop, *speedHost) {
@@ -227,8 +231,8 @@ func TestRemoteDiffPreparationBudget(t *testing.T) {
 		if response.Error != "" {
 			t.Fatal(response.Error)
 		}
-		if source.Load() != cycle*150 || baseline.Load() != cycle*150 {
-			t.Fatalf("diffs must be once per object per fresh snapshot: source=%d baseline=%d", source.Load(), baseline.Load())
+		if source.Load() != cycle*30 || baseline.Load() != cycle*30 {
+			t.Fatalf("diffs must only be prefetched for the 30 watched Deployments per fresh snapshot: source=%d baseline=%d", source.Load(), baseline.Load())
 		}
 	}
 }

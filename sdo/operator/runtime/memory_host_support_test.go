@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"net"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/memoryhost"
 )
 
@@ -16,12 +17,8 @@ func (c testMemoryRPC) Evaluate(ctx context.Context, r *pb.EvaluateRequest) (*pb
 	return c.client.Evaluate(ctx, r)
 }
 
-func (c testMemoryRPC) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
-	return c.client.Diagnose(ctx, r)
-}
-
-func (c testMemoryRPC) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.MitigateResponse, error) {
-	return c.client.Mitigate(ctx, r)
+func (c testMemoryRPC) ExecuteProgram(ctx context.Context, invocation *pb.MemoryProgramInvocation, read func(programread.Message) programread.Message) (*pb.RunProgramResponse, error) {
+	return memoryhost.CallProgram(ctx, c.client, invocation, read)
 }
 
 type memoryTesting interface {
@@ -33,13 +30,13 @@ type memoryTesting interface {
 func memoryTestRPC(t memoryTesting, s *memoryhost.Server) (testMemoryRPC, func()) {
 	t.Helper()
 	listener := bufconn.Listen(16 << 20)
-	server := grpc.NewServer()
+	server := grpc.NewServer(grpc.MaxRecvMsgSize(memoryhost.MaxMessageBytes), grpc.MaxSendMsgSize(memoryhost.MaxMessageBytes))
 	pb.RegisterMemoryHostServiceServer(server, s)
 	done := make(chan struct{})
 	go func() { defer close(done); _ = server.Serve(listener) }()
 	stop := func() { server.Stop(); <-done }
 	t.Cleanup(stop)
-	conn, err := grpc.NewClient("passthrough:///memory-host", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient("passthrough:///memory-host", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(memoryhost.MaxMessageBytes), grpc.MaxCallSendMsgSize(memoryhost.MaxMessageBytes)))
 	if err != nil {
 		t.Fatal(err)
 	}

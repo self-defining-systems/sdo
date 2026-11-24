@@ -238,55 +238,63 @@ class MemoryReadReceipt(_message.Message):
     error_class: str
     def __init__(self, operation: _Optional[str] = ..., arguments: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., result: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., error: _Optional[str] = ..., error_class: _Optional[str] = ...) -> None: ...
 
-class MemoryProgramInput(_message.Message):
-    __slots__ = ("program_id", "bindings", "mirror_sequence", "observation", "reads")
+class MemoryProgramInvocation(_message.Message):
+    __slots__ = ("program_id", "bindings", "operation")
+    class Operation(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        OPERATION_UNSPECIFIED: _ClassVar[MemoryProgramInvocation.Operation]
+        OPERATION_DIAGNOSE: _ClassVar[MemoryProgramInvocation.Operation]
+        OPERATION_MITIGATE: _ClassVar[MemoryProgramInvocation.Operation]
+    OPERATION_UNSPECIFIED: MemoryProgramInvocation.Operation
+    OPERATION_DIAGNOSE: MemoryProgramInvocation.Operation
+    OPERATION_MITIGATE: MemoryProgramInvocation.Operation
     PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
-    MIRROR_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
-    OBSERVATION_FIELD_NUMBER: _ClassVar[int]
-    READS_FIELD_NUMBER: _ClassVar[int]
+    OPERATION_FIELD_NUMBER: _ClassVar[int]
     program_id: str
     bindings: _containers.RepeatedCompositeFieldContainer[_program_pb2.Binding]
-    mirror_sequence: int
-    observation: MemoryObservation
-    reads: _containers.RepeatedCompositeFieldContainer[MemoryReadReceipt]
-    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., mirror_sequence: _Optional[int] = ..., observation: _Optional[_Union[MemoryObservation, _Mapping]] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ...) -> None: ...
+    operation: MemoryProgramInvocation.Operation
+    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., operation: _Optional[_Union[MemoryProgramInvocation.Operation, str]] = ...) -> None: ...
 
-class DiagnoseRequest(_message.Message):
-    __slots__ = ("input",)
-    INPUT_FIELD_NUMBER: _ClassVar[int]
-    input: MemoryProgramInput
-    def __init__(self, input: _Optional[_Union[MemoryProgramInput, _Mapping]] = ...) -> None: ...
+class RunProgramRequest(_message.Message):
+    __slots__ = ("invocation", "read")
+    INVOCATION_FIELD_NUMBER: _ClassVar[int]
+    READ_FIELD_NUMBER: _ClassVar[int]
+    invocation: MemoryProgramInvocation
+    read: ProgramReadReply
+    def __init__(self, invocation: _Optional[_Union[MemoryProgramInvocation, _Mapping]] = ..., read: _Optional[_Union[ProgramReadReply, _Mapping]] = ...) -> None: ...
 
-class DiagnoseResponse(_message.Message):
-    __slots__ = ("verdict", "error", "reads", "wanted_metrics")
+class RunProgramResponse(_message.Message):
+    __slots__ = ("read", "verdict", "plan", "error")
+    READ_FIELD_NUMBER: _ClassVar[int]
     VERDICT_FIELD_NUMBER: _ClassVar[int]
-    ERROR_FIELD_NUMBER: _ClassVar[int]
-    READS_FIELD_NUMBER: _ClassVar[int]
-    WANTED_METRICS_FIELD_NUMBER: _ClassVar[int]
-    verdict: _program_pb2.Verdict
-    error: str
-    reads: _containers.RepeatedCompositeFieldContainer[MemoryReadReceipt]
-    wanted_metrics: _containers.RepeatedCompositeFieldContainer[_struct_pb2.Struct]
-    def __init__(self, verdict: _Optional[_Union[_program_pb2.Verdict, _Mapping]] = ..., error: _Optional[str] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ..., wanted_metrics: _Optional[_Iterable[_Union[_struct_pb2.Struct, _Mapping]]] = ...) -> None: ...
-
-class MitigateRequest(_message.Message):
-    __slots__ = ("input",)
-    INPUT_FIELD_NUMBER: _ClassVar[int]
-    input: MemoryProgramInput
-    def __init__(self, input: _Optional[_Union[MemoryProgramInput, _Mapping]] = ...) -> None: ...
-
-class MitigateResponse(_message.Message):
-    __slots__ = ("plan", "error", "reads", "wanted_metrics")
     PLAN_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
-    READS_FIELD_NUMBER: _ClassVar[int]
-    WANTED_METRICS_FIELD_NUMBER: _ClassVar[int]
+    read: ProgramReadCall
+    verdict: _program_pb2.Verdict
     plan: _program_pb2.Plan
     error: str
-    reads: _containers.RepeatedCompositeFieldContainer[MemoryReadReceipt]
-    wanted_metrics: _containers.RepeatedCompositeFieldContainer[_struct_pb2.Struct]
-    def __init__(self, plan: _Optional[_Union[_program_pb2.Plan, _Mapping]] = ..., error: _Optional[str] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ..., wanted_metrics: _Optional[_Iterable[_Union[_struct_pb2.Struct, _Mapping]]] = ...) -> None: ...
+    def __init__(self, read: _Optional[_Union[ProgramReadCall, _Mapping]] = ..., verdict: _Optional[_Union[_program_pb2.Verdict, _Mapping]] = ..., plan: _Optional[_Union[_program_pb2.Plan, _Mapping]] = ..., error: _Optional[str] = ...) -> None: ...
+
+class ProgramReadCall(_message.Message):
+    __slots__ = ("method", "arguments")
+    METHOD_FIELD_NUMBER: _ClassVar[int]
+    ARGUMENTS_FIELD_NUMBER: _ClassVar[int]
+    method: str
+    arguments: _containers.RepeatedScalarFieldContainer[bytes]
+    def __init__(self, method: _Optional[str] = ..., arguments: _Optional[_Iterable[bytes]] = ...) -> None: ...
+
+class ProgramReadReply(_message.Message):
+    __slots__ = ("values", "error", "error_class", "usage_unavailable")
+    VALUES_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    ERROR_CLASS_FIELD_NUMBER: _ClassVar[int]
+    USAGE_UNAVAILABLE_FIELD_NUMBER: _ClassVar[int]
+    values: _containers.RepeatedScalarFieldContainer[bytes]
+    error: str
+    error_class: str
+    usage_unavailable: str
+    def __init__(self, values: _Optional[_Iterable[bytes]] = ..., error: _Optional[str] = ..., error_class: _Optional[str] = ..., usage_unavailable: _Optional[str] = ...) -> None: ...
 
 class TrafficRequest(_message.Message):
     __slots__ = ("operation", "workload", "scenarios", "target", "port", "pod_ip", "http_method", "http_path", "http_headers", "timeout_ns", "dial_targets", "http_fields")
