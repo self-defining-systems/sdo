@@ -33,7 +33,18 @@ func (c *Controller) advanceAutomaticRestores(ctx context.Context, now time.Time
 		if err != nil {
 			return nil, nil, err
 		}
-		return c.actionContext(ctx)
+		// Observation may span the handoff bound. Only the mutation retains
+		// that bound, including time spent acquiring the action guard.
+		writeCtx, cancelWrite := context.WithTimeout(ctx, deadline.Sub(laterObservationTime(now, c.clock())))
+		actionCtx, cancelAction, err := c.actionContext(writeCtx)
+		if err != nil {
+			cancelWrite()
+			return nil, nil, err
+		}
+		return actionCtx, func() {
+			cancelAction()
+			cancelWrite()
+		}, nil
 	}, func() bool {
 		return laterObservationTime(now, c.clock()).Before(deadline)
 	})

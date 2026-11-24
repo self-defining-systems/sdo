@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -204,8 +206,21 @@ func TestStatefulSetSourceRestoreWithUnchangedTemplateKeepsPods(t *testing.T) {
 }
 
 func TestAutomaticStatefulSetRestoreContinuesAfterControllerObservation(t *testing.T) {
+	testAutomaticStatefulSetRestore(t, false)
+}
+
+func TestRecoveredIncidentClosesWithAnUnavailableRestoreReplacement(t *testing.T) {
+	testAutomaticStatefulSetRestore(t, true)
+}
+
+func testAutomaticStatefulSetRestore(t *testing.T, replacementUnavailable bool) {
+	t.Helper()
 	ctx := t.Context()
-	c, world, _ := automaticRecoveryWorld(t, settlingCase{}, "agent")
+	tc := settlingCase{}
+	if replacementUnavailable {
+		tc.healAfter = 22 * time.Second
+	}
+	c, world, closed := automaticRecoveryWorld(t, tc, "agent")
 	now := world.clock.Now()
 	sets, pods := world.client.AppsV1().StatefulSets("app"), world.client.CoreV1().Pods("app")
 	live := syntheticSet("registry.invalid/store:bad", func(set *appsv1.StatefulSet) {
@@ -273,10 +288,38 @@ func TestAutomaticStatefulSetRestoreContinuesAfterControllerObservation(t *testi
 	present("store-0", true)
 	autoStep(t, c, world.clock, time.Second)
 	present("store-0", true)
-	replacement := syntheticStorePod(live, stuckPod{name: "store-1", revision: "store-new", ready: true}, world.clock.Now())
+	replacement := syntheticStorePod(live, stuckPod{name: "store-1", revision: "store-new", ready: !replacementUnavailable}, world.clock.Now())
 	replacement.UID = "replacement"
+	if replacementUnavailable {
+		replacement.Status.Phase = corev1.PodPending
+		replacement.Status.Conditions = append(replacement.Status.Conditions, corev1.PodCondition{
+			Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable,
+		})
+	}
 	if _, err := pods.Create(ctx, replacement, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	if replacementUnavailable {
+		observed.Status.UpdatedReplicas = 1 // Kubernetes has created the new revision, although it cannot schedule.
+		if _, err := sets.UpdateStatus(ctx, observed, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		for range 7 {
+			autoStep(t, c, world.clock, time.Second)
+		}
+		present("store-0", true)
+		present("store-1", true)
+		if closed.Result == nil || !closed.EscalatedAt.IsZero() {
+			t.Fatalf("an unavailable replacement held a recovered incident: open=%v stable since %v now %v escalated at %v", c.IncidentOpen(), c.closureStableSince, world.clock.Now(), closed.EscalatedAt)
+		}
+		report := deterministicStageReport(closed.Request.PriorStages)
+		effects := report.GetMitigations()[0].GetApplyReceipt().GetObjectEffects()
+		if !strings.Contains(report.GetError(), "StatefulSet restore continuation") || !slices.ContainsFunc(effects, func(effect *contracts.PlanObjectEffect) bool {
+			return effect.GetOperation() == "delete" && effect.GetRef().GetName() == "store-1"
+		}) {
+			t.Fatalf("closure lost unfinished restore evidence: %v", report)
+		}
+		return
 	}
 	autoStep(t, c, world.clock, time.Second)
 	present("store-0", false)
