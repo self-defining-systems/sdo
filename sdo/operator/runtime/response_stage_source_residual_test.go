@@ -130,7 +130,7 @@ func TestSourceRestoreWithPreExistingResidualIsNotAFailedApply(t *testing.T) {
 
 	instant := newInstantRecoveryClock()
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		recoveryNow: instant.now, recoveryWait: instant.wait, WaitBound: time.Minute}
+		diagnoseWait: instant.wait, WaitBound: time.Minute}
 	report, err := stage.Run(ctx, state)
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +141,10 @@ func TestSourceRestoreWithPreExistingResidualIsNotAFailedApply(t *testing.T) {
 	if len(report.Mitigations) != 1 {
 		t.Fatalf("mitigations = %v", report.Mitigations)
 	}
+	at := loop.clock()
+	markAutomaticRecovery(report, at, contracts.RecoveryWait_EXIT_REASON_CLEARED)
+	_, settled := loop.SettleRecoveryApplications(ctx, IncidentResult{}, []*contracts.StageReport{report}, at)
+	report = settled[0]
 	attempt := report.Mitigations[0]
 	receipt := attempt.GetApplyReceipt()
 	if attempt.Result != "applied_cleared" || !receipt.GetVerificationPassed() || receipt.GetError() != "" ||

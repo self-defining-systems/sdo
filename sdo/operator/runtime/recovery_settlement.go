@@ -77,6 +77,17 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 		applications[i].Result.EffectConfirmation = nil
 	}
 	for _, stage := range stages {
+		automatic := stage.GetStage() == "deterministic" && stage.GetApplyCompletedAt() != nil
+		creditedApplication := ""
+		if automatic {
+			var receipts []*contracts.PlanApplication
+			for _, app := range applications {
+				if receipt, err := recordedPlanContract(app); err == nil {
+					receipts = append(receipts, receipt)
+				}
+			}
+			creditedApplication = automaticCreditApplication(stage, receipts, result.AgentChanges, through)
+		}
 		for _, attempt := range stage.Mitigations {
 			id := attempt.GetApplyReceipt().GetApplicationId()
 			if id != "" && !knownApplications[id] {
@@ -99,6 +110,10 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					if attempt.Result == "applied_cleared" {
 						attempt.Result = "applied_still_matching"
 					}
+				}
+				if automatic && id != creditedApplication {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SUPERSEDED)
+					continue
 				}
 				if unavailable != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
 					reject(unavailable)
@@ -183,13 +198,18 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					explanation = l.explainRecoveryPlanFields(app.Result, getFinal, func(ref sdk.ObjectRef) bool { getFinal(ref); return apierrors.IsNotFound(readErrors[ref]) })
 				}
 				exact := explanation.Matched
-				healthy := false
-				targets := append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...)
-				verifier := scopedMitigationVerifier(executor.Verifier, app.Result.Plan, l.mitigationIncident([]selectedPlan{{programID: attempt.PlaybookId, bindings: programBindingsState(attempt.Bindings), targetFingerprints: targets}}).Findings)
-				if verifier != nil {
-					healthy, _ = verifier.Verify(ctx)
-				} else if executor.Verifier != nil {
-					healthy, _ = executor.Verifier.Verify(ctx)
+				// A controller-owned automatic report can reach this point only
+				// with a scoped Recovered proof. Agent and legacy receipts keep
+				// their binding-specific health evidence.
+				healthy := automatic
+				if !automatic {
+					targets := append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...)
+					verifier := scopedMitigationVerifier(executor.Verifier, app.Result.Plan, l.mitigationIncident([]selectedPlan{{programID: attempt.PlaybookId, bindings: programBindingsState(attempt.Bindings), targetFingerprints: targets}}).Findings)
+					if verifier != nil {
+						healthy, _ = verifier.Verify(ctx)
+					} else if executor.Verifier != nil {
+						healthy, _ = executor.Verifier.Verify(ctx)
+					}
 				}
 				// The observed transition: the plan was prepared from this binding's
 				// MATCH, and after the action succeeded the same bound diagnosis is

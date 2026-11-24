@@ -800,6 +800,14 @@ message StageReport {
   HandoffState handoff_state = 8;
   // Every playbook the stage diagnosed, with its verdict and why, matched or not.
   repeated PlaybookVerdict diagnoses = 9;
+  // Apply completion and the immutable deadline chosen for that batch.
+  google.protobuf.Timestamp apply_completed_at = 10;
+  google.protobuf.Timestamp recovery_deadline = 11;
+  // Only the first confirmed stability-only wait can extend the deadline.
+  google.protobuf.Timestamp stability_deadline = 12;
+  // The saved dispatch decision and its exact residual alert set.
+  bool handoff_selected = 13;
+  repeated string handoff_keys = 14;
 }
 
 // HandoffState is what the controller knows about a repair its automatic stage
@@ -891,6 +899,8 @@ message StageMitigation {
   ProgramRun escalation = 16;
   repeated ObjectRef escalated_resources = 17;
   string escalation_reason = 18;
+  // Immutable observation by closure at the handoff bound.
+  bool rollout_unsettled_at_deadline = 19;
 }
 
 // Controller-owned evidence of the single optional healthy source-drift turn.

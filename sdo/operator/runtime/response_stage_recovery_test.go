@@ -39,34 +39,10 @@ func (d churnDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Find
 		PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"}, Summary: "web has no ready replica"}}, nil
 }
 
-// The stage clears on Recovered and waits while it does not hold or while a
-// program still diagnoses its fault. Strength levels and restored-source
-// receipts no longer exist.
-func TestStageClearsOnRecovered(t *testing.T) {
-	for name, test := range map[string]struct {
-		check    recoveryCheck
-		matching string
-		want     stageDecision
-	}{
-		"recovered":                  {recoveryCheck{verdict: recoveryVerified}, "", stageCleared},
-		"program still matching":     {recoveryCheck{verdict: recoveryVerified}, "program p still diagnoses the fault", stageWait},
-		"opening user test not back": {recoveryCheck{verdict: recoveryPending}, "", stageWait},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := decideStageRecovery(test.check, test.matching); got != test.want {
-				t.Fatalf("decision = %v, want %v", got, test.want)
-			}
-		})
-	}
-}
-
-// A stage that applied nothing while findings remain says so: NOTHING_APPLIED
-// is not a coverage verdict, and the table counts it apart from UNCOVERED.
 func TestStageWithNothingAppliedSaysSo(t *testing.T) {
-	stage, state, _, _ := settlingStage(t, settlingCase{stallWindow: 60 * time.Second})
-	loop := stage.NewLoop(state.Request)
-	report := &contracts.StageReport{Stage: "deterministic"}
-	if err := stage.awaitApplications(context.Background(), loop, state, report, &responseStageProgress{}, func(bool) error { return nil }); err != nil {
+	stage, state, _, _ := settlingStage(t, settlingCase{undecided: true})
+	report, err := stage.Run(t.Context(), state)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got := report.GetRecoveryWait().GetExitReason(); got != contracts.RecoveryWait_EXIT_REASON_NOTHING_APPLIED {

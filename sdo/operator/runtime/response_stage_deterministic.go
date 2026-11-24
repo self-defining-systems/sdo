@@ -6,15 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
-	"log/slog"
 	"runtime/debug"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/durationpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -33,11 +32,6 @@ const stageIneffective = "ineffective"
 // the stage applies only when response.builtin_restore_auto is set.
 const stageBuiltinRestoreManual = "builtin_restore_manual"
 
-// stageRevertedIneffective is an applied attempt that cleared none of its
-// findings while its diagnosis still matched, whose writes the stage restored
-// before handoff so the responder starts from the original fault.
-const stageRevertedIneffective = "reverted_ineffective"
-
 // stageIneffectiveTargets maps a program revision to the findings it applied
 // for and did not clear.
 type stageIneffectiveTargets map[string]map[string]bool
@@ -51,7 +45,7 @@ func ineffectiveStageTargets(attempts []*contracts.StageMitigation) stageIneffec
 }
 
 func (t stageIneffectiveTargets) add(attempt *contracts.StageMitigation) {
-	if attempt.GetResult() != "applied_still_matching" && attempt.GetResult() != stageRevertedIneffective {
+	if attempt.GetResult() != "applied_still_matching" {
 		return
 	}
 	key := attempt.GetPlaybookId() + "\x00" + attempt.GetProgramRevision()
@@ -84,20 +78,11 @@ type DeterministicResponseStage struct {
 	// KeepLoop leaves the loop NewLoop returns open: it belongs to a running
 	// responder, so a later pass must not close its working programs.
 	KeepLoop bool
-	// Budget shortens shared observation (DefaultMitigationRolloutTimeout when unset).
-	Budget time.Duration
-	// RolloutTimeout caps apply convergence I/O, with one rollout sample.
-	// ObservationCeiling shortens shared recovery; neither grants writes.
-	RolloutTimeout      time.Duration
-	ObservationInterval time.Duration
-	ObservationCeiling  time.Duration
-	// WaitBound is response.after_playbook_wait under the wait policy: the
-	// recovery wait lasts this long (instead of DefaultMitigationRolloutTimeout)
-	// and its soft give-ups (a finding past its horizon, a program still
-	// matching) no longer end it; a refuted or failed write still does.
-	WaitBound    time.Duration
-	recoveryNow  func() time.Time
-	recoveryWait func(context.Context, time.Duration) error
+	// RolloutTimeout bounds the executor's apply-time observation.
+	RolloutTimeout  time.Duration
+	StabilityWindow time.Duration
+	WaitBound       time.Duration
+	diagnoseWait    func(context.Context, time.Duration) error
 }
 
 type responseStageProgress struct {
@@ -171,37 +156,27 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete, RecoveryDeadline: progress.RecoveryDeadline}
 		return loop.persistToolState(ctx)
 	}
-	// Always reobserve after recovery. A recorded attempt is never replayed,
-	// including one interrupted between the write and its completed receipt.
+	// A receipt can have reached the mutation journal just before the stage
+	// checkpoint. Recover it by immutable plan identity without repeating it.
 	if progress.Report != nil {
-		func() {
-			loop.operationMu.Lock()
-			defer loop.operationMu.Unlock()
-			loop.mu.Lock()
-			defer loop.mu.Unlock()
-			var selected []selectedPlan
-			for _, attempt := range report.Mitigations {
-				if attempt.GetResult() == "applied_cleared" && attempt.GetProgramRevision() == loop.programRevision(attempt.GetPlaybookId()) {
-					selected = append(selected, selectedPlan{programID: attempt.PlaybookId, revision: attempt.ProgramRevision, bindings: programBindingsState(attempt.Bindings)})
-				}
+		for _, attempt := range report.Mitigations {
+			if attempt.PlanId == "" || attempt.ApplyReceipt != nil {
+				continue
 			}
-			response := ToolResponse{}
-			loop.verify(ctx, selected, &response, true)
-			updateStageFindings(state, response)
-			for _, attempt := range report.Mitigations {
-				for _, run := range response.ProgramRuns {
-					if attempt.GetResult() == "applied_cleared" && run.ProgramID == attempt.PlaybookId && run.ProgramRevision == attempt.ProgramRevision && run.Bindings.Equal(programBindingsState(attempt.Bindings)) {
-						fresh := proto.Clone(attempt).(*contracts.StageMitigation)
-						fresh.PostApplyDiagnose = programRunContract(run)
-						clearVerifiedStageTargets(state, fresh, attempt.ClearedFindingFingerprints, response)
+			for _, app := range loop.ApplicationEvidence() {
+				if slices.Contains(app.PlanIDs, attempt.PlanId) {
+					receipt, err := recordedPlanContract(app)
+					if err != nil {
+						return report, err
 					}
+					attempt.ApplyReceipt = receipt
+					attempt.TouchedObjects = touchedObjects(app.Result)
+					break
 				}
 			}
-		}()
+		}
 		if progress.Complete && !state.Refresh {
-			if err := stage.awaitApplications(ctx, loop, state, report, &progress, save); err != nil {
-				return report, err
-			}
+			stage.armRecovery(state, loop, report, progress)
 			return report, save(true)
 		}
 	}
@@ -249,7 +224,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	loop.mu.Lock()
 	defer loop.mu.Unlock()
 	matches := stageCandidates(state)
-	var appliedHere []*contracts.StageMitigation
 	attempted := map[string]bool{}
 	// A later pass may complete a binding an earlier one only skipped, because
 	// its finding had not activated yet. A skip wrote nothing, so that attempt
@@ -450,7 +424,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		if loop.sameWriteInProgress(ctx, stage.stageNow(), report, loop.plans[planResponse.PlanID].plan) {
+		if loop.sameWriteInProgress(ctx, loop.clock(), report, loop.plans[planResponse.PlanID].plan) {
 			if err := skip(stageAlreadyAttempted); err != nil {
 				return report, err
 			}
@@ -460,43 +434,13 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			return report, err
 		}
 		progressed = true
-		appliedHere = append(appliedHere, attempt)
 		ineffective.add(attempt)
 		// An unsuccessful application is evidence about that binding, not a
 		// reason to starve the other matches. Each later match diagnoses fresh
 		// state and goes through the ordinary conflict and mutation fences.
 	}
-	if err := stage.awaitApplications(ctx, loop, state, report, &progress, save); err != nil {
-		return report, err
-	}
-	if err := stage.revertIneffective(ctx, loop, state, report, appliedHere, save); err != nil {
-		return report, err
-	}
-	if err := ctx.Err(); err != nil {
-		return report, err
-	}
-	if err := stage.settleLagBeforeHandoff(ctx, loop, state, report, save); err != nil {
-		return report, err
-	}
-	// Use the responder's completion verifier for final field equivalence;
-	// application success alone does not grant reflection learning authority.
-	var applications []RecordedPlanApplication
-	if err := withoutResponderLocks(loop, "credit-equivalent-repairs", true, func() {
-		loop.CreditEquivalentRepairs(ctx, loop.ApplicationRepairReceipts(state.RepairActions))
-		applications = loop.ApplicationEvidence()
-	}); err != nil {
-		return report, err
-	}
-	for _, attempt := range report.Mitigations {
-		for _, application := range applications {
-			if application.ID == attempt.GetApplyReceipt().GetApplicationId() {
-				receipt, err := recordedPlanContract(application)
-				if err != nil {
-					return report, err
-				}
-				attempt.ApplyReceipt = receipt
-			}
-		}
+	if !state.Refresh {
+		stage.armRecovery(state, loop, report, progress)
 	}
 	if err := save(true); err != nil {
 		return report, err
@@ -774,7 +718,6 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 	item.attempt.Result = "apply_error"
 	item.attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
 	planIDs := []string{item.planID}
-	selected := []selectedPlan{plan}
 	if err := save(false); err != nil {
 		return err
 	}
@@ -788,10 +731,6 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 		applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: planIDs, stage: true, rolloutTimeout: stage.RolloutTimeout})
 	}); err != nil {
 		return err
-	}
-	// Pending rollouts still get one fresh diagnosis/detector observation.
-	if applied.RolloutPending != nil {
-		loop.verify(ctx, selected, &applied, true)
 	}
 	var receipt *contracts.PlanApplication
 	complete := false
@@ -835,8 +774,6 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 			attempt.Result = "apply_error"
 		case attempt.Error != "":
 			attempt.Result = "rollout_failed"
-		case attempt.PostApplyDiagnose.GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH && len(attempt.RemainingFindingFingerprints) == 0:
-			attempt.Result = "applied_cleared"
 		default:
 			attempt.Result = "applied_still_matching"
 		}
@@ -875,361 +812,87 @@ func attemptApplication(application RecordedPlanApplication, attempt *contracts.
 
 // All admitted writes precede one shared recovery wait. Observation cannot
 // select another write or replenish apply authority. Deadline survives restart.
-func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, progress *responseStageProgress, save func(bool) error) (errOut error) {
-	now := stage.recoveryNow
-	if now == nil {
-		now = lifecycleio.Now
+// armRecovery publishes the controller's one fixed evaluation deadline at
+// apply completion. Receipt timestamps supply the fallback for old checkpoints.
+func (stage *DeterministicResponseStage) armRecovery(state *IncidentState, loop *ResponderLoop, report *contracts.StageReport, progress responseStageProgress) {
+	if report.ApplyCompletedAt != nil {
+		return
 	}
-	wait := stage.recoveryWait
-	if wait == nil {
-		wait = func(ctx context.Context, d time.Duration) error {
-			timer := lifecycleio.NewTimer(d)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-timer.C:
-				return nil
-			}
-		}
+	if !playbookWrote(report) {
+		report.ApplyCompletedAt = contractTimestamp(loop.clock().UTC())
+		report.RecoveryWait = &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_NOTHING_APPLIED}
+		return
 	}
-	started := now()
-	elapsed := report.GetRecoveryWait().GetDuration().AsDuration()
-	exit := contracts.RecoveryWait_EXIT_REASON_FAILED
-	// Every finding of this incident as last observed, and the ones a wait that
-	// could not prove recovery hands back to the responder.
-	// Recovered, and so the hand-off, is judged on the alerts that opened the
-	// incident; a clue or a later alert is never what waits or dispatches.
-	scope := newRecoveryScope(alertKeys(&state.Request))
-	state.afterWrite = state.afterWrite || playbookWrote(report)
-	seen := map[string]sdk.Finding{}
-	for _, finding := range append(append([]sdk.Finding(nil), state.Request.Findings...), state.Findings...) {
-		if scope.holds(finding) {
-			seen[FindingFingerprint(finding)] = finding
-		}
+	completed := lastStageReceipt(report)
+	report.ApplyCompletedAt = contractTimestamp(completed)
+	state.syncAlertSet()
+	deadline := progress.RecoveryDeadline
+	if deadline.IsZero() {
+		deadline = automaticRecoveryDeadline(state.Request, report, completed, loop.lastDiagnosisView, loop.Detectors, stage.WaitBound, stage.StabilityWindow)
 	}
-	var held []sdk.Finding
-	heldReason := ""
-	// branch names why the wait ended, for the exit log.
-	branch := ""
-	defer func() {
-		slog.Info("recovery_wait_exit", "incident_id", state.Request.IncidentID, "exit", exit.String(), "branch", branch)
-		if playbookWrote(report) {
-			// After a playbook wrote, what is left for another actor is what it was
-			// meant to clear: the opening alerts.
-			state.Findings = holdingFindings(scope, state.Findings)
-			state.refreshUnexplained()
-		}
-		if exit != contracts.RecoveryWait_EXIT_REASON_CLEARED && len(state.Findings) == 0 && len(held) > 0 {
-			// Detector clearance without proof is not recovery: the responder gets
-			// the findings that cleared without it.
-			slog.Info("recovery_wait_unproven", "incident_id", state.Request.IncidentID, "exit", exit.String(), "reason", heldReason)
-			state.Findings = held
-			state.refreshUnexplained()
-		}
-		observation := &contracts.RecoveryWait{ExitReason: exit, Duration: durationpb.New(elapsed + max(0, now().Sub(started)))}
-		report.RecoveryWait = observation
-		ids := map[string]bool{}
-		for _, attempt := range report.Mitigations {
-			if attempt.ApplyReceipt != nil {
-				attempt.ApplyReceipt.RecoveryWait = proto.Clone(observation).(*contracts.RecoveryWait)
-				ids[attempt.ApplyReceipt.ApplicationId] = true
-			}
-		}
-		for _, entries := range [][]RecordedPlanApplication{loop.applicationsLog, loop.archivedApplications} {
-			for i := range entries {
-				if ids[entries[i].ID] {
-					entries[i].Result.RecoveryWait = proto.Clone(observation).(*contracts.RecoveryWait)
-				}
-			}
-		}
-		for id := range ids {
-			if result, ok := loop.applications[id]; ok {
-				result.RecoveryWait = proto.Clone(observation).(*contracts.RecoveryWait)
-				loop.applications[id] = result
-			}
-		}
-		errOut = errors.Join(errOut, save(false))
-	}()
-	if progress.RecoveryDeadline.IsZero() {
-		budget := DefaultMitigationRolloutTimeout
-		if stage.WaitBound > 0 {
-			budget = stage.WaitBound
-		} else {
-			// A write's settle is its workload's rollout, which takes as long as
-			// the workload was observed to need to become Ready; the fixed
-			// bound is the floor, never the whole allowance.
-			budget += writtenWorkloadsStartup(ctx, loop, report)
-		}
-		if stage.Budget > 0 {
-			budget = min(budget, stage.Budget)
-		}
-		if stage.ObservationCeiling > 0 {
-			budget = min(budget, stage.ObservationCeiling)
-		}
-		progress.RecoveryDeadline = now().Add(budget)
-		if deadline := state.Request.ResponseDeadline; !deadline.IsZero() && deadline.Before(progress.RecoveryDeadline) {
-			progress.RecoveryDeadline = deadline
-		}
-		if err := save(false); err != nil {
-			return err
-		}
-	}
-	// Re-entry and legacy receipt reconstruction retain the original response
-	// bound as well as the shared recovery bound.
-	if deadline := state.Request.ResponseDeadline; !deadline.IsZero() && deadline.Before(progress.RecoveryDeadline) {
-		progress.RecoveryDeadline = deadline
-	}
-	observe, cancel := context.WithDeadline(ctx, progress.RecoveryDeadline)
-	defer cancel()
-	interval := stage.ObservationInterval
-	if interval <= 0 {
-		interval = 250 * time.Millisecond
-	}
-	effects := recoveryEffects{}
-	// When this wait first saw each open finding; a finding on a component no
-	// stage write touched hands off once it outlasts its clearing horizon.
-	for {
-		state.syncAlertSet()
-		scope = newRecoveryScope(alertKeys(&state.Request))
-		pending := false
-		applied := false
-		var settling []*contracts.StageMitigation
-		for _, attempt := range report.Mitigations {
-			if reason := attempt.GetApplyReceipt().GetRolloutPending().GetReasonCode(); reason == "rollout_stalled" || reason == "admission_blocked" {
-				exit = contracts.RecoveryWait_EXIT_REASON_BLOCKER
-				return nil
-			}
-			if attempt.GetApplyReceipt().GetApplied() && !attempt.GetApplyReceipt().GetRolledBack() {
-				applied = true
-			}
-			switch attempt.Result {
-			case "rollout_pending_at_handoff":
-				pending = true
-			case "applied_cleared", "skipped":
-			case "applied_still_matching":
-				// A write still taking effect, or one whose remaining findings only wait
-				// for their detectors to re-observe it, is checked below once a view exists.
-				if !writeVerifiedForSettling(attempt) && !writeTakingEffect(attempt) {
-					branch = "write refuted: " + attempt.GetPlaybookId() + " " + attempt.GetApplyReceipt().GetSettlementRejectionReason().String()
-					return nil
-				}
-				if attempt.GetApplyReceipt().GetRolloutPending() != nil {
-					pending = true
-					continue
-				}
-				settling = append(settling, attempt)
-			default:
-				// Real failure or a verified dependency needs another actor.
-				branch = "attempt " + attempt.GetPlaybookId() + " " + attempt.Result
-				return nil
-			}
-		}
-		if !applied && len(state.Findings) > 0 {
-			exit = contracts.RecoveryWait_EXIT_REASON_NOTHING_APPLIED
-			return nil
-		}
-		if !applied && !pending && len(state.Findings) == 0 {
-			// No write of this stage to prove: detector clearance decides.
-			exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
-			return nil
-		}
-		if recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
-			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
-			return ctx.Err()
-		}
-		view, viewErr := loop.snapshotView(observe)
-		if viewErr != nil {
-			// The stage cannot observe recovery, so another actor takes over; say why.
-			slog.Warn("recovery_wait_snapshot_unavailable", "incident_id", state.Request.IncidentID, "error", viewErr)
-			if len(held) == 0 {
-				held, heldReason = sortedFindings(seen), "recovery could not be observed"
-			}
-			return nil
-		}
-		for _, finding := range state.Findings {
-			if scope.holds(finding) {
-				seen[FindingFingerprint(finding)] = finding
-			}
-		}
-		state.Findings = retireDisappearedRecoveryEffects(view, state.Findings)
-		for fp, effect := range stageLifecycleEffects(view, loop.applicationEvidenceLocked(), state.Findings) {
-			effects[fp] = effect
-		}
-		state.Findings = effects.observe(view, state.Findings)
-		state.refreshUnexplained()
-		// Recovery is judged on what the stage's writes were meant to clear: a
-		// clue no detector re-observes and no attempt covered cannot clear by
-		// waiting, so it neither blocks nor times out the wait.
-		open, unrelated := splitStageFindings(state.Findings, loop.Detectors, report.Mitigations, scope)
-		if !pending {
-			check := loop.stageRecoveryCheck(observe, view, state)
-			horizonOf := func(id string) (horizon, window time.Duration) {
-				for _, detector := range loop.Detectors {
-					if detector.Spec().ID == id {
-						horizon = detectorClearingHorizon(detector, view) + 2*detector.Spec().Interval
-						if detectorWindow(detector, view) > 0 {
-							window = horizon
-						}
-					}
-				}
-				return max(horizon, 2*interval), window
-			}
-			// A finding about a workload also waits for a replacement pod to
-			// become Ready: the workload's observed startup, not a constant.
-			findingHorizon := func(finding sdk.Finding) time.Duration {
-				horizon, _ := horizonOf(finding.DetectorID)
-				resources := append([]sdk.ObjectRef{finding.PrimaryResource}, finding.RelatedResources...)
-				return horizon + sdk.ResourceStartupAllowance(view, resources...)
-			}
-			// A program that still diagnoses its fault after its write is not
-			// credited with recovery, whatever the members show; it gets the
-			// longest rolling window among the incident's detectors, since its
-			// own diagnosis may read the same lagging evidence.
-			matching := ""
-			for _, attempt := range report.Mitigations {
-				if receipt := attempt.GetApplyReceipt(); receipt.GetApplied() && !receipt.GetRolledBack() &&
-					attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH {
-					matching = "program " + attempt.GetPlaybookId() + " still diagnoses the fault after its write"
-				}
-			}
-			if len(open) == 0 {
-				switch decideStageRecovery(check, matching) {
-				case stageCleared:
-					exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
-					if len(unrelated) > 0 {
-						slog.Info("recovery_wait_unrelated_findings", "incident_id", state.Request.IncidentID, "count", len(unrelated))
-					}
-					state.Findings = open
-					state.refreshUnexplained()
-					promoteSettledAttempts(settling)
-					return nil
-				default:
-					held, heldReason = sortedFindings(seen), check.reason
-					if matching != "" {
-						heldReason = matching
-					}
-				}
-			}
-			var settled time.Duration
-			if since := check.record.GetSince(); check.record.GetWritesSettled() && since != nil {
-				settled = now().Sub(since.AsTime())
-			} else {
-				settled = -1
-			}
-			for _, finding := range open {
-				fp := FindingFingerprint(finding)
-				if settled >= findingHorizon(finding) && stage.WaitBound <= 0 {
-					branch = "finding " + fp + " persisted past its horizon after the stage's writes settled"
-					return nil
-				}
-			}
-			if check.verdict == recoveryPending && len(open) == 0 && settled >= check.horizon+2*interval && stage.WaitBound <= 0 {
-				branch = "not recovered within its members' horizon: " + check.reason
-				return nil
-			}
-			if matching != "" && check.verdict != recoveryPending && len(open) == 0 {
-				var window time.Duration
-				for _, finding := range seen {
-					_, w := horizonOf(finding.DetectorID)
-					window = max(window, w)
-				}
-				if settled >= window && stage.WaitBound <= 0 {
-					branch = matching
-					return nil
-				}
-			}
-		}
-		left := progress.RecoveryDeadline.Sub(now())
-		if left <= 0 {
-			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
-			return nil
-		}
-		if err := wait(observe, min(interval, left)); err != nil {
-			if observe.Err() != nil && ctx.Err() == nil {
-				exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
-				return nil
-			}
-			return err
-		}
-		if observe.Err() != nil || recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
-			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
-			return ctx.Err()
-		}
-		// A restored workload template may leave a Pod its controller will not
-		// replace; one sample at apply time can be too early to see it.
-		loop.replaceStuckRevisionPods(observe)
-		response := ToolResponse{}
-		loop.verify(observe, nil, &response, true)
-		updateStageFindings(state, response)
-		_, stages := loop.settleRecoveryApplicationsLocked(observe, IncidentResult{PlanApplications: loop.applicationEvidenceLocked()}, []*contracts.StageReport{report})
-		if len(stages) > 0 {
-			proto.Reset(report)
-			proto.Merge(report, stages[0])
-		}
-		// Scoped settlement retires only the targets with bound recovery proof.
-		for _, attempt := range report.Mitigations {
-			if attempt.Result == "applied_cleared" {
-				clearVerifiedStageTargets(state, attempt, attempt.ClearedFindingFingerprints, response)
-			}
-		}
-		if err := save(false); err != nil {
-			return err
-		}
-	}
+	report.RecoveryDeadline = contractTimestamp(deadline)
+	// Legacy reports may have declared clearance before the controller proved it.
+	report.RecoveryWait = nil
 }
 
-// writtenWorkloadsStartup is the longest observed startup of the workloads the
-// stage's writes touched: how long their rollouts may legitimately take to
-// settle. Zero when none is known or the view cannot be read.
-func writtenWorkloadsStartup(ctx context.Context, loop *ResponderLoop, report *contracts.StageReport) time.Duration {
-	var refs []sdk.ObjectRef
+func automaticRecoveryDeadline(request IncidentRequest, report *contracts.StageReport, completed time.Time, view sdk.DetectionContext, detectors []sdk.Detector, wait, stability time.Duration) time.Time {
+	if completed.IsZero() {
+		return completed
+	}
+	budget := wait
+	if budget <= 0 {
+		lag := 90 * time.Second
+		var refs []sdk.ObjectRef
+		for _, attempt := range report.GetMitigations() {
+			for _, ref := range attempt.GetTouchedObjects() {
+				refs = append(refs, sdk.ObjectRef{APIVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()})
+			}
+		}
+		owners := map[string]bool{}
+		for _, key := range alertKeys(&request) {
+			id, _, _ := strings.Cut(key, "\x00")
+			owners[id] = true
+		}
+		for _, detector := range detectors {
+			if owners[detector.Spec().ID] || len(owners) == 0 && detector.Spec().Class == sdk.DetectorClassHealth {
+				if view != nil {
+					lag = max(lag, detectorClearingHorizon(detector, view))
+				} else {
+					clearing := max(detector.Spec().Persistence.Clearing, 1)
+					lag = max(lag, time.Duration(clearing)*detector.Spec().Interval)
+				}
+			}
+		}
+		budget = lag + stability
+		if view != nil {
+			budget += sdk.ResourceStartupAllowance(view, refs...)
+		}
+	}
+	deadline := completed.Add(budget)
+	if !request.ResponseDeadline.IsZero() && request.ResponseDeadline.Before(deadline) {
+		return request.ResponseDeadline
+	}
+	return deadline
+}
+
+func lastStageReceipt(report *contracts.StageReport) time.Time {
+	var completed time.Time
 	for _, attempt := range report.GetMitigations() {
-		for _, ref := range attempt.GetTouchedObjects() {
-			refs = append(refs, sdk.ObjectRef{APIVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()})
+		receipt := attempt.GetApplyReceipt()
+		if !stageReceiptWrote(receipt) {
+			continue
+		}
+		at := receipt.GetCompletedAt()
+		if at == nil {
+			at = receipt.GetStartedAt()
+		}
+		if at.IsValid() && at.AsTime().After(completed) {
+			completed = at.AsTime()
 		}
 	}
-	if len(refs) == 0 {
-		return 0
-	}
-	view, err := loop.snapshotView(ctx)
-	if err != nil {
-		return 0
-	}
-	return sdk.ResourceStartupAllowance(view, refs...)
+	return completed
 }
 
-// splitStageFindings separates the findings a recovery wait can judge from
-// unrelated ones. Only an opening alert is judged, and only when a scheduled
-// detector re-observes it or an attempt covered it; an event-sourced finding no
-// detector re-observes has no way to clear by waiting. A clue, a later alert
-// and such a finding say nothing about the stage's repair: closure and the
-// controller's own drift verification still own them.
-func splitStageFindings(findings []sdk.Finding, detectors []sdk.Detector, attempts []*contracts.StageMitigation, scope recoveryScope) (open, unrelated []sdk.Finding) {
-	scheduled := map[string]bool{}
-	for _, detector := range detectors {
-		scheduled[detector.Spec().ID] = true
-	}
-	covered := map[string]bool{}
-	for _, attempt := range attempts {
-		for _, fp := range attempt.GetClearedFindingFingerprints() {
-			covered[fp] = true
-		}
-		for _, fp := range attempt.GetRemainingFindingFingerprints() {
-			covered[fp] = true
-		}
-	}
-	for _, finding := range findings {
-		if scope.holds(finding) && (scheduled[finding.DetectorID] || covered[FindingFingerprint(finding)]) {
-			open = append(open, finding)
-		} else {
-			unrelated = append(unrelated, finding)
-		}
-	}
-	return open, unrelated
-}
-
-// holdingFindings are the findings the scope holds, in order.
 func holdingFindings(scope recoveryScope, findings []sdk.Finding) []sdk.Finding {
 	var held []sdk.Finding
 	for _, finding := range findings {
@@ -1243,114 +906,6 @@ func holdingFindings(scope recoveryScope, findings []sdk.Finding) []sdk.Finding 
 // writeVerifiedForSettling reports an applied, unreverted write whose scoped verification passed and
 // whose program no longer matches, so any remaining finding is waiting on detector observation.
 // A confirmed non-object effect counts as verified: no object read can verify it.
-func writeVerifiedForSettling(attempt *contracts.StageMitigation) bool {
-	receipt := attempt.GetApplyReceipt()
-	return receipt.GetApplied() && !receipt.GetRolledBack() && (receipt.GetVerificationPassed() || nonObjectEffectConfirmed(attempt)) &&
-		attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH
-}
-
-// nonObjectEffectConfirmed reports an applied, unreverted attempt whose own
-// actions changed state outside Kubernetes objects and each recorded its
-// success (planwire.NonObjectEffect, nonObjectEffectsSucceeded). Such an
-// effect touches no object a finding could be joined to, so the findings the
-// attempt was matched against are its dependents.
-func nonObjectEffectConfirmed(attempt *contracts.StageMitigation) bool {
-	receipt := attempt.GetApplyReceipt()
-	if !receipt.GetApplied() || receipt.GetRolledBack() || receipt.GetDryRun() || receipt.GetRollbackError() != "" {
-		return false
-	}
-	actions, reports := receipt.GetPlan().GetActions(), receipt.GetActionReports()
-	if count := int(attempt.GetPlanActionCount()); count > 0 {
-		start := int(attempt.GetPlanActionStart())
-		if start < 0 || start+count > len(actions) || start+count > len(reports) {
-			return false
-		}
-		actions, reports = actions[start:start+count], reports[start:start+count]
-	}
-	return nonObjectEffectsSucceeded(actions, reports)
-}
-
-// writeTakingEffect reports an applied, unreverted, completely executed write
-// that settlement has not refuted: its rollout may still be in progress, or the
-// only objections are health or a diagnosis that may read the same windowed
-// evidence. Superseded, failed, partial or unobservable writes are refuted.
-func writeTakingEffect(attempt *contracts.StageMitigation) bool {
-	receipt := attempt.GetApplyReceipt()
-	if !receipt.GetApplied() || receipt.GetRolledBack() || receipt.GetDryRun() || receipt.GetRollbackError() != "" {
-		return false
-	}
-	if len(receipt.GetActionReports()) != len(receipt.GetPlan().GetActions()) {
-		return false
-	}
-	for _, report := range receipt.GetActionReports() {
-		if report.GetStatus() != "applied" || report.GetFailureReason() != "" || report.GetRecordingError() != "" {
-			return false
-		}
-	}
-	switch receipt.GetSettlementRejectionReason() {
-	case contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED,
-		contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING,
-		contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR,
-		contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR:
-		return true
-	}
-	return false
-}
-
-// stageDecision is what the stage's wait does once every finding is clear.
-type stageDecision int
-
-const (
-	stageWait stageDecision = iota
-	stageCleared
-)
-
-// decideStageRecovery applies Recovered to a stage whose findings have all
-// cleared: it clears (the responder is skipped) when the opening alerts
-// recovered. A program that still diagnoses its fault, or opening user tests
-// that have not passed since the stage's writes settled, keep it waiting; the
-// stage budget then hands off.
-func decideStageRecovery(check recoveryCheck, matching string) stageDecision {
-	if matching != "" || check.verdict == recoveryPending {
-		return stageWait
-	}
-	return stageCleared
-}
-
-// promoteSettledAttempts records attempts whose remaining findings cleared on
-// their own as cleared, when the program's latest diagnosis no longer matches.
-// A program that still matches after recovery is not credited with it.
-func promoteSettledAttempts(attempts []*contracts.StageMitigation) {
-	for _, attempt := range attempts {
-		if attempt.GetPostApplyDiagnose().GetVerdict().GetResult() != contracts.Verdict_RESULT_NO_MATCH {
-			continue
-		}
-		attempt.ClearedFindingFingerprints = append(attempt.ClearedFindingFingerprints, attempt.RemainingFindingFingerprints...)
-		attempt.RemainingFindingFingerprints = nil
-		attempt.Result = "applied_cleared"
-	}
-}
-
-func recoveryTimeLeft(stage *DeterministicResponseStage, deadline time.Time, legacy time.Duration) time.Duration {
-	if deadline.IsZero() {
-		return max(0, legacy)
-	}
-	now := stage.recoveryNow
-	if now == nil {
-		now = lifecycleio.Now
-	}
-	return max(0, deadline.Sub(now()))
-}
-
-func sortedFindings(byFingerprint map[string]sdk.Finding) []sdk.Finding {
-	findings := make([]sdk.Finding, 0, len(byFingerprint))
-	for _, finding := range byFingerprint {
-		findings = append(findings, finding)
-	}
-	sortFindings(findings)
-	return findings
-}
-
 // stageDiagnoseTries is how many times the stage asks a program to diagnose
 // before an Unknown verdict skips it.
 const stageDiagnoseTries = 3
@@ -1359,8 +914,8 @@ const stageDiagnoseTries = 3
 const stageDiagnoseBackoff = time.Second
 
 func (stage *DeterministicResponseStage) diagnoseBackoff(ctx context.Context) error {
-	if stage.recoveryWait != nil {
-		return stage.recoveryWait(ctx, stageDiagnoseBackoff)
+	if stage.diagnoseWait != nil {
+		return stage.diagnoseWait(ctx, stageDiagnoseBackoff)
 	}
 	timer := lifecycleio.NewTimer(stageDiagnoseBackoff)
 	defer timer.Stop()

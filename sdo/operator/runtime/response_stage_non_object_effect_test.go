@@ -111,7 +111,7 @@ func aclStage(t *testing.T, ensureOK, stillFailing bool) (*DeterministicResponse
 	}
 	loop.saveToolState = func(context.Context, []byte) error { return nil }
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		ObservationInterval: time.Second, recoveryNow: clock.Now, recoveryWait: clock.advance}
+		diagnoseWait: clock.advance}
 	return stage, &IncidentState{Request: request, Findings: findings}, world
 }
 
@@ -123,60 +123,37 @@ func aclStage(t *testing.T, ensureOK, stillFailing bool) (*DeterministicResponse
 // or one that does while the fault persists, earns no credit and goes to the
 // responder.
 func TestNonObjectRepairSettlesOnObservedTransition(t *testing.T) {
-	t.Run("exec repair takes effect", func(t *testing.T) {
-		stage, state, world := aclStage(t, true, false)
-		started := world.clock.Now()
-		agent := &recordingStage{}
-		if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
-			t.Fatal(err)
-		}
-		report := state.PriorStages[0]
-		if len(report.Mitigations) != 1 || world.ensures != 1 {
-			t.Fatalf("the stage must apply the ACL repair once (ensures=%d): %v", world.ensures, report)
-		}
-		attempt := report.Mitigations[0]
-		receipt := attempt.GetApplyReceipt()
-		if got := report.GetRecoveryWait().GetExitReason(); got != contracts.RecoveryWait_EXIT_REASON_CLEARED {
-			t.Fatalf("recovery wait exit = %s after %s, want CLEARED: %v", got, world.clock.Now().Sub(started), report)
-		}
-		if agent.dispatched {
-			t.Fatalf("the responder was dispatched for a repair the stage proved: %v", report)
-		}
-		if attempt.Result != "applied_cleared" || receipt.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED ||
-			receipt.GetFinalVerificationBasis() != "observed-transition" || !receipt.GetVerificationPassed() || !finalApplicationVerified(receipt) {
-			t.Fatalf("attempt %s, settlement %s, basis %q, verified %v: want applied_cleared on an observed transition", attempt.Result, receipt.GetSettlementRejectionReason(), receipt.GetFinalVerificationBasis(), receipt.GetVerificationPassed())
-		}
-	})
-	t.Run("exec repair without effect", func(t *testing.T) {
-		stage, state, world := aclStage(t, false, false)
-		agent := &recordingStage{}
-		if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
-			t.Fatal(err)
-		}
-		report := state.PriorStages[0]
-		if world.ensures != 1 || !agent.dispatched || report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
-			t.Fatalf("an ensure that changed nothing must go to the responder (ensures=%d, dispatched=%v): %v", world.ensures, agent.dispatched, report)
-		}
-		if got := report.Mitigations[0].Result; got == "applied_cleared" {
-			t.Fatalf("an ineffective ensure was credited: %v", report.Mitigations[0])
-		}
-	})
-	t.Run("exec repair takes effect but the fault persists", func(t *testing.T) {
-		stage, state, world := aclStage(t, true, true)
-		started := world.clock.Now()
-		agent := &recordingStage{}
-		if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
-			t.Fatal(err)
-		}
-		report := state.PriorStages[0]
-		if world.ensures != 1 || !agent.dispatched || report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
-			t.Fatalf("a persisting fault must go to the responder (ensures=%d, dispatched=%v): %v", world.ensures, agent.dispatched, report)
-		}
-		if waited := world.clock.Now().Sub(started); waited > 90*time.Second {
-			t.Fatalf("the stage observed for %s, past the recovery bound", waited)
-		}
-		if got := report.Mitigations[0]; got.Result == "applied_cleared" || finalApplicationVerified(got.GetApplyReceipt()) {
-			t.Fatalf("a repair that did not clear its diagnosis was credited: %v", got)
-		}
-	})
+	for _, tc := range []struct {
+		name                   string
+		ensureOK, stillFailing bool
+	}{
+		{"takes effect", true, false},
+		{"changes nothing", false, false},
+		{"takes effect but the fault persists", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stage, state, world := aclStage(t, tc.ensureOK, tc.stillFailing)
+			report, err := stage.Run(t.Context(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(report.Mitigations) != 1 || world.ensures != 1 {
+				t.Fatalf("want one ACL application, got %d writes: %v", world.ensures, report)
+			}
+			if report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
+				t.Fatal("apply claimed recovery")
+			}
+			if !tc.ensureOK || tc.stillFailing {
+				return // No recovered closure has attribution authority.
+			}
+			_ = world.clock.advance(t.Context(), time.Minute)
+			markAutomaticRecovery(report, world.clock.Now(), contracts.RecoveryWait_EXIT_REASON_CLEARED)
+			loop := stage.NewLoop(state.Request)
+			_, settled := loop.SettleRecoveryApplications(t.Context(), IncidentResult{}, []*contracts.StageReport{report}, world.clock.Now())
+			receipt := settled[0].Mitigations[0].GetApplyReceipt()
+			if receipt.GetFinalVerificationBasis() != "observed-transition" || !receipt.GetVerificationPassed() || !finalApplicationVerified(receipt) {
+				t.Fatalf("want closure attribution based on a confirmed transition: %v", receipt)
+			}
+		})
+	}
 }

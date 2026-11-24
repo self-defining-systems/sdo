@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"reflect"
 	"sort"
 	"strconv"
@@ -196,57 +195,36 @@ func (e PlanExecutor) replaceStuckPods(ctx context.Context, stuck []StuckRestart
 	return nil
 }
 
-// podNotReadyBound is how long a Pod may stay not Ready on an old revision
-// before a source restore replaces it, when no container reports a failing wait.
-const podNotReadyBound = 30 * time.Second
-
-// templateRolloutWaitBound bounds the wait for a StatefulSet controller to
-// observe a restored template and publish its updateRevision.
-const templateRolloutWaitBound = 10 * time.Second
-
-// stuckWaitingReasons are container waiting reasons that never resolve alone.
-var stuckWaitingReasons = map[string]bool{"ImagePullBackOff": true, "ErrImagePull": true, "CrashLoopBackOff": true, "CreateContainerConfigError": true, "InvalidImageName": true}
-
-// sourceRestoredStatefulSets returns the StatefulSets whose pod template a
-// ReconcileFromSource in this plan actually changed.
-func sourceRestoredStatefulSets(plan program.Plan, result PlanApplicationResult) []sdk.ObjectRef {
-	var refs []sdk.ObjectRef
+// sourceRestoredStatefulSets returns the StatefulSet source writes, including
+// the identity and fields the executor just verified.
+func sourceRestoredStatefulSets(plan program.Plan, result PlanApplicationResult) []PlanPatch {
+	var restores []PlanPatch
 	for _, patch := range result.Patches {
 		if patch.Ref.Kind != "StatefulSet" || patch.Before == nil || patch.After == nil {
 			continue
 		}
-		restored := false
 		for _, action := range plan.Actions {
 			if ref, err := planActionRef(action); err == nil && ref == patch.Ref && isSourceReconcile(action) {
-				restored = true
+				restores = append(restores, patch)
+				break
 			}
 		}
-		before, _, _ := unstructured.NestedMap(patch.Before.Object, "spec", "template")
-		after, _, _ := unstructured.NestedMap(patch.After.Object, "spec", "template")
-		if restored && !reflect.DeepEqual(before, after) {
-			refs = append(refs, patch.Ref)
-		}
 	}
-	return refs
+	return restores
 }
 
-// replaceRevisionStuckPods completes a source restore of a StatefulSet template
-// (Kubernetes "forced rollback"): the controller will not replace a Pod that is
-// stuck not Ready on the bad revision, so each such Pod is deleted, in ordinal
-// order, and recreated at the restored updateRevision. Only Pods on another
-// revision that are failing (ImagePullBackOff, ErrImagePull, CrashLoopBackOff...)
-// or not Ready past podNotReadyBound are deleted, never a Ready Pod.
-func (e PlanExecutor) replaceRevisionStuckPods(ctx context.Context, refs []sdk.ObjectRef, result *PlanApplicationResult) error {
+// replaceRestoredStatefulSetPods completes the source restore within the
+// application's mutation fence. Kubernetes recreates eligible Pods at the
+// observed update revision.
+
+func (e PlanExecutor) replaceRestoredStatefulSetPods(ctx context.Context, restores []PlanPatch, result *PlanApplicationResult) error {
 	lister, ok := e.Client.(planPodLister)
-	if !ok || len(refs) == 0 {
+	if !ok || len(restores) == 0 {
 		return nil
 	}
-	now := lifecycleio.Now
-	if e.Now != nil {
-		now = e.Now
-	}
-	for _, ref := range refs {
-		set, err := e.awaitObservedStatefulSet(ctx, ref)
+	for _, restore := range restores {
+		ref := restore.Ref
+		set, err := e.awaitObservedStatefulSet(ctx, restore)
 		if err != nil {
 			return fmt.Errorf("read StatefulSet %s after its source restore: %w", ref.Name, err)
 		}
@@ -254,7 +232,7 @@ func (e PlanExecutor) replaceRevisionStuckPods(ctx context.Context, refs []sdk.O
 		if err != nil {
 			return fmt.Errorf("list Pods of StatefulSet %s: %w", ref.Name, err)
 		}
-		stuck, err := podsStuckOnOldRevision(set, pods, now())
+		stuck, err := podsOffUpdateRevision(set, pods)
 		if err != nil {
 			return err
 		}
@@ -265,37 +243,44 @@ func (e PlanExecutor) replaceRevisionStuckPods(ctx context.Context, refs []sdk.O
 	return nil
 }
 
+const templateRolloutWaitBound = 10 * time.Second
+
 // awaitObservedStatefulSet reads the StatefulSet once its controller has
 // observed the restored template, so status.updateRevision names that template.
-func (e PlanExecutor) awaitObservedStatefulSet(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+func (e PlanExecutor) awaitObservedStatefulSet(ctx context.Context, restore PlanPatch) (*unstructured.Unstructured, error) {
 	deadline := lifecycleio.Now().Add(templateRolloutWaitBound)
+	template, _, _ := unstructured.NestedMap(restore.After.Object, "spec", "template")
 	for {
-		set, err := e.Client.Get(ctx, ref)
+		set, err := e.Client.Get(ctx, restore.Ref)
 		if err != nil {
 			return nil, err
 		}
+		liveTemplate, _, _ := unstructured.NestedMap(set.Object, "spec", "template")
+		if set.GetUID() != restore.Before.GetUID() || !reflect.DeepEqual(liveTemplate, template) {
+			return nil, fmt.Errorf("StatefulSet identity or template changed after the source restore")
+		}
 		observed, _, _ := unstructured.NestedInt64(set.Object, "status", "observedGeneration")
-		if observed >= set.GetGeneration() || !lifecycleio.Now().Before(deadline) {
+		if revision, _, _ := unstructured.NestedString(set.Object, "status", "updateRevision"); observed >= set.GetGeneration() && revision != "" {
 			return set, nil
 		}
-		if lifecycleio.Wait(ctx, 250*time.Millisecond) != nil {
-			return set, nil
+		if !lifecycleio.Now().Before(deadline) {
+			return nil, fmt.Errorf("controller did not publish the restored revision")
+		}
+		if err := lifecycleio.Wait(ctx, 250*time.Millisecond); err != nil {
+			return nil, err
 		}
 	}
 }
 
-// podsStuckOnOldRevision returns the StatefulSet's Pods the controller will not
-// replace after a template restore, in ordinal order: owned, not terminating, on
-// a revision other than status.updateRevision, and failing or not Ready past
-// podNotReadyBound. A Pod without a revision label, or a set without an
-// updateRevision, cannot be compared and is left alone.
-func podsStuckOnOldRevision(workload *unstructured.Unstructured, pods []corev1.Pod, now time.Time) ([]StuckRestartPod, error) {
+// podsOffUpdateRevision returns the owned Pods eligible for replacement in
+// ordinal order, preserving the rolling-update partition.
+func podsOffUpdateRevision(workload *unstructured.Unstructured, pods []corev1.Pod) ([]StuckRestartPod, error) {
 	var set appsv1.StatefulSet
 	if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(workload.Object, &set); err != nil {
 		return nil, err
 	}
 	update := set.Status.UpdateRevision
-	if update == "" || set.Spec.PodManagementPolicy == appsv1.ParallelPodManagement {
+	if update == "" {
 		return nil, nil
 	}
 	partition := 0
@@ -315,14 +300,10 @@ func podsStuckOnOldRevision(workload *unstructured.Unstructured, pods []corev1.P
 		}
 		revision := pod.Labels[appsv1.ControllerRevisionHashLabelKey]
 		ordinal, err := strconv.Atoi(strings.TrimPrefix(pod.Name, set.Name+"-"))
-		if revision == "" || revision == update || err != nil || ordinal < partition || podRunningAndReady(pod) {
+		if revision == update || err != nil || ordinal < partition {
 			continue
 		}
-		reason := podStuckReason(pod, now)
-		if reason == "" {
-			continue
-		}
-		found = append(found, ordinalPod{ordinal, pod, fmt.Sprintf("Pod is on revision %s, not the restored revision %s, and %s: a StatefulSet rolling update never replaces a Pod that is not Ready, so it is deleted to be recreated at the restored revision", revision, update, reason)})
+		found = append(found, ordinalPod{ordinal, pod, fmt.Sprintf("Pod revision %q differs from restored revision %q", revision, update)})
 	}
 	sort.Slice(found, func(i, j int) bool { return found[i].ordinal < found[j].ordinal })
 	var stuck []StuckRestartPod
@@ -330,56 +311,4 @@ func podsStuckOnOldRevision(workload *unstructured.Unstructured, pods []corev1.P
 		stuck = append(stuck, StuckRestartPod{Pod: item.pod, Reason: item.reason})
 	}
 	return stuck, nil
-}
-
-// podStuckReason says why a not-Ready Pod will not recover on its own, or "".
-func podStuckReason(pod corev1.Pod, now time.Time) string {
-	for _, status := range append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...) {
-		if waiting := status.State.Waiting; waiting != nil && stuckWaitingReasons[waiting.Reason] {
-			return "a container is waiting with " + waiting.Reason
-		}
-	}
-	since := pod.CreationTimestamp.Time
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == corev1.PodReady && !condition.LastTransitionTime.IsZero() {
-			since = condition.LastTransitionTime.Time
-		}
-	}
-	if !since.IsZero() && now.Sub(since) >= podNotReadyBound {
-		return "has not been Ready for " + now.Sub(since).Round(time.Second).String()
-	}
-	return ""
-}
-
-// replaceStuckRevisionPods re-checks, for every applied source restore of a
-// StatefulSet template, the Pods its controller will not replace. The check at
-// apply time is one sample: a Pod that has only just started failing is neither
-// waiting with a stuck reason nor past podNotReadyBound yet, and a StatefulSet
-// never replaces a Pod that is not Ready. Recovery waits call this on every
-// observation until the stage's bound, so such a Pod is replaced as soon as it
-// is stuck. A restore whose Pods are all current or Ready does nothing.
-func (l *ResponderLoop) replaceStuckRevisionPods(ctx context.Context) {
-	for i := range l.applicationsLog {
-		app := &l.applicationsLog[i]
-		result := app.Result
-		if !result.Applied || result.DryRun || result.RolledBack {
-			continue
-		}
-		refs := sourceRestoredStatefulSets(result.Plan, result)
-		if len(refs) == 0 {
-			continue
-		}
-		effects := len(result.ObjectEffects)
-		if err := l.Executor.replaceRevisionStuckPods(ctx, refs, &result); err != nil {
-			slog.Warn("stuck_pod_recheck_failed", "incident_id", l.Request.IncidentID, "application", app.ID, "error", err)
-		}
-		if len(result.ObjectEffects) == effects {
-			continue
-		}
-		app.Result.ObjectEffects = result.ObjectEffects
-		if live, ok := l.applications[app.ID]; ok {
-			live.ObjectEffects = result.ObjectEffects
-			l.applications[app.ID] = live
-		}
-	}
 }

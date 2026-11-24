@@ -3,15 +3,13 @@ package runtime
 import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
-	"sdo.dev/operator/sdk"
 )
 
 // playbookWrote reports an attempt of the automatic stage that applied its
-// plan, whether or not the stage later reverted it: a learned playbook that
-// matched and wrote.
+// live application resources, including writes that landed partially.
 func playbookWrote(report *contracts.StageReport) bool {
 	for _, attempt := range report.GetMitigations() {
-		if attempt.GetApplyReceipt().GetApplied() {
+		if stageReceiptWrote(attempt.GetApplyReceipt()) {
 			return true
 		}
 	}
@@ -22,10 +20,7 @@ func playbookApplied(reports []*contracts.StageReport) bool {
 	return playbookWrote(deterministicStageReport(reports))
 }
 
-// agentMayFollowPlaybook is the one decision response.after_playbook makes for
-// the stage pipeline: once a playbook applied and stayed applied, the agent
-// follows only under the agent policy (the unset policy). Without an applied
-// playbook the policy has nothing to say.
+// agentMayFollowPlaybook applies the configured policy once a playbook wrote.
 func agentMayFollowPlaybook(policy string, reports []*contracts.StageReport) bool {
 	if !playbookApplied(reports) {
 		return true
@@ -33,17 +28,35 @@ func agentMayFollowPlaybook(policy string, reports []*contracts.StageReport) boo
 	return policy == "" || policy == settings.AfterPlaybookAgent
 }
 
-// stageHandoffWarranted decides whether an unverified incident whose only
-// response was the automatic stage is handed to the agent. Before any applied
-// playbook, any firing health finding (or, at the deadline, any active health
-// detector) is work. After one, only the incident's alert set is (opening alerts plus joined user
-// tests; a clue never joins), and the policy decides.
-func stageHandoffWarranted(policy string, reports []*contracts.StageReport, scope recoveryScope, findings []sdk.Finding, deadlinePassed, openingActive, healthActive bool) bool {
-	if !playbookApplied(reports) {
-		return len(findings) > 0 || (deadlinePassed && healthActive)
-	}
-	if !agentMayFollowPlaybook(policy, reports) {
+func stageReceiptWrote(receipt *contracts.PlanApplication) bool {
+	if receipt == nil || receipt.GetDryRun() {
 		return false
 	}
-	return len(scope.blocking(findings)) > 0 || (deadlinePassed && openingActive)
+	for _, effect := range receipt.GetObjectEffects() {
+		if effect.GetState() != "not_applied" {
+			return true
+		}
+	}
+	uncertain := receipt.GetStartedAt() != nil && receipt.GetCompletedAt() == nil
+	for _, report := range receipt.GetActionReports() {
+		uncertain = uncertain || report.GetFailureReason() == "outcome_unknown"
+	}
+	actions := receipt.GetActionsApplied()
+	if !uncertain && !receipt.GetApplied() && len(actions) == 0 && receipt.GetRolloutPending() == nil {
+		return false
+	}
+	if len(actions) == 0 || uncertain {
+		actions = receipt.GetPlan().GetActions()
+	}
+	for _, action := range actions {
+		switch action.GetKind().(type) {
+		case *contracts.Action_WaitFor, *contracts.Action_CheckStoreCredential, *contracts.Action_StoreBackup,
+			*contracts.Action_ProposeSourceChange, *contracts.Action_Escalate:
+			continue
+		default:
+			return true
+		}
+	}
+	// Legacy summaries may record a write without its actions.
+	return len(actions) == 0
 }

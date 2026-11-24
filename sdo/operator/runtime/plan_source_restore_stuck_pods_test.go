@@ -57,9 +57,9 @@ func syntheticStorePod(owner *appsv1.StatefulSet, spec stuckPod, now time.Time) 
 }
 
 // After ReconcileFromSource restores a StatefulSet's template, a Pod still on
-// another revision and not Ready is deleted so the controller recreates it at
-// the restored revision (Kubernetes "forced rollback"); nothing else is.
-func TestReconcileFromSourceReplacesStatefulSetPodsStuckOnTheBadRevision(t *testing.T) {
+// another revision is deleted so the controller recreates it at the restored
+// revision. This includes Ready and recently unready Pods.
+func TestReconcileFromSourceReplacesStatefulSetPodsOffTheUpdateRevision(t *testing.T) {
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	for _, test := range []struct {
 		name        string
@@ -69,7 +69,7 @@ func TestReconcileFromSourceReplacesStatefulSetPodsStuckOnTheBadRevision(t *test
 	}{
 		{"image pull failure", nil,
 			[]stuckPod{{name: "store-0", revision: "store-old", waiting: "ImagePullBackOff", notReadyFor: time.Second}}, []string{"store-0"}},
-		{"only the stuck Pods, in ordinal order, never a Ready, new-revision or briefly unready Pod", nil,
+		{"all old-revision Pods in ordinal order", nil,
 			[]stuckPod{
 				{name: "store-10", revision: "store-old", waiting: "CrashLoopBackOff", notReadyFor: time.Second},
 				{name: "store-2", revision: "store-old", waiting: "ErrImagePull", notReadyFor: time.Second},
@@ -77,13 +77,13 @@ func TestReconcileFromSourceReplacesStatefulSetPodsStuckOnTheBadRevision(t *test
 				{name: "store-3", revision: "store-new", waiting: "ImagePullBackOff"},
 				{name: "store-4", revision: "store-old", notReadyFor: time.Second},
 				{name: "store-5", revision: "store-old", notReadyFor: 2 * time.Minute},
-			}, []string{"store-2", "store-5", "store-10"}},
+			}, []string{"store-1", "store-2", "store-4", "store-5", "store-10"}},
 		{"Pods below a rolling-update partition stay", func(set *appsv1.StatefulSet) {
 			partition := int32(1)
 			set.Spec.UpdateStrategy.RollingUpdate = &appsv1.RollingUpdateStatefulSetStrategy{Partition: &partition}
 		}, []stuckPod{{name: "store-0", revision: "store-old", waiting: "ImagePullBackOff"}, {name: "store-1", revision: "store-old", waiting: "ImagePullBackOff"}}, []string{"store-1"}},
-		{"a Parallel StatefulSet replaces its own Pods", func(set *appsv1.StatefulSet) { set.Spec.PodManagementPolicy = appsv1.ParallelPodManagement },
-			[]stuckPod{{name: "store-0", revision: "store-old", waiting: "ImagePullBackOff"}}, nil},
+		{"parallel policy still replaces old revisions", func(set *appsv1.StatefulSet) { set.Spec.PodManagementPolicy = appsv1.ParallelPodManagement },
+			[]stuckPod{{name: "store-0", revision: "store-old", waiting: "ImagePullBackOff"}}, []string{"store-0"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			live := syntheticSet("registry.invalid/store:bad", test.mutate)

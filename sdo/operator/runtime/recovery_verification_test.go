@@ -93,9 +93,10 @@ func (w verifyWorld) view() sdktest.Snapshot {
 			Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(verifyT0.Add(-time.Hour))}}}}
 	}
 	snapshot := sdktest.Snapshot{NamespaceName: "app",
-		PodList:         []corev1.Pod{pod("front-1", "front", "Deployment"), pod("api-1", "api", "Deployment"), pod("db-0", "db", "StatefulSet"), pod("cache-1", "cache", "Deployment"), pod("ssh-gate-1", "ssh-gate", "Deployment")},
-		StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "app"}}},
-		Traffic:         map[string]traffic.Window{},
+		PodList: []corev1.Pod{pod("front-1", "front", "Deployment"), pod("api-1", "api", "Deployment"), pod("db-0", "db", "StatefulSet"), pod("cache-1", "cache", "Deployment"), pod("ssh-gate-1", "ssh-gate", "Deployment")},
+		StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "app", Generation: 1},
+			Status: appsv1.StatefulSetStatus{ObservedGeneration: 1, ReadyReplicas: 1, UpdatedReplicas: 1, CurrentRevision: "r1", UpdateRevision: "r1"}}},
+		Traffic: map[string]traffic.Window{},
 	}
 	if !w.noProbes {
 		probeOK := w.probeOK

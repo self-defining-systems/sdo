@@ -21,8 +21,7 @@ alone is the baseline. `IncidentRequest.prior_stages` and
 `OutcomeRecord.prior_stages` retain typed controller-owned stage reports.
 Each mitigation identifies the accepted playbook revision, bindings, plan,
 `apply_receipt`, post-apply Diagnose, and cleared/remaining finding fingerprints.
-Results distinguish `applied_cleared`, `applied_still_matching` (with `kept_reason`),
-`reverted_ineffective` (writes restored before handoff), `rollout_failed`,
+Results distinguish `applied_cleared`, `applied_still_matching`, `rollout_failed`,
 `rollout_pending_at_handoff`, `apply_error`, `escalated` (a matched Diagnose whose verdict is
 `reach: out-of-reach`, from a Diagnose-only playbook or a plan whose only action is `Escalate`: nothing
 was written, `escalation` holds the verdict, its targeted findings leave the stage's work and the
@@ -33,7 +32,7 @@ and `skipped` with `skip_reason` (a Diagnose-only playbook with any other verdic
 Data effects never skip an attempt. External actions (`Exec`, `EnsureExec`, `EnsureHTTP`, `RunScript`, `RunJob`, `EnsureDatabaseUser`) and typed store actions (`StoreBackup` `read`, `InvalidateDerived` `derived-invalidate`, or `data-write` on a target the map does not mark derived, `RepairData`/`RestoreBackup` `data-write`, `RestoreStoreItem` `store-setting`, `CheckStoreCredential` `read`) run on the automatic path; their effect on each `holds_data` component is recorded as a `data effect:` line in the closure's `source_check_notes` (see [outcome records](outcome-records.md)). Runs before the record-only change could skip them with `holds_data` (error naming the effect class or the `derived_from` source).
 `already_attempted` now means every write of the match (same action, object and resolved values; `Reason` ignored)
 repeats a write an earlier attempt of the same stage applied whose effect is unsettled (`rollout_pending_at_handoff`
-or `applied_still_matching` with post-apply NO_MATCH) and that is still in progress when the match is decided (read live: a
+or `applied_still_matching`) and that is still in progress when the match is decided (read live: a
 touched Deployment still rolling out, or the 90 s recovery window after the write still open; the same holds after a
 controller restart, where the write is found in the restored applications); the earlier attempt keeps settlement credit. Before this
 rule, a second program restarting the same Deployment superseded the first (`SETTLEMENT_REJECTION_REASON_SUPERSEDED`).
@@ -41,19 +40,8 @@ A plan application rejected with `SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRM
 (a failure before any comparison, such as no pre-image or an unreadable or replaced object), `mismatches` (object, path, expected,
 observed; Secret data redacted) and `rollout_status` when settlement ran. Its `error` starts `effect_not_confirmed:` and replaces
 the apply-time error (often a stale `rollout_pending`).
-`rollout_pending_at_handoff` whose `rollout_pending` reason says `cannot progress
-without another actor` is a stall handoff, a few seconds after the write: the
-replacement Pod is unschedulable, its ReplicaSet cannot create it (non-webhook
-`FailedCreate`, e.g. quota or LimitRange), or the progress deadline passed. The
-reason first names any old-template Pod/ReplicaSet holding its place, then the
-release, then the scheduler or create message. `rollout_pending.blockers[].release`
-holds the typed standard release (`RetireOldRevision` of each old revision) when a
-replacement cannot be placed or quota is exceeded; SDO never applies it itself.
-A stall is not a budget expiry. The rollout wait keeps a reserved share of the
-deadline, so every written object has a readback; `observation_error` on a
-fast object now means a real read failure, not a slow neighbour. A stalled
-pending reservation releases responder writes after a 2 s grace with
-`rollout_stalled` naming the blocker, not after the 90 s bound.
+`rollout_pending_at_handoff` is the apply receipt's pending-rollout label. The controller owns the actual handoff decision. Join `apply_completed_at`, `recovery_deadline`, the optional `stability_deadline`, and `handoff_keys` to episode timing. `rollout_unsettled_at_deadline` is terminal trust evidence for the recorded program revision. Historically a stalled rollout could trigger an early handoff or a separate lag wait.
+
 The stage applies matched bindings sequentially with a single rollout sample, re-running Diagnose on fresh
 state after the preceding application returns. It then observes all pending applications under one durable shared recovery deadline (up to 90 seconds, bounded by the response deadline). A pending handoff
 (`admission_blocked`, stalled or bounded rollout) keeps the pass: later matches
@@ -69,7 +57,7 @@ observations never replace independent controller closure/classification.
 
 The deterministic stage requires a fresh Match, exactly one mitigation entry
 point, and all parameters bound from covered findings. It has no trust gate and
-never automatically undoes a completed apply. Its recovery observation uses the shared deadline, never a serial per-candidate rollout budget. Interrupted apply intent survives in the incident tool checkpoint;
+never automatically undoes a completed apply. Controller closure observes recovery against the fixed deadline after the stage publishes its receipts. Interrupted apply intent survives in the incident tool checkpoint;
 a retry reports uncertainty instead of repeating a potentially landed mutation.
 
 `resolution_path: deterministic` means the incident needed no responder worker;
@@ -161,42 +149,7 @@ A recorded corrective child write also follows its controller-owner lineage;
 a Pod receipt ending at a ReplicaSet cannot evade a Deployment's attribution
 check. These are neutral attribution gaps, not program execution failures.
 
-Stage recovery telemetry is `prior_stages[].recovery_wait` and the same field on
-`plan_applications[]` / mitigation `apply_receipt`: `exit_reason` is the typed
-`EXIT_REASON_CLEARED`, `DEADLINE`, `BLOCKER`, `FAILED`, `UNCOVERED` or
-`NOTHING_APPLIED` enum, and
-`duration` is measured observation time (protobuf Duration), accumulated across
-stage re-entry. Missing telemetry in historical receipts is unknown, never zero.
-This measures the recovery observation interval, not apply duration or dispatch
-latency. The controller logs `recovery_wait_exit` with the exit and the branch
-that ended the wait. `response.after_playbook` (agent, escalate, wait; see docs/config.md) decides what follows an applied
-playbook whose wait did not exit `CLEARED`: `escalate` and `wait` log `after_playbook_withheld` and dispatch no agent, so a
-withheld incident has a deterministic stage report with remaining findings and no responder session, and closes
-recovered or `failed` by ordinary closure. After its first write the stage observes only the alert set (opening alerts plus joined user tests): a clue or a later alert neither holds
-the wait nor reaches the agent. `NOTHING_APPLIED` means no learned playbook applied while
-findings remained; it is not a coverage verdict (before it existed, these waits
-exited `UNCOVERED`, which is why historical stage tables show mostly
-`UNCOVERED`). The wait asks the same recovered test as closure
-(`runtime/recovery_verification.go`, see closure-recovery.md) over the
-incident's alert set and the stage's writes: once every finding is clear
-it exits `CLEARED` when Recovered holds (every user test of the alert set passed again
-after the writes settled). An applied program whose post-apply diagnose still
-`MATCH`es keeps the wait open for the learned detectors' longest rolling
-window, then hands off. Historical receipts may carry `restored_source` and
-waits may show `recovered below operation strength` or an `UNCOVERED` churn
-hand-off; both are gone. A finding on a
-written component hands off (`FAILED`) once it outlives its detector's horizon
-counted from the writes' settle time; members that have not passed by their
-horizon do too. Settle times come from the receipts and live Pod readiness, so
-a controller restart cannot grant a fresh window (the older `EffectSettled`
-checkpoint is gone). On `CLEARED`
-an attempt is promoted to `applied_cleared` only when its latest post-apply
-diagnose is `NO_MATCH`. A learned traffic detector without its own confirmation
-is pending, not clear, while its workloads lack usable samples, and its
-workload window bounds the closure recheck. Action completion uses every
-indexed action report, including successful WaitFor and satisfied EnsureExec,
-not the number of mutations. Rollout-only source residuals and unavailable
-readback are pending; actual configuration residuals remain partial failures.
+Read `prior_stages[].recovery_wait` as the controller's disposition of the automatic attempt. Its `duration` is elapsed time from apply completion to the controller's decision. `CLEARED` means Recovered held; `DEADLINE` means the bound was reached without proof; `NOTHING_APPLIED` means no live write was observed. Historical reports may repeat the field on application receipts and use the old `BLOCKER`, `FAILED` and `UNCOVERED` exits. Interpret them against the build that produced them. The optional stability deadline records the one extension when fresh clearance and settlement are confirmed. A missing sample keeps closure pending. Handoff requires a freshly firing alert-set member under the agent policy.
 
 `plan_applications[].settlement_rejection_reason` records the typed closure
 attribution veto (also copied into stage apply receipts). Unspecified means no
@@ -219,10 +172,10 @@ without asking the absent workload to roll out.
 
 Cross-resource Service admission additionally requires an availability/traffic
 or declared-window role; a Service configuration/selector fault is not a rollout
-symptom just because it selects or names a nearby workload. The final claim
-boundary reuses the shared wait decision after preparation; a cleared skip emits
-no responder_dispatched lifecycle event. Published legacy/content-addressed
-requests, executions and workers retain ownership and are rejoined.
+symptom just because it selects or names a nearby workload. The saved handoff
+is the task publication authority. Worker claims use that decision without a
+new health read. Published requests, executions and workers retain ownership
+and are rejoined.
 
 ## Fixed by the playbook alone
 

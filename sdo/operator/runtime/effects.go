@@ -67,11 +67,22 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		defer cancel()
 		dispatchCtx, endDispatch := context.WithTimeout(actionCtx, endBy)
 		defer endDispatch()
-		result, reports, dispatchErr := c.runResponsePipeline(dispatchCtx, effect.Request)
-		if dispatchErr != nil && actionCtx.Err() == nil && errors.Is(dispatchCtx.Err(), context.DeadlineExceeded) {
-			dispatchErr = c.endTimedOutResponse(actionCtx, effect.Request, dispatchErr)
+		completion := c.runResponsePipeline(dispatchCtx, effect.Request)
+		if completion.err != nil && actionCtx.Err() == nil && errors.Is(dispatchCtx.Err(), context.DeadlineExceeded) {
+			stage := deterministicStageReport(completion.priorStages)
+			if completion.automatic != nil && playbookWrote(stage) {
+				// The journal has evidence of writes. Publish them with the
+				// original bound and let closure decide from fresh health.
+				if stage.RecoveryDeadline == nil {
+					stage.RecoveryDeadline = contractTimestamp(effect.Request.ResponseDeadline)
+				}
+				completion.err = nil
+			} else {
+				completion.err = c.endTimedOutResponse(actionCtx, effect.Request, completion.err)
+			}
 		}
-		c.results <- dispatchCompletion{incidentID: effect.Request.IncidentID, result: result, priorStages: reports, err: dispatchErr}
+		completion.incidentID = effect.Request.IncidentID
+		c.results <- completion
 	})
 	return nil
 }

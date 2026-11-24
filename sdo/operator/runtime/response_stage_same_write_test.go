@@ -184,7 +184,7 @@ func TestDeterministicStageSkipsSameWriteInProgress(t *testing.T) {
 	world, loop, state := sameWriteLoop(t)
 	instant := newInstantRecoveryClock()
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		recoveryNow: instant.now, recoveryWait: instant.wait}
+		diagnoseWait: instant.wait}
 	report, err := stage.Run(ctx, state)
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +209,9 @@ func TestDeterministicStageSkipsSameWriteInProgress(t *testing.T) {
 
 	// The windowed detector re-observes later; closure settles what the stage applied.
 	world.healthy.Store(true)
-	_, settled := loop.SettleRecoveryApplications(ctx, IncidentResult{}, []*contracts.StageReport{report})
+	at := loop.clock()
+	markAutomaticRecovery(report, at, contracts.RecoveryWait_EXIT_REASON_CLEARED)
+	_, settled := loop.SettleRecoveryApplications(ctx, IncidentResult{}, []*contracts.StageReport{report}, at)
 	for _, attempt := range settled[0].Mitigations {
 		if attempt.PlaybookId != "aware-restart" {
 			continue
@@ -236,7 +238,7 @@ func TestDeterministicStageSkipsSameWriteAfterRestore(t *testing.T) {
 	}
 	instant := newInstantRecoveryClock()
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return first }, KeepLoop: true,
-		recoveryNow: instant.now, recoveryWait: instant.wait}
+		diagnoseWait: instant.wait}
 	if _, err := stage.Run(ctx, state); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +265,7 @@ func TestDeterministicStageSkipsSameWriteAfterRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumed := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return second }, KeepLoop: true,
-		recoveryNow: instant.now, recoveryWait: instant.wait}
+		diagnoseWait: instant.wait}
 	report, err := resumed.Run(ctx, restored)
 	if err != nil {
 		t.Fatal(err)
@@ -309,14 +311,14 @@ func TestSameWriteInProgressIsReadLive(t *testing.T) {
 			}
 			start := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 			loop.Now = func() time.Time { return start }
-			clock := func() time.Time { return start.Add(tc.later) }
-			stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-				recoveryWait: func(context.Context, time.Duration) error { return nil }, recoveryNow: clock}
-			if _, err := stage.Run(context.Background(), state); err != nil {
+			stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true}
+			report, err := stage.Run(t.Context(), state)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if got := world.restarts.Load(); got != tc.wantWrites {
-				t.Fatalf("Deployment written %d times, want %d", got, tc.wantWrites)
+			app := loop.ApplicationEvidence()[0]
+			if got := loop.sameWriteInProgress(t.Context(), start.Add(tc.later), report, app.Result.Plan); got != (tc.wantWrites == 1) {
+				t.Fatalf("same write still in progress = %v, want %v", got, tc.wantWrites == 1)
 			}
 		})
 	}

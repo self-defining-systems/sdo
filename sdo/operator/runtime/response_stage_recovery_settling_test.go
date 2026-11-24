@@ -2,12 +2,14 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -343,139 +345,15 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		}
 	}
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		ObservationInterval: time.Second, recoveryNow: clock.Now, recoveryWait: clock.advance}
+		diagnoseWait: clock.advance}
 	return stage, &IncidentState{Request: request, Findings: findings}
 }
 
-// An in-stage recovery wait does not give up while the write it applied is
-// still taking effect or while windowed detectors are still catching up with
-// it. When recovery follows within their window, the stage credits its own
-// restart and the responder is not dispatched. A fault that persists past the
-// window, or an incident finding that judges current state only, still goes
-// to the responder.
-func TestRecoveryWaitSettlesWhileEffectsAndWindowsCatchUp(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		settlingCase
-		wantExit       contracts.RecoveryWait_ExitReason
-		wantResult     string
-		wantDispatched bool
-		// minWait and maxWait bound how long the stage observed before handing off.
-		minWait, maxWait time.Duration
-	}{
-		{"windows catch up after the rollout", settlingCase{healAfter: 40 * time.Second, stallWindow: 60 * time.Second},
-			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false, 40 * time.Second, 45 * time.Second},
-		// The api workload takes 100 s to become Ready after its restart: the
-		// stage gives its rollout that long on top of the 90 s floor and does not
-		// call a finding persistent before the windows and the startup passed.
-		{"slow workload startup", settlingCase{healAfter: 120 * time.Second, stallWindow: 60 * time.Second, startup: 100 * time.Second},
-			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false, 120 * time.Second, 130 * time.Second},
-		// The fault outlives the windows (60 s + one clearing interval after the
-		// rollout), which end before the 90 s recovery bound.
-		{"fault persists past the windows", settlingCase{stallWindow: 60 * time.Second},
-			contracts.RecoveryWait_EXIT_REASON_FAILED, "applied_still_matching", true, 61 * time.Second, 65 * time.Second},
-		{"incident finding without a window", settlingCase{healAfter: 40 * time.Second},
-			contracts.RecoveryWait_EXIT_REASON_FAILED, "applied_still_matching", true, 0, 5 * time.Second},
-		// Detector clearance does not outrank the applied program's own
-		// diagnosis: a program still matching once the windows have rolled
-		// over (61 s) hands the incident to the responder, uncredited.
-		{"program blind to its own repair", settlingCase{healAfter: 40 * time.Second, stallWindow: 60 * time.Second, blind: true},
-			contracts.RecoveryWait_EXIT_REASON_FAILED, "applied_still_matching", true, 61 * time.Second, 65 * time.Second},
-		// Requests succeed again after the restart: fresh samples prove it.
-		{"traffic recovers after the restart", settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{}},
-			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false, 0, 25 * time.Second},
-		// Unrelated unexplained drift has no detector and no write aimed at it:
-		// recovery is judged on what the stage's writes were meant to clear.
-		{"unrelated unexplained drift never clears", settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{}, unexplainedDrift: true},
-			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false, 0, 25 * time.Second},
-		// The prober is starved after the restart: the learned detector's window
-		// empties and its finding goes quiet, while the program's latest sample
-		// still times out. Silence is not recovery; the responder gets it.
-		{"samples stop arriving after the restart", settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{starved: true}},
-			contracts.RecoveryWait_EXIT_REASON_FAILED, "applied_still_matching", true, 28 * time.Second, 40 * time.Second},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			stage, state, clock, world := settlingStage(t, tc.settlingCase)
-			started := clock.Now()
-			agent := &recordingStage{}
-			if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
-				t.Fatal(err)
-			}
-			report := state.PriorStages[0]
-			if len(report.Mitigations) != 1 || !report.Mitigations[0].GetApplyReceipt().GetApplied() || world.restarts.Load() != 1 {
-				t.Fatalf("the stage must apply one restart (writes=%d): %v", world.restarts.Load(), report)
-			}
-			attempt := report.Mitigations[0]
-			if got := report.GetRecoveryWait().GetExitReason(); got != tc.wantExit {
-				t.Fatalf("recovery wait exit = %s after %s, want %s: %v", got, clock.Now().Sub(started), tc.wantExit, report)
-			}
-			if waited := clock.Now().Sub(started); waited < tc.minWait || waited > tc.maxWait {
-				t.Fatalf("the stage observed for %s, want %s to %s", waited, tc.minWait, tc.maxWait)
-			}
-			if attempt.Result != tc.wantResult {
-				t.Fatalf("attempt result = %s, want %s: %v", attempt.Result, tc.wantResult, attempt)
-			}
-			if agent.dispatched != tc.wantDispatched {
-				t.Fatalf("responder dispatched = %v, want %v (remaining %v)", agent.dispatched, tc.wantDispatched, report.RemainingFindingFingerprints)
-			}
-		})
-	}
-}
-
-// trafficStallDetector is a learned stall detector as the memory host serves
-// it: it consumes a traffic workload but declares no window of its own.
+// trafficStallDetector is a learned detector that consumes the health
+// workload without specifying an evaluation window of its own.
 type trafficStallDetector struct{ settlingDetector }
 
 func (trafficStallDetector) TrafficWorkloads() []string { return []string{"health"} }
-
-// A controller restart mid-wait resumes the write's settling window from when
-// its effect was first seen; it does not grant a fresh one.
-func TestRecoveryWaitWindowSurvivesControllerRestart(t *testing.T) {
-	tc := settlingCase{stallWindow: 60 * time.Second}
-	world := newSettlingWorld(tc)
-	var saved [][]byte
-	world.saved = &saved
-	stage, state := settlingStageOn(t, tc, world)
-	started := world.clock.Now()
-	// The controller dies 50 s into the wait.
-	ctx, stop := context.WithCancel(context.Background())
-	stage.recoveryWait = func(ctx context.Context, d time.Duration) error {
-		if err := world.clock.advance(ctx, d); err != nil {
-			return err
-		}
-		if world.clock.Now().Sub(started) >= 50*time.Second {
-			stop()
-			return context.Canceled
-		}
-		return nil
-	}
-	if _, err := stage.Run(ctx, state); err == nil {
-		t.Fatal("the interrupted stage must report its cancellation")
-	}
-	if len(saved) == 0 {
-		t.Fatal("no checkpoint before the restart")
-	}
-	world.saved = nil
-	resumed, restored := settlingStageOn(t, tc, world)
-	loop := resumed.NewLoop(restored.Request)
-	if err := loop.restoreToolSnapshot(saved[len(saved)-1]); err != nil {
-		t.Fatal(err)
-	}
-	agent := &recordingStage{}
-	if err := RunResponseStages(context.Background(), restored, []ResponseStage{resumed, agent}); err != nil {
-		t.Fatal(err)
-	}
-	report := restored.PriorStages[0]
-	if got := report.GetRecoveryWait().GetExitReason(); got != contracts.RecoveryWait_EXIT_REASON_FAILED || !agent.dispatched {
-		t.Fatalf("resumed wait exit = %s (dispatched %v), want FAILED to the responder: %v", got, agent.dispatched, report)
-	}
-	if waited := world.clock.Now().Sub(started); waited > 65*time.Second {
-		t.Fatalf("the restart granted a fresh window: the wait ended %s after the write, want at most 65 s", waited)
-	}
-	if world.restarts.Load() != 1 {
-		t.Fatalf("the resumed stage repeated the restart (writes=%d)", world.restarts.Load())
-	}
-}
 
 func unknownCounter(n int32) *atomic.Int32 {
 	if n == 0 {
@@ -571,5 +449,71 @@ func TestStageDoesNotReaskAProgramsOwnUnknown(t *testing.T) {
 	}
 	if world.restarts.Load() != 0 || runs != 1 {
 		t.Fatalf("writes=%d opening runs=%d, want 0 and 1", world.restarts.Load(), runs)
+	}
+}
+
+func TestAutomaticStagePublishesBeforeObservingRecovery(t *testing.T) {
+	stage, state, clock, world := settlingStage(t, settlingCase{healAfter: time.Minute, stallWindow: time.Minute})
+	start := clock.Now()
+	report, err := stage.Run(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if world.restarts.Load() != 1 || !report.GetMitigations()[0].GetApplyReceipt().GetApplied() {
+		t.Fatalf("stage did not publish its only write: %v", report)
+	}
+	if !clock.Now().Equal(start) {
+		t.Fatalf("stage ran a recovery wait for %s before publishing receipts", clock.Now().Sub(start))
+	}
+	if report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
+		t.Fatal("the stage made a recovery decision")
+	}
+}
+
+func TestAutomaticStageRecoversWriteBeforeReceiptWasPublished(t *testing.T) {
+	tc := settlingCase{}
+	world := newSettlingWorld(tc)
+	var saved [][]byte
+	world.saved = &saved
+	stage, state := settlingStageOn(t, tc, world)
+	if _, err := stage.Run(t.Context(), state); err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint []byte
+	for _, raw := range saved {
+		var snapshot responderToolState
+		if err := json.Unmarshal(raw, &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		progress := snapshot.StageProgress["deterministic"]
+		if len(snapshot.ApplicationEvidence) != 1 || len(progress.Report.GetMitigations()) != 1 || progress.Report.Mitigations[0].GetApplyReceipt() != nil {
+			continue
+		}
+		var receipt contracts.PlanApplication
+		if err := protojson.Unmarshal(snapshot.ApplicationEvidence[0].Receipt, &receipt); err != nil {
+			t.Fatal(err)
+		}
+		if receipt.GetApplied() {
+			checkpoint = raw
+			break
+		}
+	}
+	if checkpoint == nil {
+		t.Fatal("missing checkpoint between executor publication and stage receipt")
+	}
+	want := world.clock.Now().Add(90 * time.Second)
+	_ = world.clock.advance(t.Context(), 40*time.Second)
+	world.saved = nil
+	resumed, restored := settlingStageOn(t, tc, world)
+	loop := resumed.NewLoop(restored.Request)
+	if err := loop.restoreToolSnapshot(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	report, err := resumed.Run(t.Context(), restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if world.restarts.Load() != 1 || !playbookWrote(report) || !report.GetRecoveryDeadline().AsTime().Equal(want) {
+		t.Fatalf("resumed stage lost the write or replayed it: %v, writes %d", report, world.restarts.Load())
 	}
 }

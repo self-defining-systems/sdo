@@ -34,6 +34,9 @@ func (c *Controller) resumeClosureVerification(ctx context.Context, effect Closu
 	}
 	c.incidentOpen = true
 	c.currentIncidentRequest = cloneIncidentRequest(&closure.Request)
+	if report := deterministicStageReport(c.currentIncidentRequest.PriorStages); report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
+		report.RecoveryWait = nil
+	}
 	c.publishHeldLocked()
 	c.currentIncidentResult = cloneIncidentResult(closure.Result)
 	c.incidentDetectedAt = closure.DetectedAt

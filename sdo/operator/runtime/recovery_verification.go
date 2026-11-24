@@ -223,7 +223,7 @@ func sdoWrites(in verificationInput) (writes []sdoWrite, since time.Time, settle
 	for i, application := range in.result.PlanApplications {
 		refs := recoveryApplicationRefs(application)
 		pendingAtCompletion := application.Pending || application.Result.RolloutPending != nil
-		if !application.Result.Applied && !application.Result.RolledBack && len(refs) == 0 {
+		if !pendingAtCompletion && !application.Result.Applied && !application.Result.RolledBack && len(refs) == 0 {
 			continue
 		}
 		id := application.ID
@@ -231,6 +231,16 @@ func sdoWrites(in verificationInput) (writes []sdoWrite, since time.Time, settle
 			id = fmt.Sprintf("plan-application-%d", i)
 		}
 		w := sdoWrite{id: id, settledAt: application.CompletedAt, settled: !pendingAtCompletion || len(refs) > 0}
+		for _, effect := range application.Result.ObjectEffects {
+			if effect.State == "not_applied" || effect.Operation != "delete" || effect.Ref.Kind != "Pod" || effect.UID == "" {
+				continue
+			}
+			for _, pod := range in.view.Pods() {
+				if pod.Namespace == effect.Ref.Namespace && pod.Name == effect.Ref.Name && string(pod.UID) == effect.UID {
+					w.settled = false
+				}
+			}
+		}
 		for _, ref := range refs {
 			w.settled = w.settled && !writeRevisionPending(in.view, ref, pendingAtCompletion)
 		}
@@ -416,12 +426,4 @@ func writeRevisionPending(view sdk.DetectionContext, ref sdk.ObjectRef, rolloutP
 		}
 	}
 	return false
-}
-
-// stageRecoveryCheck is Recovered for the automatic stage's wait and the
-// claim-time check: the incident's opening alerts and the loop's recorded
-// writes, observed on view.
-func (l *ResponderLoop) stageRecoveryCheck(ctx context.Context, view sdk.DetectionContext, state *IncidentState) recoveryCheck {
-	result := IncidentResult{PlanApplications: l.applicationEvidenceLocked()}
-	return recovered(verificationInput{view: view, request: state.Request, result: &result, detected: state.Request.DetectedAt})
 }
