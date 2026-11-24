@@ -79,12 +79,13 @@ func Watches() []sdk.WatchKind {
 }
 
 type detector struct {
-	spec sdk.DetectorSpec
+	spec      sdk.DetectorSpec
+	readiness *workloadreadiness.Tracker
 }
 
 // NewDetector returns the workload health detector.
 func NewDetector(spec sdk.DetectorSpec) sdk.Detector {
-	return detector{spec: spec}
+	return detector{spec: spec, readiness: &workloadreadiness.Tracker{}}
 }
 
 func (d detector) Spec() sdk.DetectorSpec { return d.spec }
@@ -133,9 +134,11 @@ func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fin
 	for _, pod := range pods {
 		e.pod(pod, succeededJobs)
 	}
-	for _, name := range sortedKeys(e.deployments) {
-		e.deployment(e.deployments[name], pods)
-	}
+	d.readiness.Observe(ctx, func(observation *workloadreadiness.Observation) {
+		for _, name := range sortedKeys(e.deployments) {
+			e.deployment(e.deployments[name], pods, observation)
+		}
+	})
 	return e.findings(), nil
 }
 
@@ -323,7 +326,7 @@ func (e *evaluation) container(
 	return true
 }
 
-func (e *evaluation) deployment(deployment appsv1.Deployment, pods []corev1.Pod) {
+func (e *evaluation) deployment(deployment appsv1.Deployment, pods []corev1.Pod, observation *workloadreadiness.Observation) {
 	desired := desiredReplicas(deployment)
 	if deployment.DeletionTimestamp != nil || desired == 0 {
 		return
@@ -362,7 +365,7 @@ func (e *evaluation) deployment(deployment appsv1.Deployment, pods []corev1.Pod)
 			}
 		}
 	}
-	since, held := workloadreadiness.Deficit(e.ctx, available.LastTransitionTime.Time, owned)
+	since, held := observation.Deficit(e.ctx, "Deployment", &deployment, available.LastTransitionTime.Time, owned)
 	if !held {
 		return
 	}

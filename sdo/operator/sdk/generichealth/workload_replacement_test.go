@@ -73,3 +73,92 @@ func TestReplicaDeficitRespectsReplacementProgress(t *testing.T) {
 		})
 	}
 }
+
+func TestUnfilledReplicaDeficitOutlivesSelfHealing(t *testing.T) {
+	for _, kind := range []string{"Deployment", "StatefulSet", "DaemonSet"} {
+		for _, scenario := range []struct {
+			name    string
+			ready   int32
+			blocked string
+		}{
+			{name: "zero replicas"},
+			{name: "one old ready replica", ready: 1},
+			{name: "quota blocks creation", blocked: "exceeded quota"},
+			{name: "admission blocks creation", blocked: "admission webhook denied the request"},
+		} {
+			t.Run(kind+"/"+scenario.name, func(t *testing.T) {
+				at, hold := observedAt, time.Minute
+				desired, yes := int32(3), true
+				object := meta.ObjectMeta{Name: "store", Namespace: "app", CreationTimestamp: before(time.Hour)}
+				owner := meta.OwnerReference{Kind: kind, Name: object.Name, Controller: &yes}
+				view := sdktest.Snapshot{NamespaceName: "app", ObservedAtTime: &at, SelfHealHoldTime: &hold}
+				detector := NewWorkloads(sdk.DetectorSpec{ID: "workload-controllers"})
+				rule := "statefulset-unready"
+				setReady := func(ready int32) {}
+				switch kind {
+				case "Deployment":
+					detector, rule = workloadhealth.NewDetector(sdk.DetectorSpec{ID: "workload-health"}), workloadhealth.RuleDeploymentUnavailable
+					view.DeploymentList = []apps.Deployment{{ObjectMeta: object, Spec: apps.DeploymentSpec{Replicas: &desired},
+						Status: apps.DeploymentStatus{Conditions: []apps.DeploymentCondition{{Type: apps.DeploymentAvailable, Status: core.ConditionFalse}}}}}
+					view.ReplicaSetList = []apps.ReplicaSet{{ObjectMeta: meta.ObjectMeta{Name: "store-rs", Namespace: "app", OwnerReferences: []meta.OwnerReference{owner}}}}
+					owner.Kind, owner.Name = "ReplicaSet", "store-rs"
+					setReady = func(ready int32) { view.DeploymentList[0].Status.AvailableReplicas = ready }
+					if scenario.blocked != "" {
+						rule = workloadhealth.RuleReplicaFailure
+						view.DeploymentList[0].Status.Conditions = append(view.DeploymentList[0].Status.Conditions, apps.DeploymentCondition{
+							Type: apps.DeploymentReplicaFailure, Status: core.ConditionTrue, Reason: "FailedCreate",
+							Message: scenario.blocked, LastTransitionTime: meta.NewTime(at),
+						})
+					}
+				case "StatefulSet":
+					view.StatefulSetList = []apps.StatefulSet{{ObjectMeta: object, Spec: apps.StatefulSetSpec{Replicas: &desired}}}
+					setReady = func(ready int32) { view.StatefulSetList[0].Status.ReadyReplicas = ready }
+				case "DaemonSet":
+					rule = "daemonset-unready"
+					view.DaemonSetList = []apps.DaemonSet{{ObjectMeta: object, Status: apps.DaemonSetStatus{DesiredNumberScheduled: desired, UpdatedNumberScheduled: desired}}}
+					setReady = func(ready int32) { view.DaemonSetList[0].Status.NumberReady = ready }
+				}
+				setReady(scenario.ready)
+				if scenario.ready > 0 {
+					view.PodList = []core.Pod{{ObjectMeta: meta.ObjectMeta{Name: "store-0", Namespace: "app", CreationTimestamp: before(time.Hour),
+						OwnerReferences: []meta.OwnerReference{owner}}, Status: core.PodStatus{Phase: core.PodRunning, Conditions: []core.PodCondition{
+						{Type: core.PodReady, Status: core.ConditionTrue, LastTransitionTime: before(time.Hour)},
+					}}}}
+				}
+				if scenario.blocked != "" {
+					view.EventList = []core.Event{{InvolvedObject: core.ObjectReference{Kind: owner.Kind, Name: owner.Name, Namespace: "app"},
+						Type: core.EventTypeWarning, Reason: "FailedCreate", Message: scenario.blocked, FirstTimestamp: meta.NewTime(at), Count: 1}}
+				}
+				check := func(want bool) {
+					t.Helper()
+					got, err := detector.Detect(context.Background(), view)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, finding := range got {
+						if finding.RuleID == rule && want {
+							return
+						}
+					}
+					if want || len(got) != 0 {
+						t.Errorf("at %s, want %s present=%v, got %v", at, rule, want, got)
+					}
+				}
+				check(false)
+				at = observedAt.Add(hold - time.Second)
+				check(false)
+				at = observedAt.Add(hold)
+				check(true)
+				if scenario.blocked == "" {
+					setReady(desired)
+					check(false)
+					at = at.Add(time.Second)
+					setReady(scenario.ready)
+					check(false)
+					at = at.Add(hold)
+					check(true)
+				}
+			})
+		}
+	}
+}

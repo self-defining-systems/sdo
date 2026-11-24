@@ -10,6 +10,7 @@ import (
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/internal/workloadreadiness"
 	"time"
 )
 
@@ -19,26 +20,29 @@ import (
 const ProgressWindow = 10 * time.Minute
 
 type detector struct {
-	spec sdk.DetectorSpec
-	kind string
+	spec      sdk.DetectorSpec
+	kind      string
+	readiness *workloadreadiness.Tracker
 }
 
 func (d detector) Spec() sdk.DetectorSpec { return d.spec }
 
 // NewWiring checks selectors, ports, references, storage, ingress and DNS aliases.
-func NewWiring(s sdk.DetectorSpec) sdk.Detector { return detector{s, "wiring"} }
+func NewWiring(s sdk.DetectorSpec) sdk.Detector { return detector{spec: s, kind: "wiring"} }
 
 // NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs. Unready
 // and old-revision rules report a condition that outlived the self-heal hold;
 // a failed Job not owned by a CronJob is Kubernetes' give-up signal.
-func NewWorkloads(s sdk.DetectorSpec) sdk.Detector { return detector{s, "workloads"} }
+func NewWorkloads(s sdk.DetectorSpec) sdk.Detector {
+	return detector{spec: s, kind: "workloads", readiness: &workloadreadiness.Tracker{}}
+}
 
 // NewWarnings checks persistent recent warning events on extant application
 // objects whose current state is not healthy.
-func NewWarnings(s sdk.DetectorSpec) sdk.Detector { return detector{s, "warnings"} }
+func NewWarnings(s sdk.DetectorSpec) sdk.Detector { return detector{spec: s, kind: "warnings"} }
 
 // NewNodes checks that the nodes hosting application pods are Ready.
-func NewNodes(s sdk.DetectorSpec) sdk.Detector { return detector{s, "nodes"} }
+func NewNodes(s sdk.DetectorSpec) sdk.Detector { return detector{spec: s, kind: "nodes"} }
 
 // Watches returns all inputs used by the named detector, shared by installation.
 func Watches(kind string) []sdk.WatchKind {
@@ -89,7 +93,7 @@ func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fin
 	case "wiring":
 		e.wiring()
 	case "workloads":
-		e.workloads()
+		d.readiness.Observe(ctx, e.workloads)
 	case "warnings":
 		e.warnings()
 	case "nodes":

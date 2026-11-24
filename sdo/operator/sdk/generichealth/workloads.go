@@ -15,7 +15,7 @@ import (
 
 // Kubernetes allows standard five-field schedules and descriptors; time zones
 // are explicit. Loading UTC rather than Local makes replay host independent.
-func (e *evaluation) workloads() {
+func (e *evaluation) workloads(observation *workloadreadiness.Observation) {
 	ns := e.ctx.Namespace()
 	for _, v := range e.ctx.StatefulSets() {
 		if v.Namespace != ns || v.DeletionTimestamp != nil || v.Generation > v.Status.ObservedGeneration {
@@ -27,8 +27,10 @@ func (e *evaluation) workloads() {
 		}
 		pods, created := e.ownedPods("StatefulSet", v.Name, v.CreationTimestamp.Time)
 		r := ref("StatefulSet", "apps/v1", &v)
-		if unready, held := workloadreadiness.Deficit(e.ctx, time.Time{}, pods); v.Status.ReadyReplicas < desired && held {
-			e.emit("statefulset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.ReadyReplicas, desired, unready.UTC().Format(time.RFC3339)), true)
+		if v.Status.ReadyReplicas < desired {
+			if unready, held := observation.Deficit(e.ctx, "StatefulSet", &v, time.Time{}, pods); held {
+				e.emit("statefulset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.ReadyReplicas, desired, unready.UTC().Format(time.RFC3339)), true)
+			}
 		}
 		// OnDelete and partitioned updates intentionally retain old revisions.
 		if v.Spec.UpdateStrategy.Type != apps.OnDeleteStatefulSetStrategyType && (v.Spec.UpdateStrategy.RollingUpdate == nil || v.Spec.UpdateStrategy.RollingUpdate.Partition == nil || *v.Spec.UpdateStrategy.RollingUpdate.Partition == 0) && v.Status.CurrentRevision != "" && v.Status.UpdateRevision != "" && v.Status.CurrentRevision != v.Status.UpdateRevision && sdk.HeldPastSelfHeal(e.ctx, created) {
@@ -41,8 +43,10 @@ func (e *evaluation) workloads() {
 		}
 		pods, created := e.ownedPods("DaemonSet", v.Name, v.CreationTimestamp.Time)
 		r := ref("DaemonSet", "apps/v1", &v)
-		if unready, held := workloadreadiness.Deficit(e.ctx, time.Time{}, pods); v.Status.NumberReady < v.Status.DesiredNumberScheduled && held {
-			e.emit("daemonset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.NumberReady, v.Status.DesiredNumberScheduled, unready.UTC().Format(time.RFC3339)), true)
+		if v.Status.NumberReady < v.Status.DesiredNumberScheduled {
+			if unready, held := observation.Deficit(e.ctx, "DaemonSet", &v, time.Time{}, pods); held {
+				e.emit("daemonset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.NumberReady, v.Status.DesiredNumberScheduled, unready.UTC().Format(time.RFC3339)), true)
+			}
 		}
 		if v.Spec.UpdateStrategy.Type != apps.OnDeleteDaemonSetStrategyType && v.Status.UpdatedNumberScheduled < v.Status.DesiredNumberScheduled && sdk.HeldPastSelfHeal(e.ctx, created) {
 			e.emit("daemonset-old-revision", r, fmt.Sprintf("updated=%d desired=%d; no Pod replaced since %s", v.Status.UpdatedNumberScheduled, v.Status.DesiredNumberScheduled, created.UTC().Format(time.RFC3339)), false)

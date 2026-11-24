@@ -38,7 +38,7 @@ func TestReadinessOpenersConsultTheStartupAllowance(t *testing.T) {
 				continue
 			}
 			checked++
-			if !strings.Contains(src, "StillStarting") && !strings.Contains(src, "PodStarting") && !strings.Contains(src, "workloadreadiness.Deficit") {
+			if !strings.Contains(src, "StillStarting") && !strings.Contains(src, "PodStarting") && !strings.Contains(src, "observation.Deficit(") {
 				t.Errorf("%s judges readiness after the self-heal hold without the startup allowance (sdk.StillStarting or sdk.PodStarting)", file)
 			}
 		}
