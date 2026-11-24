@@ -17,10 +17,10 @@ bin/lanes manager status                         # unit state, binary path and r
 bin/lanes manager logs                           # follow the manager log (bench.log)
 ```
 
-`lanes manager` runs `lanes serve` under a unit named from the root, so you never type `systemctl`. It checks that the
-user has linger on (units die at logout without it) and prints the fix when not. It refuses to start while another
-manager holds `<root>/bench.lock` and names that holder. `lanes serve` still runs the manager in the foreground, for
-debugging. Every verb prints its own usage with `lanes VERB --help`.
+`lanes manager` finds the user service by root. Each launch gets a fresh unit name so `lanes manager restart` can load
+the current binary while detached steps keep running. The manager holds `<root>/bench.lock` to prevent a second
+manager from taking over the same root. The CLI warns if linger is off because user units can die at logout.
+`lanes serve` runs the manager in the foreground for debugging. Every verb prints its usage with `lanes VERB --help`.
 
 ## 2. Set up a host once
 
