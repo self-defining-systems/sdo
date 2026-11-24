@@ -15,7 +15,7 @@ import (
 
 // Kubernetes allows standard five-field schedules and descriptors; time zones
 // are explicit. Loading UTC rather than Local makes replay host independent.
-func (e *evaluation) workloads(observation *workloadreadiness.Observation) {
+func (e *evaluation) workloads() {
 	ns := e.ctx.Namespace()
 	for _, v := range e.ctx.StatefulSets() {
 		if v.Namespace != ns || v.DeletionTimestamp != nil || v.Generation > v.Status.ObservedGeneration {
@@ -28,7 +28,7 @@ func (e *evaluation) workloads(observation *workloadreadiness.Observation) {
 		pods, created := e.ownedPods("StatefulSet", v.Name, v.CreationTimestamp.Time)
 		r := ref("StatefulSet", "apps/v1", &v)
 		if v.Status.ReadyReplicas < desired {
-			if unready, held := observation.Deficit(e.ctx, "StatefulSet", &v, time.Time{}, pods); held {
+			if unready, held := workloadreadiness.Deficit(e.ctx, created, desired, pods); held {
 				e.emit("statefulset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.ReadyReplicas, desired, unready.UTC().Format(time.RFC3339)), true)
 			}
 		}
@@ -44,7 +44,7 @@ func (e *evaluation) workloads(observation *workloadreadiness.Observation) {
 		pods, created := e.ownedPods("DaemonSet", v.Name, v.CreationTimestamp.Time)
 		r := ref("DaemonSet", "apps/v1", &v)
 		if v.Status.NumberReady < v.Status.DesiredNumberScheduled {
-			if unready, held := observation.Deficit(e.ctx, "DaemonSet", &v, time.Time{}, pods); held {
+			if unready, held := workloadreadiness.Deficit(e.ctx, created, v.Status.DesiredNumberScheduled, pods); held {
 				e.emit("daemonset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.NumberReady, v.Status.DesiredNumberScheduled, unready.UTC().Format(time.RFC3339)), true)
 			}
 		}
@@ -97,8 +97,8 @@ func (e *evaluation) workloads(observation *workloadreadiness.Observation) {
 	}
 }
 
-// ownedPods returns the Pods and the last creation used by the separate
-// old-revision rule. Terminating Pods still date a readiness deficit.
+// ownedPods returns the Pods and the latest creation used by the old-revision
+// rule and the readiness fallback. Terminating Pods can date rollout progress.
 func (e *evaluation) ownedPods(kind, name string, created time.Time) ([]core.Pod, time.Time) {
 	var pods []core.Pod
 	for _, p := range e.ctx.Pods() {
