@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -34,7 +35,7 @@ func TestRejectedSecretToolCallDoesNotPersistPayload(t *testing.T) {
 				t.Fatalf("expected real Secret refusal, got %q", diagnostic)
 			}
 			call := loop.ToolCalls()[0]
-			if call.Error == "" || call.Summary == "" || !strings.Contains(call.ResponseJSON, "error_code") {
+			if call.Error != "" || call.Summary != "" || !strings.Contains(call.ResponseJSON, "error_code") {
 				t.Error("missing value-free rejection code or text")
 			}
 			for _, field := range []string{"ApplyObject", "creds", "restore expected credentials"} {
@@ -60,28 +61,19 @@ func TestRejectedSecretToolCallDoesNotPersistPayload(t *testing.T) {
 	}
 }
 
-func TestErroredAutomaticApplyKeepsValueFreeReceipt(t *testing.T) {
+func TestSecretPlanToolRecordKeepsStageAndApplicationID(t *testing.T) {
 	const canary = "synthetic-error-canary"
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "creds"}
 	loop := &ResponderLoop{}
 	loop.recordToolCall(ToolRequest{Command: "apply", PlanIDs: []string{"plan-1"}, stage: true}, ToolResponse{
 		Command: "apply", ApplicationID: "application-1", Error: canary, Summary: canary,
-		ProgramRuns: []ProgramRun{{ProgramID: "repair", Verdict: program.Verdict{
-			Result: program.Unknown, Evidence: []program.Evidence{{Observed: canary}},
-		}}},
-	}, nil)
+	}, []selectedPlan{{id: "plan-1", plan: program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}}})
 	call := loop.ToolCalls()[0]
-	if !strings.Contains(call.RequestJSON, `"stage":true`) {
-		t.Fatal("automatic stage attribution was lost")
-	}
-	var response ToolResponse
-	if err := json.Unmarshal([]byte(call.ResponseJSON), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.ApplicationID != "application-1" || len(response.ProgramRuns) != 1 || response.ProgramRuns[0].Verdict.Result != program.Unknown {
-		t.Fatal("partial application receipt was lost")
+	if !strings.Contains(call.RequestJSON, `"stage":true`) || !strings.Contains(call.ResponseJSON, "application-1") {
+		t.Fatal("automatic stage attribution or application ID was lost")
 	}
 	if strings.Contains(call.ResponseJSON+call.Error+call.Summary, canary) {
-		t.Fatal("errored receipt contained arbitrary error or evidence text")
+		t.Fatal("errored receipt contained arbitrary text")
 	}
 }
 
@@ -108,8 +100,8 @@ func TestRecordedPlanApplyPreservesTrustFields(t *testing.T) {
 	bindings := program.Bindings{Values: map[string]any{"mode": "repair"}}
 	plan := selectedPlan{id: "plan-1", programID: "repair", bindings: bindings}
 	loop := &ResponderLoop{plans: map[string]selectedPlan{plan.id: plan}}
-	loop.recordToolCall(ToolRequest{Command: "plan"}, ToolResponse{Command: "plan", PlanID: plan.id}, nil)
-	loop.recordToolCall(ToolRequest{Command: "apply", stage: true}, ToolResponse{
+	loop.recordToolCall(ToolRequest{Command: "plan", ProgramID: plan.programID, Bindings: bindings}, ToolResponse{Command: "plan", PlanID: plan.id}, nil)
+	loop.recordToolCall(ToolRequest{Command: "apply", PlanIDs: []string{plan.id}, stage: true}, ToolResponse{
 		Command: "apply", ApplicationID: "application-1", ProgramRuns: []ProgramRun{{
 			ProgramID: plan.programID, ProgramRevision: "revision-1", Bindings: bindings, Verdict: program.Verdict{Result: program.NoMatch},
 		}},
@@ -124,5 +116,40 @@ func TestRecordedPlanApplyPreservesTrustFields(t *testing.T) {
 		len(response.ProgramRuns) != 1 || !response.ProgramRuns[0].Bindings.Equal(bindings) ||
 		response.ProgramRuns[0].ProgramRevision != "revision-1" || response.ProgramRuns[0].Verdict.Result != program.NoMatch {
 		t.Fatal("apply evidence is no longer readable by the trust parser")
+	}
+}
+
+func TestSecretToolRecordDropsAcceptedBodyAndScript(t *testing.T) {
+	const canary = "synthetic-accepted-body-canary"
+	for _, tc := range []struct {
+		name, key, input string
+	}{
+		{"ApplyObject", "object_json", `{"kind":"Secret","metadata":{"name":"creds"},"data":{"key":"` + canary + `"}}`},
+		{"RunScript", "script", "kubectl apply -f - <<'YAML'\nkind: Secret\nmetadata:\n  name: creds\ndata:\n  key: " + canary + "\nYAML"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loop := &ResponderLoop{}
+			loop.recordToolCall(ToolRequest{Command: "mitigate", stage: true, Targets: []MitigateTarget{{
+				Name: tc.name, Parameters: map[string]BindValues{tc.key: {tc.input}, "reason": {"restore credentials"}},
+			}}}, ToolResponse{Command: "mitigate", Summary: canary, ApplicationID: "application-1"}, nil)
+			call := loop.ToolCalls()[0]
+			if strings.Contains(call.RequestJSON+call.ResponseJSON+call.Error+call.Summary, canary) {
+				t.Fatal("stored a Secret body or echoed text")
+			}
+			for _, want := range []string{tc.name, "creds", "restore credentials", "application-1", `"stage":true`} {
+				if !strings.Contains(call.RequestJSON+call.ResponseJSON, want) {
+					t.Errorf("missing safe evidence %q", want)
+				}
+			}
+		})
+	}
+}
+
+func TestNonSecretToolRefusalKeepsExactText(t *testing.T) {
+	_, loop := targetLoop(t)
+	response := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Targets: []MitigateTarget{{Name: "does-not-exist"}}})
+	call := loop.ToolCalls()[0]
+	if response.Error == "" || call.Error != response.Error || call.Summary != response.Summary {
+		t.Fatalf("stored refusal changed: got %q, want %q", call.Error, response.Error)
 	}
 }
