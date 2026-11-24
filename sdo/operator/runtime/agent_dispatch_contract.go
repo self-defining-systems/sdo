@@ -92,6 +92,13 @@ func encodeIncidentAgentTask(request IncidentRequest, registry *worker_registry.
 	return task, payload, nil
 }
 
+type responderCapacityConfigurationError struct {
+	cause error
+}
+
+func (err *responderCapacityConfigurationError) Error() string { return err.cause.Error() }
+func (err *responderCapacityConfigurationError) Unwrap() error { return err.cause }
+
 // incidentResultFromAgent checks a worker's AgentResult against its task and
 // unpacks the incident result it carries.
 func incidentResultFromAgent(result *contracts.AgentResult, task *contracts.AgentTask, registry *worker_registry.Registry) (IncidentResult, error) {
@@ -99,7 +106,11 @@ func incidentResultFromAgent(result *contracts.AgentResult, task *contracts.Agen
 		return IncidentResult{}, fmt.Errorf("validate agent result: %w", err)
 	}
 	if result.GetResponse() == nil {
-		return IncidentResult{}, fmt.Errorf("agent task %q %s: %s", task.GetTaskId(), result.GetStatus(), result.GetErrorSummary())
+		err := fmt.Errorf("agent task %q %s: %s", task.GetTaskId(), result.GetStatus(), result.GetErrorSummary())
+		if result.GetStatus() == "failed" && result.GetFailureReason() == "capacity_configuration_error" {
+			return IncidentResult{}, &responderCapacityConfigurationError{cause: err}
+		}
+		return IncidentResult{}, err
 	}
 	typed := &contracts.IncidentResult{}
 	if err := result.GetResponse().UnmarshalTo(typed); err != nil {

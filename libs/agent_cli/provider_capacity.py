@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
 from uuid import uuid4
 
-from libs.agent_cli.errors import ProviderRateLimited
+from libs.agent_cli.errors import CapacityConfigurationError, ProviderRateLimited
 
 DEFAULT_OPUS_SESSIONS = 8
 DEFAULT_OPUS_HOST_SHARE = 4
@@ -39,6 +39,14 @@ _LIMIT = re.compile(
     r"(?:rate limit|overloaded)\s*(?:reached|exceeded|error)",
     re.IGNORECASE,
 )
+
+
+def uses_metered_claude_backend(environment: Mapping[str, str]) -> bool:
+    """Recognize explicit Claude Code cloud routing or Anthropic API credentials."""
+    return bool(environment.get("ANTHROPIC_API_KEY", "").strip()) or any(
+        environment.get(name, "").lower() in ("1", "true", "yes", "on")
+        for name in ("CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_FOUNDRY")
+    )
 
 
 def is_claude_rate_limit(text: str) -> bool:
@@ -299,12 +307,16 @@ class ProviderCapacity:
             return
         directory = self.environment.get("SDO_OPUS_POOL_DIR", "").strip()
         if not directory:
-            raise self.exhausted("Opus requires a shared filesystem pool", kind="concurrency")
-        root = Path(directory).resolve()
-        if workspace is not None and root.is_relative_to(workspace.resolve()):
-            raise self.exhausted("Opus pool must be outside the agent workspace", kind="concurrency")
-        allocation = OpusPoolAllocation.from_environment(self.environment)
-        pool = OpusPool(root, allocation.capacity, create=allocation.mode != "per_host")
+            raise CapacityConfigurationError("subscription Opus requires a shared filesystem pool (SDO_OPUS_POOL_DIR)")
+        try:
+            root = Path(directory).resolve()
+            workspace_root = workspace.resolve() if workspace is not None else None
+            allocation = OpusPoolAllocation.from_environment(self.environment)
+            pool = OpusPool(root, allocation.capacity, create=allocation.mode != "per_host")
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise CapacityConfigurationError("invalid Opus pool path or allocation") from exc
+        if workspace_root is not None and root.is_relative_to(workspace_root):
+            raise CapacityConfigurationError("Opus pool must be outside the agent workspace")
         try:
             handle = pool.try_acquire()
             if handle is None:
@@ -319,10 +331,14 @@ class ProviderCapacity:
         except OSError as exc:
             # Name the errno so a misprovisioned pool is not mistaken for contention.
             reason = f"shared Opus pool unavailable ({errno.errorcode.get(exc.errno or 0, type(exc).__name__)})"
+            if isinstance(exc, (FileNotFoundError, NotADirectoryError, IsADirectoryError, PermissionError)) or (
+                exc.errno in (errno.EROFS, errno.ENOSYS, errno.EOPNOTSUPP)
+            ):
+                raise CapacityConfigurationError(reason) from exc
             raise self.exhausted(reason, kind="concurrency") from exc
         except ValueError as exc:
             # Unprovisioned or conflicting capacity metadata: the same named pool failure, never an unwrapped error.
-            raise self.exhausted(f"shared Opus pool unavailable ({exc})", kind="concurrency") from exc
+            raise CapacityConfigurationError("shared Opus pool unavailable (invalid capacity metadata)") from exc
         try:
             yield
         finally:
