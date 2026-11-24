@@ -470,7 +470,7 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	if closure.Result != nil {
 		message.Result, err = incidentResultContract(*closure.Result)
 		if err == nil {
-			_, err = proto.Marshal(message.Result)
+			_, err = protojson.Marshal(message.Result)
 		}
 		if err != nil {
 			if closure.HealthClearedAt == nil {

@@ -3,7 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/encoding/protojson"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"sdo.dev/operator/planwire"
 	"slices"
@@ -103,7 +103,7 @@ func historicalActionProto(action program.Action) *contracts.Action {
 	if !exists {
 		encoded, err := planActionProto(action)
 		if err == nil {
-			if _, err = proto.Marshal(encoded); err == nil {
+			if _, err = protojson.Marshal(encoded); err == nil {
 				return encoded
 			}
 		}
