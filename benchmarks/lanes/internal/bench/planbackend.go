@@ -463,7 +463,7 @@ func (b *PlanBackend) Verify(ctx context.Context, src plan.Source, a plan.Artifa
 		if run, err := b.newestDone(src.Exp); err == nil {
 			env = append(env, "BENCH_RUN_DIR="+run)
 		}
-		res := Hook{Dir: dir, Command: cmd}.Run(ctx, "verify-artifact", env, nil)
+		res := Hook{Dir: dir, Command: cmd, Env: b.Inv.hostEnv(host, s)}.Run(ctx, "verify-artifact", env, nil)
 		switch {
 		case res.Unsupported():
 			return exists(), nil

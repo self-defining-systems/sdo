@@ -135,8 +135,8 @@ func hookCheck(ctx context.Context, root Root, inv Inventory, s Spec, lock Lock,
 	if err := writeJSON(opPath, op); err != nil {
 		return err
 	}
-	h := Hook{Dir: dir, Command: inv.HookCommand[s.Operator.Hooks], Env: []string{
-		"BENCH_EXPERIMENT=" + s.Name, "FUZZOPS_NAMESPACE=" + s.Namespace, "BENCH_OPERATOR=" + opPath, "BENCH_OUT=" + tmp}}
+	h := Hook{Dir: dir, Command: inv.HookCommand[s.Operator.Hooks], Env: append(inv.hostEnv(inv.LocalHost(), s),
+		"BENCH_EXPERIMENT="+s.Name, "FUZZOPS_NAMESPACE="+s.Namespace, "BENCH_OPERATOR="+opPath, "BENCH_OUT="+tmp)}
 	if r := h.Run(ctx, "check", nil, log); !r.OK() {
 		return fmt.Errorf("hooks %s: %s", s.Operator.Hooks, r.Why("check"))
 	}

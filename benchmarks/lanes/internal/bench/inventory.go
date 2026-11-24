@@ -396,6 +396,12 @@ func (inv Inventory) LocalHost() string {
 	return ""
 }
 
+// hostEnv is the env a hook call the manager makes itself gets on host: the host's, as a step's calls have it. A hook
+// that builds (SDO's check-input) is minutes slower without the host's caches.
+func (inv Inventory) hostEnv(host string, s Spec) []string {
+	return append([]string{}, inv.Hosts[host].EnvFor(s.Workload)...)
+}
+
 // Lanes lists every lane, sorted by host then cluster.
 func (inv Inventory) Lanes() []Lane {
 	var out []Lane
