@@ -1984,5 +1984,9 @@ func sameOperatorProfile(a, b *Experiment) bool {
 		x.Operator.Hooks == "" || x.Operator.Hooks != y.Operator.Hooks || !reflect.DeepEqual(x.Operator.Settings, y.Operator.Settings) {
 		return false
 	}
-	return a.Lock.Baseline != nil && b.Lock.Baseline != nil && a.Lock.Baseline.SHA256 == b.Lock.Baseline.SHA256
+	// A subject without memory (no baseline on either side) matches; one with memory matches only the same content.
+	if a.Lock.Baseline == nil || b.Lock.Baseline == nil {
+		return a.Lock.Baseline == nil && b.Lock.Baseline == nil
+	}
+	return a.Lock.Baseline.SHA256 == b.Lock.Baseline.SHA256
 }
