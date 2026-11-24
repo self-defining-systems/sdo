@@ -943,6 +943,52 @@ func TestBenchPoolLaneReturnsByResetNotRebuild(t *testing.T) {
 	}
 }
 
+// A pool lane reset to its golden copy goes to a claimant of the pool that waits for it, by swap, before the pool may
+// refill or rebuild it: whatever the names' order, and whether or not the lane's last claimant still exists (a plan's
+// removal purges it). The pool is named to sort before its claimants, so the pool's turn comes first.
+func TestBenchResetLaneGoesToAWaitingClaimantBeforeThePoolRefills(t *testing.T) {
+	for _, purge := range []bool{true, false} {
+		t.Run(fmt.Sprintf("last claimant purged %v", purge), func(t *testing.T) {
+			l := newLab(t)
+			addOne := func(name, extra string) {
+				p := filepath.Join(l.specs, name+".yaml")
+				must(t, os.WriteFile(p, []byte(fmt.Sprintf(labSpec, name, l.hooked, "a@x", "[[1]]", l.ready, l.cap, 0)+extra), 0o644))
+				must(t, Add(context.Background(), l.root, p, io.Discard))
+			}
+			addOne("a-pool", "hold: true\nkeep_lanes: true\n")
+			l.until("pool lane held with a golden copy", func() bool {
+				lf := l.lane()
+				return lf.State == LaneReady && lf.Experiment == "a-pool" && lf.Step == nil && lf.Prepared != nil && lf.Prepared.Golden
+			})
+			addOne("z1", "claim: a-pool\nreuse_app: true\n")
+			if !purge {
+				addOne("z2", "claim: a-pool\nreuse_app: true\n")
+			}
+			// z1's run ends; its lane is released (reset) while z2 waits (or is added, once z1 is purged).
+			l.until("z1 done", func() bool { return l.exp("z1").Count(0).Done == 1 })
+			if purge {
+				must(t, os.Rename(l.root.path("z1"), filepath.Join(t.TempDir(), "z1")))
+				must(t, os.Remove(l.root.SpecPath("z1")))
+				addOne("z2", "claim: a-pool\nreuse_app: true\n")
+			}
+			l.until("z2 done", func() bool { return l.exp("z2").Count(0).Done == 1 })
+			hooks, log := l.read("hooks.log"), l.read("fuzzops.log")
+			if n := strings.Count(hooks, "swap c1 z2"); n != 1 {
+				t.Fatalf("z2 swapped %d times, want 1:\n%s", n, hooks)
+			}
+			if n := strings.Count(hooks, "swap c1 a-pool"); n != 0 {
+				t.Fatalf("the pool took the reset lane back %d times while z2 waited for it:\n%s", n, hooks)
+			}
+			if n := strings.Count(hooks, "prepare c1 "); n != 1 {
+				t.Fatalf("%d prepares, want only the pool's first build's:\n%s", n, hooks)
+			}
+			if n := countLines(log, "app up"); n != 1 {
+				t.Fatalf("%d app copies, want 1:\n%s", n, log)
+			}
+		})
+	}
+}
+
 // A lane whose reset fails is torn down and rebuilt as before.
 func TestBenchFailedResetFallsBackToTeardownAndRebuild(t *testing.T) {
 	l := newLab(t)

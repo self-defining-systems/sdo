@@ -152,6 +152,10 @@ type Prepared struct {
 	// runs the sources of the last claimant; the next build of the same profile takes it by swap.
 	Golden bool `json:"golden,omitempty"`
 	Reset  bool `json:"reset,omitempty"`
+	// Pool is the hold experiment whose golden copy the lane holds: set when the pool builds the lane and carried by
+	// every swap, reset and restore, so the lane stays its pool's whatever claimant ran on it last (and whether that
+	// claimant still exists). Empty in lane files written before it: the pool is then read from Experiment.
+	Pool string `json:"pool,omitempty"`
 }
 
 // Experiment is everything on disk about one experiment.
