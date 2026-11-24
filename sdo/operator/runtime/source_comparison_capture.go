@@ -21,11 +21,11 @@ const sourceComparisonCaptureBudget = 20 * time.Second
 // admission webhooks (with backend readiness) that admit the namespace's Pods.
 // Reads that need a program-chosen target (database catalogs, probes) are
 // recorded when a program or the responder makes them.
-func boundaryObservations(ctx context.Context, snapshot sdk.DetectionContext, view program.ReadView) []sdktest.PrimitiveCall {
+func boundaryObservations(ctx context.Context, snapshot sdk.DetectionContext, view program.ReadView, targets ...sdk.ObjectRef) []sdktest.PrimitiveCall {
 	if snapshot == nil || view == nil {
 		return nil
 	}
-	calls := sourceInventoryComparisons(ctx, snapshot, view)
+	calls := sourceInventoryComparisons(ctx, snapshot, view, targets...)
 	recorder := &sdktest.RecordingReadView{ReadView: view}
 	_, _ = recorder.AdmissionWebhooksFor(sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: snapshot.Namespace()})
 	return append(calls, recorder.RecordedReads()...)
@@ -37,7 +37,7 @@ func boundaryObservations(ctx context.Context, snapshot sdk.DetectionContext, vi
 // declares (a missing one compares as missing). Replay answers drift programs
 // from these replies; a capture is projected (ConfigMap values redacted) and
 // cannot recompute them. The context bounds the whole set.
-func sourceInventoryComparisons(ctx context.Context, snapshot sdk.DetectionContext, view program.ReadView) []sdktest.PrimitiveCall {
+func sourceInventoryComparisons(ctx context.Context, snapshot sdk.DetectionContext, view program.ReadView, targets ...sdk.ObjectRef) []sdktest.PrimitiveCall {
 	if snapshot == nil || view == nil {
 		return nil
 	}
@@ -50,6 +50,9 @@ func sourceInventoryComparisons(ctx context.Context, snapshot sdk.DetectionConte
 		}
 		seen[ref] = true
 		refs = append(refs, ref)
+	}
+	for _, ref := range targets {
+		add(ref)
 	}
 	for _, o := range sdk.TypedObjects(snapshot) {
 		if len(o.GetOwnerReferences()) > 0 || derivedObjectKind(o.GetKind()) {

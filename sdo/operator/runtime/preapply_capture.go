@@ -7,11 +7,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
 
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 const preApplyCaptureGap = "pre_apply_capture_gap"
@@ -20,16 +21,13 @@ const preApplyCaptureGap = "pre_apply_capture_gap"
 // repair. Handle serializes ad hoc acknowledgements and typed plan application.
 // The protected file is the durable marker across responder/controller restarts.
 // This boundary does no diagnosis, primitive probing, or settle waiting.
-func (l *ResponderLoop) capturePreApply(ctx context.Context, refs ...sdk.ObjectRef) error {
-	err := l.capturePreApplySnapshot(ctx, refs...)
-	if err == nil {
-		l.recordSourceComparisons(ctx, "open@pre-apply", refs...)
+func (l *ResponderLoop) capturePreApply(ctx context.Context, refs ...sdk.ObjectRef) (captureErr error) {
+	if l.CorpusSessionRoot == "" {
+		return nil
 	}
-	return err
-}
-
-func (l *ResponderLoop) capturePreApplySnapshot(ctx context.Context, refs ...sdk.ObjectRef) (captureErr error) {
-	if l.CorpusSessionRoot == "" || l.preApplyCaptured {
+	if l.preApplyCaptured {
+		// Later plans can name targets absent from the first capture.
+		l.recordSourceComparisons(ctx, "open@pre-apply", refs...)
 		return nil
 	}
 	// Never fill a missed first boundary with a later, possibly repaired view.
@@ -54,6 +52,7 @@ func (l *ResponderLoop) capturePreApplySnapshot(ctx context.Context, refs ...sdk
 	}
 	if _, err := os.Stat(filepath.Join(dir, "open@pre-apply.json")); err == nil {
 		l.preApplyCaptured = true
+		l.recordSourceComparisons(ctx, "open@pre-apply", refs...)
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect pre-apply capture: %w", err)
@@ -67,23 +66,16 @@ func (l *ResponderLoop) capturePreApplySnapshot(ctx context.Context, refs ...sdk
 	if err != nil {
 		return fmt.Errorf("pre-apply snapshot: %w", err)
 	}
-	endWrite := l.phase("preapply_capture_write")
-	err = memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, "open@pre-apply", snapshot, l.Request.Namespace, append(findingCaptureRefs(l.Request.Findings), refs...)...)
-	endWrite()
-	if err != nil {
-		return fmt.Errorf("capture pre-apply snapshot: %w", err)
-	}
-	l.preApplyCaptured = true
-	if l.ReadView != nil {
-		// Evidence never delays a write for longer than a diagnosis may take.
-		endBoundary := l.phase("preapply_boundary_observations")
-		budget, cancel := context.WithTimeout(ctx, min(l.deadline(), sourceComparisonCaptureBudget))
-		comparisons := boundaryObservations(budget, snapshot, l.ReadView(snapshot))
-		cancel()
-		if err := memory.AppendCapturedRecordings(l.CorpusSessionRoot, l.Request.IncidentID, "open@pre-apply", comparisons); err != nil {
-			slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "error", err)
+	endCapture := l.phase("preapply_evidence")
+	err = memory.CapturePreApplySnapshot(l.CorpusSessionRoot, l.Request.IncidentID, snapshot, l.Request.Namespace, func() []sdktest.PrimitiveCall {
+		if l.ReadView == nil {
+			return nil
 		}
-		endBoundary()
-	}
-	return nil
+		budget, cancel := context.WithTimeout(ctx, min(l.deadline(), sourceComparisonCaptureBudget))
+		defer cancel()
+		return boundaryObservations(budget, snapshot, l.ReadView(snapshot), refs...)
+	}, append(findingCaptureRefs(l.Request.Findings), refs...)...)
+	endCapture()
+	l.preApplyCaptured = err == nil
+	return err
 }

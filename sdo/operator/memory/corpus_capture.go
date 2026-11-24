@@ -291,6 +291,17 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 
 // CaptureIncidentSnapshot stores the first namespace-local view at each boundary.
 func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string, refs ...sdk.ObjectRef) error {
+	return captureIncidentSnapshot(repositoryMount, incidentID, phase, view, namespace, nil, refs)
+}
+
+// CapturePreApplySnapshot publishes the pre-apply snapshot only once its
+// observations are durable. Projection and observation may read the same
+// snapshot concurrently. Neither outlives this call.
+func CapturePreApplySnapshot(repositoryMount, incidentID string, view sdk.DetectionContext, namespace string, observe func() []sdktest.PrimitiveCall, refs ...sdk.ObjectRef) error {
+	return captureIncidentSnapshot(repositoryMount, incidentID, "open@pre-apply", view, namespace, observe, refs)
+}
+
+func captureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string, observe func() []sdktest.PrimitiveCall, refs []sdk.ObjectRef) error {
 	releaseSessionStorage := SessionStorageUse()
 	defer releaseSessionStorage()
 
@@ -315,6 +326,13 @@ func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk
 	if err != nil {
 		return err
 	}
+	var observations func() []sdktest.PrimitiveCall
+	if observe != nil {
+		result := make(chan []sdktest.PrimitiveCall, 1)
+		go func() { result <- observe() }()
+		observations = sync.OnceValue(func() []sdktest.PrimitiveCall { return <-result })
+		defer observations()
+	}
 	snapshot, err := sdktest.CaptureSnapshot(view, namespace, refs...)
 	if err != nil {
 		return err
@@ -325,6 +343,13 @@ func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
+	}
+	if observations != nil {
+		calls, err := json.Marshal(append([]sdktest.PrimitiveCall{}, observations()...))
+		if err != nil {
+			return err
+		}
+		return commitPreApplyCapture(dir, data, calls)
 	}
 	if phase == "open" || strings.HasPrefix(phase, "open@") {
 		recordingName := "recordings.json"
@@ -338,7 +363,28 @@ func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk
 	return writeCapturedFile(filepath.Join(dir, phase+".json"), data)
 }
 
+// commitPreApplyCapture serializes publication by typed and recorded raw writes.
+// A stopped attempt may have left recordings without its snapshot.
+func commitPreApplyCapture(dir string, snapshot, recordings []byte) error {
+	capturedRecordingsMu.Lock()
+	defer capturedRecordingsMu.Unlock()
+	path := filepath.Join(dir, "open@pre-apply.json")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := publishCapturedFile(filepath.Join(dir, "open@pre-apply-recordings.json"), recordings, true); err != nil {
+		return err
+	}
+	return writeCapturedFile(path, snapshot)
+}
+
 func writeCapturedFile(path string, data []byte) error {
+	return publishCapturedFile(path, data, false)
+}
+
+func publishCapturedFile(path string, data []byte, replace bool) error {
 	file, err := os.CreateTemp(filepath.Dir(path), ".capture-*")
 	if err != nil {
 		return err
@@ -358,6 +404,9 @@ func writeCapturedFile(path string, data []byte) error {
 	}
 	if err := file.Close(); err != nil {
 		return err
+	}
+	if replace {
+		return os.Rename(file.Name(), path)
 	}
 	if err := os.Link(file.Name(), path); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
