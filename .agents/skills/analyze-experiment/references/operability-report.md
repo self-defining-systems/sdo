@@ -8,13 +8,16 @@ by each reader, so a stored claim never accepts anything.
 |---|---|---|
 | O1 | patches apply, render deterministically, deploy, ready, served APIs | `O1.patches`, `O1.render`, `O1.deterministic`, `O1.deploy`, `O1.ready`, `O1.apis` (rendered kinds served by the recorded discovery; skipped when none was recorded or an earlier check failed) |
 | O2 | every live object attributable to accepted source | `O2.images`, `O2.stamps`, `O2.pins`, `O2.inputs`, `O2.resources` |
-| O3, O5 | detection coverage and bound sources; memory consistent | coverage and memory-validation findings; `O3.detector-coverage` (note, never a gate): detectors that evaluated clear but named what they could not observe, such as a Go-installed `store-state-<component>` reader whose store was never read healthy (no CLI, credentials not exposed, read refused), `request-metrics: request metrics not applicable to operation(s) ...` for operations whose entry service has no `entries` record (the app exports no request metric; never a firing finding or an O4 fail), or a health-probe scenario declared `knownBroken` in its workload (a route broken in the deployed application) that now meets its SLO or fails differently from its `failsWith` |
-| O4 | health detectors clear, probes pass under synthetic traffic | `O4.detectors` |
+| O3, O5 | detection coverage and bound sources; memory consistent | coverage and memory-validation findings; `O3.detector-coverage` (note, never a gate): firing or unobserved clue signals, such as an unavailable designer-authored store reader or missing CPU throttling counters. Also includes explicit observation gaps on clear detectors, such as a Go-installed `store-state-<component>` reader that has never read its store healthy (no CLI, credentials not exposed, read refused), `request-metrics: request metrics not applicable to operation(s) ...` for operations whose entry service has no `entries` record (the app exports no request metric; never a firing finding or an O4 fail), or a health-probe scenario declared `knownBroken` in its workload (a route broken in the deployed application) that now meets its SLO or fails differently from its `failsWith` |
+| O4 | incident-opening signals clear | `O4.detectors` uses the incident-opening policy. An unreadable opener waits within the verification bound. |
 | O6 | scope, allowlist, ownership, budget | `O6.scope`, `O6.allowlist`, `O6.budget` |
 
 Stages: `deployment` (O1, O2, O6; gates publication of verified source), `complete` (O1-O6; gates the health commit
 and install), `advance` (O1, O2, O4, O6; gates `PublishAdvance`). Check statuses: `pass`, `fail`, `note`, `pending`
 (both stop acceptance), `skipped` (a check not run because an earlier one failed; never a pass).
+
+For an externally pushed head, read the controller's structured `head_deployment` log. Its `detector_coverage`
+field carries the verdict's notes.
 
 ## Where it lives
 

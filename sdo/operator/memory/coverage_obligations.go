@@ -27,12 +27,12 @@ func acceptedMap(checkout string) (m appmap.Map, coverage appmap.Coverage, ok bo
 	if err != nil {
 		return appmap.Map{}, appmap.Coverage{}, false
 	}
-	return m, m.Coverage(appmap.ParseInventory(string(data)), mapWorkloads(checkout)), true
+	return m, m.Coverage(appmap.ParseInventory(string(data)), MapWorkloads(checkout)), true
 }
 
-// mapWorkloads lists the traffic workloads' scenario IDs and knownBroken
+// MapWorkloads lists the traffic workloads' scenario IDs and knownBroken
 // declarations, as the map check reads them.
-func mapWorkloads(checkout string) []appmap.Workload {
+func MapWorkloads(checkout string) []appmap.Workload {
 	directory := filepath.Join(checkout, layout.TrafficWorkloadsDir)
 	entries, err := os.ReadDir(directory)
 	if err != nil {

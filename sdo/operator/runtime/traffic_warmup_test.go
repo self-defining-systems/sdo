@@ -129,11 +129,11 @@ func (p *stalledProber) Windows(ctx context.Context) (map[string]traffic.Window,
 	return map[string]traffic.Window{p.workload.Name: window}, nil
 }
 
-func evaluateOnceWith(t *testing.T, api ProberAPI, clock *clocktesting.FakeClock, workload traffic.Workload) (evaluation.Verdict, error) {
+func evaluateOnceWith(t *testing.T, api ProberAPI, clock *clocktesting.FakeClock, workload traffic.Workload, extra ...sdk.Detector) (evaluation.Verdict, error) {
 	t.Helper()
 	detector := traffic.NewDetector(sdk.DetectorSpec{ID: "traffic-probe-call", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond}, Interval: 15 * time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Playbooks: []string{"health-objective"}, OriginatingCommit: "synthetic"}, workload.Name)
 	var stdout, stderr bytes.Buffer
-	err := RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
+	err := RunWithOptions(context.Background(), append([]sdk.Detector{detector}, extra...), RuntimeOptions{
 		Args:     []string{"--evaluate-once", "--namespace", "shop"},
 		Provider: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "shop", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "web-0", Namespace: "shop"}}}}},
 		Client:   fake.NewSimpleClientset(),
@@ -178,15 +178,21 @@ func TestEvaluateOnceUnreadableProberIsUnavailable(t *testing.T) {
 	clock := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
 	workload := pacedWorkload(3, 5)
 	api := &stalledProber{pacedProber: pacedProber{clock: clock, started: clock.Now(), workload: workload, interval: time.Second}, err: errors.New("connection refused")}
-	result, err := evaluateOnceWith(t, api, clock, workload)
+	link := traffic.NewLinkDetector(classedDetector("traffic-links", sdk.DetectorClassHealth, false).spec, "links")
+	result, err := evaluateOnceWith(t, api, clock, workload, link)
 	if err != nil {
 		t.Fatalf("evaluate-once: %v", err)
 	}
 	if result.Status != evaluation.Unavailable {
 		t.Fatalf("status = %q, want unavailable", result.Status)
 	}
-	if len(result.Unavailable) != 1 || result.Unavailable[0].DetectorID != "traffic-probe-call" || !strings.Contains(result.Unavailable[0].Reason, "connection refused") {
-		t.Fatalf("unavailable = %+v, want traffic-probe-call with the prober error", result.Unavailable)
+	gaps := map[string]evaluation.UnavailableDetector{}
+	for _, item := range result.Unavailable {
+		gaps[item.DetectorID] = item
+	}
+	scenario, links := gaps["traffic-probe-call"], gaps["traffic-links"]
+	if len(gaps) != 2 || scenario.Clue || !links.Clue || !strings.Contains(scenario.Reason, "connection refused") || !strings.Contains(links.Reason, "connection refused") {
+		t.Fatalf("unavailable = %+v, want both errors with only the link probe marked as a clue", result.Unavailable)
 	}
 }
 

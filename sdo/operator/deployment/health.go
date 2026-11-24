@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,8 +56,7 @@ func scopeOf(source lifecycle.DeploymentReceipt) HealthScope {
 type HealthEvaluation struct {
 	Status    string
 	Detectors []lifecycle.DetectorState
-	// CoverageNotes are clear detectors that named what they could not
-	// observe; they never hold the verdict.
+	// CoverageNotes describe clue findings and gaps in non-opening signals.
 	CoverageNotes []lifecycle.DetectorState
 	// ExistingRecordsExercised counts probe samples whose marked step
 	// returned a record the probe did not write.
@@ -234,7 +234,7 @@ func decodeHealthVerdict(stdout, stderr []byte) (HealthEvaluation, error) {
 func healthEvaluationOf(verdict evaluation.Verdict) HealthEvaluation {
 	result := HealthEvaluation{Status: string(verdict.Status), ExistingRecordsExercised: verdict.ExistingRecordsExercised, EnvironmentWait: verdict.EnvironmentWait}
 	for _, state := range verdict.DetectorStates {
-		if state.Status == "clear" && state.Reason != "" {
+		if (state.Status == "clear" && state.Reason != "") || (state.Status == "pending" && state.Clue) {
 			result.CoverageNotes = append(result.CoverageNotes, lifecycle.DetectorState{DetectorID: state.DetectorID, Status: state.Status, Reason: state.Reason})
 			continue
 		}
@@ -245,20 +245,20 @@ func healthEvaluationOf(verdict evaluation.Verdict) HealthEvaluation {
 	}
 	for _, item := range verdict.Unavailable {
 		state := lifecycle.DetectorState{DetectorID: item.DetectorID, Status: "unavailable", Reason: item.Reason}
-		if !evaluation.UnavailableHolds(item) {
-			// a coverage gap (not a user test): recorded, never holding
+		if item.Clue {
 			result.CoverageNotes = append(result.CoverageNotes, state)
 			continue
 		}
 		result.Detectors = append(result.Detectors, state)
 	}
-	for _, finding := range verdict.Findings {
+	for i, finding := range verdict.Findings {
 		switch {
-		case evaluation.FindingFires(finding):
-			result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: finding.DetectorID, Status: "firing", Reason: firstNonEmpty(finding.Summary, finding.RuleID) + evidenceSuffix(finding.Evidence)})
-		case finding.Status == sdk.FindingActive:
-			// a clue (failing background jobs): recorded, never holding
+		case finding.Status != sdk.FindingActive:
+			continue
+		case slices.Contains(verdict.ClueFindings, i):
 			result.CoverageNotes = append(result.CoverageNotes, lifecycle.DetectorState{DetectorID: finding.DetectorID, Status: "clue", Reason: firstNonEmpty(finding.Summary, finding.RuleID)})
+		default:
+			result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: finding.DetectorID, Status: "firing", Reason: firstNonEmpty(finding.Summary, finding.RuleID) + evidenceSuffix(finding.Evidence)})
 		}
 	}
 	return result

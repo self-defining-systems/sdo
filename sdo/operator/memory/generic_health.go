@@ -23,7 +23,6 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/generichealth"
 	"sdo.dev/operator/sdk/servicehealth"
-	"sdo.dev/operator/sdk/traffic"
 )
 
 // MetricsAlertsDetectorID names the generic detector that reports firing
@@ -213,7 +212,7 @@ func plannedGenericDetectors(options HealthOptions) []plannedDetector {
 
 // TrafficDetectorPrefix starts the ID of every Go-installed traffic-probe
 // detector; the rest of the ID is the workload it consumes.
-const TrafficDetectorPrefix = traffic.DetectorIDPrefix
+const TrafficDetectorPrefix = "traffic-"
 
 // prepareTrafficDetectors installs one detector per probe workload file and
 // removes the Go-installed ones whose workload is gone or no longer a probe,
@@ -244,7 +243,7 @@ func prepareTrafficDetectors(root string) error {
 		manifest := genericManifest(id, "10s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "SyntheticTraffic"}})
 		link := workload.GetPurpose() == "link-probe"
 		if link {
-			// A slow link is a warning finding; it still opens an incident.
+			// Link findings are diagnostic clues.
 			manifest.Batching.Severity = string(sdk.SeverityWarning)
 		}
 		if err := writeGenericDetector(root, manifest, trafficSource(id, workload.GetName(), link)); err != nil {
@@ -452,7 +451,6 @@ import (
 	"time"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
-	"sdo.dev/operator/sdk/traffic"
 )
 
 func New() sdk.Detector {
@@ -486,7 +484,6 @@ import (
 	"time"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
-	"sdo.dev/operator/sdk/traffic"
 )
 
 func New() sdk.Detector {
@@ -536,7 +533,6 @@ func trafficSource(id, workload string, link bool) string {
 import (
 	"time"
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/traffic"
 )
 
 func New() sdk.Detector {

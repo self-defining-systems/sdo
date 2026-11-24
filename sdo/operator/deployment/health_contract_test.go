@@ -23,7 +23,7 @@ func TestHealthProbeDecodesEveryVerdictTheRuntimeEncodes(t *testing.T) {
 	}{
 		{name: "clear", verdict: evaluation.Verdict{Status: evaluation.Clear, Findings: []sdk.Finding{}}, status: "clear"},
 		{name: "pending", verdict: evaluation.Verdict{Status: evaluation.Pending, DetectorStates: []evaluation.DetectorState{{DetectorID: "traffic", Status: "pending", Reason: "window incomplete"}}}, status: "pending", detector: "traffic", state: "pending", reason: "window incomplete"},
-		{name: "unavailable", verdict: evaluation.Verdict{Status: evaluation.Unavailable, Unavailable: []evaluation.UnavailableDetector{{DetectorID: "traffic-web", Reason: "prober down"}}}, status: "unavailable", detector: "traffic-web", state: "unavailable", reason: "prober down"},
+		{name: "unavailable", verdict: evaluation.Verdict{Status: evaluation.Unavailable, Unavailable: []evaluation.UnavailableDetector{{DetectorID: "request-metrics", Reason: "scrape /metrics: HTTP 503"}}}, status: "unavailable", detector: "request-metrics", state: "unavailable", reason: "scrape /metrics: HTTP 503"},
 		{name: "firing", verdict: evaluation.Verdict{Status: evaluation.Firing, Findings: []sdk.Finding{{DetectorID: "web", RuleID: "r", Status: sdk.FindingActive, Summary: "web down"}}}, status: "firing", detector: "web", state: "firing", reason: "web down"},
 	}
 	for _, tc := range cases {
@@ -52,12 +52,10 @@ func TestHealthProbeDecodesEveryVerdictTheRuntimeEncodes(t *testing.T) {
 	}
 }
 
-// A detector this environment cannot read that is not a user test (resource
-// usage without CFS counters, a clue) is a coverage note on a clear verdict,
-// never a detector the verification waits on: a head or a repair is accepted.
-func TestHealthProbeRecordsAnUnavailableNonUserTestAsACoverageNote(t *testing.T) {
+// Unavailable clues remain visible in the coverage notes of a clear verdict.
+func TestHealthProbeRecordsUnavailableCluesAsCoverageNotes(t *testing.T) {
 	reason := "resource usage: CFS counters unavailable for store-0/store"
-	stdout, err := json.Marshal(evaluation.Verdict{Status: evaluation.Clear, Findings: []sdk.Finding{}, Unavailable: []evaluation.UnavailableDetector{{DetectorID: "resource-saturation", Reason: reason}, {DetectorID: "cpu-throttling", Reason: reason}}})
+	stdout, err := json.Marshal(evaluation.Verdict{Status: evaluation.Clear, Findings: []sdk.Finding{}, Unavailable: []evaluation.UnavailableDetector{{DetectorID: "cpu-throttling", Reason: reason, Clue: true}, {DetectorID: "traffic-links", Reason: "prober down", Clue: true}, {DetectorID: "store-state-kv", Reason: "read refused", Clue: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,10 +64,10 @@ func TestHealthProbeRecordsAnUnavailableNonUserTestAsACoverageNote(t *testing.T)
 		t.Fatal(err)
 	}
 	if len(got.Detectors) != 0 {
-		t.Fatalf("detectors = %+v, want none: an unavailable non-user-test detector holds nothing", got.Detectors)
+		t.Fatalf("detectors = %+v, want none: unavailable clues must not appear as blocking detectors", got.Detectors)
 	}
-	if len(got.CoverageNotes) != 2 || got.CoverageNotes[0].Status != "unavailable" || got.CoverageNotes[0].Reason != reason {
-		t.Fatalf("coverage notes = %+v, want both detectors recorded unavailable with their reason", got.CoverageNotes)
+	if len(got.CoverageNotes) != 3 || got.CoverageNotes[0].Status != "unavailable" || got.CoverageNotes[0].Reason != reason || got.CoverageNotes[2].Reason != "read refused" {
+		t.Fatalf("coverage notes = %+v, want all clues recorded unavailable with their reason", got.CoverageNotes)
 	}
 	if verdict := verdictOf(got); verdict.Outcome != lifecycle.VerificationClear {
 		t.Fatalf("outcome = %v, want clear", verdict.Outcome)

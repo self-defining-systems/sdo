@@ -47,9 +47,8 @@ type HealthVerdict struct {
 	Outcome   VerificationOutcome
 	Summary   string
 	Detectors []DetectorState
-	// CoverageNotes are detectors that evaluated clear but named what they
-	// could not observe (a store Go reads but never read healthy). They never
-	// hold the verdict; the operability report records them under O3.
+	// CoverageNotes describe clue findings and gaps in non-opening signals.
+	// The operability report records them under O3.
 	CoverageNotes []DetectorState
 	// EnvironmentWait is the longest probe-user provisioning run the
 	// evaluation's probes were still waiting for (zero when none): a pending

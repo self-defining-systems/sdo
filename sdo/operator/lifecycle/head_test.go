@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -274,5 +275,29 @@ func TestAHeadVerifierThatCanBeginBeforeTheRolloutDoes(t *testing.T) {
 	}
 	if len(w.pins) != 1 || len(w.readyAt) != 1 {
 		t.Fatalf("pins %v, readyAt %v: want one of each", w.pins, w.readyAt)
+	}
+}
+
+func TestHeadHoldsAnUnreadableOpenerAfterTheBound(t *testing.T) {
+	w := newHeadWorld(t, true)
+	w.verdicts = []lifecycle.HealthVerdict{{
+		Outcome:   lifecycle.VerificationPending,
+		Summary:   "accepted health detectors report unavailable",
+		Detectors: []lifecycle.DetectorState{{DetectorID: "request-metrics", Status: "unavailable", Reason: "scrape /metrics: HTTP 503"}},
+	}}
+	cfg := repairConfig
+	cfg.PendingEvaluations = 3
+	result, err := w.deployer().Deploy(context.Background(), cfg)
+	if err != nil || result.Outcome != lifecycle.HeadHeld || result.Hold != lifecycle.HoldHealth || len(w.recorded) != 0 {
+		t.Fatalf("result = %+v, err = %v, recorded %d", result, err, len(w.recorded))
+	}
+	count := 0
+	for _, event := range w.events {
+		if strings.HasPrefix(event, "verify ") {
+			count++
+		}
+	}
+	if count != cfg.PendingEvaluations || !strings.Contains(result.Detail, "scrape /metrics: HTTP 503") {
+		t.Fatalf("events = %q, result = %+v; want the bounded retries and the failed read", w.events, result)
 	}
 }

@@ -41,7 +41,6 @@ const DefaultHealthMinDuration = 9 * time.Second
 const DefaultRateLimitWait = time.Minute
 const DefectRateLimited = "rate_limited"
 const DefectResponseTruncated = "response_truncated"
-const DetectorIDPrefix = "traffic-"
 const ExistingMembersKey = "sdo.existing-members"
 const MaxExecStderr = 512
 const MaxKnownBrokenReason = 200
@@ -67,6 +66,7 @@ func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting,
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, ...) sdk.Finding
+func ScenarioSLOWorkload(detector sdk.Detector) string
 type Arrival string
     const ArrivalUniform Arrival = "uniform" ...
 type Catalog []Scenario

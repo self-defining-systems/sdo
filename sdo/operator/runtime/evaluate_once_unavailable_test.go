@@ -11,15 +11,18 @@ import (
 
 // unreadableDetector cannot read its input in this environment, as resource
 // usage on a node whose kubelet exposes no CFS counters.
-type unreadableDetector struct{ spec sdk.DetectorSpec }
+type unreadableDetector struct {
+	spec sdk.DetectorSpec
+	err  string
+}
 
 func (d unreadableDetector) Spec() sdk.DetectorSpec { return d.spec }
 func (d unreadableDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
-	return nil, errors.New("resource usage: CFS counters unavailable for store-0/store")
+	return nil, errors.New(d.err)
 }
 
 func unreadable(id string) unreadableDetector {
-	return unreadableDetector{spec: classedDetector(id, sdk.DetectorClassHealth, false).spec}
+	return unreadableDetector{spec: classedDetector(id, sdk.DetectorClassHealth, false).spec, err: "CFS counters unavailable"}
 }
 
 // A detector that is not a user test and cannot be read in this environment
@@ -27,7 +30,7 @@ func unreadable(id string) unreadableDetector {
 // the rest, so a healthy head is accepted and a broken one is still firing.
 func TestEvaluateOnceRecordsAnUnreadableNonUserTestWithoutHolding(t *testing.T) {
 	healthy := classedDetector("workload-health", sdk.DetectorClassHealth, false)
-	got, err := evaluateOnceClassed(t, []sdk.Detector{healthy, unreadable("resource-saturation"), unreadable("cpu-throttling")})
+	got, err := evaluateOnceClassed(t, []sdk.Detector{healthy, unreadable("resource-saturation"), unreadable("cpu-throttling"), unreadable("traffic-links")})
 	if err != nil {
 		t.Fatalf("evaluate-once failed on an unreadable non-user-test detector: %v", err)
 	}
@@ -38,8 +41,8 @@ func TestEvaluateOnceRecordsAnUnreadableNonUserTestWithoutHolding(t *testing.T) 
 	for _, item := range got.Unavailable {
 		ids[item.DetectorID] = item.Reason
 	}
-	if ids["resource-saturation"] == "" || ids["cpu-throttling"] == "" {
-		t.Fatalf("unavailable = %+v, want both unreadable detectors recorded with their reason", got.Unavailable)
+	if ids["resource-saturation"] == "" || ids["cpu-throttling"] == "" || ids["traffic-links"] == "" {
+		t.Fatalf("unavailable = %+v, want the unreadable detectors recorded with their reason", got.Unavailable)
 	}
 
 	broken := classedDetector("workload-health", sdk.DetectorClassHealth, true)
@@ -48,15 +51,19 @@ func TestEvaluateOnceRecordsAnUnreadableNonUserTestWithoutHolding(t *testing.T) 
 	}
 }
 
-// A user test is the acceptance signal: when it cannot be read the verdict is
-// unavailable, the existing bounded wait, never clear.
-func TestEvaluateOnceUnreadableUserTestStaysUnavailable(t *testing.T) {
-	healthy := classedDetector("workload-health", sdk.DetectorClassHealth, false)
-	got, err := evaluateOnceClassed(t, []sdk.Detector{healthy, unreadable("traffic-probe-call")})
-	if err != nil {
-		t.Fatalf("evaluate-once: %v", err)
+func TestEvaluateOnceUnreadableRequestMetricsHoldsVerification(t *testing.T) {
+	metrics := unreadable("request-metrics")
+	metrics.err = "scrape /metrics: HTTP 503"
+	got, err := evaluateOnceClassed(t, []sdk.Detector{metrics})
+	if err != nil || got.Status != evaluation.Unavailable || len(got.Unavailable) != 1 || got.Unavailable[0].Reason != metrics.err {
+		t.Fatalf("request metrics verdict = %+v, %v; want unavailable with scrape error", got, err)
 	}
-	if got.Status != evaluation.Unavailable || len(got.Unavailable) != 1 || got.Unavailable[0].DetectorID != "traffic-probe-call" {
-		t.Fatalf("verdict = %+v, want unavailable naming the user test", got)
+}
+
+func TestEvaluateOnceFiringClueDoesNotHoldVerification(t *testing.T) {
+	link := classedDetector("traffic-links", sdk.DetectorClassHealth, true)
+	got, err := evaluateOnceClassed(t, []sdk.Detector{link})
+	if err != nil || got.Status != evaluation.Clear || len(got.Findings) != 1 || len(got.ClueFindings) != 1 || got.ClueFindings[0] != 0 {
+		t.Fatalf("link verdict = %+v, %v; want clear with the finding still visible", got, err)
 	}
 }

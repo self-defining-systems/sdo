@@ -90,7 +90,7 @@ func (c *Controller) driveHeadPoll(ctx context.Context, now time.Time) {
 			result, err = poller.Deployer.Deploy(actionCtx, config)
 		}
 		if err == nil && result.Outcome != lifecycle.HeadCurrent {
-			slog.Info("head_deployment", "outcome", string(result.Outcome), "commit", result.Commit, "hold", string(result.Hold), "detail", result.Detail)
+			slog.Info("head_deployment", "outcome", string(result.Outcome), "commit", result.Commit, "hold", string(result.Hold), "detail", result.Detail, "detector_coverage", result.Verdict.CoverageNotes)
 		}
 		c.reflectionResults <- reflectionCompletion{head: true, err: err}
 	})

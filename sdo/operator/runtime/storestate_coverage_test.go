@@ -48,14 +48,13 @@ func TestEvaluateOnceReportsAnUnobservedGoStoreReaderAsACoverageNote(t *testing.
 	if !strings.Contains(note, "not observed") {
 		t.Fatalf("detector states = %+v", verdict.DetectorStates)
 	}
-	// A designer's reader that could not read is named unavailable with its
-	// reason, never cleared; it is not a user test, so it holds nothing
-	// (evaluation.UnavailableHolds).
+	// A designer's reader can only provide a clue. Its failed read stays
+	// visible with a reason and the verdict clears.
 	designer, err := evaluateOnceClassed(t, []sdk.Detector{storeReader(t, false)})
 	if err != nil {
 		t.Fatalf("designer reader: %v", err)
 	}
-	if len(designer.Unavailable) != 1 || designer.Unavailable[0].DetectorID != "store-state-kv" || designer.Unavailable[0].Reason == "" {
+	if designer.Status != evaluation.Clear || len(designer.Unavailable) != 1 || !designer.Unavailable[0].Clue || designer.Unavailable[0].DetectorID != "store-state-kv" || designer.Unavailable[0].Reason == "" {
 		t.Fatalf("a designer's store reader cleared a read that never ran: %+v", designer)
 	}
 }

@@ -45,32 +45,79 @@ type openers struct {
 // data checks, metrics alerts, authored and learned detectors) is a clue: it
 // never opens or holds an incident.
 func (c *Controller) opens(finding sdk.Finding) bool {
-	if c.isUserTraffic(finding) {
-		return true
-	}
-	if slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID) {
-		return true
-	}
-	return c.isUserTest(finding)
+	return c.openingRole(finding, nil) != noOpener
 }
 
-// isUserTraffic is the real-traffic half of opens: the request-metrics error
-// rule, keyed by operation or route through the finding fingerprint.
-func (c *Controller) isUserTraffic(finding sdk.Finding) bool {
-	if finding.Metadata[requestmetrics.MetaBackground] == true {
-		return false // background jobs are not users: a clue
+type openingRole uint8
+
+const (
+	noOpener openingRole = iota
+	userTrafficOpener
+	conditionOpener
+	userTestOpener
+)
+
+// openingRole classifies an observed rule or, when possibleUserTest is set,
+// a detector whose observation is missing. For a missing observation a rule
+// that could have been emitted counts, even when its health is unknown.
+func (c *Controller) openingRole(finding sdk.Finding, possibleUserTest func() bool) openingRole {
+	switch {
+	case finding.DetectorID == memory.RequestMetricsDetectorID:
+		if c.config.RequestMetricsOpens && finding.Metadata[requestmetrics.MetaBackground] != true &&
+			(finding.RuleID == requestmetrics.RuleErrors || possibleUserTest != nil) {
+			return userTrafficOpener
+		}
+	case slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID):
+		return conditionOpener
+	case strings.HasPrefix(finding.DetectorID, memory.TrafficDetectorPrefix):
+		if possibleUserTest != nil {
+			if possibleUserTest() {
+				return userTestOpener
+			}
+		} else if scenario, ok := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix); ok {
+			tests := c.userTests()
+			if tests == nil || tests[scenario] {
+				return userTestOpener
+			}
+		}
 	}
-	return c.config.RequestMetricsOpens && finding.DetectorID == memory.RequestMetricsDetectorID && finding.RuleID == requestmetrics.RuleErrors
+	return noOpener
 }
 
-// isUserTest is the probe half of opens: a failing user test.
-func (c *Controller) isUserTest(finding sdk.Finding) bool {
-	scenario, ok := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix)
-	if !ok || !strings.HasPrefix(finding.DetectorID, memory.TrafficDetectorPrefix) {
-		return false
+// verificationOpeners identifies the detectors whose absent observation can
+// hide an opening rule. Use the accepted probe catalog even when the prober
+// cannot supply a window. Fall back to a possible user test if the map or
+// workload cannot be read, just as opens falls back for an unreadable map.
+func (c *Controller) verificationOpeners(detectors []sdk.Detector, catalog []appmap.Workload) map[string]bool {
+	workloads := map[string]appmap.Workload{}
+	for _, workload := range catalog {
+		workloads[workload.Name] = workload
 	}
-	tests := c.userTests()
-	return tests == nil || tests[scenario]
+	result := map[string]bool{}
+	for _, detector := range detectors {
+		id := detector.Spec().ID
+		result[id] = c.openingRole(sdk.Finding{DetectorID: id}, func() bool {
+			name := traffic.ScenarioSLOWorkload(detector)
+			if name == "" {
+				return false
+			}
+			tests := c.userTests()
+			workload, ok := workloads[name]
+			if tests == nil {
+				return true
+			}
+			if !ok {
+				return len(tests) > 0
+			}
+			for _, scenario := range workload.Scenarios {
+				if tests[scenario] && !slices.Contains(workload.KnownBroken, scenario) {
+					return true
+				}
+			}
+			return false
+		}) != noOpener
+	}
+	return result
 }
 
 // AlertJoinWindow bounds how long after detection a user test that starts
@@ -86,7 +133,7 @@ const AlertJoinWindow = 5 * time.Minute
 // It reports whether the finding is now (or already was) in the set. It never
 // dispatches or re-prompts the agent.
 func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
-	if !c.isUserTest(finding) && !c.isUserTraffic(finding) {
+	if role := c.openingRole(finding, nil); role != userTestOpener && role != userTrafficOpener {
 		return false
 	}
 	c.mu.Lock()

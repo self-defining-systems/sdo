@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -77,8 +78,8 @@ func TestEvaluateOnceObservesDeclaredPodAdmission(t *testing.T) {
 			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "", errSyntheticQuota)
 		})
 		got := evaluateOnceStatus(t, client)
-		if got.Status != "firing" || len(got.Findings) != 1 || got.Findings[0].RuleID != workloadhealth.RulePodAdmissionRejected {
-			t.Fatalf("result = %+v, want one firing pod-admission-rejected finding", got)
+		if got.Status != evaluation.Clear || len(got.Findings) != 1 || got.Findings[0].RuleID != workloadhealth.RulePodAdmissionRejected || !slices.Equal(got.ClueFindings, []int{0}) {
+			t.Fatalf("result = %+v, want clear with a pod-admission-rejected clue", got)
 		}
 	})
 }
