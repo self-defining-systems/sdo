@@ -175,8 +175,8 @@ func (g guardedOps) PodRestarts(ctx context.Context, lane, kubeconfig string) (m
 // crashBlock says why lane gets no new steps because its pods crash-loop ("" when it may).
 func (m *Manager) crashBlock(lane string) string { return m.crash[lane] }
 
-// observeCrashLoops takes one pod reading per lane with a cluster, all at once and each bounded, and updates which lanes
-// are crash-looping. A failed read is no reading: it neither marks nor clears a lane.
+// observeCrashLoops samples prepared lanes in parallel, with a bound on each read. The first sample after
+// preparation is a baseline for cumulative restart counts. A failed read neither marks nor clears a lane.
 func (m *Manager) observeCrashLoops(ctx context.Context, reachable map[string]bool) {
 	if m.crash == nil {
 		m.crash, m.crashTrack = map[string]string{}, map[string]*crashTracker{}
@@ -189,7 +189,13 @@ func (m *Manager) observeCrashLoops(ctx context.Context, reachable map[string]bo
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, l := range m.sortedLanes() {
-		if !reachable[l.Host] || l.Gone {
+		if l.Gone || l.Prepared == nil || !l.Prepared.Ready ||
+			l.Step != nil && replacesPreparation(l.Step.Kind) {
+			delete(m.crashTrack, l.Lane)
+			delete(m.crash, l.Lane)
+			continue
+		}
+		if !reachable[l.Host] {
 			continue
 		}
 		h := m.inv.Hosts[l.Host]
@@ -234,4 +240,9 @@ func (m *Manager) observeCrashLoops(ctx context.Context, reachable map[string]bo
 			m.logf("lane %s: restarts are back under %d in %s, new steps resume", l.Lane, th.Restarts, th.Window)
 		}
 	}
+}
+
+// A build or release can replace the app copy whose counters were sampled.
+func replacesPreparation(kind string) bool {
+	return kind == StepBuild || kind == StepRelease
 }
