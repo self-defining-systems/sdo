@@ -1287,6 +1287,42 @@ func TestBenchIncompleteEvidenceHoldsTheLane(t *testing.T) {
 	}
 }
 
+// A subject that declares verify-evidence, through real steps and hooks: a run whose collect failed and whose evidence
+// is not verified holds its lane with the reasons, and the lane goes back to use on its own once a later check verifies it.
+func TestBenchDeclaredSubjectHoldsUntilItsHookVerifies(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real detached steps take several seconds: nightly tier")
+	}
+	l := newLab(t)
+	must(t, os.WriteFile(filepath.Join(l.hooks, "describe"), []byte(`{"max_startup":"0s","verify_evidence":true}`+"\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(l.hooks, "fail-collect"), []byte("store gone\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(l.hooks, "verify-evidence"), []byte(`{"verified":false,"reasons":["store x empty"]}`+"\n"), 0o644))
+	l.add("e1", l.hooked, "a@x", "[[1]]", 0)
+	l.until("lane held", func() bool { return l.lane().State == LaneHeld })
+	if lf := l.lane(); !strings.Contains(lf.Reason, "store x empty") {
+		t.Fatalf("lane %+v", lf)
+	}
+	must(t, os.WriteFile(filepath.Join(l.hooks, "verify-evidence"), []byte(`{"verified":true}`+"\n"), 0o644))
+	must(t, os.Remove(filepath.Join(l.hooks, "fail-collect")))
+	now := time.Now()
+	l.m.Now = func() time.Time { now = now.Add(10 * time.Second); return now } // the next check is minutes away
+	l.until("lane released", idle(l))
+	hooks := l.read("hooks.log")
+	after := hooks[strings.LastIndex(hooks, "collect c1 e1"):]
+	if c, r, d := strings.Index(after, "verify-evidence"), strings.Index(after, "reset-incidents"), strings.Index(after, "teardown"); c < 0 || r < c || d < r {
+		t.Fatalf("want checks, then the reset, then the teardown:\n%s", after)
+	}
+}
+
+// Every hook is told how long it has before the platform kills it.
+func TestHookKnowsItsTimeLimit(t *testing.T) {
+	dir := t.TempDir()
+	h := Hook{Dir: dir, Command: "sh -c 'echo $" + HookLimitEnv + "'"}
+	if r := h.Run(context.Background(), "collect", nil, nil); r.First != fmt.Sprint(int(hookTimeouts["collect"].Seconds())) {
+		t.Fatalf("collect was told %q", r.First)
+	}
+}
+
 func TestBenchUnholdWithOptionalIncidentReset(t *testing.T) {
 	for _, tc := range []struct {
 		name, reply, wantState string

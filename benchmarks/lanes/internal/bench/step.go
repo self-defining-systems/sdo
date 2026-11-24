@@ -29,6 +29,7 @@ const (
 	StepRun     = "run"     // one fuzzops run, then settle, collect and the safety check
 	StepRelease = "release" // tear down the operator, the lane becomes free
 	StepUnhold  = "unhold"  // a held lane's evidence is complete: reset the operator's incidents that collect skipped
+	StepVerify  = "verify"  // a held lane's subject is asked again whether the run's evidence is verified
 	StepRecover = "recover" // after a step died: undo any fault left, check nothing is active
 )
 
@@ -73,6 +74,9 @@ type Step struct {
 	BuildBad *int `json:"build_bad,omitempty"`
 
 	Run *RunSpec `json:"run,omitempty"`
+	// VerifyEvidence (run): the subject declares verify-evidence. Window (verify): the span of Run.
+	VerifyEvidence bool    `json:"verify_evidence,omitempty"`
+	Window         *Window `json:"window,omitempty"`
 
 	// The lane's cluster: the host's cluster_up and cluster_down commands for it, and whether this
 	// build creates it (Create: it is gone; Recreate: delete it first) or this release deletes it.
@@ -159,6 +163,12 @@ type Result struct {
 	// EvidenceIncomplete is the operator's own verdict on the cell's evidence after collect: the problems in
 	// operator/evidence-manifest.json ("" when none or no manifest). The lane is held, not recycled, until it clears.
 	EvidenceIncomplete string `json:"evidence_incomplete,omitempty"`
+	// CollectFailed is why the collect hook failed or was killed at its limit ("" when it succeeded or was not called).
+	CollectFailed string `json:"collect_failed,omitempty"`
+	// Evidence is the subject's answer to verify-evidence (a run or verify step of a subject that declares it), and
+	// Window the span collected.
+	Evidence *Evidence `json:"evidence,omitempty"`
+	Window   *Window   `json:"window,omitempty"`
 	// Transcripts is a failed transcripts check after a teardown ("" when complete or not checked).
 	Transcripts string `json:"transcripts,omitempty"`
 	// Exit, Tail and Log describe the command that failed the step: its exit code, the last lines it wrote (at most
@@ -244,8 +254,9 @@ func RunStep(ctx context.Context, path string) error {
 	}
 	// A step is cancelled only by its own deadline: the manager going away must not stop it.
 	ctx = context.WithoutCancel(ctx)
-	// Deleting a lane's cluster needs no workload: a lane that never got a build has no checkout to ask.
-	noWorkload := s.Kind == StepRelease && s.Fuzzops == "" && s.DeleteCluster
+	// Deleting a lane's cluster needs no workload: a lane that never got a build has no checkout to ask. A verify step
+	// asks only the subject.
+	noWorkload := s.Kind == StepVerify || s.Kind == StepRelease && s.Fuzzops == "" && s.DeleteCluster
 	if !noWorkload {
 		if err = r.writeSpecFile(); err == nil {
 			r.res.Fuzzops, err = r.version(ctx)
@@ -254,7 +265,7 @@ func RunStep(ctx context.Context, path string) error {
 	switch {
 	case err != nil:
 		r.fail("workload identity: %v", err)
-	case pinMismatch(r.res.Fuzzops, s.WorkloadRev) != "":
+	case s.Kind != StepVerify && pinMismatch(r.res.Fuzzops, s.WorkloadRev) != "":
 		r.fail("%s", pinMismatch(r.res.Fuzzops, s.WorkloadRev))
 	default:
 		switch s.Kind {
@@ -268,6 +279,8 @@ func RunStep(ctx context.Context, path string) error {
 			r.unhold(ctx)
 		case StepRecover:
 			r.recover(ctx)
+		case StepVerify:
+			r.verify(ctx)
 		default:
 			r.fail("unknown step kind %q", s.Kind)
 		}
@@ -1542,12 +1555,17 @@ func (r *stepRunner) run(ctx context.Context) {
 		if r.res.SettleEnd != nil {
 			end = *r.res.SettleEnd
 		}
-		res := r.callHook(ctx, p, "collect", "BENCH_OUT="+out, "BENCH_RUN="+rs.ID, "BENCH_FAULT="+faultArg(rs.Fault),
-			"BENCH_INTERVAL_START="+from.UTC().Format(time.RFC3339), "BENCH_INTERVAL_END="+end.Format(time.RFC3339))
+		w := Window{from, end}
+		res := r.callHook(ctx, p, "collect", append(w.env(), "BENCH_OUT="+out, "BENCH_RUN="+rs.ID, "BENCH_FAULT="+faultArg(rs.Fault))...)
 		if !res.OK() {
+			r.res.CollectFailed = clip(res.Why("collect"), 300)
 			r.logf("collect failed (recorded, the run stands): %s", res.Why("collect"))
 		}
-		r.res.EvidenceIncomplete = evidenceProblems(filepath.Join(out, EvidenceManifest))
+		if s.VerifyEvidence {
+			r.res.Window, r.res.Evidence = &w, r.verifyEvidence(ctx, p, r.dir, rs, w)
+		} else {
+			r.res.EvidenceIncomplete = evidenceProblems(filepath.Join(out, EvidenceManifest))
+		}
 	}
 	r.safety(ctx, p, rs)
 }

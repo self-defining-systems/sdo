@@ -40,7 +40,7 @@ func (m *Manager) retireLeft() {
 		if readJSON(m.Root.LanePath(lane), lf) != nil {
 			continue
 		}
-		if _, ok := m.inv.Hosts[lf.Host]; ok && (lf.Step != nil || m.leftHasCluster(lf)) {
+		if _, ok := m.inv.Hosts[lf.Host]; lf.Hold.owes() != "" || ok && (lf.Step != nil || m.leftHasCluster(lf)) {
 			m.leaving[lane] = lf
 			continue
 		}
@@ -106,8 +106,16 @@ func (m *Manager) leftStep(ctx context.Context, lf *LaneFile, state string, ph *
 			lf.BuildFailures++
 			m.logf("lane %s: deleting the cluster of a lane that left hosts.yaml failed (%d/%d): %s", lf.Lane, lf.BuildFailures, leftReleaseTries, res.Reason)
 		}
+	} else if tmp := m.Root.path("lanes", lf.Lane+".steps", ref.ID); ref.Kind == StepVerify {
+		var res Result
+		if state == StepFinished && m.ops(lf.Host).Fetch(ctx, lf.Lane, ref.ID, tmp) == nil && readJSON(filepath.Join(tmp, "result.json"), &res) == nil {
+			m.checked(lf, res, tmp)
+		}
 	} else {
 		m.logf("lane %s: step %s of a lane that left hosts.yaml ended (%s)", lf.Lane, ref.ID, state)
+	}
+	if x := m.exps[lf.Experiment]; x != nil && m.holdDead(lf, x, ref, "") {
+		return // settleLeft brings its files home
 	}
 	if err := m.ops(lf.Host).Clean(ctx, lf.Lane, ref.ID); err != nil {
 		m.logf("lane %s: clean %s: %v", lf.Lane, ref.ID, err)
@@ -120,6 +128,9 @@ func (m *Manager) settleLeft(ctx context.Context, reachable map[string]bool) {
 	for _, lf := range m.leaving {
 		if lf.Step != nil || !reachable[lf.Host] {
 			continue
+		}
+		if m.checkHold(ctx, lf) {
+			continue // left hosts.yaml, held
 		}
 		if m.leftHasCluster(lf) {
 			lf.Reason = "left hosts.yaml: deleting its cluster"

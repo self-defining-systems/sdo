@@ -57,9 +57,11 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -1717,17 +1719,74 @@ def collect_page(run: Path, state: dict[str, Any]) -> observe.PageEvidence:
     return paging
 
 
-def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+#: How long ``collect`` has when the platform does not say (``BENCH_VERB_LIMIT_SECONDS``: it kills the hook then).
+COLLECT_LIMIT_S = 600.0
+#: By what share of the limit each part of ``collect`` has ended at the latest: what a part leaves unused is
+#: the later ones'. What is left after the last capture writes the manifest, then resets the operator (``reset``).
+COLLECT_BY = {
+    "memory": 0.10,
+    "state": 0.125,
+    "fallback-inbox": 0.16,
+    "logs": 0.23,
+    "evidence": 0.45,
+    "view": 0.48,
+    "build": 0.50,
+    "host-load": 0.51,
+    "observability": 0.76,
+    "reset": 0.97,
+}
+#: The time a part that comes after an overrun still gets.
+COLLECT_PART_MIN_S = 5.0
+
+
+class PartDeadlineError(BaseException):
+    """A part of collect is out of time. Not an ``Exception``: a part that survives its own failures must end too."""
+
+
+def bounded_part(seconds: float, step: Callable[[], str]) -> str:
+    """``step()``, ended with ``PartDeadlineError`` after ``seconds`` wherever it is (its command is killed)."""
+    if threading.current_thread() is not threading.main_thread():
+        return step()
+
+    def fire(*_: object) -> None:
+        raise PartDeadlineError(f"not done within its {seconds:.0f} s")
+
+    handler = signal.signal(signal.SIGALRM, fire)
+    earlier, _ = signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        return step()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, earlier)
+        signal.signal(signal.SIGALRM, handler)
+
+
+def collect(
+    env: Mapping[str, str],
+    out: Callable[[str], None] = _print,
+    clock: Callable[[], float] = time.monotonic,
+) -> int:
+    """Everything the run's evidence needs, best effort, then the manifest that says what is missing. Every part ends by
+    its share of the platform's limit (``COLLECT_BY``), so the manifest is always written; until it is, the one on disk
+    says ``collect did not finish``."""
     dest = Path(_need(env, "BENCH_OUT")).resolve()
     dest.mkdir(parents=True, exist_ok=True)
+    cellevidence.write_unfinished(dest.parent)
+    (dest / "collect.json").unlink(
+        missing_ok=True
+    )  # an earlier collect's: this one is not done until it writes its own
     control = control_namespace(env)
     kube = _kube(env)
     parts: dict[str, str] = {}
+    began = clock()
+    limit = float(env.get("BENCH_VERB_LIMIT_SECONDS") or COLLECT_LIMIT_S)
+
+    def remaining(name: str) -> float:
+        return max(began + COLLECT_BY[name] * limit - clock(), COLLECT_PART_MIN_S)
 
     def part(name: str, step: Callable[[], str]) -> None:
         try:
-            parts[name] = step() or "ok"
-        except Exception as exc:  # best effort: every part runs and records its own failure
+            parts[name] = bounded_part(remaining(name), step) or "ok"
+        except (Exception, PartDeadlineError) as exc:  # best effort: every part runs and records its own failure
             parts[name] = f"error: {exc}"[:400]
 
     def memory() -> str:
@@ -1813,19 +1872,21 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     part("host-load", lambda: capture.write_host_load(dest, _now))
 
     def observability() -> str:
-        plan = capture.capture_plan(Path(_need(env, "BENCH_LANE_DIR")), start=env.get("BENCH_INTERVAL_START", ""))
+        lane_dir = Path(_need(env, "BENCH_LANE_DIR"))
         receipt = capture.capture_all(
             kube.cmd,
             control,
             _need(env, "FUZZOPS_NAMESPACE"),
             dest,
-            plan.start,
+            env.get("BENCH_INTERVAL_START", ""),
             env.get("BENCH_INTERVAL_END", ""),
-            defer=plan.defer,
+            since=capture.capture_plan(lane_dir).since,
+            seconds=remaining("observability") * 0.95,
         )
         bad = sorted(k for k in cellevidence.CAPTURES if receipt.get(k, {}).get("status") == "error")
         if bad:
             raise HookError("observability capture failed: " + ", ".join(f"{k}: {receipt[k]['detail']}" for k in bad))
+        capture.mark_captured(lane_dir, receipt["window"][1])
         return "ok " + ", ".join(f"{k}={receipt[k]['status']}" for k in cellevidence.CAPTURES)
 
     part("observability", observability)
@@ -1877,6 +1938,19 @@ def reset_incidents_verb(env: Mapping[str, str], out: Callable[[str], None] = _p
     """The bench's ``reset-incidents``: the operator reset collect skipped while the lane was held for its evidence."""
     dest = Path(_need(env, "BENCH_OUT")).resolve()
     out(_reset_receipt(env, control_namespace(env), dest))
+    return 0
+
+
+def verify_evidence(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    """The platform's question whether the evidence of the run in ``BENCH_RUN_DIR`` is complete or waived: the manifest
+    validator's answer, as ``{"verified": bool, "reasons": [...]}``. A later check of a held lane
+    (``BENCH_EVIDENCE_RECHECK``) collects again when it is not; the directory is then a copy, kept only if verified."""
+    run = Path(_need(env, "BENCH_RUN_DIR")).resolve()
+    problems = cellevidence.write_manifest(run, run_pending=True).problems
+    if problems and env.get("BENCH_EVIDENCE_RECHECK"):
+        collect({**env, "BENCH_OUT": str(run / "operator")}, out)
+        problems = cellevidence.write_manifest(run, run_pending=True).problems
+    out(json.dumps({"verified": not problems, "reasons": problems}))
     return 0
 
 
@@ -2705,7 +2779,8 @@ def describe(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
 
     ``max_startup`` is the settings' ``startup_bound`` (else ``config.response.startup_bound``, else SDO's default), so
     the platform waits as long as the install may report busy. ``needs_credentials`` is false for the no-model stub
-    agent. A seed is a learned memory in the baseline's format, so it needs the baseline.
+    agent. A seed is a learned memory in the baseline's format, so it needs the baseline. ``verify_evidence``: a
+    lane is freed only once that verb answered that its run's evidence is complete.
     """
     path = Path(_need(env, "BENCH_OPERATOR"))
     try:
@@ -2722,6 +2797,7 @@ def describe(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
                 "max_startup": str(bound),
                 "needs_credentials": settings.get("model") != "stub",
                 "inputs": {"seed": {"requires": ["baseline"]}},
+                "verify_evidence": True,
             }
         )
     )
@@ -2960,6 +3036,7 @@ VERBS = (
     "watch",
     "collect",
     "validate",
+    "verify-evidence",
     "reset-incidents",
     "verify-start",
     "teardown",
@@ -3004,6 +3081,7 @@ def main(argv: list[str] | None = None) -> int:
             "idle": idle,
             "collect": collect,
             "validate": validate,
+            "verify-evidence": verify_evidence,
             "reset-incidents": reset_incidents_verb,
             "verify-start": verify_start_verb,
             "teardown": teardown,

@@ -137,6 +137,7 @@ No alarm kills or resets anything; it stops new work on the host or lane.
 | `reservation-drift` | The host's slices differ from the record; nothing is admitted. | `lanes host status` shows what differs; `lanes host reserve` it again. |
 | `kernel-setting-low` | A kernel value fell below its minimum. | `lanes host reserve HOST` raises it; check for a later sysctl file. |
 | `disk-floor` | Staging free space is under `min_free`; no new build. | Run `lanes gc` or free space. |
+| `evidence-hold` | A run's evidence is not verified; its lane is held. | Read the reasons and the way out in `lanes status` ([contract.md](contract.md), the evidence rule). |
 | `idle-lane` | A lane stayed free over `idle_lane` while runs wait. | Read the idle reason in `lanes status` (a gate, a held lane, a blocked edge). |
 | `arm-stall` | An arm has work but nothing ended for `arm_stall`. | Look at `lanes plan status` for the blocked reason. |
 | `stage` | A stage took more than `factor` x its minimum. | Open that run's log; the lane may be slow or stuck. |

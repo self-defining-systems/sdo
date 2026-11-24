@@ -77,6 +77,9 @@ echo "==> Go nondeterminism ratchet"
 echo "==> go mains (benchmarks/)"
 "$SCRIPT_DIR/check_go_mains.sh"
 
+echo "==> lanes layering (what the lanes packages may name)"
+"$SCRIPT_DIR/check_lanes_layering.sh"
+
 if [[ "$run_parity" == 1 ]]; then
     "$SCRIPT_DIR/check_contracts_fast.sh" --go-only
 fi

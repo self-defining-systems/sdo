@@ -35,7 +35,7 @@ Both roles: **environment in, last stdout line JSON out.**
   stderr is the log; its last bytes are the reason of a failure.
 - Exit 0 is success. Any other exit is a failure of that verb. Retrying is the platform's job: an adapter never
   retries internally.
-- Each verb has a time limit (`hookTimeouts` in `internal/bench/hooks.go`; `run active` and `run undo` are bounded at
+- Each verb has a time limit (a subject verb reads its own, in seconds, from `BENCH_VERB_LIMIT_SECONDS`; `hookTimeouts` in `internal/bench/hooks.go`; `run active` and `run undo` are bounded at
   20 minutes, not the run's six hours); the platform kills the process group at the limit.
 
 ### Workload settings belong to the workload, not the host
@@ -77,7 +77,8 @@ contract, unchanged (semantics in fuzzops `docs/bench.md`, "Hook contract").
 |---|---|
 | `check`, `prepare`, `swap`, `idle`, `watch`, `collect`, `snapshot`, `reset`, `teardown`, `transcripts` | implemented by the platform's callers |
 | `reset-incidents` | optional. Called with `BENCH_OUT` set to the unhold step directory when the evidence manifest for a held lane lists no problems. Resets any incidents that `collect` left open. Success or an unsupported reply releases the hold. Any other failure keeps the lane held and the manager retries after a minute |
-| `describe` | called at `plan add` and `add` once per hooks checkout and operator settings, on the manager's host, with `BENCH_OPERATOR` (hooks, revision, settings). Answer: `{"max_startup":"30m","needs_credentials":true,"inputs":{"seed":{"requires":["baseline"]}}}`. `max_startup` is how long a fresh install may report busy (`0s` or absent: none); `needs_credentials` says whether preflight should check a model credential; `inputs` are rules on the spec's named inputs (`requires` lists inputs that must also be set). Lanes stores the answer in the experiment's lock (`described`) and reads it instead of the operator settings. **Unsupported (a pin that predates the verb) falls back to the built-in SDO answer, and lanes logs `pre-contract pin` once per checkout** |
+| `verify-evidence` | called for a subject that declares it. Whether a run's evidence is complete: `{"verified":true}` or `{"verified":false,"reasons":["..."]}` (the evidence rule, below) |
+| `describe` | called at `plan add` and `add` once per hooks checkout and operator settings, on the manager's host, with `BENCH_OPERATOR` (hooks, revision, settings). Answer: `{"max_startup":"30m","needs_credentials":true,"inputs":{"seed":{"requires":["baseline"]}}}`. `max_startup` is how long a fresh install may report busy (`0s` or absent: none); `needs_credentials` says whether preflight should check a model credential; `inputs` are rules on the spec's named inputs (`requires` lists inputs that must also be set). `verify_evidence` (default false) declares the verb `verify-evidence` (the evidence rule, below). Lanes stores the answer in the experiment's lock (`described`) and reads it instead of the operator settings. **Unsupported (a pin that predates the verb) falls back to the built-in SDO answer, and lanes logs `pre-contract pin` once per checkout** |
 | `check-input` | called at `add` / `plan add` and in `lanes preflight` for each of a spec's inputs (`operator.baseline`, `operator.seed`) that is set and no placeholder, on the manager's host. Environment: `BENCH_INPUT_KIND` (`baseline` or `seed`), `BENCH_INPUT_PATH`, `BENCH_INPUT_PHASE` (`add`: no cluster is known yet; `preflight`), `BENCH_INPUT_ALLOW` (comma-separated diagnostics a human asked to allow) and `BENCH_OPERATOR`. Answer: `{"ok":true,"detail":"...","note":"..."}`; `ok:false` refuses the spec with `detail`; `note` says why nothing was checked (not a failure). Lanes runs no check of its own on an input. **Unsupported falls back to the built-in SDO memory check (`memory migrate`) with a `pre-contract pin` log once** |
 | `preflight` | called by `lanes preflight` once per hooks checkout per host. Answer: `{"checks":[{"check":"name","ok":true,"detail":"..."}]}`. **Unsupported falls back to the SDO operator's built-in checks** (credential call, sink, proto binding, baseline memory, `sdo-*` images), which is what preflight has always run. A subject that answers `preflight` owns all the checks of its specs: the platform runs none of its own for them, inputs included. In that fallback a spec whose operator settings say `model: stub` (a no-model stand-in agent) gets no credential call (a passing note says it was skipped), and the baseline memory check on a host with no hooks checkout of the pin reports "not checkable here" as a passing note, not a failure |
 | `export-artifact`, `verify-artifact`, `reseed` | defined, **not called yet**; every adapter answers unsupported |
@@ -86,6 +87,34 @@ contract, unchanged (semantics in fuzzops `docs/bench.md`, "Hook contract").
 The build check waits `max(ready_timeout, max_startup + 10m)` for `idle`: a subject reports busy through its own start-up period, and a lane is never failed for a wait shorter than it. `max_startup` is the subject's `describe` answer (for a pin without `describe`: SDO's `operator.settings.startup_bound`, default 30m).
 
 The `idle` before a teardown (a release, a rebuild that removes the operator) is called with `BENCH_IDLE_FOR=teardown`: the operator is about to be deleted, so the subject answers only whether its agent has stopped writing and not what an inject would need (for example a settled baseline); unset, `idle` is the gate before an inject or the build check. Settle passes `BENCH_OWN_DETECTED_AT`.
+
+### The evidence rule
+
+**A lane is never reset, released, rebuilt or torn down for a run whose evidence its subject has not verified.** The platform
+knows one thing per run: verified, or the reasons why not. What evidence is, where it lies and what may be waived is the
+subject's. A subject binds itself to the rule by declaring the verb (`describe`: `"verify_evidence": true`).
+
+`verify-evidence` gets `BENCH_RUN_DIR` (the run's directory: the record and everything `collect` left under it), `BENCH_RUN`,
+`BENCH_FAULT` and the interval, and answers `{"verified":bool,"reasons":["..."]}` with exit 0. Only a readable `verified: true`
+with no reasons frees the lane. Reasons, any other exit, a timeout (the process group is killed), an unreadable answer, or
+an unsupported verb although declared hold it (`held`).
+
+| when | who asks, about what |
+|---|---|
+| after `collect`, in the run step on the lane's host | the hook, about the step's directory. Its files then come home under a checksum manifest, so what was verified is what is home |
+| a run step that died, ran past its bound or was lost with its host | nothing yet: its files are copied home first (kept on the host until they are), then the lane is held and checked as below. A run that is not recorded keeps its files in `<exp>/lost/<step>/` |
+| a held lane: after a minute, then less often, at least every 15 minutes | a `verify` step on the lane's host, with the hook's normal environment plus `BENCH_EVIDENCE_RECHECK=1`, about a copy of the home directory (so a waiver written there counts). The subject may collect again into the copy; only what it then verifies goes home. A check that hangs is killed and asked again |
+
+- Once verified, the manager calls `reset-incidents` and the lane goes on; no person is needed.
+- Not held: a try that never started the workload or never passed its gate (nothing was injected).
+- `start` refuses a build, run or release on a lane that owes evidence, so nothing clears a hold by accident: a manager
+  restart (the hold is in the lane file), a pool that refills, the automatic reset of a down lane, `lane reset`, a lane or host
+  that left `hosts.yaml`, removing the experiment or its plan (the plan's directory stays until then).
+- The way out is in `lanes status` with the reasons: complete or waive the evidence the subject's way and wait for the next
+  check, or give the run up by name, `lanes remove EXP --teardown` (also on an experiment removed before).
+- A subject that does not declare the verb is never asked and behaves as before it existed (a manifest that lists problems
+  holds its lane until it lists none). The answer of `describe` is recorded when a spec is added, so a pin that predates the
+  field is not bound.
 
 ## Workload verbs
 

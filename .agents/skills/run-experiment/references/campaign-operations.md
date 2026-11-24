@@ -120,6 +120,7 @@ Then compare measured wall time with it, per problem and per series, as results 
 ## 7. Analyze, finish and clean up
 
 - **Put an efficiency section in every report** ([report.md](report.md#efficiency)); each row above its alarm names its cause and the guard now preventing it.
+- **A held lane is the only copy of its run's evidence: complete or waive it, never work around the hold.** A collect killed at its limit once let the lane reset and erased a two-hour series' metrics. The lane checks itself again (and collects again), so read its reasons in `lanes status` first; if a store cannot answer, copy it out (`kubectl exec ... tar`), then write `operator/evidence-waiver.json` naming only the items that cannot be had. Fix the cause of the failed collect before the next series.
 - Remove your worktrees and tear down your own idle clusters when a round ends; idle leftovers still hold memory and processes.
 - **Never move platforms mid-campaign** (for example kind to a managed cloud cluster). It splits results by platform, and the harness may not support it.
 - **Cloud resources:**

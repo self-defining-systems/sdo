@@ -134,7 +134,7 @@ func purgePlan(root Root, name string) (done bool, err error) {
 	b := &PlanBackend{Root: root}
 	exps := plan.AllExperiments(dir)
 	for _, exp := range exps {
-		if err := b.Cancel(context.Background(), exp); err != nil {
+		if err := remove(root, exp, Removal{Cancel: true}); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return false, err
 		}
 	}
@@ -378,6 +378,9 @@ func (b *PlanBackend) laneBound(exp string) bool {
 	for _, l := range lanes {
 		if l.Experiment == exp && (l.Seq != nil || l.Step != nil) {
 			return true
+		}
+		if l.Hold != nil && l.Hold.Experiment == exp {
+			return true // what is still to be verified goes to its directory
 		}
 	}
 	return false

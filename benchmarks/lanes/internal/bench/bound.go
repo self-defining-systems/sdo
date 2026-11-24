@@ -93,6 +93,22 @@ func (g guardedOps) Fetch(ctx context.Context, lane, id, dest string) error {
 	return err
 }
 
+func (g guardedOps) Put(ctx context.Context, lane, id, src string) error {
+	if err := g.down(); err != nil {
+		return err
+	}
+	_, err := bounded(ctx, fetchBound, "put on "+g.host, func(c context.Context) (struct{}, error) { return none(g.in.Put(c, lane, id, src)) })
+	return err
+}
+
+func (g guardedOps) Salvage(ctx context.Context, lane, id, dest string) error {
+	if err := g.down(); err != nil {
+		return err
+	}
+	_, err := bounded(ctx, fetchBound, "salvage from "+g.host, func(c context.Context) (struct{}, error) { return none(g.in.Salvage(c, lane, id, dest)) })
+	return err
+}
+
 func (g guardedOps) Clean(ctx context.Context, lane, id string) error {
 	if err := g.down(); err != nil {
 		return err
@@ -195,6 +211,8 @@ func stepBound(kind string, s Spec) time.Duration {
 		// bound at the cap would kill a release that is only waiting as long as it may, and the lane's nodes would
 		// bill for want of its cluster delete.
 		return max(2*time.Hour, cap+time.Hour)
+	case StepVerify:
+		return hookTimeouts[verbVerifyEvidence] + 15*time.Minute
 	}
 	return 2 * time.Hour
 }

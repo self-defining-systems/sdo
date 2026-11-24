@@ -25,7 +25,12 @@ type HostOps interface {
 	Probe(ctx context.Context, steps map[string]string, fuzzops []string) (Probe, error)
 	// Fetch copies a finished step's directory to dest and checks it against its manifest.
 	Fetch(ctx context.Context, lane, id, dest string) error
-	// Clean removes a step's staging directory (only after Fetch).
+	// Salvage copies what a step that ended without a result left to dest, beside what is there already (an entry that
+	// exists is kept). A step directory that is gone is no error.
+	Salvage(ctx context.Context, lane, id, dest string) error
+	// Put copies directory src of the root to run/ in the directory of a step that is about to start.
+	Put(ctx context.Context, lane, id, src string) error
+	// Clean removes a step's staging directory (only after Fetch or Salvage).
 	Clean(ctx context.Context, lane, id string) error
 	// Kill ends a running step (its process group): TERM, then KILL after a few seconds. A step that is not there
 	// is no error.
@@ -241,6 +246,47 @@ func fetchDir(src, dest string) error {
 	}
 	_ = os.RemoveAll(dest)
 	return os.Rename(tmp, dest)
+}
+
+func (h localHost) Put(_ context.Context, lane, id, src string) error {
+	return copyTree(src, filepath.Join(h.staging, lane, id, "run"), true)
+}
+
+func (h localHost) Salvage(_ context.Context, lane, id, dest string) error {
+	src := filepath.Join(h.staging, lane, id)
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return nil
+	}
+	tmp := dest + ".partial"
+	_ = os.RemoveAll(tmp)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	if err := copyTree(src, tmp, true); err != nil {
+		return err
+	}
+	return mergeInto(tmp, dest)
+}
+
+// mergeInto moves the entries of src into dest, keeping the ones dest has already, and removes src.
+func mergeInto(src, dest string) error {
+	ents, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return err
+	}
+	for _, e := range ents {
+		to := filepath.Join(dest, e.Name())
+		if _, err := os.Lstat(to); err == nil {
+			continue
+		}
+		if err := os.Rename(filepath.Join(src, e.Name()), to); err != nil {
+			return err
+		}
+	}
+	return os.RemoveAll(src)
 }
 
 func (h localHost) Clean(_ context.Context, lane, id string) error {

@@ -41,9 +41,11 @@ type fakeWorld struct {
 	started []Step // every Start, in order
 	killed  []string
 	cleaned []string
-	free    map[string]int64
-	load    map[string]float64 // the 5-minute load each host's probe reports (0: idle)
-	release chan struct{}
+	// salvaged are the dead steps whose files were brought home.
+	salvaged []string
+	free     map[string]int64
+	load     map[string]float64 // the 5-minute load each host's probe reports (0: idle)
+	release  chan struct{}
 	// ledgerReqs is every ledger reconciliation asked of a host; ledgerReleased is what the fake host reports released.
 	ledgerReqs     []LedgerReq
 	ledgerReleased map[string][]string
@@ -125,6 +127,18 @@ func (o fakeOps) Fetch(_ context.Context, _, id, dest string) error {
 		return err
 	}
 	return writeJSON(filepath.Join(dest, "result.json"), fs.res)
+}
+
+func (o fakeOps) Put(context.Context, string, string, string) error { return o.w.gate(o.host, "Put") }
+
+func (o fakeOps) Salvage(_ context.Context, _, id, dest string) error {
+	if err := o.w.gate(o.host, "Salvage"); err != nil {
+		return err
+	}
+	o.w.mu.Lock()
+	defer o.w.mu.Unlock()
+	o.w.salvaged = append(o.w.salvaged, id)
+	return os.MkdirAll(dest, 0o755)
 }
 
 func (o fakeOps) Clean(_ context.Context, _, id string) error {

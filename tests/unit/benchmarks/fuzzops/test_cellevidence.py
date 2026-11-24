@@ -452,6 +452,55 @@ def test_a_commit_series_record_is_not_missing_the_fuzzops_run_fields(tmp_path: 
     assert not [p for p in ev.problems if p.startswith("record.json")], ev.problems
 
 
+def test_a_record_the_grader_declared_invalid_has_no_measurement_to_miss(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    _w(run / "record.json", {"valid": False, "invalid_reason": "x"})
+    assert not [p for p in ce.build(run).problems if p.startswith("record.json")]
+    _w(run / "record.json", {"valid": True})
+    assert [p for p in ce.build(run).problems if p.startswith("record.json")]
+
+
+@pytest.mark.parametrize(("name", "accepted"), [("jaeger", True), ("prometheus", False), ("applogs", False)])
+def test_an_empty_capture_is_accepted_only_of_traces(tmp_path: Path, name: str, accepted: bool) -> None:
+    """An application that sends no traces has none; a Prometheus or a log capture that holds nothing lost something."""
+    run = make_cell(tmp_path)
+    receipt = run / "operator" / ce.OBSERVABILITY
+    _w(receipt, json.loads(receipt.read_text()) | {name: {"status": "empty", "detail": "nothing"}})
+    problems = [p for p in ce.build(run).problems if p.startswith(f"observability {name}")]
+    assert bool(problems) is not accepted, problems
+
+
+@pytest.mark.parametrize(("name", "accepted"), [("jaeger", True), ("prometheus", False)])
+def test_an_empty_file_recorded_ok_is_never_present(tmp_path: Path, name: str, accepted: bool) -> None:
+    """Older captures wrote an empty gzip for a store that held nothing and recorded it ok."""
+    run = make_cell(tmp_path)
+    rel = f"observability/{name}.jsonl.gz"
+    ce.atomic_write_gzip(run / "operator" / rel, "\n")
+    receipt = run / "operator" / ce.OBSERVABILITY
+    _w(receipt, json.loads(receipt.read_text()) | {name: {"status": "ok", "files": [rel]}})
+    ev = ce.build(run)
+    assert [i.status for i in ev.items if i.path.endswith(rel)] == ["empty"]
+    assert bool([p for p in ev.problems if p.startswith(f"observability {name}")]) is not accepted
+
+
+@pytest.mark.parametrize(
+    ("data", "expect"),
+    [
+        (gzip.compress(b'{"a": 1}\n{"b": 2}\n', mtime=0), ""),
+        (gzip.compress(b'{"a": 1}\n{"b": 2}\n', mtime=0)[:-6], "unreadable"),
+        (gzip.compress(b'{"a": 1}\n{"b"', mtime=0), "last line has no newline"),
+        (gzip.compress(b"{}\nx\n{}\n", mtime=0), "line 2 is not JSON"),
+        (b"not a gzip", "unreadable"),
+    ],
+    ids=["whole", "cut", "partial line", "not json", "not gzip"],
+)
+def test_a_gzip_jsonl_file_is_read_to_its_end(tmp_path: Path, data: bytes, expect: str) -> None:
+    path = tmp_path / "x.jsonl.gz"
+    path.write_bytes(data)
+    assert ce.jsonl_problem(path).startswith(expect)
+    assert bool(ce.jsonl_problem(path)) is bool(expect)
+
+
 @pytest.mark.parametrize("native_accounting", [True, False])
 def test_investigator_worker_sessions_belong_to_one_incident(tmp_path: Path, native_accounting: bool) -> None:
     run = make_cell(tmp_path)
