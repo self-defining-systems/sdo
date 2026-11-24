@@ -1232,7 +1232,9 @@ type RunProgramResponse struct {
 	//	*RunProgramResponse_Verdict
 	//	*RunProgramResponse_Plan
 	//	*RunProgramResponse_Error
-	Frame         isRunProgramResponse_Frame `protobuf_oneof:"frame"`
+	Frame isRunProgramResponse_Frame `protobuf_oneof:"frame"`
+	// Set on an error frame when host validation refused a computed plan.
+	PlanRefused   bool `protobuf:"varint,5,opt,name=plan_refused,json=planRefused,proto3" json:"plan_refused,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1308,6 +1310,13 @@ func (x *RunProgramResponse) GetError() string {
 		}
 	}
 	return ""
+}
+
+func (x *RunProgramResponse) GetPlanRefused() bool {
+	if x != nil {
+		return x.PlanRefused
+	}
+	return false
 }
 
 type isRunProgramResponse_Frame interface {
@@ -1868,12 +1877,13 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"invocation\x18\x01 \x01(\v22.sdodev.contracts.v1alpha1.MemoryProgramInvocationH\x00R\n" +
 	"invocation\x12A\n" +
 	"\x04read\x18\x02 \x01(\v2+.sdodev.contracts.v1alpha1.ProgramReadReplyH\x00R\x04readB\a\n" +
-	"\x05frame\"\xee\x01\n" +
+	"\x05frame\"\x91\x02\n" +
 	"\x12RunProgramResponse\x12@\n" +
 	"\x04read\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.ProgramReadCallH\x00R\x04read\x12>\n" +
 	"\averdict\x18\x02 \x01(\v2\".sdodev.contracts.v1alpha1.VerdictH\x00R\averdict\x125\n" +
 	"\x04plan\x18\x03 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanH\x00R\x04plan\x12\x16\n" +
-	"\x05error\x18\x04 \x01(\tH\x00R\x05errorB\a\n" +
+	"\x05error\x18\x04 \x01(\tH\x00R\x05error\x12!\n" +
+	"\fplan_refused\x18\x05 \x01(\bR\vplanRefusedB\a\n" +
 	"\x05frame\"G\n" +
 	"\x0fProgramReadCall\x12\x16\n" +
 	"\x06method\x18\x01 \x01(\tR\x06method\x12\x1c\n" +

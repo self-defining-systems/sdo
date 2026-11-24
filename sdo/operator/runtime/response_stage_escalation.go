@@ -20,9 +20,9 @@ const stageEscalated = "escalated"
 // verdict whose Reach is out-of-reach does: a Diagnose-only playbook escalates
 // on it, and a playbook with a mitigation escalates when Mitigate returns an
 // Escalate plan. Any other plan proceeds through ordinary planning.
-func stageEscalation(ctx context.Context, mitigator program.Mitigator, canMitigate bool, view program.ReadView, bindings program.Bindings, verdict program.Verdict, deadline time.Duration) (program.Escalate, bool) {
+func stageEscalation(ctx context.Context, mitigator program.Mitigator, canMitigate bool, view program.ReadView, bindings program.Bindings, verdict program.Verdict, deadline time.Duration) (program.Escalate, bool, error) {
 	if verdict.Result != program.Match || verdict.Reach != program.ReachOutOfReach || verdict.Validate() != nil {
-		return program.Escalate{}, false
+		return program.Escalate{}, false, nil
 	}
 	if !canMitigate {
 		escalation := program.Escalate{Reason: fmt.Sprintf("Diagnose matched an out-of-reach %s cause", verdict.CauseClass)}
@@ -31,13 +31,17 @@ func stageEscalation(ctx context.Context, mitigator program.Mitigator, canMitiga
 				escalation.Resources = append(escalation.Resources, evidence.Resource)
 			}
 		}
-		return escalation, true
+		return escalation, true, nil
 	}
 	plan, err := BuildMitigationPlan(ctx, mitigator, view, bindings, deadline)
-	if err != nil || plan.Validate() != nil {
-		return program.Escalate{}, false
+	if err != nil {
+		return program.Escalate{}, false, err
 	}
-	return program.EscalationOf(plan)
+	if err := plan.Validate(); err != nil {
+		return program.Escalate{}, false, &NonExecutablePlanError{Cause: err}
+	}
+	escalation, ok := program.EscalationOf(plan)
+	return escalation, ok, nil
 }
 
 // stageEscalatedIn reports whether any automatic-stage attempt escalated.

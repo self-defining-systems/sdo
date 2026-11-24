@@ -739,6 +739,18 @@ def _sdo(
         row.responder_usage_complete &= complete
         row.response_sessions.extend(sessions)
         responder_dispatched |= bool(sessions) and sessions[0].usage.input_tokens is not None
+        # An incident with no sealed timeline (still open at collect, or reset after the window) still holds the
+        # responder's transcript: its writes count from the page, bounded by the graded recovery.
+        if page is not None:
+            bound = None
+            if row.fixed_in_window and inject is not None and row.inject_to_last_bad_s is not None:
+                bound = inject + timedelta(seconds=row.inject_to_last_bad_s + 1)
+            paths = [*folder.glob("claude/projects/**/*.jsonl"), *folder.rglob("rollout-*.jsonl")]
+            writes.extend(
+                (page, w)
+                for w in _incident_writes({}, paths)
+                if page <= w.at and (bound is None or (w.tool_start or w.at) <= bound)
+            )
     for sessions in investigators.values():
         # An investigator can be collected even when the parent evidence was lost.
         responders.extend(session.usage for session in sessions)

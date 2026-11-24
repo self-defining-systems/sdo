@@ -136,14 +136,11 @@ func (s *Server) executeProgram(ctx context.Context, invocation *pb.MemoryProgra
 		if err := program.ValidateBindings(p.Spec(), bindings); err != nil {
 			return programError(err), nil
 		}
-		plan, err := mitigate(ctx, p, view, bindings)
+		response := mitigate(ctx, p, view, bindings)
 		if aborted := view.ReadAbortError(); aborted != nil {
-			err = aborted
+			return programError(aborted), nil
 		}
-		if err != nil {
-			return programError(err), nil
-		}
-		return &pb.RunProgramResponse{Frame: &pb.RunProgramResponse_Plan{Plan: plan}}, nil
+		return response, nil
 	default:
 		return programError(errors.New("invalid program operation")), nil
 	}
@@ -169,7 +166,7 @@ func verdictProto(verdict program.Verdict) *pb.Verdict {
 	}
 	return out
 }
-func mitigate(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings) (*pb.Plan, error) {
+func mitigate(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings) *pb.RunProgramResponse {
 	checked := &checkedView{ReadView: view}
 	// Programs that honor their context end before the transport gives up, so a
 	// slow program is a plan error and never a failed host.
@@ -179,21 +176,27 @@ func mitigate(ctx context.Context, p program.Mitigator, view program.ReadView, b
 	if readErr := checked.failure(); readErr != nil {
 		err = readErr
 	}
-	if err == nil {
-		err = plan.Validate()
-	}
 	if err != nil {
-		return nil, err
+		return programError(err)
+	}
+	if err := plan.Validate(); err != nil {
+		return refusedPlan(err)
 	}
 	encoded := &pb.Plan{Rationale: plan.Rationale}
 	for _, action := range plan.Actions {
 		out, err := planwire.ActionProto(action)
 		if err != nil {
-			return nil, err
+			return refusedPlan(err)
 		}
 		encoded.Actions = append(encoded.Actions, out)
 	}
-	return encoded, nil
+	return &pb.RunProgramResponse{Frame: &pb.RunProgramResponse_Plan{Plan: encoded}}
+}
+
+func refusedPlan(err error) *pb.RunProgramResponse {
+	response := programError(err)
+	response.PlanRefused = true
+	return response
 }
 
 // WithReadFactory installs host-owned readers before serving; no writer is exposed.
