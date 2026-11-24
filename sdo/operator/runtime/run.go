@@ -39,6 +39,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/memoryhost/hostio"
@@ -1899,7 +1900,7 @@ func evaluateOnce(
 	appRoot := flags.String("app-root", "", "accepted application repository root")
 	sourceDriftAcknowledgement := flags.String("source-drift-acknowledgement", "", "installer onboarding acknowledgement ProtoJSON file for the read-only source inventory check")
 	sourceDriftReport := flags.String("source-drift-report", "", "read-only accepted-source inventory check; write full JSON to this path and print a summary")
-	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
+	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless its incident-opening signals evaluate clear")
 	hostBinary := flags.String("memory-host-binary", "", "validated memory host binary")
 	hostDigest := flags.String("memory-host-digest", "", "validated memory host digest")
 	memoryCommit := flags.String("memory-commit", "", "accepted memory revision")
@@ -2062,6 +2063,7 @@ func evaluateOnce(
 		}
 		return WriteSourceInventoryReport(stdout, *sourceDriftReport, index, cache.SourceDriftObjects())
 	}
+	verificationDetectors := detectors
 	// Deployment-time evaluation runs before any controller measured this
 	// cluster, so it judges reachability without a recorded baseline.
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
@@ -2174,77 +2176,112 @@ func evaluateOnce(
 		SourceCommit: "evaluation", DeployedCommit: "evaluation",
 		RepositoryWorktree: ".",
 	}.WithSettings(policy)
+	if *appRoot != "" {
+		once.SourceCommit, once.DeployedCommit, once.RepositoryWorktree = readCommit, readCommit, *appRoot
+	}
 	// One evaluation never dispatches, so it has no start-up period.
 	once.StartupBound = 0
 	controller, err := NewController(once, detectors, provider, evaluationDispatcher{}, start)
 	if err != nil {
 		return err
 	}
+	var workloads []appmap.Workload
+	if *appRoot != "" {
+		controller.gitRead = lifecycleio.GitOutput
+		workloads = memory.MapWorkloads(*appRoot)
+	}
+	openingDetectors := controller.verificationOpeners(verificationDetectors, workloads)
+	openingWorkloads := map[string]bool{}
+	for _, detector := range verificationDetectors {
+		if workload := traffic.ScenarioSLOWorkload(detector); workload != "" && openingDetectors[detector.Spec().ID] {
+			openingWorkloads[workload] = true
+		}
+	}
+	for i := range unavailable {
+		unavailable[i].Clue = !openingDetectors[unavailable[i].DetectorID]
+	}
 	findings := make([]sdk.Finding, 0)
-	var detectorErrors []error
+	var controllerErrors []error
 	controller.now = clock.Now
 	controller.OnEvaluation = func(sample []sdk.Finding) { findings = append([]sdk.Finding{}, sample...) }
-	controller.OnError = func(err error) { detectorErrors = append(detectorErrors, err) }
-	// judge steps the controller once and reports the verdict. When watching,
-	// a detector error is that detector's unavailable entry, so the others
-	// stay judged; a one-shot evaluation fails on it.
+	controller.OnError = func(err error) {
+		if !errors.As(err, new(*detectorEvaluationError)) {
+			controllerErrors = append(controllerErrors, err)
+		}
+	}
+	// judge steps the controller once and reports the verdict. A detector
+	// error is that detector's unavailable entry, so the others stay judged;
+	// only incident openers can hold the verdict. A
+	// one-shot evaluation fails on any other controller error.
 	judge := func(now time.Time, watching bool) (evaluation.Verdict, error) {
-		detectorErrors = nil
+		controllerErrors = nil
 		if err := controller.Step(ctx, now, nil); err != nil {
 			return evaluation.Verdict{}, err
 		}
 		unavailableNow := append([]evaluation.UnavailableDetector(nil), unavailable...)
-		if len(detectorErrors) > 0 && !watching {
-			return evaluation.Verdict{}, fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
+		if len(controllerErrors) > 0 && !watching {
+			return evaluation.Verdict{}, fmt.Errorf("health detector evaluation failed: %w", controllerErrors[0])
+		}
+		// A detector runs on its own interval, so its latest evaluation (this
+		// pass or an earlier one) is what it currently reports.
+		latest := map[string]DetectorEvaluation{}
+		var order []string
+		for _, observed := range controller.history {
+			if _, seen := latest[observed.DetectorID]; !seen {
+				order = append(order, observed.DetectorID)
+			}
+			latest[observed.DetectorID] = observed
 		}
 		observations := controller.history
 		if watching {
-			// A detector runs on its own interval, so its latest evaluation
-			// (this pass or an earlier one) is what it currently reports.
-			latest := map[string]DetectorEvaluation{}
-			var order []string
-			for _, observed := range controller.history {
-				if _, seen := latest[observed.DetectorID]; !seen {
-					order = append(order, observed.DetectorID)
-				}
-				latest[observed.DetectorID] = observed
-			}
 			observations = nil
-			for _, id := range order {
+		}
+		for _, id := range order {
+			if watching {
 				observations = append(observations, latest[id])
-				if latest[id].Status == DetectorEvaluationError {
-					unavailableNow = append(unavailableNow, evaluation.UnavailableDetector{DetectorID: id, Reason: latest[id].Error})
-				}
+			}
+			if latest[id].Status == DetectorEvaluationError {
+				unavailableNow = append(unavailableNow, evaluation.UnavailableDetector{DetectorID: id, Reason: latest[id].Error, Clue: !openingDetectors[id]})
 			}
 		}
 		status := evaluation.Clear
 		var unconfirmed []evaluation.DetectorState
 		for _, observed := range observations {
-			if observed.Status == DetectorEvaluationPending {
+			if observed.Status == DetectorEvaluationPending && openingDetectors[observed.DetectorID] {
 				status = evaluation.Pending
 			}
 			if observed.Status == DetectorEvaluationPending || observed.Reason != "" {
-				unconfirmed = append(unconfirmed, evaluation.DetectorState{DetectorID: observed.DetectorID, EvaluatedAt: observed.EvaluatedAt, Status: string(observed.Status), Fingerprints: observed.Fingerprints, Error: observed.Error, Reason: observed.Reason})
+				unconfirmed = append(unconfirmed, evaluation.DetectorState{DetectorID: observed.DetectorID, EvaluatedAt: observed.EvaluatedAt, Status: string(observed.Status), Fingerprints: observed.Fingerprints, Error: observed.Error, Reason: observed.Reason, Clue: !openingDetectors[observed.DetectorID]})
 			}
 		}
-		if len(unavailableNow) > 0 {
-			status = evaluation.Unavailable
+		for _, item := range unavailableNow {
+			if !item.Clue {
+				status = evaluation.Unavailable
+				break
+			}
 		}
 		exercised := 0
 		var environmentWait time.Duration
 		if trafficProvider.Observer != nil {
-			for _, window := range trafficProvider.Observer.Windows() {
+			for name, window := range trafficProvider.Observer.Windows() {
 				exercised += window.ExistingRecordsExercised()
-				environmentWait = max(environmentWait, window.IdentityWait())
+				if openingWorkloads[name] {
+					environmentWait = max(environmentWait, window.IdentityWait())
+				}
 			}
 		}
-		for _, finding := range findings {
-			if evaluation.FindingFires(finding) {
+		var clueFindings []int
+		for i, finding := range findings {
+			if finding.Status != sdk.FindingActive {
+				continue
+			}
+			if controller.opens(finding) {
 				status = evaluation.Firing
-				break
+			} else {
+				clueFindings = append(clueFindings, i)
 			}
 		}
-		return evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailableNow, DetectorStates: unconfirmed, Progress: progressWhenWatching(watching, controller), ExistingRecordsExercised: exercised, StartedAt: now.UTC(), EnvironmentWait: environmentWait}, nil
+		return evaluation.Verdict{Status: status, Findings: findings, ClueFindings: clueFindings, Unavailable: unavailableNow, DetectorStates: unconfirmed, Progress: progressWhenWatching(watching, controller), ExistingRecordsExercised: exercised, StartedAt: now.UTC(), EnvironmentWait: environmentWait}, nil
 	}
 	if *watch > 0 {
 		// The provider warmed above; each pass judges the live application

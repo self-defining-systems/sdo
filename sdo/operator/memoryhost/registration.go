@@ -33,6 +33,7 @@ type Registration struct {
 	Alerts       bool
 	PodAdmission bool
 	Traffic      []string
+	ScenarioSLO  string
 	// Windowed marks a detector that judges a rolling window (sdk.WindowedDetector).
 	// The window itself is derived from the declared inputs and the view.
 	Windowed bool
@@ -48,7 +49,7 @@ type Registration struct {
 }
 
 func registration(d sdk.Detector) Registration {
-	r := Registration{DetectorSpec: d.Spec()}
+	r := Registration{DetectorSpec: d.Spec(), ScenarioSLO: traffic.ScenarioSLOWorkload(d)}
 	if c, ok := d.(metrics.Consumer); ok {
 		r.Metrics = c.MetricQueries()
 	}

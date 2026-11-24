@@ -9,7 +9,6 @@ import (
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
 
@@ -85,10 +84,7 @@ func restoredStartupPeriod(state *contracts.StartupPeriod) *startupPeriod {
 // openerDetector reports whether a detector's findings can open an incident
 // (Controller.opens): a Kubernetes-condition, health-probe traffic or (out of shadow mode) request-metrics detector.
 func (c *Controller) openerDetector(id string) bool {
-	if id == memory.RequestMetricsDetectorID {
-		return c.config.RequestMetricsOpens
-	}
-	return slices.Contains(memory.KubernetesConditionDetectorIDs(), id) || strings.HasPrefix(id, memory.TrafficDetectorPrefix)
+	return c.openingRole(sdk.Finding{DetectorID: id}, func() bool { return true }) != noOpener
 }
 
 // noteStartupEvaluation records a completed evaluation of an opener detector.

@@ -8,7 +8,9 @@ import (
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 func userTestFinding(scenario string) sdk.Finding {
@@ -187,5 +189,25 @@ func TestResetClosesTheOpenIncidentAndStartsClean(t *testing.T) {
 	step(t, c, 2)
 	if next := currentRequest(c); next == nil || next.IncidentID == first {
 		t.Fatalf("the still-failing test did not open a fresh incident: %+v", next)
+	}
+}
+
+func TestVerificationNeedsOnlyTrafficWorkloadsWithAnOpeningScenario(t *testing.T) {
+	c := openersController(t, &recordingDispatcher{})
+	c.gitRead = fakeArchitecture(verifyArch)
+	detectors := []sdk.Detector{
+		traffic.NewDetector(sdk.DetectorSpec{ID: "traffic-entry"}, "entry"),
+		traffic.NewDetector(sdk.DetectorSpec{ID: "traffic-internal"}, "internal"),
+		traffic.NewDetector(sdk.DetectorSpec{ID: "traffic-known-broken"}, "known-broken"),
+		traffic.NewLinkDetector(sdk.DetectorSpec{ID: "traffic-links"}, "entry"),
+	}
+	workloads := []appmap.Workload{
+		{Name: "entry", Scenarios: []string{"browse-items"}},
+		{Name: "internal", Scenarios: []string{"warm-cache"}},
+		{Name: "known-broken", Scenarios: []string{"browse-items"}, KnownBroken: []string{"browse-items"}},
+	}
+	got := c.verificationOpeners(detectors, workloads)
+	if !got["traffic-entry"] || got["traffic-internal"] || got["traffic-known-broken"] || got["traffic-links"] {
+		t.Fatalf("verification openers = %v, want only the entry scenario detector", got)
 	}
 }

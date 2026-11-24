@@ -223,6 +223,7 @@ func (d *remoteDetector) UsageRequirements() usage.Requirements { return d.Usage
 func (d *remoteDetector) ConsumesServiceReachability() bool     { return d.Reachability }
 func (d *remoteDetector) ConsumesAlerts() bool                  { return d.Alerts }
 func (d *remoteDetector) ConsumesPodAdmission() bool            { return d.PodAdmission }
+func (d *remoteDetector) ScenarioSLOWorkload() string           { return d.ScenarioSLO }
 func (d *remoteDetector) TrafficWorkloads() []string            { return d.Traffic }
 func (d *remoteDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
 	if d.Registration.AppStateReader {

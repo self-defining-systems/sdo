@@ -11,12 +11,11 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/requestmetrics"
 )
 
 // Status is the bounded command verdict, not a persisted detector observation.
-// Unavailable means this invocation lacks a required capability; Pending means
-// a detector can run but its observation window is incomplete.
+// Unavailable means this invocation cannot read an incident opener; Pending means a detector can run but its
+// observation window is incomplete.
 type Status string
 
 const (
@@ -44,6 +43,7 @@ const OutsideClusterReason = "not evaluable outside the cluster: "
 type UnavailableDetector struct {
 	DetectorID string `json:"detector_id"`
 	Reason     string `json:"reason"`
+	Clue       bool   `json:"clue,omitempty"`
 }
 
 // DetectorState is one detector observation that is not a plain clear: pending
@@ -56,6 +56,7 @@ type DetectorState struct {
 	Fingerprints []string  `json:"Fingerprints"`
 	Error        string    `json:"Error"`
 	Reason       string    `json:"Reason,omitempty"`
+	Clue         bool      `json:"Clue,omitempty"`
 }
 
 // DetectorProgress says how far one detector has judged the application since
@@ -73,16 +74,11 @@ type DetectorProgress struct {
 	FirstAt     time.Time     `json:"first_at"`
 }
 
-// FindingFires reports whether an active finding makes a verdict firing. Failing background jobs (a request-metrics
-// finding of an entry only internal operations enter, requestmetrics.MetaBackground) are clues, not failing user
-// traffic: they never open an incident (runtime opens) and never hold a head or a repair.
-func FindingFires(finding sdk.Finding) bool {
-	return finding.Status == sdk.FindingActive && finding.Metadata[requestmetrics.MetaBackground] != true
-}
-
 // Verdict is the whole --evaluate-once output.
 type Verdict struct {
-	Findings       []sdk.Finding         `json:"findings"`
+	Findings []sdk.Finding `json:"findings"`
+	// ClueFindings indexes active findings that cannot open an incident.
+	ClueFindings   []int                 `json:"clue_findings,omitempty"`
 	Status         Status                `json:"status"`
 	Unavailable    []UnavailableDetector `json:"unavailable,omitempty"`
 	DetectorStates []DetectorState       `json:"detector_states,omitempty"`

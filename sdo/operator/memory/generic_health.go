@@ -243,7 +243,7 @@ func prepareTrafficDetectors(root string) error {
 		manifest := genericManifest(id, "10s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "SyntheticTraffic"}})
 		link := workload.GetPurpose() == "link-probe"
 		if link {
-			// A slow link is a warning finding; it still opens an incident.
+			// Link findings are diagnostic clues.
 			manifest.Batching.Severity = string(sdk.SeverityWarning)
 		}
 		if err := writeGenericDetector(root, manifest, trafficSource(id, workload.GetName(), link)); err != nil {

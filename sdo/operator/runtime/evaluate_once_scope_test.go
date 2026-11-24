@@ -62,8 +62,8 @@ func TestEvaluateOnceGatesOnTheSelectedClassesOnly(t *testing.T) {
 	healthy := classedDetector("workload-health", sdk.DetectorClassHealth, false)
 	gating := evaluation.FormatClasses(evaluation.GatingClasses)
 
-	if got, err := evaluateOnceClassed(t, []sdk.Detector{healthy, drift}); err != nil || got.Status != evaluation.Firing {
-		t.Fatalf("every class: %+v, %v; want firing (the control: the drift detector fires)", got, err)
+	if got, err := evaluateOnceClassed(t, []sdk.Detector{healthy, drift}); err != nil || got.Status != evaluation.Clear || len(got.Findings) != 1 {
+		t.Fatalf("every class: %+v, %v; want clear with the drift clue", got, err)
 	}
 	if got, err := evaluateOnceClassed(t, []sdk.Detector{healthy, drift}, "--classes", gating); err != nil || got.Status != evaluation.Clear || len(got.Findings) != 0 {
 		t.Fatalf("gating classes: %+v, %v; want clear: a learned detector must not hold an advance", got, err)

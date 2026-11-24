@@ -64,6 +64,17 @@ func (d sloDetector) Spec() sdk.DetectorSpec { return d.spec }
 
 func (d sloDetector) TrafficWorkloads() []string { return []string{d.workload} }
 
+func (d sloDetector) ScenarioSLOWorkload() string { return d.workload }
+
+// ScenarioSLOWorkload returns the workload whose scenario SLO violations this
+// detector reports, or an empty string for other detectors, including links.
+func ScenarioSLOWorkload(detector sdk.Detector) string {
+	if reporter, ok := detector.(interface{ ScenarioSLOWorkload() string }); ok {
+		return reporter.ScenarioSLOWorkload()
+	}
+	return ""
+}
+
 // EvaluationWindow bounds how long a repaired scenario can keep violating its
 // SLO: pre-repair samples age out after MaxAge, and the window needs MinSamples
 // fresh samples, plus one arrival at the scenario's share of the workload rate.

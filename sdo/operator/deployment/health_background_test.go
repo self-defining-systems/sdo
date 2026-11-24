@@ -15,19 +15,12 @@ import (
 func TestBackgroundJobFindingsNeverMakeAVerdictFiring(t *testing.T) {
 	background := sdk.Finding{DetectorID: "request-metrics", RuleID: requestmetrics.RuleErrors, Status: sdk.FindingActive,
 		Summary: "operation run-background-jobs: 13 of 22 requests failed", Metadata: map[string]any{requestmetrics.MetaBackground: true}}
-	got := verdictOf(healthEvaluationOf(evaluation.Verdict{Status: evaluation.Clear, Findings: []sdk.Finding{background}}))
+	got := verdictOf(healthEvaluationOf(evaluation.Verdict{Status: evaluation.Clear, Findings: []sdk.Finding{background}, ClueFindings: []int{0}}))
 	if got.Outcome != lifecycle.VerificationClear || len(got.Detectors) != 0 || len(got.CoverageNotes) != 1 {
 		t.Fatalf("a background-job finding must be a coverage note of a clear verdict: %+v", got)
 	}
-	if evaluation.FindingFires(background) {
-		t.Fatalf("evaluation.FindingFires must not count a background clue")
-	}
-
 	user := background
 	user.Metadata = nil
-	if !evaluation.FindingFires(user) {
-		t.Fatalf("a user-traffic finding is firing")
-	}
 	held := verdictOf(healthEvaluationOf(evaluation.Verdict{Status: evaluation.Firing, Findings: []sdk.Finding{user}}))
 	if held.Outcome != lifecycle.VerificationSourceFault || len(held.Detectors) != 1 {
 		t.Fatalf("a user-traffic finding must still hold: %+v", held)

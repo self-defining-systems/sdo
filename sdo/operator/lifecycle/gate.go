@@ -119,9 +119,8 @@ func verdictChecks(verdict HealthVerdict, existingRecords bool) []operability.Ch
 	return checks
 }
 
-// coverageNoteChecks records the detectors that cleared without observing part
-// of their scope as one O3 note: a coverage gap the report shows and no reader
-// acts on.
+// coverageNoteChecks records clue findings and observation gaps as one
+// informational O3 note.
 func coverageNoteChecks(notes []DetectorState) []operability.Check {
 	if len(notes) == 0 {
 		return nil

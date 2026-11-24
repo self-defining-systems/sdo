@@ -13,7 +13,7 @@ import (
 func TestClearVerdictRecordsCoverageNotesWithoutHoldingAcceptance(t *testing.T) {
 	verdict := HealthVerdict{
 		Outcome: VerificationClear, Summary: "accepted health detectors report clear",
-		CoverageNotes: []DetectorState{{DetectorID: "store-state-kv", Status: "clear", Reason: "store kv (redis) not observed until it is read healthy once: Pod kv-0: sh: redis-cli: not found"}},
+		CoverageNotes: []DetectorState{{DetectorID: "store-state-kv", Status: "unavailable", Reason: "store kv (redis): Pod kv-0: sh: redis-cli: not found"}},
 	}
 	checks := verdictChecks(verdict, true)
 	var note *operability.Check

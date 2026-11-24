@@ -111,6 +111,10 @@ func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload,
     the Service the scenario calls; the Services it depends on are related,
     so the finding localizes the fault along the request path.
 
+func ScenarioSLOWorkload(detector sdk.Detector) string
+    ScenarioSLOWorkload returns the workload whose scenario SLO violations this
+    detector reports, or an empty string for other detectors, including links.
+
 
 TYPES
 
