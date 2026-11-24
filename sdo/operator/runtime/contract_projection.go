@@ -292,6 +292,9 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		}
 		encoded.ApplicationId, encoded.ProgramIds, encoded.Duration, encoded.Error = application.ID, append([]string(nil), application.ProgramIDs...), durationpb.New(application.Result.Duration), application.Error
 		encoded.RolledBack, encoded.RollbackError = application.RolledBack, application.RollbackError
+		if hasStructuralSecret(application.Result.Plan.Actions) {
+			encoded.Error, encoded.RollbackError = "", ""
+		}
 		encoded.RunningCommit, encoded.RunningDirty = application.RunningCommit, application.RunningDirty
 		encoded.StartedAt, encoded.CompletedAt = optionalTimestamp(application.StartedAt), optionalTimestamp(application.CompletedAt)
 		message.PlanApplications = append(message.PlanApplications, encoded)

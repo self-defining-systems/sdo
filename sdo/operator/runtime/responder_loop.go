@@ -109,7 +109,8 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
-	Text string `json:"text,omitempty"`
+	RecordedErrorCode contracts.MitigationReport_Status `json:"error_code,omitempty"`
+	Text              string                            `json:"text,omitempty"`
 	// Data is a structured answer (`map` with Structured), never prose in JSON.
 	Data                json.RawMessage     `json:"data,omitempty"`
 	Burst               *prober.BurstResult `json:"burst,omitempty"`

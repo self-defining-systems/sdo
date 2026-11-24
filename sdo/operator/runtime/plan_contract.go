@@ -8,6 +8,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -18,12 +19,16 @@ import (
 // Applied actions, pending-rollout observations and verification evidence cross
 // the durable boundary; pending observations never become verification credit.
 func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
-	if err := r.Plan.Validate(); err != nil {
+	sensitive := hasStructuralSecret(r.Plan.Actions)
+	if err := r.Plan.Validate(); err != nil && !sensitive {
 		return nil, err
+	}
+	if sensitive {
+		r.Plan.Rationale, r.RollbackError = "", ""
 	}
 	plan := &contracts.Plan{Rationale: r.Plan.Rationale}
 	for _, action := range r.Plan.Actions {
-		converted, err := planActionProto(action)
+		converted, err := applicationActionProto(action)
 		if err != nil {
 			return nil, err
 		}
@@ -31,7 +36,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	}
 	application := &contracts.PlanApplication{RolledBack: r.RolledBack, RollbackError: r.RollbackError, Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed, FinalEquivalenceVerified: r.FinalEquivalenceVerified, FinalVerificationBasis: r.FinalVerificationBasis, SettlementRejectionReason: r.SettlementRejectionReason, RolloutPending: r.RolloutPending, RecoveryWait: r.RecoveryWait, EffectConfirmation: r.EffectConfirmation}
 	for _, action := range r.ActionsApplied {
-		converted, err := planActionProto(action)
+		converted, err := applicationActionProto(action)
 		if err != nil {
 			return nil, err
 		}
@@ -49,7 +54,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	}
 	for _, effect := range r.observedObjectEffects() {
 		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible, Reason: effect.Reason}
-		if effect.DeletedPreImage != nil {
+		if effect.DeletedPreImage != nil && !isSecretRef(effect.Ref) && effect.DeletedPreImage.GetKind() != "Secret" {
 			object := effect.DeletedPreImage.DeepCopy().Object
 			sdk.ProjectWebhookCABundles(object)
 			image, err := structpb.NewStruct(object)
@@ -65,6 +70,12 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		encoded.SourceReconcile = report.SourceReconcile
 		encoded.WebhookCaDigest = report.WebhookCADigest
 		encoded.FailureReason = report.FailureReason
+		if report.ActionIndex >= 0 && report.ActionIndex < len(r.Plan.Actions) {
+			if _, sensitive := structuralSecretAction(r.Plan.Actions[report.ActionIndex]); sensitive {
+				application.ActionReports = append(application.ActionReports, encoded)
+				continue
+			}
+		}
 		encoded.RecordingError = report.RecordingError
 		encoded.JobStatusJson = report.JobStatus
 		if report.Script != nil {
@@ -89,6 +100,40 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		application.ActionReports = append(application.ActionReports, encoded)
 	}
 	return application, nil
+}
+
+func applicationActionProto(action program.Action) (*contracts.Action, error) {
+	identity, sensitive := structuralSecretAction(action)
+	if !sensitive {
+		return planActionProto(action)
+	}
+	result := &contracts.Action{}
+	message := result.ProtoReflect()
+	fields := message.Descriptor().Oneofs().ByName("kind").Fields()
+	for i := range fields.Len() {
+		field := fields.Get(i)
+		if string(field.Message().Name()) != identity.Action {
+			continue
+		}
+		target := message.Mutable(field).Message()
+		if ref := target.Descriptor().Fields().ByName("ref"); ref != nil {
+			target.Set(ref, protoreflect.ValueOfMessage(planRefProto(identity.Ref).ProtoReflect()))
+		}
+		if reason := target.Descriptor().Fields().ByName("reason"); reason != nil {
+			target.Set(reason, protoreflect.ValueOfString(identity.Reason))
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("encode Secret action identity")
+}
+
+func hasStructuralSecret(actions []program.Action) bool {
+	for _, action := range actions {
+		if _, ok := structuralSecretAction(action); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func planApplicationState(application *contracts.PlanApplication) RecordedPlanApplication {
