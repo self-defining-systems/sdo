@@ -42,6 +42,20 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
     assert "one match" in output
 
 
+def test_closing_turn_rejects_live_commands_without_polling(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "requests").mkdir()
+    (tmp_path / "responses").mkdir()
+    monkeypatch.setenv("SDO_TOOLS_DIR", "")
+    monkeypatch.setattr(tools_cli.time, "sleep", lambda _: pytest.fail("polled a closed transport"))
+
+    assert tools_cli.main(["timeline"]) == 1
+    output = capsys.readouterr()
+    assert "Live incident tools are unavailable in the closing turn" in output.err
+    assert output.out == ""
+    assert list((tmp_path / "requests").iterdir()) == []
+
+
 def test_sdo_source_cli_sends_a_namespaced_resource(monkeypatch, capsys):
     seen = []
 

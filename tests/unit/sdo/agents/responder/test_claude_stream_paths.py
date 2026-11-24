@@ -57,8 +57,10 @@ def _frames(session: str, *answers: str) -> list[dict[str, object]]:
 
 
 def test_incident_turn_waits_for_its_subagents_then_the_closing_turn_resumes_the_same_session(
-    tmp_path: Path, prepare_reflection_memory
+    tmp_path: Path, prepare_reflection_memory, monkeypatch
 ) -> None:
+    tools_dir = str(tmp_path / "live-tools")
+    monkeypatch.setenv("SDO_TOOLS_DIR", tools_dir)
     incident = FakeExecutor(
         FakeRun(), peers=lambda _spawn: ClaudeFramePeer([_frames(RESPONDER_SESSION, "failed: pending", "recovered")])
     )
@@ -67,6 +69,7 @@ def test_incident_turn_waits_for_its_subagents_then_the_closing_turn_resumes_the
     )
     assert json.loads(turn.output_json) == {"answer": "recovered"}
     assert turn.session_id == RESPONDER_SESSION
+    assert incident.spawns[-1].env["SDO_TOOLS_DIR"] == tools_dir
 
     prepare_reflection_memory(tmp_path, INCIDENT)
     closing = ScriptedAgent(
@@ -87,6 +90,7 @@ def test_incident_turn_waits_for_its_subagents_then_the_closing_turn_resumes_the
     assert f"--resume={RESPONDER_SESSION}" in argv
     assert "-p" not in argv
     assert argv[argv.index("--input-format") + 1] == "stream-json"
+    assert spawn.env["SDO_TOOLS_DIR"] == ""
     decision = ReflectionResult()
     assert result.response.Unpack(decision)
     assert decision.no_change_reason == "restarts it"
