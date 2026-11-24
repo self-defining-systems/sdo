@@ -36,6 +36,8 @@ var hookTimeouts = map[string]time.Duration{
 	"snapshot":    90 * time.Minute,
 	"teardown":    15 * time.Minute,
 	"transcripts": 2 * time.Minute,
+	// a first check only reads; a later one may collect again, within collect's own limit.
+	verbVerifyEvidence: 15 * time.Minute,
 	// The verbs the contract adds (docs/contract.md); no step calls them yet except preflight.
 	"describe":        time.Minute,
 	"check-input":     30 * time.Minute,
@@ -56,8 +58,12 @@ var hookTimeouts = map[string]time.Duration{
 	VerbFootprint:   5 * time.Minute,
 }
 
+// HookLimitEnv tells a hook how many seconds it has before the platform kills its process group, so that a verb that
+// must leave something behind (collect: its manifest) ends on its own before that.
+const HookLimitEnv = "BENCH_VERB_LIMIT_SECONDS"
+
 // SubjectVerbs are the verbs of the subject contract (docs/contract.md): the operator under test.
-var SubjectVerbs = []string{"check", "prepare", "swap", "idle", "watch", "collect", "snapshot", "reset", "teardown", "transcripts", verbUnhold,
+var SubjectVerbs = []string{"check", "prepare", "swap", "idle", "watch", "collect", "snapshot", "reset", "teardown", "transcripts", verbUnhold, verbVerifyEvidence,
 	"describe", "check-input", "preflight", "export-artifact", "verify-artifact", "reseed", "verify-start"}
 
 // Unsupported reports that the hook does not implement the verb: exit 64, a last stdout line {"unsupported":true},
@@ -122,6 +128,7 @@ func (h Hook) Run(ctx context.Context, verb string, extra []string, log io.Write
 	cmd := exec.CommandContext(ctx, "sh", "-c", h.Command+" "+verb)
 	cmd.Dir = h.Dir
 	cmd.Env = append(append(os.Environ(), h.Env...), extra...)
+	cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%d", HookLimitEnv, int(d.Seconds())))
 	var stdout, all bytes.Buffer
 	w := io.Writer(&all)
 	if log != nil {

@@ -61,7 +61,7 @@ const (
 	// The state is the last one in bench.log, so lane-time totals stop at it. Reset by hand to bring it back.
 	LaneRetired = "retired"
 	// LaneHeld: the run's evidence is incomplete. The lane is neither recycled nor released (its cluster still holds
-	// what the evidence lacks) until the manifest lists no problems (a fix or a waiver).
+	// what the evidence lacks) until the manifest lists no problems (a fix or a waiver; evidencehold.go).
 	LaneHeld = "held"
 	// LaneUnreachable: the lane's host stopped answering for longer than hostGrace. Its step (Orphan) is given up and
 	// its item went back to the queue; the lane is recovered, as every lane after a lost step is, once the host is
@@ -88,9 +88,12 @@ type LaneFile struct {
 	// experiment): every build tears it down first.
 	Prepared *Prepared `json:"prepared,omitempty"`
 	// HeldRun is the run directory whose evidence manifest holds the lane (state held).
-	HeldRun       string `json:"held_run,omitempty"`
-	BuildFailures int    `json:"build_failures,omitempty"`
-	GateFailures  int    `json:"gate_failures,omitempty"`
+	HeldRun string `json:"held_run,omitempty"`
+	// Hold is the hold of a subject that declares verify-evidence (evidencehold.go): until it is verified nothing erases
+	// the lane.
+	Hold          *Hold `json:"hold,omitempty"`
+	BuildFailures int   `json:"build_failures,omitempty"`
+	GateFailures  int   `json:"gate_failures,omitempty"`
 	// AutoResets counts the times the manager recreated the lane after it went down; a good build clears it.
 	AutoResets int `json:"auto_resets,omitempty"`
 	// Gone: the lane's cluster was deleted (the next build creates it). Recreate: the next build
@@ -181,6 +184,9 @@ type Removal struct {
 	// Cancel: the removal also stops the experiment's runs in flight (`lanes plan remove --cancel`, `plan skip
 	// --cancel`); without it, and without Teardown, a run on a lane finishes.
 	Cancel bool `json:"cancel,omitempty"`
+	// GiveUp: a person gave the runs up by name (a teardown, an explicit --cancel), so no lane is held for their
+	// evidence. Removing a plan cancels its runs too, but gives nothing up on its own.
+	GiveUp bool `json:"give_up,omitempty"`
 }
 
 // Root is the results directory.

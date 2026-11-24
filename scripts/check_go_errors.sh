@@ -77,6 +77,10 @@ echo "==> Go nondeterminism ratchet"
 echo "==> go mains (benchmarks/)"
 "$SCRIPT_DIR/check_go_mains.sh"
 
+# Integration-tagged, so a plain `go test` never compiles it; it reads source files only (one package, about a second).
+echo "==> lanes layering (what the lanes packages may name)"
+(cd benchmarks/lanes && go test -count=1 -tags integration ./internal/layerguard)
+
 if [[ "$run_parity" == 1 ]]; then
     "$SCRIPT_DIR/check_contracts_fast.sh" --go-only
 fi

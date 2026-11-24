@@ -719,6 +719,9 @@ func (m *Manager) resetDown() {
 		if l.State != LaneDown || l.Step != nil || now.Sub(l.Since) < downRetryAfter {
 			continue
 		}
+		if l.Hold.owes() != "" {
+			continue
+		}
 		if l.AutoResets >= maxAutoResets {
 			m.setState(l, LaneRetired, fmt.Sprintf("down after %d automatic resets: %s", l.AutoResets, l.Reason))
 			continue
@@ -783,6 +786,10 @@ func (m *Manager) churnFull(h string) bool { return m.builds(h) >= m.inv.Hosts[h
 
 // start fills in the lane's part of a step and starts it on the lane's host.
 func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
+	if why := l.Hold.owes(); why != "" && erases(s.Kind) {
+		m.logf("lane %s: %s refused: the evidence of its last run is not verified: %s", l.Lane, s.Kind, why)
+		return false
+	}
 	if why := m.laneGate(l.Lane); why != "" && (s.Kind == StepBuild || s.Kind == StepRun) {
 		return false // no new work on a lane whose pods crash-loop; recover, release and unhold still run
 	}
@@ -859,6 +866,12 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 			}
 		}
 	}
+	if s.Kind == StepVerify {
+		if err := m.ops(l.Host).Put(ctx, l.Lane, s.ID, l.Hold.Dir); err != nil {
+			m.logf("lane %s: %s: send %s: %v", l.Lane, s.ID, l.Hold.Dir, err)
+			return false
+		}
+	}
 	if err := m.ops(l.Host).Start(ctx, s); err != nil {
 		// It may have started all the same (an ssh that timed out after the step began): the
 		// probe decides. A step that never ran shows as dead and is followed by a recover step.
@@ -898,7 +911,7 @@ func (m *Manager) expStep(ctx context.Context, l *LaneFile, x *Experiment, kind 
 	if s.GateAfterCheck != "" {
 		gate, _ = time.ParseDuration(s.GateAfterCheck)
 	}
-	st := Step{Kind: kind, Experiment: x.Name, Fuzzops: fz, Workload: s.Workload, WorkloadRev: s.Fuzzops, ReadyFor: Seconds(rf.Seconds()), GateAfterCheck: Seconds(gate.Seconds()),
+	st := Step{Kind: kind, Experiment: x.Name, VerifyEvidence: kind == StepRun && x.declaresEvidence(), Fuzzops: fz, Workload: s.Workload, WorkloadRev: s.Fuzzops, ReadyFor: Seconds(rf.Seconds()), GateAfterCheck: Seconds(gate.Seconds()),
 		ReadyTimeout: Seconds(rt.Seconds()), Cap: Seconds(cap.Seconds())}
 	if kind == StepBuild {
 		b := s.BuildBad()
@@ -931,12 +944,12 @@ func (m *Manager) expStep(ctx context.Context, l *LaneFile, x *Experiment, kind 
 	return st, nil
 }
 
-// unhold returns a held lane to use once its run's evidence manifest lists no problems (the evidence was completed,
-// or waived, and the manifest rewritten). First the operator reset collect skipped runs as a step (the lane keeps its
-// held state meanwhile); then the lane continues its sequence when it still has one, else it is free. A failed reset
-// leaves it held and is tried again after a minute.
+// unhold returns a held lane to use once its run's evidence is complete (checkHold; for a subject that declares no
+// verify-evidence, once the manifest that holds the lane lists no problems). First the reset collect skipped runs as a
+// step (the lane keeps its held state meanwhile); then the lane continues its sequence when it still has one, else it
+// is free. A failed reset leaves it held and is tried again after a minute.
 func (m *Manager) unhold(ctx context.Context, l *LaneFile) {
-	if l.State != LaneHeld || l.Step != nil || evidenceProblems(l.HeldRun) != "" {
+	if l.Step != nil || m.checkHold(ctx, l) || l.State != LaneHeld || evidenceProblems(l.HeldRun) != "" {
 		return
 	}
 	if m.now().Sub(l.Since) < time.Minute && strings.HasPrefix(l.Reason, "unhold failed") {
@@ -946,7 +959,7 @@ func (m *Manager) unhold(ctx context.Context, l *LaneFile) {
 		return
 	}
 	if l.Prepared != nil && l.Prepared.Hooks != "" {
-		m.logf("lane %s: evidence complete, resetting incidents", l.Lane)
+		m.logf("lane %s: evidence complete, starting the reset its run still owes", l.Lane)
 		m.start(ctx, l, Step{Kind: StepUnhold, Prev: l.Prepared})
 		return
 	}
@@ -956,7 +969,7 @@ func (m *Manager) unhold(ctx context.Context, l *LaneFile) {
 // release ends a hold: the lane continues its sequence, else it is free.
 func (m *Manager) release(l *LaneFile) {
 	m.logf("lane %s: evidence complete, hold released", l.Lane)
-	l.HeldRun = ""
+	l.HeldRun, l.Hold = "", nil
 	if l.Seq != nil {
 		m.setState(l, LaneReady, "")
 		return
@@ -1505,10 +1518,18 @@ func (m *Manager) died(ctx context.Context, l *LaneFile) {
 	if m.retryTeardown(ctx, l, dead) {
 		return
 	}
+	if dead.Kind == StepVerify && l.Hold != nil {
+		l.Hold.Evidence = &Evidence{Reasons: []string{strings.TrimSpace("the check died " + dead.Killed)}}
+		if err := m.ops(l.Host).Clean(ctx, l.Lane, dead.ID); err != nil {
+			m.logf("lane %s: clean %s: %v", l.Lane, dead.ID, err)
+		}
+		return
+	}
 	if dead.Kind == StepRecover {
 		m.setState(l, LaneDown, "recover step died")
 		return
 	}
+	owed := false
 	if dead.Kind == StepRun && l.Experiment != "" && l.Seq != nil {
 		if x := m.exps[l.Experiment]; x != nil {
 			reason := "lane lost: step died"
@@ -1516,6 +1537,7 @@ func (m *Manager) died(ctx context.Context, l *LaneFile) {
 				reason = "lane lost: step " + dead.Killed
 			}
 			m.endRun(x, l, dead.Run, Result{Status: StatusInvalid, Reason: reason})
+			owed = m.holdDead(l, x, dead, m.Root.RunDir(x.Name, dead.Run.ID))
 		}
 	}
 	if dead.Kind == StepBuild && dead.Killed != preemptedBy {
@@ -1534,7 +1556,9 @@ func (m *Manager) died(ctx context.Context, l *LaneFile) {
 		}
 	}
 	m.unbind(l, "step died: "+dead.ID)
-	if err := m.ops(l.Host).Clean(ctx, l.Lane, dead.ID); err != nil {
+	if owed {
+		m.salvage(ctx, l)
+	} else if err := m.ops(l.Host).Clean(ctx, l.Lane, dead.ID); err != nil {
 		m.logf("lane %s: clean %s: %v", l.Lane, dead.ID, err)
 	}
 	m.start(ctx, l, Step{Kind: StepRecover, Prev: prev, Run: dead.Run})
@@ -1558,10 +1582,19 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 	if ref.Kind == StepRun && x != nil {
 		res, oom = judgeOOM(x.Measured(), res)
 	}
+	// A first run that timed out on an overloaded manager machine is the machine's failure: no run is recorded, so the
+	// item stays queued with its attempts, and the lane's cluster is made anew (what the run did to it is unknown).
+	writtenOff := ref.Kind == StepRun && x != nil && ref.Run != nil && ref.Run.Position == 1 && l.Seq != nil && res.Status == StatusInvalid &&
+		m.lostToLoad(l, ref, res, fmt.Sprintf("%s/%v", x.Name, *l.Seq))
+	var dest string
 	if ref.Kind == StepRun && x != nil {
-		// A run's files go to its run directory (run.json last, below); a not-ready try's apart.
-		dest := m.Root.path(x.Name, "not-ready", ref.ID)
-		if ref.Run != nil && res.Status != StatusNotReady {
+		// A run's files go to its run directory (run.json last, below); a not-ready try's and those of a run that is
+		// not recorded apart.
+		dest = m.Root.path(x.Name, "not-ready", ref.ID)
+		switch {
+		case writtenOff && x.declaresEvidence():
+			dest = m.Root.path(x.Name, "lost", ref.ID)
+		case ref.Run != nil && res.Status != StatusNotReady:
 			dest = m.Root.RunDir(x.Name, ref.Run.ID)
 		}
 		_ = os.RemoveAll(dest)
@@ -1654,11 +1687,10 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 			}
 		}
 	case StepRun:
-		// A first run that timed out on an overloaded manager machine is the machine's failure: no run is recorded, so the
-		// item stays queued with its attempts, and the lane's cluster is made anew (what the run did to it is unknown).
-		writtenOff := x != nil && ref.Run != nil && ref.Run.Position == 1 && l.Seq != nil && res.Status == StatusInvalid &&
-			m.lostToLoad(l, ref, res, fmt.Sprintf("%s/%v", x.Name, *l.Seq))
-		if x != nil && !writtenOff {
+		switch {
+		case writtenOff && x.declaresEvidence():
+			m.lost(l, x, ref, "not counted, the manager's machine was overloaded: "+res.Reason)
+		case x != nil && !writtenOff:
 			m.endRun(x, l, ref.Run, res)
 		}
 		switch {
@@ -1693,7 +1725,7 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 			} else {
 				m.unbind(l, "")
 			}
-			if res.EvidenceIncomplete != "" && x != nil && ref.Run != nil {
+			if res.EvidenceIncomplete != "" && x != nil && ref.Run != nil && !x.declaresEvidence() {
 				l.HeldRun = filepath.Join(m.Root.RunDir(x.Name, ref.Run.ID), "operator", EvidenceManifest)
 				m.logf("lane %s: evidence incomplete, lane held: %s", l.Lane, res.EvidenceIncomplete)
 				m.setState(l, LaneHeld, "evidence incomplete: "+res.EvidenceIncomplete)
@@ -1706,6 +1738,21 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 			}
 			m.unbind(l, "")
 		}
+		// A try that never started the workload or never passed its gate is no run: nothing was injected.
+		if ref.Run != nil && x.declaresEvidence() && !x.givenUp() && res.Status != "" && res.Status != StatusNotReady {
+			ev, w := res.Evidence, res.Window
+			if ev == nil && res.CollectFailed != "" {
+				ev = &Evidence{Reasons: []string{res.CollectFailed}}
+			}
+			if w == nil {
+				w = &Window{res.Started, res.Ended}
+			}
+			if ev.missing() != "" || res.CollectFailed != "" {
+				m.hold(l, x, ref, dest, *w, ev, false)
+			}
+		}
+	case StepVerify:
+		m.checked(l, res, tmp)
 	case StepRelease:
 		if res.OK {
 			if res.Prepared != nil && res.Prepared.Reset {
@@ -1771,20 +1818,29 @@ func (m *Manager) endRun(x *Experiment, l *LaneFile, rs *RunSpec, res Result) {
 		}
 		status, reason = StatusInvalid, "sequence broken: not ready: "+res.Reason
 	}
-	now := m.now().UTC()
-	rf := RunFile{ID: rs.ID, Experiment: x.Name, Fault: rs.Fault, Sequence: l.Seq.Q, Position: rs.Position, Seed: rs.Seed,
-		Attempt: l.Attempt, Status: status, Reason: reason, Lane: l.Lane, Host: l.Host, OperatorLabel: rs.Label, Fuzzops: res.Fuzzops,
-		Started: res.Started, Ended: res.Ended, InjectAt: res.InjectAt, SettleEnd: res.SettleEnd, Capped: res.Capped, Isolation: res.Isolation}
+	rf := m.runFile(x, l, rs, res, status, reason)
 	if res.Isolation != nil && res.Isolation.OOMKills > 0 {
 		m.logf("run %s: %d OOM kill(s) in lane %s's nodes during the run: flagged in run.json (status %s)", rs.ID, res.Isolation.OOMKills, l.Lane, status)
-	}
-	if rf.Started.IsZero() {
-		rf.Started, rf.Ended = now, now
 	}
 	m.writeRun(x, rf)
 	if status != StatusDone {
 		m.breakRest(x, l, rs, reason)
 	}
+}
+
+// runFile is the run.json of run rs, which ended with res on lane l.
+func (m *Manager) runFile(x *Experiment, l *LaneFile, rs *RunSpec, res Result, status, reason string) RunFile {
+	rf := RunFile{ID: rs.ID, Experiment: x.Name, Fault: rs.Fault, Position: rs.Position, Seed: rs.Seed,
+		Attempt: l.Attempt, Status: status, Reason: reason, Lane: l.Lane, Host: l.Host, OperatorLabel: rs.Label, Fuzzops: res.Fuzzops,
+		Started: res.Started, Ended: res.Ended, InjectAt: res.InjectAt, SettleEnd: res.SettleEnd, Capped: res.Capped, Isolation: res.Isolation}
+	if l.Seq != nil {
+		rf.Sequence = l.Seq.Q
+	}
+	if rf.Started.IsZero() {
+		rf.Started = m.now().UTC()
+		rf.Ended = rf.Started
+	}
+	return rf
 }
 
 // breakRest marks the positions after rs invalid "sequence broken: why".
@@ -1865,6 +1921,9 @@ func (m *Manager) gcHost(ctx context.Context, host string) {
 		}
 		if !l.Gone {
 			keep = append(keep, filepath.Join(l.Lane, "lane"), filepath.Join(l.Lane, "step.lock"))
+		}
+		if l.Hold != nil && l.Hold.Step != "" {
+			keep = append(keep, filepath.Join(l.Lane, l.Hold.Step))
 		}
 		if p := l.Prepared; p != nil && p.Operator != "" {
 			dir := filepath.Dir(p.Operator)

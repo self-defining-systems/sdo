@@ -24,6 +24,7 @@ case $verb in
   watch) echo "watching $BENCH_FAULT"; sleep 3600 ;;
   collect) echo "collected $BENCH_RUN" > "$BENCH_OUT/collected.txt"
     [ -f "$st/incomplete-evidence" ] && echo '{"problems": ["controller.log missing (operator/controller.log)"]}' > "$BENCH_OUT/evidence-manifest.json" ;;
+  verify-evidence) [ -f "$st/verify-evidence" ] && cat "$st/verify-evidence" || exit 64 ;;
   reset-incidents) echo reset >> "$st/incident-resets" ;;
   teardown) rm -f "$st/prepared" "$st/golden" ;;
   transcripts) [ -n "$BENCH_EVIDENCE_HOST" ] && [ -n "$BENCH_EVIDENCE_RUN" ] || { echo "no sink: no evidence directory"; exit 1; } ;;

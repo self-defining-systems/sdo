@@ -194,6 +194,30 @@ func (h sshHost) Fetch(ctx context.Context, lane, id, dest string) error {
 	return os.Rename(tmp, dest)
 }
 
+func (h sshHost) Put(ctx context.Context, lane, id, src string) error {
+	dst := filepath.Join(h.h.Staging, lane, id, "run")
+	if _, err := h.run(ctx, nil, "mkdir -p "+shellQuote(dst)); err != nil {
+		return err
+	}
+	return rsync(ctx, h.sshForRsync(), src+"/", h.h.SSH+":"+dst+"/")
+}
+
+func (h sshHost) Salvage(ctx context.Context, lane, id, dest string) error {
+	src := filepath.Join(h.h.Staging, lane, id)
+	out, err := h.run(ctx, nil, "if test -d "+shellQuote(src)+"; then echo there; fi")
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return err
+	}
+	tmp := dest + ".partial"
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		return err
+	}
+	if err := rsync(ctx, h.sshForRsync(), h.h.SSH+":"+src+"/", tmp+"/", rsyncNFSExclude); err != nil {
+		return err
+	}
+	return mergeInto(tmp, dest)
+}
+
 func (h sshHost) Clean(ctx context.Context, lane, id string) error {
 	_, err := h.run(ctx, nil, "rm -rf "+shellQuote(filepath.Join(h.h.Staging, lane, id)))
 	return err

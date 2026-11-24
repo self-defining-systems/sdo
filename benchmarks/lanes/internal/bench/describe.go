@@ -26,6 +26,9 @@ type Described struct {
 	MaxStartup string `json:"max_startup,omitempty"`
 	// NeedsCredentials says whether the subject calls a model provider, so preflight should check credentials.
 	NeedsCredentials bool `json:"needs_credentials"`
+	// VerifyEvidence declares the verb verify-evidence: a lane is freed only once it answered "verified"
+	// (evidencehold.go). Absent: the verb is never called and holds nothing.
+	VerifyEvidence bool `json:"verify_evidence,omitempty"`
 	// Inputs are the rules on the spec's named inputs (operator.baseline, operator.seed), by input name.
 	Inputs map[string]InputRule `json:"inputs,omitempty"`
 }

@@ -26,6 +26,7 @@ import os
 import re
 import sys
 import tempfile
+import zlib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,9 @@ OBSERVABILITY = "observability.json"
 BUILD = "build.json"
 HOST_LOAD = "host-load.json"
 INCOMPLETE = "evidence incomplete"
+#: The captures that may be ``empty`` (the store ran through the window and holds nothing for it, see ``capture``): an
+#: application that sends no traces has none. An empty Prometheus or an empty log capture is missing evidence.
+MAY_BE_EMPTY = ("jaeger",)
 #: Observability captures that must be present once the receipt says the stack answered.
 CAPTURES = ("prometheus", "jaeger", "applogs")
 #: The model name an operator is configured with when its agents are scripted stand-ins (no model, no cost, no
@@ -101,23 +105,21 @@ def read_json_object(path: Path) -> dict[str, Any]:
 
 def jsonl_problem(path: Path) -> str:
     """Why a JSONL file is not whole ("" when every line parses): a killed writer leaves a partial last line."""
+    bad, line = "", b"\n"
     try:
-        if path.suffix == ".gz":
-            data = gzip.decompress(path.read_bytes())
-        else:
-            data = path.read_bytes()
-    except (OSError, EOFError, gzip.BadGzipFile) as exc:
+        with gzip.open(path, "rb") if path.suffix == ".gz" else path.open("rb") as f:
+            for n, line in enumerate(f, 1):
+                if bad or not line.strip():
+                    continue
+                try:
+                    json.loads(line)
+                except ValueError:
+                    bad = f"line {n} is not JSON"
+    except (OSError, EOFError, gzip.BadGzipFile, zlib.error) as exc:
         return f"unreadable: {exc}"
-    if data and not data.endswith(b"\n"):
+    if not line.endswith(b"\n"):
         return "last line has no newline (partial write)"
-    for n, line in enumerate(data.splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            json.loads(line)
-        except ValueError:
-            return f"line {n} is not JSON"
-    return ""
+    return bad
 
 
 # ---- the manifest ----------------------------------------------------------------------------------------------------
@@ -138,7 +140,7 @@ class Item:
     name: str
     path: str  # relative to the run directory
     required: bool = True
-    status: str = "present"  # present | missing | truncated | invalid | waived
+    status: str = "present"  # present | missing | truncated | invalid | empty | waived
     bytes: int = 0
     sha256: str = ""
     detail: str = ""
@@ -523,6 +525,17 @@ def copy_problems(evidence: Path) -> dict[str, list[str]]:
     return out
 
 
+#: A gzip file smaller than this may hold nothing at all (the header and trailer alone are 20 bytes and some).
+MIN_GZIP_BYTES = 64
+
+
+def _gzip_is_empty(path: Path) -> bool:
+    try:
+        return not gzip.decompress(path.read_bytes()).strip()
+    except (OSError, EOFError, zlib.error):
+        return False  # unreadable, which is another problem
+
+
 def _item(run: Path, name: str, rel: str, required: bool = True) -> Item:
     p = run / rel
     if not p.is_file():
@@ -579,7 +592,8 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
     _check_json(add("run.json", "run.json", required=not run_pending), run, problems)
     rec_item = add("record.json", "record.json")
     _check_json(rec_item, run, problems)
-    if isinstance(record, dict) and "series" not in record:  # a commit-series record is the adapter's, not a run's
+    # a commit-series record is the adapter's, not a run's; one the grader declared invalid has no measurement to miss
+    if isinstance(record, dict) and "series" not in record and record.get("valid") is not False:
         for k in ("window", "tail", "timing", "interference"):
             if not isinstance(record.get(k), dict):
                 problems.append(Problem("record.json", "incomplete", f"no {k}"))  # noqa: PERF401
@@ -637,6 +651,10 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
                 it = add(f"observability {name}", f"operator/{rel}")
                 if it.status == "missing":
                     problems.append(Problem(it.name, "missing", it.path))
+                elif rel.endswith(".jsonl.gz") and it.bytes < MIN_GZIP_BYTES and _gzip_is_empty(run / it.path):
+                    it.status = "empty"  # an older capture recorded a store that held nothing as ok
+                    if name not in MAY_BE_EMPTY:
+                        problems.append(Problem(it.name, "missing", f"{it.path} holds nothing"))
                 elif (
                     it.path.endswith((".gz", ".jsonl"))
                     and (bad := jsonl_problem(run / it.path))
@@ -644,7 +662,9 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
                 ):
                     it.status = "truncated"
                     problems.append(Problem(it.name, "truncated", f"{it.path}: {bad}"))
-        elif state not in ("absent", "deferred"):
+        elif state == "empty" and name in MAY_BE_EMPTY:
+            pass
+        elif state not in ("absent", "deferred"):  # "deferred": cells of series from before every position captured
             problems.append(
                 Problem(f"observability {name}", "incomplete", str(_get(obs, name, "detail") or state)[:160])
             )
@@ -757,6 +777,16 @@ def write_manifest(run_dir: Path, run_pending: bool = False) -> CellEvidence:
     ev = build(run_dir, run_pending)
     atomic_write_json(run_dir / "operator" / MANIFEST, ev.to_json())
     return ev
+
+
+UNFINISHED = "collect did not finish"
+
+
+def write_unfinished(run_dir: Path) -> None:
+    """The manifest a collect that has begun leaves until it ends: whatever kills it, no file says the evidence is
+    complete, and the one problem says why."""
+    ev = CellEvidence(run=run_dir.name, written_at=_now(), problems=[UNFINISHED])
+    atomic_write_json(run_dir / "operator" / MANIFEST, ev.to_json())
 
 
 def verdict(ev: CellEvidence) -> str:

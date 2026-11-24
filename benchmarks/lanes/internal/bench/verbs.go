@@ -202,22 +202,27 @@ func checkPoolCapacity(inv Inventory, s Spec) error {
 // clusters are deleted once no experiment needs their host (as for an experiment without keep_lanes). What remove
 // decided is recorded in <exp>/removed.json before the spec goes, so the manager never sees it removed without it.
 func Remove(root Root, name string, teardown bool) error {
-	return remove(root, name, teardown, false)
+	return remove(root, name, Removal{Teardown: teardown, GiveUp: teardown})
 }
 
 // RemoveCancel is Remove that also kills the experiment's runs in flight (their lanes return free through the
 // recover step, as for a dead step) and keeps the spec's keep_lanes: cancelling a run does not delete its cluster.
 func RemoveCancel(root Root, name string) error {
-	return remove(root, name, false, true)
+	return remove(root, name, Removal{Cancel: true, GiveUp: true})
 }
 
-func remove(root Root, name string, teardown, cancel bool) error {
+func remove(root Root, name string, rm Removal) error {
 	if _, err := os.Stat(root.SpecPath(name)); err != nil {
+		var was Removal
+		if rm.GiveUp && readJSON(root.RemovedPath(name), &was) == nil {
+			was.GiveUp = true // removed already: what is left of it is a lane held for one of its runs
+			return writeJSON(root.RemovedPath(name), was)
+		}
 		return err
 	}
-	rm := Removal{At: time.Now().UTC(), Teardown: teardown, Cancel: cancel}
+	rm.At = time.Now().UTC()
 	if x, err := root.LoadExperiment(name); err == nil && x.Spec != nil {
-		rm.KeepLanes = x.Measured().KeepLanes && !teardown
+		rm.KeepLanes = x.Measured().KeepLanes && !rm.Teardown
 	}
 	if err := writeJSON(root.RemovedPath(name), rm); err != nil {
 		return err
@@ -261,6 +266,9 @@ func LaneReset(root Root, lane string) error {
 	}
 	if lf.State != LaneDown && lf.State != LaneRetired {
 		return fmt.Errorf("lane %s is %s, not down or retired", lane, lf.State)
+	}
+	if lf.Hold.owes() != "" {
+		return fmt.Errorf("lane %s: %s", lane, lf.Hold.reason())
 	}
 	lf.AutoResets = 0
 	lf.State, lf.Reason, lf.Since = LaneFree, "reset by hand after: "+lf.Reason, time.Now().UTC()
@@ -557,6 +565,9 @@ func Status(root Root, only string, w io.Writer) error {
 		}
 		if l.Gone {
 			l.Reason = strings.TrimSpace("cluster deleted " + l.Reason)
+		}
+		if l.Hold.owes() != "" && l.State != LaneHeld {
+			l.Reason = strings.TrimPrefix(l.Reason+"; "+l.Hold.reason(), "; ")
 		}
 		what := l.Experiment
 		if l.Seq != nil {

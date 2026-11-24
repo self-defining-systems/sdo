@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1245,6 +1246,144 @@ def test_collect_blocks_the_reset_while_the_evidence_is_incomplete(
     assert not (out / "incidents-reset.json").exists()
 
 
+class _Killed(BaseException):
+    """The platform killed the hook's process group."""
+
+
+def test_a_collect_that_is_killed_never_leaves_a_manifest_that_says_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A killed collect left no manifest, the platform read that as nothing wrong and reset the lane. An earlier
+    attempt's complete manifest must not stand either while the evidence is collected again."""
+
+    def killed(*_: Any, **__: Any) -> None:
+        raise _Killed
+
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: subprocess.CompletedProcess(cmd, 1, "", "no"))
+    monkeypatch.setattr(hooks.capture, "capture_all", killed)
+    out = tmp_path / "run" / "operator"
+    out.mkdir(parents=True)
+    (out / "evidence-manifest.json").write_text('{"problems": []}')
+    with pytest.raises(_Killed):
+        hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out), BENCH_LANE_DIR=str(tmp_path)), out=lambda _: None)
+    assert json.loads((out / "evidence-manifest.json").read_text())["problems"] == ["collect did not finish"]
+
+
+def test_a_part_that_hangs_ends_by_its_deadline_and_the_manifest_names_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every part hangs in a command that would outlive the platform's limit (and survives its own failures): collect
+    still ends, with its manifest, on its own."""
+    monkeypatch.setattr(hooks, "COLLECT_PART_MIN_S", 0.02)
+
+    def hang(*_: Any, **__: Any) -> subprocess.CompletedProcess[str]:
+        while True:
+            try:
+                signal.pause()
+            except Exception:
+                continue
+
+    monkeypatch.setattr(hooks.subprocess, "run", hang)
+    out = tmp_path / "run" / "operator"
+    env = _sink_env(tmp_path, BENCH_OUT=str(out), BENCH_VERB_LIMIT_SECONDS="0.1")
+    assert hooks.collect(env, out=lambda _: None) == 1
+    manifest = json.loads((out / "evidence-manifest.json").read_text())
+    assert any("collect part logs incomplete (error: not done within" in p for p in manifest["problems"])
+    assert any("collect part observability" in p for p in manifest["problems"])
+
+
+def _verify(env: dict[str, str]) -> dict[str, Any]:
+    lines: list[str] = []
+    assert hooks.verify_evidence(env, out=lines.append) == 0
+    return json.loads(lines[-1])
+
+
+def _evidence(monkeypatch: pytest.MonkeyPatch, *answers: list[str]) -> list[Path]:
+    """The manifest lists these problems, one list per time it is built."""
+    built: list[Path] = []
+
+    def write_manifest(run: Path, run_pending: bool = False) -> Any:
+        assert run_pending, "run.json is the manager's"
+        built.append(run)
+        return hooks.cellevidence.CellEvidence(problems=answers[min(len(built), len(answers)) - 1])
+
+    monkeypatch.setattr(hooks.cellevidence, "write_manifest", write_manifest)
+    return built
+
+
+@pytest.mark.parametrize("problems", [[], ["controller.log missing", "observability jaeger incomplete (lost)"]])
+def test_verify_evidence_answers_the_manifests_problems(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problems: list[str]
+) -> None:
+    built = _evidence(monkeypatch, problems)
+    monkeypatch.setattr(hooks, "collect", lambda *_, **__: pytest.fail("a first check only reads"))
+    answer = _verify(_sink_env(tmp_path, BENCH_RUN_DIR=str(tmp_path / "run")))
+    assert answer == {"verified": not problems, "reasons": problems}
+    assert built == [tmp_path / "run"]
+
+
+@pytest.mark.parametrize(("then", "verified"), [([], True), (["still missing"], False)])
+def test_a_later_check_collects_again_before_it_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, then: list[str], verified: bool
+) -> None:
+    _evidence(monkeypatch, ["collect.json missing"], then)
+    collected: list[str] = []
+    monkeypatch.setattr(hooks, "collect", lambda env, out: collected.append(env["BENCH_OUT"]) or 1)
+    env = _sink_env(tmp_path, BENCH_RUN_DIR=str(tmp_path / "run"), BENCH_EVIDENCE_RECHECK="1")
+    assert _verify(env) == {"verified": verified, "reasons": then}
+    assert collected == [str(tmp_path / "run" / "operator")]
+
+
+def test_a_later_check_of_complete_or_waived_evidence_collects_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _evidence(monkeypatch, [])
+    monkeypatch.setattr(hooks, "collect", lambda *_, **__: pytest.fail("nothing to collect"))
+    env = _sink_env(tmp_path, BENCH_RUN_DIR=str(tmp_path / "run"), BENCH_EVIDENCE_RECHECK="1")
+    assert _verify(env)["verified"] is True
+
+
+def test_a_killed_collect_is_not_verified_by_an_earlier_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def killed(*_: Any, **__: Any) -> None:
+        raise _Killed
+
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: subprocess.CompletedProcess(cmd, 1, "", "no"))
+    monkeypatch.setattr(hooks.capture, "capture_all", killed)
+    out = tmp_path / "run" / "operator"
+    out.mkdir(parents=True)
+    (out / "collect.json").write_text('{"parts": {}}')
+    with pytest.raises(_Killed):
+        hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out), BENCH_LANE_DIR=str(tmp_path)), out=lambda _: None)
+    answer = _verify(_sink_env(tmp_path, BENCH_RUN_DIR=str(tmp_path / "run")))
+    assert "collect.json missing (operator/collect.json)" in answer["reasons"]
+
+
+def test_verify_evidence_is_a_verb() -> None:
+    assert "verify-evidence" in hooks.VERBS
+
+
+def test_every_part_of_collect_ends_before_the_platforms_limit() -> None:
+    by = list(hooks.COLLECT_BY.values())
+    assert by == sorted(by)
+    assert by[-1] < 1
+    assert hooks.COLLECT_BY["observability"] <= 0.8, "the manifest is written in what is left"
+
+
+def test_the_captures_get_the_time_the_platform_leaves_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    given: list[float] = []
+
+    def capture_all(*_: Any, seconds: float, **__: Any) -> dict[str, Any]:
+        given.append(seconds)
+        return {"window": ["", ""]} | {k: {"status": "ok"} for k in hooks.cellevidence.CAPTURES}
+
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: subprocess.CompletedProcess(cmd, 1, "", "no"))
+    monkeypatch.setattr(hooks.capture, "capture_all", capture_all)
+    env = _sink_env(tmp_path, BENCH_OUT=str(tmp_path / "run" / "operator"), BENCH_LANE_DIR=str(tmp_path))
+    env |= {"BENCH_VERB_LIMIT_SECONDS": "1000"}
+    hooks.collect(env, out=lambda _: None, clock=lambda: 50.0)
+    assert given == [pytest.approx(1000 * hooks.COLLECT_BY["observability"] * 0.95)]
+
+
 def test_reset_after_install_waits_for_the_controller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     answers = [(1, ""), (1, ""), (0, '{"generation": 1, "acknowledged": true}')]
     monkeypatch.setattr(
@@ -1715,6 +1854,7 @@ def test_describe_tells_lanes_what_the_platform_needs(
         "max_startup": "30m",
         "needs_credentials": True,
         "inputs": {"seed": {"requires": ["baseline"]}},
+        "verify_evidence": True,
     }
 
 

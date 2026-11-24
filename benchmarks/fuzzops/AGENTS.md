@@ -166,8 +166,23 @@ page time in `page.json`, comparable with B1.
 ## Cell evidence manifest and validator
 
 `collect` writes `operator/build.json`, `host-load.json`, `observability.json` (receipt: `prometheus`, `jaeger`, `applogs`
-each `ok`/`absent`/`error`) and `observability/prometheus.jsonl.gz` (every series over the window, 5 minutes of lead),
-`observability/jaeger.jsonl.gz`, `applogs/<ns>/<pod>.log.gz` (64 MiB budget per cell, all atomic writes). Then
+each `ok`/`absent`/`empty`/`error`) and `observability/prometheus.jsonl.gz` (one line `{metric, result}` per metric: every
+series over the window, 5 minutes of lead), `observability/jaeger.jsonl.gz`, `applogs/<ns>/<pod>.log.gz` (per run at most
+96, 32 and 64 MiB; a capture over its bound is an error, never cut). **Every run captures its own window**, each position of
+a commit series too (from where the series' last verified capture ended, at most 20 minutes back), so the cost is the
+window's, not the series', and position k is on disk before position k+1 starts. A file appears only once it was read back:
+whole, not empty, and (Prometheus) with samples from the run's start to the window's end; a store whose data begins later
+(its pod was replaced) is an error, named. `empty` is a store that ran through the window and holds nothing for it: accepted
+of Jaeger (the application sends no traces), a problem for Prometheus and the logs. Prometheus queries are bounded by
+points and run one at a time (its limit is 1 GiB).
+
+Every part of `collect` ends by its share of `BENCH_VERB_LIMIT_SECONDS` (`COLLECT_BY`), and the manifest on disk says
+`collect did not finish` until the real one is written, so a slow or killed collect is an incomplete cell. The hooks
+declare `verify-evidence`, which answers the manifest validator's problems (waivers count), so the platform holds the lane of
+any run that is not complete (`benchmarks/lanes/docs/contract.md`, the evidence rule) and asks again; a later check collects again
+first. A store too ill to be
+queried can still be copied out (`kubectl -n <control> exec deploy/sdo-prometheus -- tar -C /prometheus -cf - .`) before its items
+are waived. Then
 `cellevidence.write_manifest` writes `operator/evidence-manifest.json` (`sdo.cell-evidence/v1`: build and spec identity,
 the grader's journeys per second and window/tail bad seconds, per-incident timelines with dispatch, first agent change,
 health cleared, verified, playbook evaluated/applied, closing-turn dispatch/end/duration/cost, learning decision,

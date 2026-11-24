@@ -20,13 +20,17 @@ func (m *Manager) hostLost(host string, since time.Time, cause error) {
 		if l.Host != host || l.State == LaneDown || l.State == LaneRetired || l.State == LaneUnreachable && l.Step == nil && l.Seq == nil {
 			continue
 		}
-		if l.Step == nil && l.Seq == nil && l.Orphan == nil {
+		if l.Step == nil && (l.Seq == nil || l.Hold != nil) && l.Orphan == nil {
 			continue // a free lane: nothing to give up; admission already refuses the host
 		}
 		reason := fmt.Sprintf("host unreachable since %s: %s", since.Format(time.RFC3339), clip(cause.Error(), 160))
 		if l.Step != nil {
 			m.logf("lane %s: step %s %s (not counted as a failure of its item)", l.Lane, l.Step.ID, reason)
 			l.Orphan, l.Step = l.Step, nil
+			if x := m.exps[l.Experiment]; x != nil && l.Orphan.Run != nil {
+				// Its item runs again under the same run ID: what this try left goes apart.
+				m.holdDead(l, x, l.Orphan, "")
+			}
 			if l.Orphan.Kind == StepBuild && l.Prepared == nil {
 				// The build may have prepared its operator before the host went away: recover tears it down.
 				if x := m.exps[l.Experiment]; x != nil {
@@ -52,10 +56,12 @@ func (m *Manager) settleOrphan(ctx context.Context, l *LaneFile, state string) {
 		}
 		return
 	}
-	if err := ops.Clean(ctx, l.Lane, o.ID); err != nil {
+	l.Orphan = nil
+	if l.Hold != nil && l.Hold.Step == o.ID {
+		m.salvage(ctx, l)
+	} else if err := ops.Clean(ctx, l.Lane, o.ID); err != nil {
 		m.logf("lane %s: clean %s: %v (staging left for gc)", l.Lane, o.ID, err)
 	}
-	l.Orphan = nil
 	if !m.start(ctx, l, Step{Kind: StepRecover, Prev: l.Prepared, Run: o.Run}) {
 		l.Orphan = o
 	}

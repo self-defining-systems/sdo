@@ -114,8 +114,8 @@
       "reason": "operator block staging, FuzzopsRev, reset-incidents step (audit A6, A7, B3, B10)",
       "terms": {
         "fuzzops": 19,
-        "incident": 2,
-        "operator": 32,
+        "incident": 1,
+        "operator": 31,
         "sdo": 6,
         "sdo-config": 9
       }
