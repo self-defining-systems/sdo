@@ -136,7 +136,7 @@ class Plan(_message.Message):
     def __init__(self, actions: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class Action(_message.Message):
-    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script", "sync_webhook_ca", "retire_old_revision", "retry_admission", "store_backup", "invalidate_derived", "repair_data", "restore_backup", "restore_store_item", "check_store_credential", "escalate", "propose_source_change")
+    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script", "sync_webhook_ca", "retire_old_revision", "retry_admission", "store_backup", "invalidate_derived", "repair_data", "restore_backup", "restore_store_item", "check_store_credential", "escalate", "propose_source_change", "unencodable")
     RECONCILE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_FIELD_NUMBER: _ClassVar[int]
     SET_FIELD_FIELD_NUMBER: _ClassVar[int]
@@ -167,6 +167,7 @@ class Action(_message.Message):
     CHECK_STORE_CREDENTIAL_FIELD_NUMBER: _ClassVar[int]
     ESCALATE_FIELD_NUMBER: _ClassVar[int]
     PROPOSE_SOURCE_CHANGE_FIELD_NUMBER: _ClassVar[int]
+    UNENCODABLE_FIELD_NUMBER: _ClassVar[int]
     reconcile_from_source: ReconcileFromSource
     rollback: Rollback
     set_field: SetField
@@ -197,7 +198,8 @@ class Action(_message.Message):
     check_store_credential: CheckStoreCredential
     escalate: Escalate
     propose_source_change: ProposeSourceChange
-    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ..., sync_webhook_ca: _Optional[_Union[SyncWebhookCA, _Mapping]] = ..., retire_old_revision: _Optional[_Union[RetireOldRevision, _Mapping]] = ..., retry_admission: _Optional[_Union[RetryAdmission, _Mapping]] = ..., store_backup: _Optional[_Union[StoreBackup, _Mapping]] = ..., invalidate_derived: _Optional[_Union[InvalidateDerived, _Mapping]] = ..., repair_data: _Optional[_Union[RepairData, _Mapping]] = ..., restore_backup: _Optional[_Union[RestoreBackup, _Mapping]] = ..., restore_store_item: _Optional[_Union[RestoreStoreItem, _Mapping]] = ..., check_store_credential: _Optional[_Union[CheckStoreCredential, _Mapping]] = ..., escalate: _Optional[_Union[Escalate, _Mapping]] = ..., propose_source_change: _Optional[_Union[ProposeSourceChange, _Mapping]] = ...) -> None: ...
+    unencodable: UnencodableAction
+    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ..., sync_webhook_ca: _Optional[_Union[SyncWebhookCA, _Mapping]] = ..., retire_old_revision: _Optional[_Union[RetireOldRevision, _Mapping]] = ..., retry_admission: _Optional[_Union[RetryAdmission, _Mapping]] = ..., store_backup: _Optional[_Union[StoreBackup, _Mapping]] = ..., invalidate_derived: _Optional[_Union[InvalidateDerived, _Mapping]] = ..., repair_data: _Optional[_Union[RepairData, _Mapping]] = ..., restore_backup: _Optional[_Union[RestoreBackup, _Mapping]] = ..., restore_store_item: _Optional[_Union[RestoreStoreItem, _Mapping]] = ..., check_store_credential: _Optional[_Union[CheckStoreCredential, _Mapping]] = ..., escalate: _Optional[_Union[Escalate, _Mapping]] = ..., propose_source_change: _Optional[_Union[ProposeSourceChange, _Mapping]] = ..., unencodable: _Optional[_Union[UnencodableAction, _Mapping]] = ...) -> None: ...
 
 class Escalate(_message.Message):
     __slots__ = ("reason", "resources")
@@ -448,20 +450,22 @@ class ProgramRun(_message.Message):
     def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ..., read_trace: _Optional[_Iterable[_Union[ReadStep, _Mapping]]] = ..., retrieval: _Optional[str] = ...) -> None: ...
 
 class PlaybookVerdict(_message.Message):
-    __slots__ = ("playbook_id", "program_revision", "result", "reason", "retrieval", "unknown_on_recurrence")
+    __slots__ = ("playbook_id", "program_revision", "result", "reason", "retrieval", "unknown_on_recurrence", "asked_at")
     PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
     RETRIEVAL_FIELD_NUMBER: _ClassVar[int]
     UNKNOWN_ON_RECURRENCE_FIELD_NUMBER: _ClassVar[int]
+    ASKED_AT_FIELD_NUMBER: _ClassVar[int]
     playbook_id: str
     program_revision: str
     result: str
     reason: str
     retrieval: str
     unknown_on_recurrence: int
-    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., result: _Optional[str] = ..., reason: _Optional[str] = ..., retrieval: _Optional[str] = ..., unknown_on_recurrence: _Optional[int] = ...) -> None: ...
+    asked_at: _timestamp_pb2.Timestamp
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., result: _Optional[str] = ..., reason: _Optional[str] = ..., retrieval: _Optional[str] = ..., unknown_on_recurrence: _Optional[int] = ..., asked_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class ReadStep(_message.Message):
     __slots__ = ("op", "target", "outcome")
@@ -576,6 +580,16 @@ class PlanApplication(_message.Message):
     running_dirty: bool
     effect_confirmation: EffectConfirmation
     def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ..., rollout_pending: _Optional[_Union[RolloutPending, _Mapping]] = ..., recovery_wait: _Optional[_Union[RecoveryWait, _Mapping]] = ..., final_verification_basis: _Optional[str] = ..., settlement_rejection_reason: _Optional[_Union[SettlementRejectionReason, str]] = ..., running_commit: _Optional[str] = ..., running_dirty: _Optional[bool] = ..., effect_confirmation: _Optional[_Union[EffectConfirmation, _Mapping]] = ...) -> None: ...
+
+class UnencodableAction(_message.Message):
+    __slots__ = ("action_type", "ref", "reason")
+    ACTION_TYPE_FIELD_NUMBER: _ClassVar[int]
+    REF_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    action_type: str
+    ref: _common_pb2.ObjectRef
+    reason: str
+    def __init__(self, action_type: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class EffectConfirmation(_message.Message):
     __slots__ = ("reason", "mismatches", "rollout_status")

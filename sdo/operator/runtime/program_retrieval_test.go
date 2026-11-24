@@ -130,15 +130,12 @@ func TestThePageStatesWhatTheStageTried(t *testing.T) {
 	stages := []*contracts.StageReport{{Stage: "deterministic", Diagnoses: []*contracts.PlaybookVerdict{
 		{PlaybookId: "seen", Result: "match", Retrieval: RetrievalRoleLessScan},
 		{PlaybookId: "blind", Result: "unknown", Reason: "object not captured: v1/ConfigMap app/settings"},
-		{PlaybookId: "quiet", Result: "no_match"},
+		{PlaybookId: "quiet", Result: "no_match", AskedAt: timestamppb.New(time.Unix(1, 0))},
 	}}}
 	lines := strings.Join(diagnosisLines(stages), "\n")
-	for _, want := range []string{"tried by sdo: seen -> match (role_less_scan)", "tried by sdo: blind -> unknown (object not captured: v1/ConfigMap app/settings)"} {
+	for _, want := range []string{"tried by sdo: seen -> match (role_less_scan)", "tried by sdo: blind -> unknown (object not captured: v1/ConfigMap app/settings)", "tried by sdo: quiet -> no_match (asked 00:00:01Z)"} {
 		if !strings.Contains(lines, want) {
 			t.Fatalf("lines lack %q:\n%s", want, lines)
 		}
-	}
-	if strings.Contains(lines, "quiet") {
-		t.Fatalf("a plain NoMatch is noise on the page:\n%s", lines)
 	}
 }

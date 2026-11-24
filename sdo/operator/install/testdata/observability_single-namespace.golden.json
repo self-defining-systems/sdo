@@ -99,7 +99,7 @@
             {
               "name": "data",
               "emptyDir": {
-                "sizeLimit": "2Gi"
+                "sizeLimit": "5Gi"
               }
             }
           ],
@@ -111,7 +111,8 @@
                 "--config.file=/etc/prometheus/prometheus.yml",
                 "--storage.tsdb.path=/prometheus",
                 "--storage.tsdb.retention.time=6h",
-                "--storage.tsdb.retention.size=1GB",
+                "--storage.tsdb.retention.size=3GB",
+                "--query.max-samples=2000000",
                 "--web.enable-otlp-receiver"
               ],
               "ports": [
@@ -123,7 +124,7 @@
               "resources": {
                 "limits": {
                   "cpu": "1",
-                  "memory": "1Gi"
+                  "memory": "2Gi"
                 },
                 "requests": {
                   "cpu": "100m",

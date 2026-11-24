@@ -237,8 +237,7 @@ def _last_read(run: ProgramRun) -> str:
 
 def unmatched_playbooks_block(request: IncidentRequest) -> str:
     """Learned playbooks the automatic stage evaluated for this incident that returned NoMatch or Unknown, closest
-    few first, each with where it was learned, the last read in its trace and where its source is. SDO never
-    applies these; the responder decides. Empty when every evaluated playbook matched or none was evaluated."""
+    few first, each with its origin, last read and source. The responder can ask again against live state."""
     matched = {run.program_id for run in request.initial_program_runs if run.verdict.result == Verdict.RESULT_MATCH}
     best: dict[str, ProgramRun] = {}
     for run in request.initial_program_runs:
@@ -253,8 +252,7 @@ def unmatched_playbooks_block(request: IncidentRequest) -> str:
     ranked = sorted(best.values(), key=lambda run: (_closeness(run), run.program_id))
     lines = [
         "",
-        "Learned playbooks evaluated for this incident that did not match (SDO does not apply them; "
-        "one may still describe the right fix):",
+        "Learned playbooks that did not match at opening; rerun `sdo diagnose` for the current answer:",
     ]
     for run in ranked[:_MAX_UNMATCHED]:
         origin = _origin(markdown.get(run.program_id, ""))

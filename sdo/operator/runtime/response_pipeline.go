@@ -174,7 +174,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 			state.Coverage = cloneCoverage(c.currentIncidentRequest.PlaybookCoverage)
 			state.Request.InitialProgramRuns = append([]ProgramRun(nil), c.currentIncidentRequest.InitialProgramRuns...)
 		}
-		state.PriorStages = mergeLaterStagePasses(state.PriorStages, c.currentIncidentRequest.PriorStages)
+		state.PriorStages = mergeStageReports(c.currentIncidentRequest.PriorStages, state.PriorStages)
 		// Findings that joined the incident mid-way are the ones those passes
 		// cleared, so the root causes need them.
 		known := map[string]bool{}

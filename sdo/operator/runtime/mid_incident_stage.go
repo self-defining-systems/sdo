@@ -2,11 +2,11 @@ package runtime
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
 )
 
@@ -32,30 +32,9 @@ type midIncidentStage struct {
 	passes  int
 }
 
-// StageNote tells the responder what a later automatic pass did, in the
-// vocabulary of prior_stages. Each note is delivered once, in the next tool reply.
-type StageNote struct {
-	Stage           string `json:"stage"`
-	PlaybookID      string `json:"playbook_id"`
-	Result          string `json:"result"`
-	SkipReason      string `json:"skip_reason,omitempty"`
-	Error           string `json:"error,omitempty"`
-	ClearedFindings int    `json:"cleared_findings,omitempty"`
-}
-
-func (n StageNote) String() string {
-	text := fmt.Sprintf("%s applied %s: %s", n.Stage, n.PlaybookID, n.Result)
-	if n.SkipReason != "" {
-		text += " (" + n.SkipReason + ")"
-	}
-	return text
-}
-
-// attachLearnedActivation handles a finding that activates after the responder
-// was dispatched. When a learned program can bind it, the finding joins the
-// open incident and the automatic stage runs again, so the learned repair is
-// applied when the finding appears rather than when the responder next looks.
-// It reports whether the finding was taken.
+// attachLearnedActivation queues a pass for linked evidence while the
+// automatic stage still owns the incident. It reports whether it took the
+// finding. After handoff the ordinary alert-join path handles it.
 func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Finding) bool {
 	c.mu.Lock()
 	loop := c.responderLoop
@@ -115,13 +94,16 @@ func (c *Controller) startMidPassesLocked(ctx context.Context, incidentID string
 func (c *Controller) resumePendingLearnedPass(ctx context.Context) {
 	c.mu.Lock()
 	loop := c.responderLoop
-	if !c.midStage.pending || c.responseStagesRunning || c.midStage.running || c.midStage.settled || !c.incidentOpen ||
-		c.currentIncidentRequest == nil || !c.learnedPassAllowedLocked() ||
-		loop == nil || c.midStage.passes >= maxMidIncidentPasses {
+	if !c.pendingLearnedPassReadyLocked() {
 		c.mu.Unlock()
 		return
 	}
 	c.startMidPassesLocked(ctx, c.currentIncidentRequest.IncidentID, loop)
+}
+
+func (c *Controller) pendingLearnedPassReadyLocked() bool {
+	return c.midStage.pending && !c.responseStagesRunning && !c.midStage.running && !c.midStage.settled &&
+		c.responderLoop != nil && c.midStage.passes < maxMidIncidentPasses && c.learnedPassAllowedLocked()
 }
 
 func (c *Controller) deterministicStageSelectedLocked() bool {
@@ -216,10 +198,8 @@ func (c *Controller) runMidIncidentPasses(ctx context.Context, incidentID string
 	}
 }
 
-// runMidIncidentPass runs the automatic stage again on the responder's own
-// loop, so its applications and receipts are the ones the
-// responder sees, and serialize with its tool calls. It reports whether the
-// pass made progress (stagePassProgressed).
+// runMidIncidentPass extends the controller-owned automatic stage with new
+// evidence. It reports whether the pass made progress (stagePassProgressed).
 func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, loop *ResponderLoop) (bool, error) {
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
@@ -231,30 +211,37 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	actionCtx, stop := context.WithTimeout(actionCtx, 2*c.config.StageBudget)
 	defer stop()
 	c.mu.Lock()
-	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
+	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID || !c.learnedPassAllowedLocked() {
 		c.mu.Unlock()
 		return false, nil
 	}
 	c.midStage.passes++
 	request := *cloneIncidentRequest(c.currentIncidentRequest)
 	awaiting := c.awaitingAutomaticRecoveryLocked()
-	if awaiting != nil {
+	deadline := request.ResponseDeadline
+	if playbookWrote(awaiting) {
+		deadline = c.automaticDeadlineLocked(awaiting)
+	}
+	if !deadline.IsZero() {
 		var cancelWait context.CancelFunc
-		actionCtx, cancelWait = context.WithTimeout(actionCtx, c.automaticDeadlineLocked(awaiting).Sub(c.clock()))
+		actionCtx, cancelWait = context.WithTimeout(actionCtx, deadline.Sub(c.clock()))
 		defer cancelWait()
 	}
 	c.mu.Unlock()
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), PriorStages: cloneStageReports(request.PriorStages)}
 	earlier := deterministicStageReport(state.PriorStages)
-	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true}
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, StabilityWindow: c.config.ClosureStabilityWindow}
+	if c.config.AfterPlaybook == settings.AfterPlaybookWait {
+		stage.WaitBound = c.config.AfterPlaybookWait
+	}
 	if c.tuneMidStage != nil {
 		c.tuneMidStage(stage)
 	}
 	report, runErr := RunStageAgain(actionCtx, state, stage)
-	notes := stageNotes(earlier, report)
 	c.mu.Lock()
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID {
-		c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
+		state.PriorStages = mergeStageReports(c.currentIncidentRequest.PriorStages, state.PriorStages)
+		c.currentIncidentRequest.PriorStages = state.PriorStages
 		// Receipts, their diagnoses and finding coverage form one snapshot.
 		// Publishing only the report loses the proof required by reflection.
 		c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
@@ -270,88 +257,45 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 		}
 	}
 	c.mu.Unlock()
-	loop.noteStages(notes)
 	if err := c.PersistState(ctx); err != nil {
 		slog.Warn("persist later automatic stage pass", "incident_id", incidentID, "error", err)
 	}
 	return stagePassProgressed(earlier, report), runErr
 }
 
-// stageNotes lists what the later pass changed in the report: attempts that are
-// new, or that went from skipped to a result.
-func stageNotes(earlier, report *contracts.StageReport) []StageNote {
-	before := map[string]*contracts.StageMitigation{}
-	for _, attempt := range earlier.GetMitigations() {
-		before[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))] = attempt
-	}
-	var notes []StageNote
-	for _, attempt := range report.GetMitigations() {
-		prior := before[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))]
-		if prior != nil && proto.Equal(prior, attempt) {
-			continue
-		}
-		notes = append(notes, StageNote{Stage: "deterministic", PlaybookID: attempt.PlaybookId, Result: attempt.Result, SkipReason: attempt.SkipReason, Error: attempt.Error, ClearedFindings: len(attempt.ClearedFindingFingerprints)})
-	}
-	return notes
-}
-
-// noteStages queues automatic-pass results for the responder's next tool reply.
-func (l *ResponderLoop) noteStages(notes []StageNote) {
-	if len(notes) == 0 {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.stageNotes = append(l.stageNotes, notes...)
-}
-
-// takeStageNotes hands the queued notes to the agent's reply, once. A stage's
-// own call (a later pass plans and applies through Handle) leaves them queued,
-// so notes from every pass accumulate until the agent calls. Callers hold l.mu.
-func (l *ResponderLoop) takeStageNotes(request ToolRequest) []StageNote {
-	if request.stage {
-		return nil
-	}
-	notes := l.stageNotes
-	l.stageNotes = nil
-	return notes
-}
-
-// mergeLaterStagePasses keeps what later passes added while the pipeline ran:
-// the pipeline returns the reports it started with, and a stage's report only
-// ever gains attempts and results, so the one with more of them is the newer.
-func mergeLaterStagePasses(completed, current []*contracts.StageReport) []*contracts.StageReport {
-	merged := cloneStageReports(completed)
-	for i, report := range merged {
-		for _, newer := range current {
-			if newer.GetStage() == report.GetStage() && stageReportProgress(newer) > stageReportProgress(report) {
-				merged[i] = proto.Clone(newer).(*contracts.StageReport)
+// mergeStageReports folds new evidence into the existing stage order.
+func mergeStageReports(earlier, fresh []*contracts.StageReport) []*contracts.StageReport {
+	merged := cloneStageReports(earlier)
+	for _, report := range fresh {
+		found := false
+		for i, prior := range merged {
+			if prior.GetStage() == report.GetStage() {
+				merged[i] = mergeStagePass(prior, proto.Clone(report).(*contracts.StageReport))
+				found = true
+				break
 			}
+		}
+		if !found {
+			merged = append(merged, proto.Clone(report).(*contracts.StageReport))
 		}
 	}
 	return merged
 }
 
-func stageReportProgress(report *contracts.StageReport) int {
-	progress := 0
-	for _, attempt := range report.GetMitigations() {
-		progress++
-		if attempt.GetResult() != "skipped" {
-			progress += len(report.GetMitigations()) + 1
-		}
-	}
-	return progress
-}
-
-// Before handoff, new evidence can request one more apply pass while the
-// original await bound is still open. An actual responder keeps its existing
-// later-pass behavior.
+// The automatic stage can take new evidence only while it owns the repair.
+// Dispatch freezes the handoff report and gives write ownership to the agent.
 func (c *Controller) learnedPassAllowedLocked() bool {
-	if c.currentIncidentRequest != nil && stagePlanRefused(deterministicStageReport(c.currentIncidentRequest.PriorStages)) {
+	if c.responseStagesRunning {
+		return true
+	}
+	report := c.awaitingAutomaticRecoveryLocked()
+	if report == nil || stagePlanRefused(report) {
 		return false
 	}
-	if report := c.awaitingAutomaticRecoveryLocked(); report != nil {
-		return playbookWrote(report) && c.escalatedAt.IsZero() && c.clock().Before(controllerTime(report.GetRecoveryDeadline()))
+	if playbookWrote(report) {
+		return c.clock().Before(c.automaticDeadlineLocked(report))
 	}
-	return c.dispatchState == contracts.DispatchState_DISPATCH_STATE_RUNNING && !c.responderDone
+	// Drain evidence queued during the opening pass even if it wrote nothing.
+	deadline := c.currentIncidentRequest.ResponseDeadline
+	return (c.midStage.pending || c.midStage.running) && (deadline.IsZero() || c.clock().Before(deadline))
 }

@@ -16,7 +16,6 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
-	programvalidation "sdo.dev/operator/memory/validate/program"
 	"sdo.dev/operator/safefs"
 	"sdo.dev/operator/sdk"
 )
@@ -104,7 +103,7 @@ func LoadReflectionDecision(ctx context.Context, root, path string) (*contracts.
 	}, nil
 }
 
-func lifecycleChecks(ctx context.Context, r Request, paths []string, structurallyValid bool) ([]Diagnostic, error) {
+func lifecycleChecks(ctx context.Context, r Request, paths []string) ([]Diagnostic, error) {
 	var ds []Diagnostic
 	add := func(rule, message, hint string) {
 		ds = append(ds, Diagnostic{Rule: rule, Message: message, Hint: hint})
@@ -179,19 +178,7 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 				if err := wire.UnmarshalLenientMigrating([]byte(raw), outcome); err != nil {
 					return nil, err
 				}
-				// SDO decides learning (the closing turn's gate, the corpus case, the match key and credit): the
-				// agent's playbook is checked for what it is, not for covering every recorded repair or cause.
-				if structurallyValid {
-					var originErr error
-					if r.Replay == "off" {
-						originErr = programvalidation.ValidateScriptOriginsWithoutCorpus(ctx, r.Root, r.Base, outcome, paths)
-					} else {
-						originErr = programvalidation.ValidateScriptOrigins(r.Root, outcome, paths)
-					}
-					if originErr != nil {
-						ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: originErr.Error()})
-					}
-				}
+
 			}
 		}
 	}
@@ -314,16 +301,10 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 	if err != nil {
 		return nil, err
 	}
-	ds, err := lifecycleChecks(ctx, r, paths, structurallyValid)
+	ds, err := lifecycleChecks(ctx, r, paths)
 	if err != nil {
 		return nil, err
 	}
-	if structurallyValid && r.Replay == "off" && !(r.Actor == Responder && r.Phase == ReflectionPhase) {
-		if err := programvalidation.ValidateScriptOriginsWithoutCorpus(ctx, r.Root, r.Base, nil, paths); err != nil {
-			ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: err.Error()})
-		}
-	}
-
 	ds = append(ds, repairStatementDiagnostics(r.Root, paths)...)
 	ds = append(ds, clusterLocalDiagnostics(r.Root, paths)...)
 	ds = append(ds, secretDataDiagnostics(r.Root, paths)...)

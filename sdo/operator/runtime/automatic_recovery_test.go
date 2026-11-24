@@ -12,6 +12,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // Drive the real stage and closure over the same synthetic clock and live
@@ -510,11 +511,13 @@ func (d *recoveryWaitingHandoff) Dispatch(ctx context.Context, _ IncidentRequest
 
 func TestAutomaticHandoffVerifiesRecoveryWhileResponderWaits(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		applied bool
+		name        string
+		applied     bool
+		unencodable bool
 	}{
-		{"applied", true},
-		{"nothing applied", false},
+		{name: "applied", applied: true},
+		{name: "nothing applied"},
+		{name: "unencodable responder application", unencodable: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, world, closed := automaticRecoveryWorld(t, settlingCase{
@@ -563,6 +566,20 @@ func TestAutomaticHandoffVerifiesRecoveryWhileResponderWaits(t *testing.T) {
 			close(dispatcher.repair)
 			<-dispatcher.repaired
 
+			if tc.unencodable {
+				action := program.SetField{
+					Ref:  sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "synthetic"},
+					Path: "data.key",
+				}
+				c.responderLoop.mu.Lock()
+				c.responderLoop.applicationsLog = append(c.responderLoop.applicationsLog, RecordedPlanApplication{
+					ID: "synthetic-unencodable", Result: PlanApplicationResult{
+						Plan: program.Plan{Actions: []program.Action{action}}, ActionsApplied: []program.Action{action}, Applied: true,
+					},
+				})
+				c.responderLoop.mu.Unlock()
+			}
+
 			for i := 0; c.IncidentOpen() && i < 12; i++ {
 				wake := c.NextWake()
 				if !wake.After(world.clock.Now()) {
@@ -576,6 +593,29 @@ func TestAutomaticHandoffVerifiesRecoveryWhileResponderWaits(t *testing.T) {
 			if c.IncidentOpen() || !closed.VerifiedWhileResponderRunning || closed.HealthClearedAt == nil {
 				t.Fatalf("controller did not verify and close while the responder waited: %+v", closed)
 			}
+			if tc.unencodable {
+				// Derive from the restored closure to exercise the durable round trip.
+				derived, err := (ProtoOutcomeDeriver{}).Derive(ctx, *c.pendingClosure, "", "synthetic", "synthetic")
+				if err != nil {
+					t.Fatal(err)
+				}
+				index := slices.IndexFunc(derived.Record.GetPlanApplications(), func(app *contracts.PlanApplication) bool {
+					return app.GetApplicationId() == "synthetic-unencodable"
+				})
+				if index < 0 {
+					t.Fatal("outcome omitted the unencodable application")
+				}
+				actions := derived.Record.GetPlanApplications()[index].GetActionsApplied()
+				if len(actions) != 1 {
+					t.Fatalf("applied actions = %v", actions)
+				}
+				gap := actions[0].GetUnencodable()
+				if gap.GetActionType() != "program.SetField" || gap.GetRef().GetName() != "synthetic" ||
+					gap.GetReason() != "unencodable: action_encoding" {
+					t.Fatalf("outcome placeholder = %v", gap)
+				}
+			}
+
 			if !c.tracker.HasActiveKeys([]string{findingKey(clue)}) {
 				t.Fatal("the drift clue cleared during the simulation")
 			}
@@ -638,5 +678,28 @@ func TestAutomaticRecoveryExtendsWhenClearAtDeadline(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestClosureFreezeBackoffDoesNotDelayAutomaticHandoff(t *testing.T) {
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
+	bound := autoReport(c).GetRecoveryDeadline().AsTime()
+	// A closure freeze failed before the alert re-fired. Its retry may be
+	// after the response deadline, so waiting for it could skip handoff.
+	c.closureFreezeRetryAt = c.currentIncidentRequest.ResponseDeadline.Add(time.Second)
+	autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-time.Second)
+	if autoReport(c).GetHandoffSelected() {
+		t.Fatal("handoff selected before the recovery deadline")
+	}
+	// Remove the periodic detector wake so this assertion exercises the
+	// automatic deadline itself. Recovery still uses the detector registry.
+	c.scheduler = NewScheduler(nil, world.clock.Now(), c.config.Namespace)
+	if wake, reason := c.nextWake(); !wake.Equal(bound) || reason != "verification deadline" {
+		t.Fatalf("next wake %s (%s), want the automatic recovery deadline %s", wake, reason, bound)
+	}
+	autoStep(t, c, world.clock, time.Second)
+	if !autoReport(c).GetHandoffSelected() ||
+		c.responseEntry(*c.currentIncidentRequest) != dispatchStagedHandoff {
+		t.Fatal("closure freeze backoff prevented automatic handoff at its deadline")
 	}
 }

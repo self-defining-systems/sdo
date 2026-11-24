@@ -6,7 +6,6 @@ import (
 	"google.golang.org/protobuf/proto"
 	"maps"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"strings"
 
 	"sdo.dev/operator/sdk"
 )
@@ -91,14 +90,6 @@ func (l *ResponderLoop) publishRead(ctx context.Context, request ToolRequest, re
 			l.menu = read.menu
 			l.menuSession = read.menuSession
 			l.menuEntries.advertise(read.menuEntries.entries)
-		}
-		if notes := l.takeStageNotes(request); len(notes) > 0 {
-			response.PriorStages = notes
-			lines := make([]string, len(notes))
-			for i, note := range notes {
-				lines[i] = note.String()
-			}
-			response.Summary = "automatic stage ran while you worked: " + strings.Join(lines, "; ") + ". " + response.Summary
 		}
 		if request.Command == "detect" && request.Name == "" && request.Finding == "" && len(request.DetectorIDs) == 0 && response.Error == "" {
 			appendNote(&response, l.detectNote(response.Findings))

@@ -96,6 +96,18 @@ type ReconcileFromSource struct{ Ref sdk.ObjectRef }
     one at a time in ordinal order, so the controller recreates it at the
     restored revision; the receipt names each deleted Pod and why.
 
+type RecordedRepairReceipt struct {
+	ScriptDigest string          `json:"script_digest,omitempty"`
+	ID           string          `json:"id"`
+	IncidentID   string          `json:"incident_id"`
+	Success      bool            `json:"success"`
+	StartedAt    time.Time       `json:"started_at"`
+	CompletedAt  time.Time       `json:"completed_at"`
+	Resources    []sdk.ObjectRef `json:"resources,omitempty"`
+}
+    RecordedRepairReceipt is evidence of a successful repair. ScriptDigest,
+    when present, identifies the exact RunScript bytes that ran.
+
 type RemoveServicePort struct {
 	Ref        sdk.ObjectRef
 	Name       string
@@ -202,15 +214,4 @@ type RestoreStoreItem struct {
     an item has an inverse.
 
 func (a RestoreStoreItem) Validate() error
-
-type Result string
-    Result is a diagnosis verdict: Match means the fault is present, NoMatch
-    absent, Unknown that evidence is unavailable.
-
-const (
-	Match          Result = "Match"
-	NoMatch        Result = "NoMatch"
-	Unknown        Result = "Unknown"
-	NeedsJudgement Result = "NeedsJudgement"
-)
 ```

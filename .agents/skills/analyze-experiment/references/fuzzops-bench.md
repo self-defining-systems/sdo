@@ -167,3 +167,8 @@ without transferring the raw evidence. Replace the host and path as needed.
 ```bash
 ssh evidence-host 'python3 - /path/to/experiment/runs/*/' < benchmarks/fuzzops/row_metrics.py
 ```
+
+Prometheus evidence in `observability/prometheus.jsonl.gz` may contain multiple
+`{metric, result}` rows for one metric. Join by the full series label set and
+sample timestamp across consecutive chunks. Earlier captures stored each metric
+in one row. The receipt counts distinct label sets across chunks.

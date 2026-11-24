@@ -110,7 +110,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, se
 	application := flags.String("application", "", "application identity")
 	responderImage := flags.String("responder-image", "", "registered responder image")
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required)")
-	scriptImage := flags.String("script-image", "", "fixed tool image for app-local RunScript Jobs")
+	scriptImage := flags.String("script-image", "", "fixed tool image for learned RunScript Jobs")
 	repositoryPVC := flags.String("repository-pvc", "", "repository PVC")
 	repositoryMount := flags.String("repository-mount-path", "", "repository PVC mount")
 	repositorySubPath := flags.String("repository-pvc-subpath", "", "repository PVC subpath")

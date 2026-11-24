@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"sync"
 	"syscall"
 	"time"
 
@@ -46,34 +45,17 @@ func (s *LocalServer) Shutdown(ctx context.Context) error { return s.server.Shut
 // Close stops the server immediately.
 func (s *LocalServer) Close() error { return s.server.Close() }
 
-type scriptOutput struct {
-	bytes     []byte
-	truncated bool
-	mu        sync.Mutex
-}
-
-func (w *scriptOutput) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	n := len(p)
-	space := program.MaxScriptOutputBytes - len(w.bytes)
-	if len(p) > space {
-		p = p[:space]
-		w.truncated = true
-	}
-	w.bytes = append(w.bytes, p...)
-	return n, nil
-}
-
-// ExecuteScript runs a bash script in its own process group and records its
-// bounded output into out. It returns the script exit code.
 func ExecuteScript(ctx context.Context, script string, env []string, out *program.ScriptExecutionResult) int32 {
-	stdout, stderr := &scriptOutput{}, &scriptOutput{}
+	return executeScript(ctx, script, env, out, &syscall.Credential{Uid: 65534, Gid: 65534})
+}
+
+func executeScript(ctx context.Context, script string, env []string, out *program.ScriptExecutionResult, credential *syscall.Credential) int32 {
+	started := time.Now()
 	command := exec.CommandContext(ctx, "bash", "-c", script)
 	command.Env = env
-	command.Stdout = stdout
-	command.Stderr = stderr
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Raw output has no trusted origin. A bare secret has no pattern a
+	// text redactor can use, so leave both streams disconnected.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Credential: credential}
 	command.Cancel = func() error {
 		if command.Process == nil {
 			return nil
@@ -85,10 +67,7 @@ func ExecuteScript(ctx context.Context, script string, env []string, out *progra
 	if command.Process != nil {
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 	}
-	out.Stdout = string(stdout.bytes)
-	out.Stderr = string(stderr.bytes)
-	out.StdoutTruncated = stdout.truncated
-	out.StderrTruncated = stderr.truncated
+	out.DurationMS = time.Since(started).Milliseconds()
 	out.TimedOut = ctx.Err() != nil
 	if err == nil {
 		return 0

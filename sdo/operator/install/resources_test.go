@@ -29,3 +29,12 @@ func TestControllerPodGracePeriodOutlastsTheChildStop(t *testing.T) {
 		t.Fatalf("terminationGracePeriodSeconds = %d, not above the child's stop grace %v", *grace, builder.ControllerStopGrace)
 	}
 }
+
+func TestControllerDoesNotWaitForScriptImage(t *testing.T) {
+	job := controllerJob(Config{Namespace: "app", Application: "synthetic", ControllerImage: "controller", ScriptImage: "script-tools"})
+	for _, init := range job.Spec.Template.Spec.InitContainers {
+		if init.Image == "script-tools" {
+			t.Fatal("script image pull would block controller startup")
+		}
+	}
+}

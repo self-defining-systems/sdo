@@ -237,10 +237,9 @@ func Resources(c Config) (Plan, error) {
 	if split {
 		plan.Namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", ControllerNamespaceLabel: "true", ApplicationNamespaceLabel: c.Namespace}}}
 	}
-	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-image-builder"} {
+	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-image-builder", "sdo-script"} {
 		plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control}})
 	}
-	plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "sdo-script", Namespace: c.Namespace}})
 	addAdminGrant(c, &plan)
 	if err := addObservability(&plan, c); err != nil {
 		return Plan{}, err
@@ -411,6 +410,7 @@ func controllerJob(c Config) *batchv1.Job {
 			{Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
 			{Name: "SDO_TURN_USAGE_LOG", Value: "/workspace/.sdo-runtime/usage/controller-turns.jsonl"},
 			{Name: "SDO_CONTROLLER_JOB", Value: ControllerJobName},
+			{Name: "SDO_CONTROLLER_NODE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"}}},
 			{Name: "SDO_CONTROLLER_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 			{Name: "GIT_AUTHOR_NAME", Value: "sdo-controller"},
 			{Name: "GIT_AUTHOR_EMAIL", Value: "sdo-controller@invalid"},

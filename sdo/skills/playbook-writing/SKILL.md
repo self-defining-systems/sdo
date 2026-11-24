@@ -15,12 +15,14 @@ Start from `examples/template-drift/` or `examples/stuck-pods/`. Write `diagnose
 - `Mitigate`: the changes that fixed it, in order: `program.DeletePod`,
   `program.RestartRollout`, `program.SetField`; for an `sdo mitigate X`, the same
   `program.X` with the same fields.
-- For SQL or CLI repairs without a typed action, use `program.EnsureExec` (check, then repair in a Pod using container credentials). All actions: `/opt/sdo/sdo/skills/sdo-playbook-authoring/references/sdk-card.md`. `program.Escalate` alone repairs nothing.
+- For SQL or CLI repairs, see `program.EnsureExec` in `sdk-card.md`.
 - Use the fastest equivalent action. Verify serving processes use the new state.
 - Scope absence claims to where you looked. Before recreating or overwriting lost data, require a live check for the authoritative copy and restore it if found. If the check is unavailable, leave the write to the responder.
 - Set the known-good value directly, not from controller history a repeat may lack.
 - Carry a whole source restore as `program.ReconcileFromSource`. Omit changes that did not help.
-- Memory is for this application and may name its own tables, resources and commands; generalize over what varies, not away from the application. Automate mechanical steps; leave judgement to the README. No `RunScript`, no passwords.
+- Memory is for this application and may name its own tables, resources and commands; generalize over what varies, not away from the application. Automate mechanical steps; leave judgement to the README. No passwords.
+- Save commands that worked with waits and checks, recheck state first, and find names through relations. A matching Diagnose can select scripts or typed actions.
+- Script output is discarded; signal by exit code.
 
 If the cause has a signal of its own, add a detector that names the playbook: [detector.md](detector.md).
 

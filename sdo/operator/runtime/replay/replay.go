@@ -157,12 +157,14 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	}
 	// The plan comes from the builder the incident stage uses, so a plan the
 	// stage would refuse (empty, invalid, unbindable) fails validation here.
-	plan, err := operator.BuildMitigationPlan(ctx, m, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, operator.DefaultDiagnosisDeadline, operator.ReplayScriptProvenance(c.Corpus))
+	plan, err := operator.BuildMitigationPlan(ctx, m, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, operator.DefaultDiagnosisDeadline)
 	if err != nil {
 		return fail(mitigationBuildError(err))
 	}
 	if containsScript(plan) {
-		return observedScriptTransition(ctx, p, c, plan, source, r)
+		r.Status = "skipped"
+		r.Effects = append(r.Effects, "script execution is not simulated")
+		return r
 	}
 	client, err := newCluster(c.Corpus.Open)
 	if err != nil {

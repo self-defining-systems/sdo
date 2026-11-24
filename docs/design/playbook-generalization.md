@@ -11,7 +11,7 @@ Learned memory is organized per (symptom x service) and binds too widely:
    bind a hard-coded Deployment name. Hint bindings apply to every program with a `deployment` role,
    and the learned stall diagnoses ("matches source, not yet restarted") match any healthy Deployment.
    Result: 3-6 restarts across every service on the failing journey.
-2. `RunScript` must be byte-identical to a receipted command, so a recorded
+2. Historically, `RunScript` had to be byte-identical to a receipted command, so a recorded
    `kubectl exec <live-pod-name>` was frozen into a program and later hit the wrong Redis.
 3. Reflection publishes a second copy of the same repair for a second service, and folds a new repair
    method (Redis ACL restore) into each symptom-named playbook. Adding a required `redis-pod` role that
@@ -226,3 +226,13 @@ but it does not reject a valid program for a name it shares.
 - No automatic merge, retirement or migration of existing duplicate playbooks or detectors.
 - No change to health detectors, the judge's traffic generators, or SREGym/benchmark code.
 - No live runs (the orchestrator runs the reuse wave).
+
+## Open RunScript recovery issues
+
+- **Cancellation during Job creation.** The API server can accept a Job create
+  after the caller loses the response. A recovery read can race that commit.
+  Reconcile the original reservation through the create ambiguity window before
+  reporting that no Job started.
+- **API failures during restart recovery.** A failed read of the reservation,
+  Job, or receipts can leave the application with incomplete write evidence.
+  Persist the unresolved recovery work and retry it without creating a new Job.

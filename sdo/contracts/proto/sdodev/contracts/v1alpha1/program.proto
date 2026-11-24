@@ -109,6 +109,7 @@ message Action {
     CheckStoreCredential check_store_credential = 28;
     Escalate escalate = 29;
     ProposeSourceChange propose_source_change = 30;
+    UnencodableAction unencodable = 31 [(controller_owned) = true];
   }
 }
 
@@ -299,6 +300,8 @@ message PlaybookVerdict {
   // Outcomes in which this playbook was tried and returned Unknown. A counter that
   // gates nothing.
   int32 unknown_on_recurrence = 6;
+  // When this recorded diagnosis was asked. Older reports omit it.
+  google.protobuf.Timestamp asked_at = 7;
 }
 
 message ReadStep {
@@ -409,6 +412,13 @@ message PlanApplication {
   // Why recovery settlement could not confirm the exact effect; set only
   // with SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED.
   EffectConfirmation effect_confirmation = 28;
+}
+
+// Value-free historical evidence. This action cannot be executed.
+message UnencodableAction {
+  string action_type = 1;
+  ObjectRef ref = 2;
+  string reason = 3;
 }
 
 // What the exact-field check expected and observed, so a rejection can be

@@ -435,26 +435,6 @@ var gateRows = []gateRow{
 			remove(t, r, ".sdo/playbooks/base/scripts")
 			write(t, r, ".sdo/playbooks/base/diagnose.go", gateFormatted(t, gateDiffTextProgram))
 		}},
-	{name: "corpus case claims a script origin with no receipt", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{RuleProgramMitigationRepair},
-		baseMessage: gateOutcomeMessage,
-		prepare: func(t *testing.T, r string) {
-			for _, dir := range []string{"playbooks/service-targetport-mismatch", "lib", "corpus"} {
-				copyTree(t, filepath.Join(gateProgramFixture, dir), filepath.Join(r, ".sdo", dir))
-			}
-			write(t, r, ".sdo/diagnostics/go.mod", gateRead(t, gateProgramFixture, "diagnostics/go.mod"))
-			generateIndex(t, r)
-			gateOutcome(gateClean())(t, r)
-		},
-		edit: func(t *testing.T, r string) {
-			copyTree(t, filepath.Join(r, ".sdo/corpus/targetport-mismatch"), filepath.Join(r, ".sdo/corpus/case-2"))
-			labels := gateRead(t, r, ".sdo/corpus/case-2/labels.json")
-			write(t, r, ".sdo/corpus/case-2/labels.json", strings.Replace(labels, `{"root_cause`, `{"script_origins":{"sha256:abc":"no-such-receipt"},"root_cause`, 1))
-		},
-		request: func(r *Request) {
-			r.Decision = gateUpdated()
-			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: gateIncident}
-		}},
-
 	// Ownership: who may change what, in which phase.
 	{name: "responder edits a learned detector in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, edit: gateWrite(gateCache, "package cache\n\n// tuned\n")},
 	{name: "responder adds a learned detector in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, edit: func(t *testing.T, r string) {
@@ -518,7 +498,7 @@ var gateRows = []gateRow{
 	{name: "upstream advance cannot change memory", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
 		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, layout.SchemaVersionFile, "13\n")
+		write(t, r, layout.SchemaVersionFile, "14\n")
 		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
 	}},
 	{name: "upkeep migration drops a retired Go-installed generic detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
@@ -527,7 +507,7 @@ var gateRows = []gateRow{
 			gateStrandedDetector(t, r, "synthetic-retired", "lifecycle-bootstrap")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "13\n")
+			write(t, r, layout.SchemaVersionFile, "14\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-retired"))
 		}},
 	{name: "upkeep migration moves incident-era detectors to the learned directory", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
@@ -546,7 +526,7 @@ var gateRows = []gateRow{
 			gateStrandedDetector(t, r, "synthetic-authored", "initial")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "13\n")
+			write(t, r, layout.SchemaVersionFile, "14\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-authored"))
 		}},
 	{name: "responder cannot edit the goal", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,

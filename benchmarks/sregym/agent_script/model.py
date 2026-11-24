@@ -29,6 +29,7 @@ class Command(Model):
 class Tool(Model):
     kind: Literal["tool"]
     argv: list[str] = Field(min_length=1)
+    input_json: dict[str, Any] | None = None
     exit_code: int = 0
     contains: str | None = None
 

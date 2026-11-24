@@ -404,6 +404,10 @@ func requestEvent(r *http.Request) apihistory.Event {
 	e.DryRun = mutating(r.Method) && len(values) == 1 && values[0] == "All" &&
 		(e.Subresource == "" || e.Subresource == "status" || e.Subresource == "scale" || e.Subresource == "finalize")
 	e.Partial = r.URL.Query().Get("labelSelector") != "" || r.URL.Query().Get("fieldSelector") != "" || r.URL.Query().Get("continue") != "" || r.URL.Query().Get("limit") != ""
+	if e.Verb == "delete" && e.Name == "" && e.Partial {
+		query := r.URL.Query()
+		e.CollectionQuery = url.Values{"labelSelector": query["labelSelector"], "fieldSelector": query["fieldSelector"]}.Encode()
+	}
 	return e
 }
 

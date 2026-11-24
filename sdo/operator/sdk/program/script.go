@@ -9,7 +9,6 @@ import (
 )
 
 const MaxScriptBytes = 64 << 10
-const MaxScriptOutputBytes = 64 << 10
 const DefaultScriptTimeout = time.Minute
 const MaxScriptTimeout = 5 * time.Minute
 

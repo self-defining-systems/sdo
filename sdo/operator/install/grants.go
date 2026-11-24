@@ -19,8 +19,8 @@ func adminGrantName(control string) string { return "sdo-admin-" + control }
 func addAdminGrant(c Config, plan *Plan) {
 	control := c.controlNamespace()
 	name := adminGrantName(control)
-	subjects := []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-script", Namespace: c.Namespace}}
-	for _, account := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-image-builder"} {
+	var subjects []rbacv1.Subject
+	for _, account := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-image-builder", "sdo-script"} {
 		subjects = append(subjects, rbacv1.Subject{Kind: "ServiceAccount", Name: account, Namespace: control})
 	}
 	if control != c.Namespace {

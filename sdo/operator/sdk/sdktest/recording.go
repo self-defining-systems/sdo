@@ -200,7 +200,6 @@ func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, e
 }
 
 type CorpusCase struct {
-	ScriptOrigins       map[string]string `json:"script_origins,omitempty"`
 	Open                Snapshot
 	Fixed               Snapshot
 	Healthy             Snapshot
@@ -250,17 +249,16 @@ func loadCorpusCase(dir string, snapshots bool) (CorpusCase, error) {
 	}{
 		{"open.json", &open}, {"fixed.json", &fixed}, {"healthy.json", &healthy}, {"recordings.json", &c.Recordings},
 		{"labels.json", &struct {
-			RootCauseProgramIDs    *[]string          `json:"root_cause_program_ids"`
-			NoMatchProgramIDs      *[]string          `json:"no_match_program_ids"`
-			Bindings               *program.Bindings  `json:"bindings"`
-			PeerBindings           *program.Bindings  `json:"peer_bindings"`
-			Provenance             *CorpusProvenance  `json:"provenance"`
-			SyntheticNoMatchReason *string            `json:"synthetic_no_match_reason"`
-			HealthImpact           **bool             `json:"health_impact"`
-			ScriptOrigins          *map[string]string `json:"script_origins,omitempty"`
-			OpeningKeys            *[]string          `json:"opening_keys,omitempty"`
-			Suspects               *[]sdk.ObjectRef   `json:"suspects,omitempty"`
-		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason, &c.HealthImpact, &c.ScriptOrigins, &c.OpeningKeys, &c.Suspects}},
+			RootCauseProgramIDs    *[]string         `json:"root_cause_program_ids"`
+			NoMatchProgramIDs      *[]string         `json:"no_match_program_ids"`
+			Bindings               *program.Bindings `json:"bindings"`
+			PeerBindings           *program.Bindings `json:"peer_bindings"`
+			Provenance             *CorpusProvenance `json:"provenance"`
+			SyntheticNoMatchReason *string           `json:"synthetic_no_match_reason"`
+			HealthImpact           **bool            `json:"health_impact"`
+			OpeningKeys            *[]string         `json:"opening_keys,omitempty"`
+			Suspects               *[]sdk.ObjectRef  `json:"suspects,omitempty"`
+		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason, &c.HealthImpact, &c.OpeningKeys, &c.Suspects}},
 	} {
 		if !snapshots && (item.name == "open.json" || item.name == "fixed.json" || item.name == "healthy.json") {
 			continue
@@ -272,6 +270,14 @@ func loadCorpusCase(dir string, snapshots bool) (CorpusCase, error) {
 		}
 		if err != nil {
 			return c, fmt.Errorf("corpus %s: %w", path, err)
+		}
+		if item.name == "labels.json" {
+			// Older immutable cases can still carry retired receipt linkage.
+			var labels map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &labels); err == nil && labels["script_origins"] != nil {
+				delete(labels, "script_origins")
+				raw, _ = json.Marshal(labels)
+			}
 		}
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
