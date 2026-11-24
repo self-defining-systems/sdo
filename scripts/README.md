@@ -17,6 +17,7 @@
 Extend the owning gate when adding a check. Keep policy fixtures alongside its
 implementation; wire mandatory static checks through `check_errors.sh`.
 
+- `check_lanes_layering.sh`: the lanes layer guard (`benchmarks/lanes/internal/layerguard`), integration-tagged and so run here because a plain `go test` skips it.
 - `check_go_mains.sh`: test-free production package builds plus Go vet of `package main` helpers under `benchmarks/` and `tests/unit/`; catches declarations accidentally supplied only by tests before integration builds.
 
 - `split_go_integration.sh`: report subprocess-dependent Go test declarations,

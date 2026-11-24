@@ -56,7 +56,13 @@ def _check_go_errors_copy(tmp_path: Path, check_proto: str) -> Path:
     ):
         (scripts / name).write_text("#!/bin/bash\nexit 0\n")
     (scripts / "go_quality_checks.py").write_text("")
-    for name in ("check_go_determinism.sh", "check_go_core.sh", "check_go_mains.sh", "check_contracts_fast.sh"):
+    for name in (
+        "check_go_determinism.sh",
+        "check_go_core.sh",
+        "check_go_mains.sh",
+        "check_lanes_layering.sh",
+        "check_contracts_fast.sh",
+    ):
         (scripts / name).write_text("#!/bin/bash\necho ran-$(basename $0)\n")
     for script in scripts.glob("*.sh"):
         script.chmod(0o755)
@@ -83,6 +89,7 @@ def test_an_unavailable_proto_toolchain_is_a_loud_skip_and_later_stages_run(tmp_
     assert result.returncode == 0
     assert "SKIPPED: proto contracts" in result.stderr
     assert "ran-check_go_mains.sh" in result.stdout, "stages after the proto stage must still run"
+    assert "ran-check_lanes_layering.sh" in result.stdout, "the layer guard is part of the gate"
     assert "SKIPPED stages" in result.stderr
     assert "proto contracts: buf/BSR" in result.stderr
 
