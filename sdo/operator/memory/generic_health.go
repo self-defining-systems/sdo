@@ -533,6 +533,7 @@ func trafficSource(id, workload string, link bool) string {
 import (
 	"time"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 func New() sdk.Detector {
