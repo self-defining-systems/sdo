@@ -370,21 +370,25 @@ def await_onset(env: Mapping[str, str], injected: float) -> tuple[float | None, 
 
 def supervise(env: Mapping[str, str], injected: float, lock_fd: int) -> None:
     os.set_inheritable(lock_fd, False)
-    target = run_dir(env)
-    atomic_write_json(target / "start.json", {"watch_at": timestamp(injected)})
-    if env.get("BENCH_FAULT") == "none":
-        atomic_write_json(target / "done.json", {"skipped": "healthy control"})
-        return
-    onset, failing = await_onset(env, injected)
-    atomic_write_json(target / "onset.json", {"at": timestamp(onset) if onset else None, "failing": failing})
-    capture_agent(env, target, injected)
+    capture_agent(env, run_dir(env), injected)
 
 
 def watch(env: Mapping[str, str]) -> int:
     injected = time.time()
+    target = run_dir(env)
+    target.mkdir(mode=0o700)
+    atomic_write_json(target / "start.json", {"watch_at": timestamp(injected)})
+    if env.get("BENCH_FAULT") == "none":
+        atomic_write_json(target / "done.json", {"skipped": "healthy control"})
+        return 0
+    print("vanilla: waiting for harm onset", flush=True)
+    try:
+        onset, failing = await_onset(env, injected)
+    except HookError as exc:
+        atomic_write_json(target / "done.json", {"error": str(exc)})
+        raise
+    atomic_write_json(target / "onset.json", {"at": timestamp(onset) if onset else None, "failing": failing})
     with lane_lock(env) as lock:
-        target = run_dir(env)
-        target.mkdir(mode=0o700)
         proc = subprocess.Popen(
             [sys.executable, "-m", MODULE, "supervise", str(injected), str(lock.fileno())],
             env=env,
@@ -394,7 +398,7 @@ def watch(env: Mapping[str, str]) -> int:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    print("vanilla: waiting for harm onset", flush=True)
+    print("vanilla: launched Claude Code", flush=True)
     return proc.wait()
 
 

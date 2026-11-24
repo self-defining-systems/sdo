@@ -2,9 +2,9 @@
 
 import json
 import os
+import select
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 from benchmarks.fuzzops import vanilla
@@ -54,13 +54,16 @@ def test_scoped_kubeconfig_and_clean_pool(tmp_path, monkeypatch, capsys):
     assert not any("synthetic-kube-token" in p.read_text() for p in (tmp_path / "receipts").rglob("*.json"))
 
 
-def test_detached_onset_launcher_and_evidence(tmp_path, monkeypatch):
+def test_detached_onset_launcher_and_evidence(tmp_path):
     tools = tmp_path / "bin"
     tools.mkdir()
     pack = tmp_path / "pack"
     pack.mkdir()
     (pack / "journeys.yaml").write_text("journeys: [{name: read-project}]\n")
     counter = tmp_path / "checks"
+    ready, release = tmp_path / "agent-ready", tmp_path / "agent-release"
+    os.mkfifo(ready)
+    os.mkfifo(release)
     write_executable(
         tools / "fuzzops",
         f"""#!/bin/sh
@@ -100,8 +103,8 @@ os.execve(bind[cmd], [cmd, *args], env)
     )
     write_executable(
         tools / "claude",
-        """#!/usr/bin/python3
-import json, os, pathlib, sys, time
+        r"""#!/usr/bin/python3
+import json, os, pathlib, sys
 assert not list(pathlib.Path.cwd().iterdir())
 assert not list(pathlib.Path(os.environ['HOME']).iterdir())
 assert 'AWS_SHARED_CREDENTIALS_FILE' not in os.environ
@@ -112,12 +115,16 @@ assert sys.stdin.read().strip() == ('Users are reporting problems with the appli
                                    'investigate and fix it.')
 p = pathlib.Path(os.environ['CLAUDE_CONFIG_DIR']) / 'projects'
 p.mkdir()
-(p / 'synthetic.jsonl').write_text('{"type":"assistant"}\\n')
-(p / 'agent-test123.jsonl').write_text('{"type":"assistant"}\\n')
-time.sleep(0.4)
+(p / 'synthetic.jsonl').write_text('{"type":"assistant"}\n')
+(p / 'agent-a0123456789abcdef.jsonl').write_text('{"type":"assistant"}\n')
+with open(READY, 'wb') as signal:
+    signal.write(b'R')
+with open(RELEASE, 'rb') as signal:
+    assert signal.read(1) == b'G'
 print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_tokens': 7},
-                  'total_cost_usd': 0.1, 'result': 'Repaired. synthetic-kube-token'}))
-""",
+                  'agentId': 'a0123456789abcdef', 'total_cost_usd': 0.1,
+                  'result': 'Repaired. synthetic-kube-token synthetic-vertex-key'}))
+""".replace("READY", repr(str(ready))).replace("RELEASE", repr(str(release))),
     )
     auth = tmp_path / "auth.json"
     auth.write_text('{"private_key":"synthetic-vertex-key"}')
@@ -159,18 +166,27 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
         "FUZZOPS_BIN": str(tools / "fuzzops"),
         "FUZZOPS_NAMESPACE": "fg1",
     }
+    ready_fd = os.open(ready, os.O_RDWR | os.O_NONBLOCK)
+    release_fd = os.open(release, os.O_RDWR | os.O_NONBLOCK)
     watch = subprocess.Popen([sys.executable, "-m", vanilla.__name__, "watch"], env=env)
     try:
-        deadline = time.monotonic() + 10
-        while vanilla.main(["idle"], env) == 0 and time.monotonic() < deadline:
-            time.sleep(0.02)
+        assert select.select([ready_fd], [], [], 15)[0]
+        assert os.read(ready_fd, 1) == b"R"
         assert vanilla.main(["idle"], env) == 1
         watch.kill()
         watch.wait(timeout=4)
-        while vanilla.main(["idle"], env) == 1 and time.monotonic() < deadline:
-            time.sleep(0.05)
+        os.write(release_fd, b"G")
+        # The detached supervisor owns the lock through evidence publication.
+        subprocess.run(
+            ["flock", "-w", "15", str(state / "lock"), "true"],
+            timeout=20,
+            check=True,
+        )
         assert vanilla.main(["idle"], env) == 0
     finally:
+        os.write(release_fd, b"G")
+        os.close(release_fd)
+        os.close(ready_fd)
         if watch.poll() is None:
             watch.kill()
             watch.wait()
@@ -178,5 +194,8 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
     assert cell_problems(evidence, "vanilla") == []
     assert json.loads((evidence / "onset.json").read_text())["failing"] == ["read-project"]
     assert json.loads((evidence / "usage.json").read_text())["input_tokens"] == 7
-    assert "synthetic-kube-token" not in (evidence / "transcript.jsonl").read_text()
+    transcript = (evidence / "transcript.jsonl").read_text()
+    assert "synthetic-kube-token" not in transcript
+    assert "synthetic-vertex-key" not in transcript
+    assert vanilla.main(["collect"], env) == 0
     assert not list(evidence.rglob("kubeconfig"))
