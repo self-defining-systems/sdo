@@ -410,3 +410,25 @@ def test_sdo_open_or_reset_incident_still_yields_its_fixing_write(tmp_path: Path
     row = measure(tmp_path)
     # The 35 s write starts after the last graded bad second (29): it cannot explain the recovery.
     assert (row.ttf_s, row.ttf_source) == (9, "claude_tool_start")
+
+
+def test_terminating_a_blocking_session_is_a_fixing_write(tmp_path: Path) -> None:
+    # pg_terminate_backend ends someone's session (it kills the lock holder): a write even inside a SELECT.
+    grade(tmp_path)
+    put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+    transcript(
+        tmp_path,
+        "operator/transcript.jsonl",
+        [
+            (6, 7, "kubectl exec db-0 -- psql -Atc 'select pid from pg_stat_activity'", False, "41"),
+            (
+                11,
+                12,
+                "kubectl exec db-0 -- psql -Atc 'select pg_terminate_backend(pid) from pg_stat_activity where pid=41'",
+                False,
+                "t",
+            ),
+        ],
+    )
+    row = measure(tmp_path)
+    assert (row.ttf_s, row.last_write_source) == (8, "claude_tool_start")

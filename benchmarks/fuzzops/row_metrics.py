@@ -212,6 +212,8 @@ _SQL_WRITE = re.compile(
     r"|(?:alter|create(?:\s+or\s+replace)?|drop)\s+(?:table|trigger|function|procedure|index|view|rule|policy"
     r"|sequence|type|role|user|schema|extension)"
     r"|grant\s|revoke\s|comment\s+on|vacuum\s+full|reindex)\b"
+    # Ending or cancelling another session changes the state of the store (it releases locks).
+    r"|\bpg_(?:terminate|cancel)_backend\s*\("
 )
 _RUBY_WRITE = re.compile(
     r"\.(?:update(?:_all|_columns|_column)?|save|create|destroy(?:_all)?|delete(?:_all)?|touch)"
