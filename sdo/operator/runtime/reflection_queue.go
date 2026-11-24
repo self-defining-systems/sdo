@@ -117,7 +117,6 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 	}
 	c.mu.Lock()
 	state.running = id
-	c.head.openingBound = now.Add(deploymentOpeningBound)
 	c.mu.Unlock()
 	c.goBackground(func() {
 		defer cancel()

@@ -45,8 +45,8 @@ type headPollState struct {
 	running bool
 	nextAt  time.Time
 
-	lastObservedReceipt          string
-	receiptRetryAt, openingBound time.Time
+	lastObservedReceipt string
+	receiptRetryAt      time.Time
 }
 
 // SetHeadPoller makes the controller deploy branch heads SDO did not write
@@ -72,7 +72,6 @@ func (c *Controller) driveHeadPoll(ctx context.Context, now time.Time) {
 		return
 	}
 	c.head.running = true
-	c.head.openingBound = now.Add(deploymentOpeningBound)
 	interval := poller.Interval
 	if interval <= 0 {
 		interval = DefaultHeadPollInterval
@@ -148,22 +147,11 @@ func (c *Controller) syncDeploymentReceipt(ctx context.Context) {
 	c.acceptDeploymentLocked(revision)
 }
 
-const deploymentOpeningBound = lifecycle.DefaultPauseAckTimeout + lifecycle.DefaultPauseApplyBound + lifecycle.DefaultSettleWindow
-
-func (c *Controller) deploymentOpeningBlockedLocked(now time.Time) bool {
-	return (c.head.running || c.reflections.running != "") && now.Before(c.head.openingBound)
-}
-
-func (c *Controller) syncDeploymentBeforeOpening(ctx context.Context, now time.Time) {
+func (c *Controller) retryDeploymentReceipt(ctx context.Context, now time.Time) {
 	c.mu.Lock()
-	expired := (c.head.running || c.reflections.running != "") && !c.head.openingBound.IsZero() && !now.Before(c.head.openingBound)
 	retry := !c.head.receiptRetryAt.IsZero() && !now.Before(c.head.receiptRetryAt)
-	if expired {
-		c.head.openingBound = time.Time{}
-		slog.Warn("deployment completion exceeded its bound; opening against the recorded deployment")
-	}
 	c.mu.Unlock()
-	if expired || retry {
+	if retry {
 		c.syncDeploymentReceipt(ctx)
 	}
 }

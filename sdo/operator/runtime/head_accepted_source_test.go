@@ -163,12 +163,12 @@ func TestHeadReceiptInvalidatesRenderOfSameRevision(t *testing.T) {
 	}
 	ledger.revision, ledger.err = "v2", nil
 	retryAt := c.head.receiptRetryAt
-	c.syncDeploymentBeforeOpening(ctx, retryAt.Add(-time.Second))
+	c.retryDeploymentReceipt(ctx, retryAt.Add(-time.Second))
 	if ledger.reads != 1 {
 		t.Fatal("read the ledger before the retry was due")
 	}
-	c.syncDeploymentBeforeOpening(ctx, retryAt)
-	c.syncDeploymentBeforeOpening(ctx, retryAt.Add(time.Minute))
+	c.retryDeploymentReceipt(ctx, retryAt)
+	c.retryDeploymentReceipt(ctx, retryAt.Add(time.Minute))
 	if invalidations != 1 || ledger.reads != 2 || !c.head.receiptRetryAt.IsZero() {
 		t.Fatalf("same-revision receipt invalidated %d times, want 1", invalidations)
 	}
@@ -188,52 +188,6 @@ func TestLiveMemoryReadsIgnoreRenderRevision(t *testing.T) {
 	}
 	if text, err := view.ArchitectureText(); err != nil || text != architecture {
 		t.Fatalf("memory read followed deployment revision: %q %v", text, err)
-	}
-}
-
-func TestOpeningWaitsForRepairCompletionOrItsBound(t *testing.T) {
-	ctx := context.Background()
-	now := time.Unix(1_700_000_000, 0)
-	for _, path := range []string{"external", "page", "detector"} {
-		t.Run(path, func(t *testing.T) {
-			cfg := testControllerConfig()
-			cfg.SourceCommit, cfg.DeployedCommit = "memory", "v1"
-			cfg.ExternalIncidentsOnly = path == "external"
-			c, err := NewController(cfg, nil, staticProvider{}, &recordingDispatcher{}, now)
-			if err != nil {
-				t.Fatal(err)
-			}
-			ledger := &headReceiptReader{revision: "v2"}
-			c.SetHeadPoller(&HeadPoller{Deployer: lifecycle.HeadDeployer{Broker: ledger}})
-			c.reflections.running = "repair"
-			c.head.openingBound = now.Add(deploymentOpeningBound)
-			alert := ExternalIncident{ID: "test", Namespace: cfg.Namespace, Message: "check"}
-			open := func(at time.Time) {
-				t.Helper()
-				var err error
-				switch path {
-				case "external":
-					err = c.OpenExternalIncident(ctx, at, alert)
-				case "page":
-					err = c.admitPage(ctx, at, sdktest.Snapshot{NamespaceName: cfg.Namespace}, alert)
-				case "detector":
-					err = c.dispatchReady(ctx, at, sdktest.Snapshot{NamespaceName: cfg.Namespace})
-				}
-				if err != nil && !errors.Is(err, ErrExternalIncidentBusy) {
-					t.Fatal(err)
-				}
-			}
-			c.batcher.AddAt(sdk.Finding{RuleID: "test", Status: sdk.FindingActive}, now)
-			open(now.Add(time.Minute))
-			if c.incidentOpen {
-				t.Fatal("opened against a deployment awaiting completion")
-			}
-			c.syncDeploymentBeforeOpening(ctx, c.head.openingBound)
-			open(now.Add(deploymentOpeningBound))
-			if !c.incidentOpen || c.currentIncidentRequest.DeployedCommit != "v2" {
-				t.Fatalf("after bound, expected incident on recorded v2: %+v", c.currentIncidentRequest)
-			}
-		})
 	}
 }
 

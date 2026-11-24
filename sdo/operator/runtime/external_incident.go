@@ -30,7 +30,6 @@ type ExternalIncident struct{ ID, Namespace, Message string }
 // never execute detectors and close only after the responder returns.
 func (c *Controller) OpenExternalIncident(ctx context.Context, now time.Time, alert ExternalIncident) error {
 	defer c.lockObservation("external_incident")()
-	c.syncDeploymentBeforeOpening(ctx, now)
 	if err := c.openExternalIncident(now, alert); err != nil {
 		return err
 	}
@@ -68,7 +67,7 @@ func (c *Controller) openExternalIncident(now time.Time, alert ExternalIncident)
 		}
 		return nil
 	}
-	busy := c.incidentOpen || c.deploymentOpeningBlockedLocked(now) || c.closureBlocksNextLocked()
+	busy := c.incidentOpen || c.closureBlocksNextLocked()
 	c.mu.Unlock()
 	// Retain the alert in the caller's inbox until current work is acknowledged.
 	if busy {
