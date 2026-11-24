@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
+	"sdo.dev/operator/rendered"
 )
 
 // normalizeSourceWire reconciles representations on already detached copies.
@@ -59,7 +60,7 @@ func normalizeWireValue(accepted, observed any, typ reflect.Type) {
 				continue
 			}
 			// Init containers and environment expansion execute in declaration order.
-			if key := field.Tag.Get("patchMergeKey"); key != "" && name != "env" && name != "initContainers" {
+			if key := field.Tag.Get("patchMergeKey"); key != "" && name != "env" && name != rendered.InitContainers {
 				keys := []string{key}
 				if name == "ports" && (typ == reflect.TypeFor[corev1.ServiceSpec]() ||
 					typ == reflect.TypeFor[corev1.Container]() || typ == reflect.TypeFor[corev1.EphemeralContainerCommon]()) {
