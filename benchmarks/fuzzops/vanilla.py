@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from benchmarks.fuzzops import eks, page
+from benchmarks.fuzzops import eks
 from benchmarks.fuzzops.cellevidence import atomic_write_json, cell_problems
 from benchmarks.fuzzops.hooks import HookError, fuzzops_app, prove_golden
 from benchmarks.fuzzops.view import redact
@@ -25,12 +25,20 @@ if TYPE_CHECKING:
 
 MODEL = "claude-opus-5-5"
 EFFORT = "medium"
-ONSET_SECONDS = 150
 AGENT_SECONDS = 25 * 60
 IDENTITY = "vanilla-agent"
 MODULE = "benchmarks.fuzzops.vanilla"
 VERTEX_ENV = ("CLAUDE_CODE_USE_VERTEX", "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID")
-EVIDENCE_FILES = ("start.json", "onset.json", "done.json", "usage.json", "transcript.jsonl", "stderr.log")
+ONSET_EVIDENCE = "onset-probes.jsonl"
+EVIDENCE_FILES = (
+    "start.json",
+    "onset.json",
+    ONSET_EVIDENCE,
+    "done.json",
+    "usage.json",
+    "transcript.jsonl",
+    "stderr.log",
+)
 
 
 def timestamp(t: float) -> str:
@@ -335,45 +343,28 @@ def capture_agent(env: Mapping[str, str], target: Path, injected: float) -> None
         )
 
 
-def await_onset(env: Mapping[str, str], watch_at: float) -> tuple[float | None, list[str]]:
-    pack = Path(env["BENCH_PACK"])
-    names = [journey["name"] for journey in page.journeys(pack)["journeys"]]
-    fuzzops = Path(env["FUZZOPS_BIN"]).resolve()
-    deadline = watch_at + ONSET_SECONDS
-    args = [
-        str(fuzzops),
-        "check",
-        "--pack",
-        str(pack),
-        "--namespace",
-        env["FUZZOPS_NAMESPACE"],
-        "--duration",
-        "4s",
-        "--rate",
-        "6",
-        "--trace",
-        "--lines",
-    ]
-    while (remaining := deadline - time.time()) > 0:
-        try:
-            check = subprocess.run(
-                args,
-                cwd=fuzzops.parent.parent,
-                env=env,
-                timeout=min(20, remaining),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            continue
-        if check.returncode not in (0, 1):
-            raise HookError(f"onset check failed (exit {check.returncode})")
-        failing = page.parse_trace(check.stdout, check.stderr, names)
-        if failing:
-            return time.time(), sorted(failing)
-        time.sleep(min(0.25, max(0, deadline - time.time())))
-    return None, []
+def await_onset(env: Mapping[str, str], target: Path, deadline: float) -> dict[str, Any]:
+    if not env.get("FUZZOPS_TRAFFIC"):
+        raise HookError("watch requires a FuzzOps pin that publishes FUZZOPS_TRAFFIC")
+    with Path(env["FUZZOPS_TRAFFIC"]).open("rb") as source, (target / ONSET_EVIDENCE).open("wb") as evidence:
+        sample = None
+        while True:
+            offset = source.tell()
+            line = source.readline()
+            if line.endswith(b"\n"):
+                evidence.write(line)
+                evidence.flush()
+                sample = json.loads(line)
+                if sample["first_bad"] is not None:
+                    return sample
+                continue
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                if sample is None or not sample["requests"]:
+                    raise HookError("FuzzOps onset stream did not observe any requests")
+                return sample
+            source.seek(offset)
+            time.sleep(min(0.25, remaining))
 
 
 def supervise(env: Mapping[str, str], injected: float, lock_fd: int) -> None:
@@ -383,26 +374,27 @@ def supervise(env: Mapping[str, str], injected: float, lock_fd: int) -> None:
 
 def watch(env: Mapping[str, str]) -> int:
     watch_at = time.time()
-    # FuzzOps sets the operator deadline to inject_at + the configured window.
-    # The env value has second precision. Standalone hook tests may omit it.
-    deadline = env.get("FUZZOPS_DEADLINE")
-    injected = watch_at
-    if deadline:
-        window = operator_settings(env)["window_seconds"]
-        injected = datetime.fromisoformat(deadline).timestamp() - window
     target = run_dir(env)
     target.mkdir(mode=0o700)
-    atomic_write_json(target / "start.json", {"watch_at": timestamp(watch_at), "inject_at": timestamp(injected)})
+    atomic_write_json(target / "start.json", {"watch_at": timestamp(watch_at)})
     if env.get("BENCH_FAULT") == "none":
         atomic_write_json(target / "done.json", {"skipped": "healthy control"})
         return 0
-    print("vanilla: waiting for harm onset", flush=True)
+    print("vanilla: waiting for harm onset", file=sys.stderr, flush=True)
     try:
-        onset, failing = await_onset(env, watch_at)
-    except HookError as exc:
-        atomic_write_json(target / "done.json", {"error": str(exc)})
-        raise
-    atomic_write_json(target / "onset.json", {"at": timestamp(onset) if onset else None, "failing": failing})
+        deadline = datetime.fromisoformat(env["FUZZOPS_DEADLINE"]).timestamp()
+        sample = await_onset(env, target, deadline)
+        injected = datetime.fromisoformat(sample["inject_at"]).timestamp()
+    except (HookError, OSError, ValueError, KeyError, TypeError) as exc:
+        why = str(exc) if isinstance(exc, HookError) else f"invalid FuzzOps onset stream ({type(exc).__name__})"
+        atomic_write_json(target / "done.json", {"error": why})
+        raise HookError(why) from exc
+    harmed = sample["first_bad"] is not None
+    atomic_write_json(target / "start.json", {"watch_at": timestamp(watch_at), "inject_at": timestamp(injected)})
+    atomic_write_json(target / "onset.json", {**sample, "at": timestamp(time.time()) if harmed else None})
+    if not harmed:
+        atomic_write_json(target / "done.json", {"skipped": "no user harm observed"})
+        return 0
     with lane_lock(env) as lock:
         proc = subprocess.Popen(
             [sys.executable, "-m", MODULE, "supervise", str(injected), str(lock.fileno())],
@@ -413,7 +405,7 @@ def watch(env: Mapping[str, str]) -> int:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    print("vanilla: launched Claude Code", flush=True)
+    print("vanilla: launched Claude Code", file=sys.stderr, flush=True)
     return proc.wait()
 
 
@@ -433,7 +425,7 @@ def collect(env: Mapping[str, str]) -> int:
         if proof.is_file():
             shutil.copyfile(proof, dest / proof.name)
         done = json.loads((target / "done.json").read_text()) if (target / "done.json").exists() else {}
-        problems = [] if done.get("skipped") == "healthy control" else cell_problems(dest, "vanilla")
+        problems = [] if done.get("skipped") else cell_problems(dest, "vanilla")
         if not done.get("skipped") and not done.get("result_event"):
             problems.append("Claude Code result event missing" + (f" ({done['error']})" if done.get("error") else ""))
         elif done.get("is_error") or done.get("exit") not in (None, 0):
@@ -526,7 +518,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         if verb == "preflight":
             print(json.dumps({"checks": [{"check": "vanilla-sandbox", "ok": False, "detail": why}]}))
             return 0
-        print(why)
+        print(why, file=sys.stderr if verb in ("watch", "supervise") else sys.stdout)
         return 1
     return 0
 
