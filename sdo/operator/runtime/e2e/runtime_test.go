@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -296,7 +297,18 @@ func (r *Runtime) resolveEnv(ctx context.Context, pod *corev1.Pod, c corev1.Cont
 		env["KUBERNETES_SERVICE_PORT"] = fmt.Sprint(r.APIPort(pod))
 		env["KUBERNETES_SERVICE_PORT_HTTPS"] = env["KUBERNETES_SERVICE_PORT"]
 	}
+	setPodAPIProxyEnv(env, r.kubelet.podIP(pod.UID))
 	return env, nil
+}
+
+// The harness shares the host network. Each Pod's unique loopback IP gives
+// its API proxy the same isolation as localhost provides inside a real Pod.
+func setPodAPIProxyEnv(env map[string]string, podIP string) {
+	address := net.JoinHostPort(podIP, "18080")
+	env["SDO_API_PROXY_ADDRESS"] = address
+	if env["SDO_API_PROXY_URL"] == "http://127.0.0.1:18080" {
+		env["SDO_API_PROXY_URL"] = "http://" + address
+	}
 }
 
 func automount(pod *corev1.Pod) bool {

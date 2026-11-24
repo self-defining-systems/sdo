@@ -88,3 +88,19 @@ func TestWorldsOnOneHostRunOneAtATime(t *testing.T) {
 	}
 	second()
 }
+
+func TestAPIProxyAddressIsLocalToEachPod(t *testing.T) {
+	const proxy = "http://127.0.0.1:18080"
+	first := map[string]string{"SDO_API_PROXY_URL": proxy}
+	second := map[string]string{"SDO_API_PROXY_URL": proxy}
+	sidecar := map[string]string{}
+	setPodAPIProxyEnv(first, podLoopback(8))
+	setPodAPIProxyEnv(second, podLoopback(9))
+	setPodAPIProxyEnv(sidecar, podLoopback(8))
+	if first["SDO_API_PROXY_URL"] != "http://"+sidecar["SDO_API_PROXY_ADDRESS"] {
+		t.Fatalf("agent proxy %q does not match its sidecar %q", first["SDO_API_PROXY_URL"], sidecar["SDO_API_PROXY_ADDRESS"])
+	}
+	if first["SDO_API_PROXY_URL"] == second["SDO_API_PROXY_URL"] {
+		t.Fatalf("agents in different Pods share proxy %q", first["SDO_API_PROXY_URL"])
+	}
+}

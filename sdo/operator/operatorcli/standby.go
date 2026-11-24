@@ -23,7 +23,11 @@ func RunStandby(ctx context.Context, args []string) error {
 	if err := json.Unmarshal([]byte(*raw), &command); err != nil {
 		return err
 	}
-	return worker_registry.RunStandbyDaemon(ctx, worker_registry.StandbyDaemonOptions{Inbox: "/sdo/request", Ready: "/sdo/standby/ready/agent", Checkout: "/sdo/proposal", SessionDirectory: "/sdo/session", Command: command, ProxyAddress: APIProxyAddress})
+	address, err := apiProxyAddress()
+	if err != nil {
+		return err
+	}
+	return worker_registry.RunStandbyDaemon(ctx, worker_registry.StandbyDaemonOptions{Inbox: "/sdo/request", Ready: "/sdo/standby/ready/agent", Checkout: "/sdo/proposal", SessionDirectory: "/sdo/session", Command: command, ProxyAddress: address})
 }
 
 func RunStandbyHistory(ctx context.Context, args []string) error {
