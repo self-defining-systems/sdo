@@ -206,7 +206,9 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	c.recoverySafetyLost = true
 	if c.earlyReportPendingLocked() {
 		c.cacheVerificationLocked(ToolResponse{Command: "verify", Summary: "recovery proof invalidated by a joined alert", Findings: []sdk.Finding{finding}})
-	} else if c.responderDone {
+	} else if c.responderDone && (pending || c.awaitingAutomaticRecoveryLocked() == nil) {
+		// The provisional outcome already ended response. During an automatic
+		// wait the first responder handoff can still be due.
 		c.escalateLocked(now)
 	}
 	// A new alert reopens a settled automatic stage while repair is ongoing.

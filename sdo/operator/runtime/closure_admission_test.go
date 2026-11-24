@@ -95,7 +95,7 @@ func testClosureAdmission(t *testing.T, scenario string) {
 	metrics := controllerDetector(route.DetectorID, time.Second, route)
 	metrics.spec.Persistence.Firing = 2
 	metrics.spec.Persistence.Clearing = 1
-	probeTest := controllerDetector("traffic-known-broken", time.Second, userTestFinding("browse-items"))
+	probeTest := controllerDetector("traffic-known-broken", time.Second, sdk.Finding{})
 	probeTest.errors[0] = errors.New("probe unavailable")
 	if scenario == "unavailable" {
 		metrics.errors[0] = errors.New("Prometheus unavailable")
@@ -137,7 +137,8 @@ func testClosureAdmission(t *testing.T, scenario string) {
 	}
 	requireFrozen := func() {
 		t.Helper()
-		if c.pendingClosure == nil || !c.pendingClosure.Frozen || len(c.pendingClosure.Request.JoinedKeys) != 0 {
+		if c.pendingClosure == nil || !c.pendingClosure.Frozen || len(c.pendingClosure.Request.JoinedKeys) != 0 ||
+			c.pendingClosure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
 			t.Fatalf("expected a verified freeze with the original alert set: %+v", c.pendingClosure)
 		}
 	}
@@ -183,7 +184,7 @@ func testClosureAdmission(t *testing.T, scenario string) {
 	if err := restarted.RestoreState(saved); err != nil {
 		t.Fatal(err)
 	}
-	if !restarted.IncidentOpen() || !restarted.responderDone || !slices.Contains(*restarted.heldKeys.Load(), key) {
+	if !restarted.IncidentOpen() || !restarted.responderDone || restarted.escalatedAt.IsZero() || !slices.Contains(*restarted.heldKeys.Load(), key) {
 		t.Fatalf("joined alert or responder result lost on restart: open=%v done=%v held=%v", restarted.IncidentOpen(), restarted.responderDone, *restarted.heldKeys.Load())
 	}
 
