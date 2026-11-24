@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -184,6 +185,10 @@ func (c *Controller) earlyReportPendingLocked() bool {
 	return !c.incidentOpen && c.currentIncidentRequest != nil && c.pendingClosure != nil && c.pendingClosure.VerifiedWhileResponderRunning && c.pendingClosure.Request.IncidentID == c.currentIncidentRequest.IncidentID
 }
 
+func (c *Controller) earlyProofInvalidatedLocked() bool {
+	return c.earlyReportPendingLocked() && !slices.Equal(c.currentIncidentRequest.JoinedKeys, c.pendingClosure.Request.JoinedKeys)
+}
+
 // A verified closure waits for a running session's final result, bounded by the
 // response deadline, then retires it. Uncertain quiescence retries retain their
 // own deadline. Mutation fencing and independently observed quiescence hold the
@@ -257,6 +262,14 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 		}
 		if !done {
 			c.pendingClosure.ResponderCompletedAt = now.UTC()
+		}
+		if c.earlyProofInvalidatedLocked() {
+			err := c.reobserveClosureLocked(now, c.currentIncidentRequest)
+			c.mu.Unlock()
+			if err != nil {
+				c.reportBrokerError("resume recovery after a joined alert", err)
+			}
+			return
 		}
 		c.clearIncidentLocked()
 	}
@@ -397,8 +410,8 @@ func (c *Controller) markNewSinceDispatchLocked(response *ToolResponse) {
 	}
 }
 
-// markAlertSetLocked tells the responder what Recovered waits on when user
-// tests joined the opening alerts after dispatch.
+// markAlertSetLocked tells the responder what Recovered waits on when
+// alerts joined after dispatch.
 func (c *Controller) markAlertSetLocked(response *ToolResponse) {
 	if c.currentIncidentRequest == nil || len(c.currentIncidentRequest.JoinedKeys) == 0 {
 		return
@@ -437,6 +450,9 @@ func (c *Controller) cacheVerificationLocked(response ToolResponse) {
 // pendingClosureVerifiedLocked reports a closure frozen at verification. An
 // unconfirmed recheck keeps that verification; it only withholds final health.
 func (c *Controller) pendingClosureVerifiedLocked(id string) bool {
+	if c.earlyProofInvalidatedLocked() && c.currentIncidentRequest.IncidentID == id {
+		return false
+	}
 	if c.pendingClosure != nil && !c.pendingClosure.Frozen && c.pendingClosure.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED && c.cachedIncidentID == id && c.cachedVerification != nil && !c.cachedVerification.Healthy {
 		return false
 	}

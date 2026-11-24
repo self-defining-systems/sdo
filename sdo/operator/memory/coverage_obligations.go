@@ -47,20 +47,27 @@ func MapWorkloads(checkout string) []appmap.Workload {
 		if err != nil {
 			continue
 		}
-		workload, err := parseTrafficWorkload(file.Name(), content)
-		if err != nil {
-			continue
+		if workload, ok := MapWorkload(file.Name(), content); ok {
+			out = append(out, workload)
 		}
-		w := appmap.Workload{Name: workload.GetName()}
-		for _, scenario := range workload.GetScenarios() {
-			w.Scenarios = append(w.Scenarios, scenario.GetId())
-			if scenario.GetKnownBroken() != nil {
-				w.KnownBroken = append(w.KnownBroken, scenario.GetId())
-			}
-		}
-		out = append(out, w)
 	}
 	return out
+}
+
+// MapWorkload reads one traffic workload from an accepted file.
+func MapWorkload(file string, content []byte) (appmap.Workload, bool) {
+	workload, err := parseTrafficWorkload(file, content)
+	if err != nil {
+		return appmap.Workload{}, false
+	}
+	w := appmap.Workload{Name: workload.GetName()}
+	for _, scenario := range workload.GetScenarios() {
+		w.Scenarios = append(w.Scenarios, scenario.GetId())
+		if scenario.GetKnownBroken() != nil {
+			w.KnownBroken = append(w.KnownBroken, scenario.GetId())
+		}
+	}
+	return w, true
 }
 
 // CoverageObligations renders, for the detection designer's brief, the

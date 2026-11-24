@@ -501,8 +501,10 @@ func (c *Controller) composeProvider() {
 // taken from now on. Caller holds c.mu.
 func (c *Controller) publishHeldLocked() {
 	var keys []string
-	if c.incidentOpen && c.currentIncidentRequest != nil {
+	if c.currentIncidentRequest != nil && (c.incidentOpen || c.earlyReportPendingLocked()) {
 		keys = alertKeys(c.currentIncidentRequest)
+	} else if c.provisionalClosureLocked() {
+		keys = alertKeys(&c.pendingClosure.Request)
 	}
 	c.heldKeys.Store(&keys)
 }
@@ -1018,9 +1020,8 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	if c.attachBeforeLaunch([]sdk.Finding{finding}, true) {
 		return
 	}
-	// A user test that starts failing early in a launched incident joins its
-	// alert set (Recovered waits on it); any other later opener, or a test
-	// after the join window, opens the next incident.
+	// An opener inside the join window belongs to the current alert set.
+	// Later openers wait for the next incident.
 	if c.joinAlertSet(finding, now) {
 		// The alert set changed: a learned playbook for the joined symptom is
 		// evaluated against live state, not only the opening alerts' playbooks.
@@ -1679,9 +1680,9 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 				result.ResponderSessionID = c.pendingClosure.Result.ResponderSessionID
 			}
 			c.pendingClosure.Result = cloneIncidentResult(&result)
-			c.pendingClosure.ResponderCompletedAt = observedAt.UTC()
 		}
 		if completion.err == nil || terminal {
+			c.pendingClosure.ResponderCompletedAt = observedAt.UTC()
 			c.responderDone = true
 			c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(observedAt), IncidentId: completion.incidentID, DispatchError: completion.err != nil})
 		}
@@ -2505,7 +2506,6 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	// lock, but treat the old process as finished so detector clears can close it.
 	c.responderDone = state.ResponderDone
 	c.currentIncidentRequest = cloneIncidentRequest(incidentRequestState(state.GetIncidentRequest()))
-	c.publishHeldLocked()
 	c.currentIncidentResult = nil
 	if state.IncidentResult != nil {
 		result := incidentResultState(state.IncidentResult)

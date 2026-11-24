@@ -804,7 +804,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	s.Limits = laneLimits(h, limitSpec, block)
 	s.IsolationMode = mode
 	if s.Cap == 0 && s.Prev != nil {
-		// A release or build tearing down another experiment's operator waits for it at most that experiment's cap.
+		// Teardown waits at most the previous experiment's cap.
 		if x := m.exps[s.Prev.Experiment]; x != nil {
 			_, _, c := x.Measured().Durations()
 			s.Cap = Seconds(c.Seconds())
@@ -873,7 +873,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	return true
 }
 
-// preparedFor is the operator and app a build of x puts on l (before it has run).
+// preparedFor describes what a build of x will put on l.
 func (m *Manager) preparedFor(l *LaneFile, x *Experiment) *Prepared {
 	s := x.Measured()
 	p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: m.appPackFor(l.Host, s),
@@ -1697,7 +1697,7 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 	case StepRelease:
 		if res.OK {
 			if res.Prepared != nil && res.Prepared.Reset {
-				// A pool lane went back to its golden copy: its operator stays, prepared and idle.
+				// The pool lane stays prepared and idle after reset.
 				l.Prepared = res.Prepared
 			} else {
 				// The operator is gone; the app copy stays for the next build to reuse (reuse_app), unless the cluster went.
@@ -1848,10 +1848,17 @@ func (m *Manager) gcHost(ctx context.Context, host string) {
 		}
 		if l.Step != nil {
 			// The lock of a live step, whatever the lane's cluster: a lane's first build runs while it is Gone.
-			keep = append(keep, filepath.Join(l.Lane, l.Step.ID), filepath.Join(l.Lane, "step.lock"))
+			keep = append(keep, filepath.Join(l.Lane, l.Step.ID), filepath.Join(l.Lane, "step.lock"),
+				filepath.Join(l.Lane, hookInputDirName(l.Step.ID)))
 		}
 		if !l.Gone {
 			keep = append(keep, filepath.Join(l.Lane, "lane"), filepath.Join(l.Lane, "step.lock"))
+		}
+		if p := l.Prepared; p != nil && p.Operator != "" {
+			dir := filepath.Dir(p.Operator)
+			if filepath.Dir(dir) == filepath.Join(m.inv.Hosts[host].Staging, l.Lane) {
+				keep = append(keep, filepath.Join(l.Lane, filepath.Base(dir)))
+			}
 		}
 	}
 	for _, x := range m.exps {
@@ -1913,7 +1920,7 @@ func appCopy(p *Prepared, gone bool) *Prepared {
 	if p == nil || gone || !p.Ready {
 		return nil
 	}
-	return &Prepared{Experiment: p.Experiment, Namespace: p.Namespace, AppPack: p.AppPack, Ready: true, Fault: p.Fault,
+	return &Prepared{Experiment: p.Experiment, Namespace: p.Namespace, AppPack: p.AppPack, Operator: p.Operator, Ready: true, Fault: p.Fault,
 		Workload: p.Workload, WorkloadRev: p.WorkloadRev}
 }
 

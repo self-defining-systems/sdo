@@ -309,41 +309,62 @@ func (r *stepRunner) interval(kind string, start time.Time, ok bool, detail stri
 		Start: start.UTC(), End: time.Now().UTC(), OK: ok, Detail: detail})
 }
 
-// specFilePath is the lane's spec file (the one every call's env names), kept in the lane directory from one build to the next.
-func (r *stepRunner) specFilePath() string { return filepath.Join(r.s.LaneDir, "operator.json") }
+// hookInputDirName is a lane staging entry, separate from both the step's
+// collected output and the scratch directory emptied during a build.
+func hookInputDirName(stepID string) string { return stepID + ".hook-input" }
 
-// specFileFor is the file a call about p names ("": the spec has no such block). A step that builds or runs carries
-// the spec's block, and RunStep writes its file before the step's first workload call, so every call of it names the
-// file, also the ones made before the build prepares p; a release or recover names the file the lane was prepared with.
+// specFileFor uses the call's target. Identity has no target of its own, so
+// it uses New for a build or run and Prev for steps servicing the lane.
 func (r *stepRunner) specFileFor(p *Prepared) string {
-	for _, q := range []*Prepared{p, r.s.New, r.s.Prev} {
-		if q != nil && q.Operator != "" {
-			return q.Operator
+	if p == nil {
+		p = r.s.New
+		if p == nil {
+			p = r.s.Prev
 		}
 	}
-	if r.s.OperatorFile != nil {
-		return r.specFilePath()
+	if p == nil {
+		return ""
 	}
-	return ""
+	return p.Operator
 }
 
-// writeSpecFile writes the spec's block to the lane's file. It is the one place the file is written for a step's
-// workload calls: RunStep calls it before the first one, and whatever empties the lane directory calls it again.
+// writeSpecFile binds New to its own file before the first workload call.
+// Prev keeps the file recorded by its build.
 func (r *stepRunner) writeSpecFile() error {
 	block := r.s.OperatorFile
 	if block == nil {
 		return nil
 	}
-	return writeJSON(r.specFilePath(), block)
+	if r.s.New == nil {
+		return errors.New("hook input has no target")
+	}
+	path := filepath.Join(filepath.Dir(r.s.LaneDir), hookInputDirName(r.s.ID), "operator.json")
+	if err := writeJSON(path, block); err != nil {
+		return err
+	}
+	r.s.New.Operator = path
+	return nil
 }
 
-// resetLaneDir empties the lane directory (a new cluster, a new app copy) and puts the spec's file back in it.
+// resetLaneDir clears the lane's scratch data. Older prepared records may
+// still point to operator.json here, including if this build dies before its
+// result is adopted.
 func (r *stepRunner) resetLaneDir() error {
-	_ = os.RemoveAll(r.s.LaneDir)
 	if err := os.MkdirAll(r.s.LaneDir, 0o755); err != nil {
 		return err
 	}
-	return r.writeSpecFile()
+	entries, err := os.ReadDir(r.s.LaneDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() != "operator.json" {
+			if err := os.RemoveAll(filepath.Join(r.s.LaneDir, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // laneEnv is the environment of every fuzzops call and hook on the lane.
@@ -390,9 +411,6 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 		}
 		e = append(e, "BENCH_REGISTRY="+filepath.Join(r.platform(), "deploy", registry))
 	}
-	// The spec's block reaches every call of the step, whatever state p is in: a workload that chooses images or
-	// credentials from it must not fall back to the host's defaults for a verb that runs before the build prepared p.
-	// _BLOCK says the spec has one, so a workload can refuse a call that lost the file by name.
 	if f := r.specFileFor(p); f != "" {
 		e = append(e, "BENCH_OPERATOR="+f, "BENCH_OPERATOR_BLOCK=1")
 	}
@@ -775,7 +793,6 @@ func (r *stepRunner) build(ctx context.Context) {
 			r.fail("lane dir: %v", err)
 			return
 		}
-		pre.Operator = r.specFilePath()
 		pre.EvidenceRun = s.Experiment + "-" + s.Lane + "-" + s.ID
 		// From here the operator may be (partly) on the lane: the next build tears it down.
 		r.res.Prepared = &pre
@@ -913,7 +930,6 @@ func (r *stepRunner) swapInto(ctx context.Context) {
 	pre := *p
 	pre.Pack, pre.Version, pre.Memory, pre.EvidenceRun = prev.Pack, prev.Version, prev.Memory, prev.EvidenceRun
 	pre.Golden = prev.Golden
-	pre.Operator = r.specFilePath()
 	if err := checkRevision(ctx, p.HooksPath, s.OperatorFile.Revision); err != nil {
 		r.fail("hooks %s: %v", p.Hooks, err)
 		return
