@@ -68,8 +68,8 @@ type InvalidateDerived struct {
 // RepairData runs one write on a scope.
 // Its effect is data-write. It sets exactly one of:
 //   - Statement: a redis single-key write per matched key ("SREM member"; an
-//     argument with spaces is quoted as in redis-cli; a quote that does not
-//     start an argument is itself), a
+//     argument with spaces is quoted as in redis-cli; only a whole
+//     argument can be quoted), a
 //     mongodb update document or pipeline, a postgres or mysql assignment list
 //     (SET is optional; a quoted value may hold any character), or
 //     "delete" (the only memcached statement);
