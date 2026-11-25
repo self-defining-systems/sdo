@@ -188,6 +188,13 @@ func (c *Controller) RestoredFromState() bool {
 func (c *Controller) recordFiring(spec sdk.DetectorSpec, now time.Time, findings []sdk.Finding, changes FindingChanges) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	automaticOwnsRepair := len(changes.Transitions) > 0 && c.pendingStageCapacityLocked() &&
+		playbookWrote(c.awaitingAutomaticRecoveryLocked()) && c.learnedPassAllowedLocked()
+	var openingKeys []string
+	if automaticOwnsRepair {
+		openingKeys = c.currentIncidentRequest.OpeningKeys
+	}
 	at := now.UTC()
 	for _, finding := range findings {
 		if finding.Status != sdk.FindingActive {
@@ -200,6 +207,12 @@ func (c *Controller) recordFiring(spec sdk.DetectorSpec, now time.Time, findings
 	}
 	for _, transition := range changes.Transitions {
 		fingerprint := FindingFingerprint(transition.Finding)
+		// The opening diagnosis already saw the initial opening alerts.
+		changed := transition.Event == FiringCleared || transition.Event == FiringActivated &&
+			(transition.Sequence > 1 || !slices.Contains(openingKeys, findingKey(transition.Finding)))
+		if changed && automaticOwnsRepair {
+			c.queueLearnedPassLocked()
+		}
 		incidentID, relation := c.classifyFindingLocked(spec.ID, transition.Finding)
 		index := c.timelineIndexLocked(spec.ID, fingerprint)
 		switch transition.Event {

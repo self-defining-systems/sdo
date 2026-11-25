@@ -330,7 +330,22 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 	}
 	now := l.clock().UTC()
 	page := l.pageInput(reads, response.Findings, now)
-	summary := buildDetectSummary(detectInput{Request: l.liveRequest(), Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), AppState: page.AppState})
+	input := detectInput{Request: l.liveRequest(), Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), AppState: page.AppState}
+	stage := deterministicStageReport(input.Request.PriorStages)
+	if stage.GetHandoffSelected() && !input.Recovered && l.Programs != nil {
+		ids := map[string]bool{}
+		for _, verdict := range stage.GetDiagnoses() {
+			if verdict.GetResult() != "match" {
+				ids[verdict.GetPlaybookId()] = true
+			}
+		}
+		if len(ids) > 0 {
+			runs := SelectKeyedProgramCandidates(ctx, onlyPrograms{ProgramRegistry: l.Programs, ids: ids}, view, response.Findings, l.deadline(),
+				KeyedMatching{Credits: l.Credits, OpeningKeys: alertKeys(&input.Request)})
+			input.LiveMatches = buildPlaybookCoverage(response.Findings, runs, view, l.Trust).GetMatches()
+		}
+	}
+	summary := buildDetectSummary(input)
 	response.Text = summary.Text
 	if finding != "" {
 		text, found := summary.item(finding)

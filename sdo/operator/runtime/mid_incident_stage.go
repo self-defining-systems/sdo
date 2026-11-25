@@ -15,33 +15,32 @@ import (
 // the bound only limits how often a flapping detector can ask.
 const maxMidIncidentPasses = 8
 
-// midIncidentStage coalesces the re-runs of the automatic stage over the
-// open incident: one pass at a time, and one more when a match arrived during it.
-// A pass that clears no finding and applies no program new to the incident
-// settles the stage: the responder owns what remains, and later activations
-// of findings the incident already holds join it without another pass. A
-// finding new to the incident (a symptom joining the alert set, a clue)
-// reopens the stage for one more pass.
+// midIncidentStage coalesces finding changes into bounded passes, one at a time.
 type midIncidentStage struct {
 	running bool
 	dirty   bool
-	settled bool
-	// pending holds a finding that arrived while the first response pipeline
-	// was running; one pass evaluates it when the pipeline ends.
 	pending bool
 	passes  int
+}
+
+func (c *Controller) queueLearnedPassLocked() {
+	if c.midStage.running {
+		c.midStage.dirty = true
+	} else {
+		c.midStage.pending = true
+	}
 }
 
 // attachLearnedActivation queues a pass for linked evidence while the
 // automatic stage still owns the incident. It reports whether it took the
 // finding. After handoff the ordinary alert-join path handles it.
-func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Finding) bool {
+func (c *Controller) attachLearnedActivation(finding sdk.Finding) bool {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	loop := c.responderLoop
 	if !c.incidentOpen || c.currentIncidentRequest == nil || c.incidentDispatchedAt.IsZero() || !c.learnedPassAllowedLocked() ||
-		loop == nil || c.midStage.passes >= maxMidIncidentPasses || !c.deterministicStageSelectedLocked() ||
+		!c.pendingStageCapacityLocked() ||
 		!learnedPlaybookExplains(loop, finding) {
-		c.mu.Unlock()
 		return false
 	}
 	request := c.currentIncidentRequest
@@ -55,30 +54,8 @@ func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Fi
 		sortFindings(request.Findings)
 		c.incidentFindingKeys = findingKeys(request.Findings)
 		c.noteBatchedLocked(request.IncidentID, []sdk.Finding{finding})
-		// New evidence reopens a settled stage: the pass that settled it never
-		// saw this finding. The pass cap still bounds a flapping detector.
-		c.midStage.settled = false
 	}
-	// The first pipeline is still running: it diagnosed without this finding,
-	// so one pass follows it (resumePendingLearnedPass).
-	if c.responseStagesRunning {
-		c.midStage.pending = true
-		c.mu.Unlock()
-		return true
-	}
-	// A settled stage hands the finding to the responder with the incident.
-	if c.midStage.settled {
-		c.mu.Unlock()
-		return true
-	}
-	// A pass is running: it ends with one more pass, so the finding is
-	// evaluated even if the running pass already diagnosed.
-	if c.midStage.running {
-		c.midStage.dirty = true
-		c.mu.Unlock()
-		return true
-	}
-	c.startMidPassesLocked(ctx, request.IncidentID, loop)
+	c.queueLearnedPassLocked()
 	return true
 }
 
@@ -102,12 +79,12 @@ func (c *Controller) resumePendingLearnedPass(ctx context.Context) {
 }
 
 func (c *Controller) pendingLearnedPassReadyLocked() bool {
-	return c.midStage.pending && !c.responseStagesRunning && !c.midStage.running && !c.midStage.settled &&
-		c.responderLoop != nil && c.midStage.passes < maxMidIncidentPasses && c.learnedPassAllowedLocked()
+	return c.midStage.pending && !c.responseStagesRunning && !c.midStage.running &&
+		c.pendingStageCapacityLocked() && c.learnedPassAllowedLocked()
 }
 
-func (c *Controller) deterministicStageSelectedLocked() bool {
-	if c.codePath == nil {
+func (c *Controller) pendingStageCapacityLocked() bool {
+	if c.codePath == nil || c.responderLoop == nil || c.midStage.passes >= maxMidIncidentPasses {
 		return false
 	}
 	for _, name := range c.codePath.Selection.ResponseStages {
@@ -177,16 +154,12 @@ func stagePassProgressed(earlier, report *contracts.StageReport) bool {
 
 func (c *Controller) runMidIncidentPasses(ctx context.Context, incidentID string, loop *ResponderLoop) {
 	for {
-		progressed, err := c.runMidIncidentPass(ctx, incidentID, loop)
+		err := c.runMidIncidentPass(ctx, incidentID, loop)
 		if err != nil {
 			slog.Warn("later automatic stage pass", "incident_id", incidentID, "error", err)
 		}
 		c.mu.Lock()
-		// A finding that arrived during the pass has not been evaluated yet.
-		if err == nil && !progressed && !c.midStage.dirty {
-			c.midStage.settled = true
-		}
-		again := c.midStage.dirty && !c.midStage.settled && c.midStage.passes < maxMidIncidentPasses && c.incidentOpen &&
+		again := c.midStage.dirty && c.midStage.passes < maxMidIncidentPasses && c.incidentOpen &&
 			c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID && c.learnedPassAllowedLocked()
 		c.midStage.dirty = false
 		if !again {
@@ -198,22 +171,12 @@ func (c *Controller) runMidIncidentPasses(ctx context.Context, incidentID string
 	}
 }
 
-// runMidIncidentPass extends the controller-owned automatic stage with new
-// evidence. It reports whether the pass made progress (stagePassProgressed).
-func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, loop *ResponderLoop) (bool, error) {
-	actionCtx, cancel, err := c.actionContext(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer cancel()
-	// The pass holds the loop's locks, so no read inside it may hang: twice the
-	// stage's own budget covers its checks and apply.
-	actionCtx, stop := context.WithTimeout(actionCtx, 2*c.config.StageBudget)
-	defer stop()
+// runMidIncidentPass extends controller-owned recovery within its existing deadline.
+func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, loop *ResponderLoop) error {
 	c.mu.Lock()
 	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID || !c.learnedPassAllowedLocked() {
 		c.mu.Unlock()
-		return false, nil
+		return nil
 	}
 	c.midStage.passes++
 	request := *cloneIncidentRequest(c.currentIncidentRequest)
@@ -222,14 +185,20 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	if playbookWrote(awaiting) {
 		deadline = c.automaticDeadlineLocked(awaiting)
 	}
-	if !deadline.IsZero() {
-		var cancelWait context.CancelFunc
-		actionCtx, cancelWait = context.WithTimeout(actionCtx, deadline.Sub(c.clock()))
-		defer cancelWait()
-	}
 	c.mu.Unlock()
+
+	actionCtx, cancel, err := c.actionContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	budget := 2 * c.config.StageBudget
+	if !deadline.IsZero() {
+		budget = min(budget, deadline.Sub(c.clock()))
+	}
+	actionCtx, stop := context.WithTimeout(actionCtx, budget)
+	defer stop()
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), PriorStages: cloneStageReports(request.PriorStages)}
-	earlier := deterministicStageReport(state.PriorStages)
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, StabilityWindow: c.config.ClosureStabilityWindow}
 	if c.config.AfterPlaybook == settings.AfterPlaybookWait {
 		stage.WaitBound = c.config.AfterPlaybookWait
@@ -237,7 +206,7 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	if c.tuneMidStage != nil {
 		c.tuneMidStage(stage)
 	}
-	report, runErr := RunStageAgain(actionCtx, state, stage)
+	_, runErr := RunStageAgain(actionCtx, state, stage)
 	c.mu.Lock()
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID {
 		state.PriorStages = mergeStageReports(c.currentIncidentRequest.PriorStages, state.PriorStages)
@@ -260,7 +229,7 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	if err := c.PersistState(ctx); err != nil {
 		slog.Warn("persist later automatic stage pass", "incident_id", incidentID, "error", err)
 	}
-	return stagePassProgressed(earlier, report), runErr
+	return runErr
 }
 
 // mergeStageReports folds new evidence into the existing stage order.
@@ -285,17 +254,17 @@ func mergeStageReports(earlier, fresh []*contracts.StageReport) []*contracts.Sta
 // The automatic stage can take new evidence only while it owns the repair.
 // Dispatch freezes the handoff report and gives write ownership to the agent.
 func (c *Controller) learnedPassAllowedLocked() bool {
+	if request := c.currentIncidentRequest; request == nil || pageOpened(request) ||
+		!request.ResponseDeadline.IsZero() && !c.clock().Before(request.ResponseDeadline) || stageEscalatedIn(request.PriorStages) {
+		return false
+	}
 	if c.responseStagesRunning {
 		return true
 	}
 	report := c.awaitingAutomaticRecoveryLocked()
-	if report == nil || stagePlanRefused(report) {
-		return false
-	}
 	if playbookWrote(report) {
-		return c.clock().Before(c.automaticDeadlineLocked(report))
+		return report.GetStabilityDeadline() == nil && c.clock().Before(c.automaticDeadlineLocked(report))
 	}
 	// Drain evidence queued during the opening pass even if it wrote nothing.
-	deadline := c.currentIncidentRequest.ResponseDeadline
-	return (c.midStage.pending || c.midStage.running) && (deadline.IsZero() || c.clock().Before(deadline))
+	return report != nil && !stagePlanRefused(report) && (c.midStage.pending || c.midStage.running)
 }

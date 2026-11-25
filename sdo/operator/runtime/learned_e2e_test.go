@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -167,5 +169,168 @@ func TestLearnedPlaybookDoesNotWriteAfterHandoff(t *testing.T) {
 	}
 	if closed.Result != nil || dispatcher.calls != 0 {
 		t.Fatal("the responder's incident closed or dispatched another agent")
+	}
+}
+
+type compositeRoute struct{ e2eRoute }
+
+func (d *compositeRoute) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	var findings []sdk.Finding
+	for _, deployment := range view.Deployments() {
+		if deployment.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] != "" {
+			continue
+		}
+		ref := sdk.ObjectRefFrom("Deployment", "apps/v1", &deployment)
+		findings = append(findings, sdk.Finding{DetectorID: d.Spec().ID, RuleID: requestmetrics.RuleErrors,
+			Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "route fails",
+			Evidence: "synthetic", PrimaryResource: ref, ParameterBindings: map[string]sdk.ObjectRef{ComponentRole: ref}})
+	}
+	return findings, nil
+}
+
+type dependentRestart struct {
+	componentRestart
+	target  string
+	blocked *atomic.Bool
+	refuse  program.Action
+}
+
+func (p dependentRestart) Diagnose(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
+	if bindings.Objects[ComponentRole].Name != p.target {
+		return program.Verdict{Result: program.NoMatch}, nil
+	}
+	if p.blocked != nil && p.blocked.Load() {
+		return program.Verdict{Result: program.Unknown}, nil
+	}
+	return p.componentRestart.Diagnose(ctx, view, bindings)
+}
+
+func (p dependentRestart) Mitigate(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Plan, error) {
+	if p.refuse != nil {
+		return program.Plan{Actions: []program.Action{p.refuse}}, nil
+	}
+	return p.componentRestart.Mitigate(ctx, view, bindings)
+}
+
+func TestCompositeAutomaticRepairAfterDependencyClears(t *testing.T) {
+	for _, clearAtDeadline := range []bool{false, true} {
+		name := "before handoff"
+		if clearAtDeadline {
+			name = "at handoff deadline"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			clock := &settlingClock{now: time.Unix(1000, 0).UTC()}
+			world := e2eWorld()
+			dependency := &e2eChurn{}
+			dependency.on.Store(true)
+			detectors := []sdk.Detector{dependency, &compositeRoute{}}
+			refusing := dependentRestart{componentRestart: componentRestart{id: "a-refusing"}, target: "api", refuse: program.RestartRollout{}}
+			if clearAtDeadline {
+				refusing.refuse = unencodableAction{}
+			}
+			fixAPI := dependentRestart{componentRestart: componentRestart{id: "b-api"}, target: "api"}
+			fixWorker := dependentRestart{componentRestart: componentRestart{id: "c-worker"}, target: "worker", blocked: &dependency.on}
+			registry, err := program.NewRegistry([]program.Diagnoser{refusing, fixAPI, fixWorker}, []program.Mitigator{refusing, fixAPI, fixWorker})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := testControllerConfig()
+			cfg.Namespace = "app"
+			cfg.RequestMetricsOpens = true
+			dispatcher := &recordingDispatcher{}
+			c, err := NewController(cfg, detectors, world, dispatcher, clock.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.now = clock.Now
+			snapshot, err := world.Snapshot(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			alerts, _ := detectors[1].Detect(ctx, snapshot)
+			for _, finding := range alerts {
+				c.tracker.Observe(clock.Now(), finding.DetectorID, []sdk.Finding{finding})
+			}
+			dependencyFindings, _ := dependency.Detect(ctx, snapshot)
+			c.tracker.Observe(clock.Now(), dependency.Spec().ID, dependencyFindings)
+			request := IncidentRequest{IncidentID: "synthetic-composite", Application: "demo", Namespace: "app", SourceCommit: "synthetic", RepairPolicy: "recorded-actions",
+				Findings: alerts, OpeningKeys: findingKeys(alerts), ResponseDeadline: clock.Now().Add(time.Hour)}
+			executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: world}}
+			loop := NewResponderLoop(request, registry, world, detectors, executor, 5)
+			loop.Now = c.now
+			loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
+				return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
+			}
+			loop.saveToolState = func(context.Context, []byte) error { return nil }
+			stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true}
+			state := &IncidentState{Request: request, Findings: alerts}
+			report, err := stage.Run(ctx, state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if world.restarts.Load() != 1 || !stagePlanRefused(report) {
+				t.Fatalf("opening writes = %d, want one despite refusal: %v, diagnoses %v", world.restarts.Load(), report.GetMitigations(), report.GetDiagnoses())
+			}
+			if !slices.ContainsFunc(report.GetDiagnoses(), func(v *contracts.PlaybookVerdict) bool {
+				return v.GetPlaybookId() == fixWorker.id && v.GetResult() == "unknown"
+			}) {
+				t.Fatalf("worker was not Unknown at opening: %v", report.GetDiagnoses())
+			}
+			state.PriorStages = []*contracts.StageReport{report}
+			result, err := responsePipelineResult(state, clock.Now(), clock.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			request = state.Request
+			c.codePath = &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}
+			c.responderLoop = loop
+			c.incidentOpen, c.dispatchState = true, contracts.DispatchState_DISPATCH_STATE_RUNNING
+			c.currentIncidentRequest = &request
+			c.incidentFindingKeys = findingKeys(alerts)
+			c.incidentDetectedAt, c.incidentDispatchedAt = clock.Now(), clock.Now()
+			c.handleDispatchCompletion(dispatchCompletion{incidentID: request.IncidentID, result: result, priorStages: state.PriorStages}, clock.Now())
+
+			dependency.on.Store(false)
+			elapsed := time.Second
+			if clearAtDeadline {
+				elapsed = report.GetRecoveryDeadline().AsTime().Sub(clock.Now())
+			}
+			_ = clock.advance(ctx, elapsed)
+			if err := c.Step(ctx, clock.Now(), nil); err != nil {
+				t.Fatal(err)
+			}
+			c.Wait()
+			if clearAtDeadline {
+				if world.restarts.Load() != 1 || !autoReport(c).GetHandoffSelected() {
+					t.Fatalf("dependency clear postponed handoff: writes %d, report %v", world.restarts.Load(), autoReport(c))
+				}
+				loop.Request = *c.currentIncidentRequest
+				response := loop.Handle(ctx, ToolRequest{Command: "diagnose", ProgramID: fixWorker.id,
+					Bindings: program.Bindings{Objects: map[string]sdk.ObjectRef{ComponentRole: {APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "worker"}}}})
+				if len(response.ProgramRuns) != 1 || response.ProgramRuns[0].Verdict.Result != program.Match {
+					t.Fatalf("responder could not diagnose new match: %+v", response)
+				}
+				detect := loop.Handle(ctx, ToolRequest{Command: "detect"})
+				if !strings.Contains(detect.Text, "match now: sdo mitigate "+fixWorker.id) {
+					t.Fatalf("detect did not show the new match: %s (%s)", detect.Text, detect.Error)
+				}
+				return
+			}
+			if world.restarts.Load() != 2 || autoReport(c).GetHandoffSelected() {
+				t.Fatalf("dependency clear should apply worker repair before handoff: writes %d, report %v", world.restarts.Load(), autoReport(c))
+			}
+			for i := range 2 * maxMidIncidentPasses {
+				dependency.on.Store(i%2 == 0)
+				_ = clock.advance(ctx, time.Second)
+				if err := c.Step(ctx, clock.Now(), nil); err != nil {
+					t.Fatal(err)
+				}
+				c.Wait()
+			}
+			if c.midStage.passes != maxMidIncidentPasses || world.restarts.Load() != 2 || len(autoReport(c).GetMitigations()) != 3 {
+				t.Fatalf("flaps: %d passes, %d writes, %v attempts", c.midStage.passes, world.restarts.Load(), autoReport(c).GetMitigations())
+			}
+		})
 	}
 }

@@ -57,7 +57,8 @@ type detectInput struct {
 	// Recovered is the incident's verified marker.
 	Recovered bool
 	// AppState supplies the app-state changes placed on the candidates; nil lists none.
-	AppState AppStateChangeSource
+	AppState    AppStateChangeSource
+	LiveMatches []*contracts.PlaybookMatch
 }
 
 // detectSummary is the compact text and the full text of each item a `more:`
@@ -868,6 +869,11 @@ func buildDetectSummary(in detectInput) detectSummary {
 		}
 	}
 
+	for _, match := range in.LiveMatches {
+		if match.GetMitigateCommand() != "" {
+			header = append(header, "match now: "+match.GetMitigateCommand())
+		}
+	}
 	header = append(header, diagnosisLines(in.Request.PriorStages)...)
 
 	testBlock := func(test failingTest, role string) ([]string, string) {

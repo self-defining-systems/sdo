@@ -104,7 +104,8 @@ type KeyedMatching struct {
 	// Restore are the built-in source-restore candidates: suspects on every
 	// failing path, bound by component name. They are offered like any playbook's
 	// candidates; whether the stage applies one is the loop's BuiltinRestoreAuto.
-	Restore []sourceRestoreCandidate
+	Restore   []sourceRestoreCandidate
+	Attempted map[string]bool
 }
 
 func (k KeyedMatching) active() bool { return len(k.Credits) > 0 }
@@ -144,7 +145,10 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 	aliases := map[string][]candidate{}
 	position := map[string]int{}
 	add := func(id string, bindings program.Bindings, fingerprint, source, retrieval string, rank int) {
-		key := id + "\x00" + bindingKey(bindings)
+		key := stageAttemptKey(id, bindings)
+		if keyed.Attempted[key] {
+			return
+		}
 		if seen[key] {
 			// A finding that names the playbook is why it was tried, whichever finding got there first.
 			if retrieval == RetrievalDetector {
