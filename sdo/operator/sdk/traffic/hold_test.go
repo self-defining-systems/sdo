@@ -59,11 +59,12 @@ func seconds(values ...int) []time.Duration {
 	return out
 }
 
-// The hold counts from the first failing sample in the window: once the
+// A partial failure (a success between its failing samples) waits for the
+// hold, which counts from the first failing sample in the window: once the
 // failing samples span it, the SLO violation is reported on that evaluation,
 // not a further hold later.
 func TestHoldCountsFromTheFirstFailingSample(t *testing.T) {
-	ok := seconds(-3, -2, -1)
+	ok := seconds(-3, -2, -1, 2, 6)
 	if got := holdFindings(t, holdWindow(ok, seconds(0, 4, 8))); len(got) != 0 {
 		t.Fatalf("failing samples spanning 8s fired before the hold: %+v", got)
 	}
@@ -109,15 +110,16 @@ func TestExplicitMinDurationIsNotHeldByTheDetector(t *testing.T) {
 
 // At the default workload cadence a scenario is sampled every second or
 // faster, so the five-sample SLO window spans only a few seconds. A fault that
-// has failed every sample for longer than the hold must still fire: the hold
+// has failed every second sample for longer than the hold must still fire: the hold
 // counts the failure episode, not just the samples the SLO window keeps.
 func TestHoldCountsTheFailureEpisodeBeyondTheSLOWindow(t *testing.T) {
 	var ok, fail []time.Duration
 	for i := 1; i <= 6; i++ {
 		ok = append(ok, -time.Duration(i)*750*time.Millisecond)
 	}
-	for at := time.Duration(0); at <= 8*time.Second; at += 750 * time.Millisecond {
+	for at := time.Duration(0); at <= 8*time.Second; at += 1500 * time.Millisecond {
 		fail = append(fail, at)
+		ok = append(ok, at+750*time.Millisecond)
 	}
 	if got := holdFindings(t, holdWindow(ok, fail)); len(got) != 0 {
 		t.Fatalf("a failure episode of 8s fired before the hold: %+v", got)
@@ -135,7 +137,8 @@ func TestHoldEpisodeEndsAfterAFullWindowOfSuccesses(t *testing.T) {
 	for at := -20 * time.Second; at < 6*time.Second; at += time.Second {
 		ok = append(ok, at)
 	}
-	fail := []time.Duration{-12 * time.Second, 6 * time.Second, 7 * time.Second, 8 * time.Second, 9 * time.Second, 10 * time.Second}
+	ok = append(ok, 7*time.Second, 9*time.Second)
+	fail := []time.Duration{-12 * time.Second, 6 * time.Second, 8 * time.Second, 10 * time.Second}
 	// ok samples at -12s coincide with the failure; drop that one.
 	filtered := ok[:0]
 	for _, at := range ok {

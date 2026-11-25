@@ -58,3 +58,43 @@ func TestIncidentRequestCarriesThePassingTests(t *testing.T) {
 		t.Fatalf("round trip = %v, want %v", received.PassingTests, got)
 	}
 }
+
+// A test whose failure is confirmed is not passing, though its scheduled
+// samples still meet the SLO; a confirming success makes no test pass.
+func TestPassingTestsLeaveOutAConfirmedFailure(t *testing.T) {
+	window := probeWindow(nil, "a-call", "b-call")
+	at := time.Unix(1005, 0)
+	failing := &window.Scenarios[0]
+	failing.Samples = append(failing.Samples, traffic.Sample{At: at, Outcome: traffic.OutcomeError})
+	failing.Confirming = []traffic.Sample{{At: at.Add(4 * time.Second), Outcome: traffic.OutcomeError}}
+	window.ObservedAt = at.Add(5 * time.Second)
+	snapshot := windowSnapshot{windows: map[string]traffic.Window{"probe": window}}
+	if got := passingTests(snapshot); !slices.Equal(got, []string{"b-call"}) {
+		t.Fatalf("passing = %v, want only b-call", got)
+	}
+	window = probeWindow(map[string]bool{"a-call": true}, "a-call", "b-call")
+	window.Scenarios[0].Confirming = []traffic.Sample{{At: at, Outcome: traffic.OutcomeOK}}
+	snapshot.windows["probe"] = window
+	if got := passingTests(snapshot); !slices.Equal(got, []string{"b-call"}) {
+		t.Fatalf("passing = %v, want only b-call", got)
+	}
+}
+
+// The observer marks the scenarios the accepted map names as user tests, and
+// reads the map only while a sample fails.
+func TestTrafficObserverMarksUserTests(t *testing.T) {
+	observer := NewTrafficObserver(&fixedProber{}, []string{"probe"}, nil, 0)
+	reads := 0
+	observer.UseUserTests(func() map[string]bool { reads++; return map[string]bool{"a-call": true} })
+	observer.windows = map[string]traffic.Window{"probe": probeWindow(nil, "a-call", "search")}
+	if observer.Windows(); reads != 0 {
+		t.Fatalf("the map was read %d times while healthy", reads)
+	}
+	observer.windows = map[string]traffic.Window{"probe": probeWindow(map[string]bool{"search": true}, "a-call", "search")}
+	scenarios := observer.Windows()["probe"].Scenarios
+	if !scenarios[0].UserTest || scenarios[1].UserTest {
+		t.Fatalf("user tests marked: a-call %t, search %t", scenarios[0].UserTest, scenarios[1].UserTest)
+	}
+}
+
+type fixedProber struct{ ProberAPI }

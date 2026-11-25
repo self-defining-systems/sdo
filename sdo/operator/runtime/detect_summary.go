@@ -168,6 +168,7 @@ func judgedTests(view detectReads, m program.AppMap, g *mapGraph) testJudgement 
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	confirmed := traffic.ConfirmedFailures(windows)
 	for _, name := range names {
 		window := windows[name]
 		samples := map[string][]traffic.Sample{}
@@ -241,7 +242,7 @@ func judgedTests(view detectReads, m program.AppMap, g *mapGraph) testJudgement 
 			}
 			entry := candidateTest{ID: id, Symptom: test.label, Path: path, Source: source, Failures: test.failures, Samples: test.samples, LatestOK: test.latestOK}
 			switch {
-			case ok && verdict.Evaluated && !verdict.Healthy:
+			case ok && verdict.Evaluated && (!verdict.Healthy || confirmed[name+"/"+id] != ""):
 				entry.State = testFailing
 				out.failing = append(out.failing, test)
 			case failedSamples > 0:

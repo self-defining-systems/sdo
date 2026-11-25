@@ -165,6 +165,11 @@ type Engine struct {
 	limits *rateLimits
 	// warming reports whether the probe is warming up (UseWarmup); nil never.
 	warming func() bool
+	// startsFailing says whether a scheduled sample began a failure
+	// (UseConfirm); nil samples nothing again.
+	startsFailing func(scenario string) bool
+	// confirmed receives the confirming samples, apart from the scheduled ones.
+	confirmed func(scenario string, sample Sample)
 	// identities serializes the samples that act on one synthetic identity;
 	// engines that ShareSetup use one record. identityKeys are each writing
 	// scenario's identities (writeIdentity).
@@ -817,7 +822,8 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 // Run starts iterations at the workload's arrival pattern and rate, from
 // iteration first, until ctx ends or, for bounded workloads, the duration
 // elapses. At most MaxInFlight iterations run at once; an arrival that finds
-// them all busy is skipped. It waits for running iterations and returns the
+// them all busy is skipped. A scheduled sample that begins a failure is
+// confirmed by at most two more (UseConfirm). It waits for running iterations and returns the
 // next iteration number and the number of skipped arrivals.
 func (e *Engine) Run(ctx context.Context, first uint64, emit func(scenario string, sample Sample)) (uint64, int) {
 	var deadline <-chan time.Time
@@ -826,6 +832,9 @@ func (e *Engine) Run(ctx context.Context, first uint64, emit func(scenario strin
 	}
 	gaps := rand.New(rand.NewPCG(e.workload.Seed, math.MaxUint64))
 	slots := make(chan struct{}, MaxInFlight)
+	// Confirming samples draw from their own iteration range, so each stays
+	// replayable and none repeats a scheduled one.
+	confirm := &confirmer{engine: e, slots: slots, emit: e.confirmed, active: map[string]bool{}, next: first + 1<<31}
 	var running sync.WaitGroup
 	defer running.Wait()
 	iteration, skipped := first, 0
@@ -835,10 +844,13 @@ func (e *Engine) Run(ctx context.Context, first uint64, emit func(scenario strin
 			running.Add(1)
 			go func(iteration uint64) {
 				defer running.Done()
-				defer func() { <-slots }()
 				scenario, sample := e.Iterate(ctx, iteration)
 				if ctx.Err() == nil || sample.Outcome == OutcomeOK {
 					emit(scenario, sample)
+				}
+				<-slots
+				if sample.failed() && e.startsFailing != nil && e.startsFailing(scenario) && confirm.start(scenario) {
+					confirm.run(ctx, scenario, sample)
 				}
 			}(iteration)
 		default:

@@ -125,6 +125,12 @@ func (s Scenario) Validate() error
 type ScenarioObservations struct {
 	Scenario Descriptor `json:"scenario"`
 	Samples  []Sample   `json:"samples"`
+	// Confirming are the samples taken again after a scheduled one failed,
+	// oldest first. Only ConfirmedFailures reads them: SLO verdicts, recovery
+	// and qualification count scheduled samples alone.
+	Confirming []Sample `json:"confirming,omitempty"`
+	// UserTest reports that the accepted map names the scenario as a user test.
+	UserTest bool `json:"userTest,omitempty"`
 	// Qualified reports whether the scenario has succeeded at least once
 	// since observation began. A scenario that never succeeded is not a
 	// firing health signal: its generator may not match this deployment.
@@ -219,21 +225,4 @@ func NotYet(format string, args ...any) Verdict
 
 func Pass() Verdict
     Pass accepts a response.
-
-type Window struct {
-	Workload   Workload               `json:"workload"`
-	ObservedAt time.Time              `json:"observedAt"`
-	Scenarios  []ScenarioObservations `json:"scenarios"`
-	// Links holds a link-probe workload's per-edge observations.
-	Links []LinkObservations `json:"links,omitempty"`
-	// Skipped counts arrivals dropped because MaxInFlight iterations were running.
-	Skipped int `json:"skipped,omitempty"`
-	// LoadError is set when the workload could not be loaded or run.
-	LoadError string `json:"loadError,omitempty"`
-}
-    Window is what the prober has observed for one workload at ObservedAt.
-
-func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)
-    WindowFrom returns the observations of workload, when the context carries
-    them.
 ```
