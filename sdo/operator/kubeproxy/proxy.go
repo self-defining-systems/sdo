@@ -118,7 +118,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 			r.Body = requestBody
 		}
 		if gate != nil {
-			if withdrawn := gate.Withdrawn(); withdrawn != "" && (told.Swap(withdrawn) != withdrawn || write) {
+			if withdrawn, _ := gate.Withdrawn(); withdrawn != "" && (told.Swap(withdrawn) != withdrawn || write) {
 				// kubectl prints it. Reads carry it once: their output is often parsed.
 				w.Header().Add("Warning", fmt.Sprintf("299 - %q", withdrawn))
 			}
@@ -128,7 +128,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 			if err != nil {
 				warning, _ := gate.Verified()
 				message := "incident mutation rejected"
-				if withdrawn := gate.Withdrawn(); withdrawn != "" {
+				if withdrawn, _ := gate.Withdrawn(); withdrawn != "" {
 					message, warning = withdrawn+" (retry)", nil
 				} else if warning != nil {
 					message += ": " + warning.Message

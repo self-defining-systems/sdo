@@ -311,7 +311,7 @@ func TestCommandsTellAWithdrawnRecovery(t *testing.T) {
 		// A test can fail or lack samples before it joins, so the notice never
 		// invites the agent to stop on SDO's verdict alone.
 		if response.IncidentVerified == nil || strings.Contains(response.IncidentVerified.Message, "finish") ||
-			!strings.Contains(response.IncidentVerified.Message, "return only when every user test passes") {
+			!strings.Contains(response.IncidentVerified.Message, "return unless a test of this incident fails") {
 			t.Errorf("%s: %+v", command, response.IncidentVerified)
 		}
 	})
@@ -330,6 +330,7 @@ func TestCommandsTellAWithdrawnRecovery(t *testing.T) {
 		told(command, loop.Handle(context.Background(), ToolRequest{Command: command}))
 	}
 	observation.Close()
+	c.tracker.Restore(map[string]FindingState{findingKey(joinedCondition()): {DetectorID: joinedCondition().DetectorID, Finding: joinedCondition(), Active: true}})
 	c.finishEarlyReport(context.Background(), c.clock())
 	all(told)
 	// A new verification replaces the notice.
@@ -341,7 +342,7 @@ func TestCommandsTellAWithdrawnRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	observation.Close()
-	if gate.Withdrawn() != "" {
+	if reason, _ := gate.Withdrawn(); reason != "" {
 		t.Fatal("a new verification kept the old notice")
 	}
 }
@@ -357,5 +358,35 @@ func TestAWithdrawnAlertIsNamedInOneShortLine(t *testing.T) {
 	}
 	if long := alertName(sdk.Finding{RuleID: strings.Repeat("x", 200)}); len([]rune(long)) != 50 {
 		t.Errorf("unbounded name: %q", long)
+	}
+}
+
+// The notice names an alert that fires now: it ends when that alert clears,
+// also across a restart.
+func TestTheWithdrawnNoticeEndsWhenItsAlertClears(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		w, gate := verifiedRunningSession(t)
+		c := w.controller
+		w.refail()
+		w.runUntil(t, 5, nil, c.IncidentOpen)
+		w.runUntil(t, 2, nil, func() bool { return false })
+		if reason, _ := gate.Withdrawn(); !strings.Contains(reason, "request-stall Deployment/api fires") {
+			t.Fatalf("the firing alert is not named: %q", reason)
+		}
+		if restart {
+			state, err := c.ExportState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.withdrawnNoticeMayStand = false
+			if err := c.RestoreState(state); err != nil {
+				t.Fatal(err)
+			}
+			c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+		}
+		w.runUntil(t, 12, nil, func() bool { return false })
+		if reason, _ := gate.Withdrawn(); reason != "" || !c.IncidentOpen() {
+			t.Fatalf("restart %v: a cleared alert is said to fire: %q", restart, reason)
+		}
 	}
 }

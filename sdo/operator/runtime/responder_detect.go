@@ -20,7 +20,7 @@ const (
 	detectPollInterval = 2 * time.Second
 	// detectRecoveredWatchInterval is how often a waiting `sdo detect --wait` looks at the recovered marker.
 	detectRecoveredWatchInterval = 100 * time.Millisecond
-	detectRecoveredMessage       = "recovered: SDO refuses writes now; return only when every user test passes"
+	detectRecoveredMessage       = "recovered: SDO refuses writes now; return unless a test of this incident fails"
 	// detectMaxWaitSeconds bounds one `sdo detect --wait`.
 	detectMaxWaitSeconds = 600
 )

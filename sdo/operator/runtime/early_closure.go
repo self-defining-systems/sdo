@@ -234,13 +234,14 @@ func (c *Controller) withdrawRecoveryLocked(now time.Time, finding sdk.Finding) 
 	if c.incidentGate != nil {
 		gate, err := c.incidentGate(closure.Request.IncidentID)
 		if err == nil {
-			err = gate.Withdraw("recovery withdrawn: " + alertName(finding) + " fires; writes are accepted, keep working")
+			err = gate.Withdraw("recovery withdrawn: "+alertName(finding)+" fires; writes are accepted, keep working", findingKey(finding))
 		}
 		if err != nil {
 			slog.Error("recovery_withdrawn_notice_failed", "incident_id", closure.Request.IncidentID, "error", err)
 		}
 	}
 	c.reconcileRecoveryFenceLocked()
+	c.withdrawnNoticeMayStand = true
 }
 
 // alertName is one alert in a line: its user test, or its rule and object.
@@ -252,12 +253,34 @@ func alertName(finding sdk.Finding) string {
 	return plainName(name, 50)
 }
 
+// clearWithdrawnNoticeLocked ends the notice once its alert cleared: it must
+// never say that a cleared alert fires.
+func (c *Controller) clearWithdrawnNoticeLocked() {
+	if !c.withdrawnNoticeMayStand || !c.incidentOpen || c.currentIncidentRequest == nil || c.incidentGate == nil {
+		return
+	}
+	gate, err := c.incidentGate(c.currentIncidentRequest.IncidentID)
+	if err == nil {
+		_, alert := gate.Withdrawn()
+		if alert != "" && c.tracker.HasActiveKeys([]string{alert}) {
+			return
+		}
+		err = gate.ClearWithdrawn()
+	}
+	if err != nil {
+		slog.Warn("recovery_withdrawn_notice_pending", "incident_id", c.currentIncidentRequest.IncidentID, "error", err)
+		return
+	}
+	c.withdrawnNoticeMayStand = false
+}
+
 // reconcileRecoveryFenceLocked removes a recovery fence that outlived its
 // recovery: an open incident with an unfinished responder accepts writes. Each
 // step repeats it, so a busy gate, a restart or a closure that failed to begin
 // cannot leave the session fenced. A finished responder's fence stays until a
 // new dispatch proves it quiescent (reopenWithdrawnRecovery).
 func (c *Controller) reconcileRecoveryFenceLocked() {
+	c.clearWithdrawnNoticeLocked()
 	if !c.recoveryFenceMayStand || !c.incidentOpen || c.responderDone || c.currentIncidentRequest == nil ||
 		c.incidentDispatchedAt.IsZero() || c.incidentGate == nil {
 		return

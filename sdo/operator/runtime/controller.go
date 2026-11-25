@@ -215,7 +215,9 @@ type Controller struct {
 	unevaluatedHoldUntil, unevaluatedHoldSince time.Time
 	// recoveryFenceMayStand: this incident's write fence was published, or a
 	// restart cannot tell.
-	recoveryFenceMayStand   bool
+	recoveryFenceMayStand bool
+	// withdrawnNoticeMayStand: a withdrawn-recovery notice is on disk, or a restart cannot tell.
+	withdrawnNoticeMayStand bool
 	responderLoop           *ResponderLoop
 	responderCancel         context.CancelFunc
 	finishedHoldWake        time.Time
@@ -2662,7 +2664,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	// A subprocess cannot survive a controller restart. Preserve the incident
 	// lock, but treat the old process as finished so detector clears can close it.
 	c.responderDone = state.ResponderDone
-	c.recoveryFenceMayStand = true
+	c.recoveryFenceMayStand, c.withdrawnNoticeMayStand = true, true
 	c.currentIncidentRequest = cloneIncidentRequest(incidentRequestState(state.GetIncidentRequest()))
 	c.currentIncidentResult = nil
 	if state.IncidentResult != nil {

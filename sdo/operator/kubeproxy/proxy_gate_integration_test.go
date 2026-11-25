@@ -183,7 +183,7 @@ func TestAWithdrawnRecoveryIsToldToKubectl(t *testing.T) {
 	if warning, status, body := send("DELETE"); warning != "" || status != 409 || !strings.Contains(body, "retry") || strings.Contains(body, "finish") {
 		t.Fatalf("%q %d %s", warning, status, body)
 	}
-	if err := gate.Withdraw("recovery withdrawn: write-item fires"); err != nil {
+	if err := gate.Withdraw("recovery withdrawn: write-item fires", "alert"); err != nil {
 		t.Fatal(err)
 	}
 	if _, status, body := send("DELETE"); status != 409 || !strings.Contains(body, "recovery withdrawn: write-item fires") || strings.Contains(body, "Recovery judged") {
@@ -200,7 +200,7 @@ func TestAWithdrawnRecoveryIsToldToKubectl(t *testing.T) {
 	if warning, _, _ := send("GET"); warning != "" {
 		t.Fatalf("a read repeated the notice: %q", warning)
 	}
-	if err := gate.Withdraw("recovery withdrawn: read-item fires"); err != nil {
+	if err := gate.Withdraw("recovery withdrawn: read-item fires", "alert"); err != nil {
 		t.Fatal(err)
 	}
 	if warning, _, _ := send("GET"); !strings.Contains(warning, "read-item") {

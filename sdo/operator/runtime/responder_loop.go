@@ -1254,7 +1254,8 @@ func (l *ResponderLoop) recoveryWithdrawn() string {
 	if l.MutationGate == nil {
 		return ""
 	}
-	return l.MutationGate.Withdrawn()
+	reason, _ := l.MutationGate.Withdrawn()
+	return reason
 }
 
 func logicalToolResponse(response ToolResponse) ToolResponse {
