@@ -163,6 +163,18 @@ observing and `sdo detect` serves the candidate view, but their findings never o
 responder's completion closes it (frozen memory). Page to first write and page to fixed are measured from the
 page time in `page.json`, comparable with B1.
 
+## AWS DevOps Agent baseline
+
+`devops_agent.py` is a lanes subject built on `vanilla.py`'s lane side (same page text, harm-onset wait, ServiceAccount,
+sandbox and 25-minute cap). The service only recommends, so a row has a diagnosis (`diagnosis.json`, `$FUZZOPS_REPORT`),
+a plan (`plan.json`) and the result of running the plan's `prepare` and `apply` commands unchanged (`apply.json`: stops
+at the first failed apply command; text steps are counted as `manual`). `task.json`, `executions.json`, `journal.jsonl`,
+`usage.json` (execution spans at list price, no tokens) and `space.json` (Agent Space assets, account counters) are the rest
+of the evidence. Settings: `window_seconds` and `devops_agent: {region, lanes: {<lane>: {agent_space_id, cluster}}}`, one
+Agent Space and EKS cluster per lane. `prepare` refuses a vcluster lane (the service reads EKS clusters only) and an Agent
+Space with directed actions on. The hooks never create or configure AWS resources; they start and cancel investigations,
+which are billed. A task the service linked or skipped, or that failed, is a problem (no row).
+
 ## Cell evidence manifest and validator
 
 `collect` writes `operator/build.json`, `host-load.json`, `observability.json` (receipt: `prometheus`, `jaeger`, `applogs`
