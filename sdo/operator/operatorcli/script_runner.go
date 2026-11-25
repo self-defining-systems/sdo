@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -24,7 +26,7 @@ import (
 
 // RunScriptRunner is the fixed Job entrypoint. The child uses the same recording
 // proxy as responder kubectl, with first-write preimages and settled postimages.
-func RunScriptRunner(ctx context.Context) error {
+func RunScriptRunner(ctx context.Context) (runErr error) {
 	namespace, indexName := processio.Environment("SDO_SCRIPT_NAMESPACE"), processio.Environment("SDO_SCRIPT_INDEX")
 	storage := processio.Environment("SDO_SCRIPT_STORAGE_NAMESPACE")
 	if namespace == "" || storage == "" || indexName == "" {
@@ -49,8 +51,16 @@ func RunScriptRunner(ctx context.Context) error {
 	}
 	script := processio.Environment("SDO_SCRIPT_TEXT")
 	out := program.ScriptExecutionResult{ApplicationID: index.Data["application_id"], JobName: indexName, JobUID: string(job.UID), ScriptDigest: program.ScriptDigest(script)}
-	if out.JobUID == "" || index.Data["namespace"] != namespace || index.Data["script_digest"] != out.ScriptDigest || job.Annotations["sdo.dev/script-application"] != out.ApplicationID || index.Data["job_uid"] != "" && index.Data["job_uid"] != out.JobUID {
-		return errors.New("script runner identity conflict")
+	// Every return before the script's first command is a refusal: say so, or
+	// the controller can only report an unknown outcome.
+	started := false
+	defer func() {
+		if runErr != nil && !started {
+			runErr = refuseScript(ctx, client, storage, indexName, out.JobUID, runErr)
+		}
+	}()
+	if err := scriptIdentityConflict(index, job, namespace, out); err != nil {
+		return err
 	}
 	_ = json.Unmarshal([]byte(index.Data["inputs"]), &out.Inputs)
 	deadline, err := time.Parse(time.RFC3339Nano, index.Data["deadline"])
@@ -121,6 +131,7 @@ func RunScriptRunner(ctx context.Context) error {
 		env = append(env, value)
 	}
 	env = append(env, "KUBECONFIG="+kubeconfig, "SDO_KUBE_API=http://"+listenerAddress)
+	started = true
 	code := processio.ExecuteScript(runCtx, script, env, &out)
 	cancel()
 	out.ExitCode = &code
@@ -175,6 +186,46 @@ func RunScriptRunner(ctx context.Context) error {
 		}
 	}
 	return err
+}
+
+// scriptIdentityConflict names every identity fact of this Job that differs
+// from its reservation. Digests and names only, never script text.
+func scriptIdentityConflict(index *corev1.ConfigMap, job *batchv1.Job, namespace string, out program.ScriptExecutionResult) error {
+	var conflicts []error
+	differ := func(clause, got, want string) {
+		conflicts = append(conflicts, fmt.Errorf("%s: this Job has %q, the reservation %q", clause, got, want))
+	}
+	if out.JobUID == "" {
+		conflicts = append(conflicts, errors.New("Job UID unavailable"))
+	}
+	if want := index.Data["namespace"]; want != namespace {
+		differ("namespace", namespace, want)
+	}
+	if want := index.Data["script_digest"]; want != out.ScriptDigest {
+		differ("script digest", out.ScriptDigest, want)
+	}
+	if got := job.Annotations["sdo.dev/script-application"]; got != out.ApplicationID {
+		differ("application", got, out.ApplicationID)
+	}
+	if want := index.Data["job_uid"]; want != "" && want != out.JobUID {
+		differ("Job UID", out.JobUID, want)
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	return fmt.Errorf("script runner identity conflict: %w", errors.Join(conflicts...))
+}
+
+// refuseScript records that the script did not run.
+func refuseScript(ctx context.Context, client kubernetes.Interface, storage, indexName, jobUID string, reason error) error {
+	raw, _ := json.Marshal(program.ScriptRefusal{JobUID: jobUID, Reason: reason.Error()})
+	patch, _ := json.Marshal(map[string]any{"data": map[string]string{program.ScriptRefusalKey: string(raw)}})
+	write, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer stop()
+	if _, err := client.CoreV1().ConfigMaps(storage).Patch(write, indexName, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		reason = errors.Join(reason, fmt.Errorf("record refusal: %w", err))
+	}
+	return fmt.Errorf("script refused, not run: %w", reason)
 }
 
 // The runner and responder share the same mutation policy.

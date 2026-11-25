@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sdo.dev/operator/sdk/podtext"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -110,6 +111,8 @@ func credentialCheckPod(store, client *corev1.Pod, probe StoreCredentialProbe) (
 	if err != nil {
 		return nil, err
 	}
+	// The client's own environment keeps the meaning Kubernetes gives it.
+	argv = podtext.EscapeAll(argv)
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{GenerateName: "sdo-credential-check-", Namespace: probe.Namespace,
 			Labels: map[string]string{CredentialCheckLabel: "true"}},

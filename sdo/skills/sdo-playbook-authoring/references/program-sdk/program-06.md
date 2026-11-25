@@ -134,7 +134,9 @@ type ScriptExecutionResult struct {
 	TimedOut      bool                       `json:"timed_out,omitempty"`
 	Receipts      []ScriptAPIReceipt         `json:"receipts,omitempty"`
 	Objects       []ScriptObjectCapture      `json:"objects,omitempty"`
-	CaptureGaps   []string                   `json:"capture_gaps,omitempty"`
+	// Refused is why SDO did not run the script; nothing it would do happened.
+	Refused     string   `json:"refused,omitempty"`
+	CaptureGaps []string `json:"capture_gaps,omitempty"`
 }
     ScriptExecutionResult retains measured evidence, never invented effect
     replies. Kubernetes preimages permit future explicit undo; arbitrary
@@ -150,6 +152,14 @@ type ScriptObjectCapture struct {
 	Before       *unstructured.Unstructured `json:"before,omitempty"`
 	After        *unstructured.Unstructured `json:"after,omitempty"`
 }
+
+type ScriptRefusal struct {
+	JobUID string `json:"job_uid"`
+	Reason string `json:"reason"`
+}
+    ScriptRefusal is published instead of a result when a script is refused
+    before its first command. JobUID binds it to the Job that refused, and is
+    empty when no Job was created.
 
 type SetField struct {
 	Ref    sdk.ObjectRef
@@ -247,19 +257,4 @@ type StoreQuery struct {
 
 func (q StoreQuery) Validate() error
     Validate checks the target, scope, selector grammar, catalog and fields.
-
-type StoreRestoreEffect struct {
-	Component     string            `json:"component"`
-	Key           storestate.Key    `json:"key"`
-	Baseline      *storestate.Item  `json:"baseline,omitempty"`
-	Prior         *storestate.Item  `json:"prior,omitempty"`
-	After         *storestate.Item  `json:"after,omitempty"`
-	Already       bool              `json:"already,omitempty"`
-	SessionsEnded bool              `json:"sessions_ended,omitempty"`
-	Facts         *storestate.Facts `json:"facts,omitempty"`
-}
-    StoreRestoreEffect is the controller's record of one RestoreStoreItem: the
-    item's baseline value, its value before the restore (Prior) and after it,
-    whether it already had the baseline value, and the store's facts after.
-    Values are value-free facts; Before or After nil means absent.
 ```

@@ -69,7 +69,11 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 				}
 				if report.FailureReason != "" {
 					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-failed-%d", application.ID, index+1), used)
-					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", Target: "script", Resources: scoped, Summary: "script execution failed or outcome unknown", Details: failedScriptDetails(index, application.ID, report), StartedAt: started, CompletedAt: completed, FailureReason: report.FailureReason})
+					summary := "script execution failed or outcome unknown"
+					if report.FailureReason == ScriptRefusedReason {
+						summary = "script refused by SDO, not run"
+					}
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", Target: "script", Resources: scoped, Summary: summary, Details: failedScriptDetails(index, application.ID, report), StartedAt: started, CompletedAt: completed, FailureReason: report.FailureReason})
 				}
 				continue
 			}

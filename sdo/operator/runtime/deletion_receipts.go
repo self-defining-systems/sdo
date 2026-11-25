@@ -46,7 +46,7 @@ func failedInventoryAttempts(repairs []continuationRepair, remaining map[sdk.Obj
 			return nil, false
 		}
 		switch receipt.FailureReason {
-		case "authorization_denied", "execution_failed":
+		case "authorization_denied", "execution_failed", ScriptRefusedReason:
 		default:
 			return nil, false
 		}

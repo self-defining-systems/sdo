@@ -6425,7 +6425,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12#\n" +
 	"\rsource_commit\x18\x04 \x01(\tR\fsourceCommit\x12)\n" +
 	"\x10resource_version\x18\x05 \x01(\tR\x0fresourceVersion\x12\x1c\n" +
-	"\tparameter\x18\x06 \x01(\tR\tparameter\"\xa1\x06\n" +
+	"\tparameter\x18\x06 \x01(\tR\tparameter\"\xb9\x06\n" +
 	"\fActionReport\x12*\n" +
 	"\x11webhook_ca_digest\x18\v \x01(\tR\x0fwebhookCaDigest\x12!\n" +
 	"\faction_index\x18\x01 \x01(\rR\vactionIndex\x12K\n" +
@@ -6439,8 +6439,8 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x12script_result_json\x18\n" +
 	" \x01(\fR\x10scriptResultJson\x12[\n" +
 	"\x10source_reconcile\x18\f \x01(\v20.sdodev.contracts.v1alpha1.SourceReconcileResultR\x0fsourceReconcile\x12,\n" +
-	"\x12source_change_json\x18\r \x01(\fR\x10sourceChangeJson\x12\x8e\x01\n" +
-	"\x0efailure_reason\x18\t \x01(\tBg\xbaHdrbR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x0fsource_residualR\rfailureReasonB\f\n" +
+	"\x12source_change_json\x18\r \x01(\fR\x10sourceChangeJson\x12\xa6\x01\n" +
+	"\x0efailure_reason\x18\t \x01(\tB\x7f\xbaH|rzR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x16refused_by_sdo_not_runR\x0fsource_residualR\rfailureReasonB\f\n" +
 	"\n" +
 	"_exit_code\"\xbd\x02\n" +
 	"\x15SourceReconcileResult\x126\n" +

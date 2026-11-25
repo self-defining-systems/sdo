@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/podtext/podtexttest"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -80,6 +82,25 @@ func TestScriptCancellationRecoversDrainedEvidence(t *testing.T) {
 	}
 	if creates != 1 {
 		t.Fatalf("created %d Jobs for one application", creates)
+	}
+}
+
+func TestScriptTextAndEnvReachTheRunnerAsWritten(t *testing.T) {
+	const script = "psql -c 'DO $$ BEGIN UPDATE t SET a = 1; END $$' ; echo $(date) $(SDO_SCRIPT_INDEX) $HOME ${X} $$$$"
+	kube := fake.NewSimpleClientset()
+	var got []corev1.EnvVar
+	kube.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		got = action.(ktesting.CreateAction).GetObject().(*batchv1.Job).Spec.Template.Spec.Containers[0].Env
+		return true, nil, errors.New("captured")
+	})
+	client := TypedPlanClient{Client: kube, ScriptImage: "synthetic", ScriptNamespace: "control", ScriptRepositoryMount: t.TempDir(), ScriptRepositoryPVC: "repo"}
+	_, _ = client.RunScript(t.Context(), ScriptExecutionRequest{ApplicationID: "app-1", IncidentID: "incident-1", Namespace: "app", Script: script, Timeout: time.Minute, Env: map[string]string{"QUERY": "select $$a$$"}})
+	expanded, _ := podtexttest.Process(corev1.Container{Env: got})
+	if expanded["SDO_SCRIPT_TEXT"] != script {
+		t.Errorf("the runner reads %q, the program wrote %q", expanded["SDO_SCRIPT_TEXT"], script)
+	}
+	if expanded["QUERY"] != "select $$a$$" {
+		t.Errorf("the script's QUERY is %q", expanded["QUERY"])
 	}
 }
 

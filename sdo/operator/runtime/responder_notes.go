@@ -106,7 +106,7 @@ func (l *ResponderLoop) incidentWrites() []IncidentChange {
 			actor, writer = ActorSDO, "sdo playbook stage"
 		}
 		for _, report := range application.Result.ActionReports {
-			if script := report.Script; script != nil && script.JobUID != "" {
+			if script := report.Script; script != nil && script.JobUID != "" && script.Refused == "" {
 				summary := fmt.Sprintf("script ran in %d ms; exit status unavailable", script.DurationMS)
 				if script.ExitCode != nil {
 					summary = fmt.Sprintf("script ran in %d ms; exit %d", script.DurationMS, *script.ExitCode)

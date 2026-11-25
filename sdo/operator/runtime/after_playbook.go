@@ -64,7 +64,7 @@ func stageReceiptWrote(receipt *contracts.PlanApplication) bool {
 }
 
 // stageScriptsFailed reports that every program that may have written ended in
-// a script that exited non-zero, timed out or was killed. Its writes stay
+// a script that exited non-zero, timed out, was killed or was refused. Its writes stay
 // unknown evidence; only a program that returned success is worth waiting for.
 func stageScriptsFailed(report *contracts.StageReport) bool {
 	failed := false
@@ -76,7 +76,7 @@ func stageScriptsFailed(report *contracts.StageReport) bool {
 		actions := receipt.GetPlan().GetActions()
 		if receipt.GetCompletedAt() == nil || !slices.ContainsFunc(receipt.GetActionReports(), func(action *contracts.ActionReport) bool {
 			index := int(action.GetActionIndex())
-			return index < len(actions) && actions[index].GetRunScript() != nil && action.GetStatus() == "unknown"
+			return index < len(actions) && actions[index].GetRunScript() != nil && (action.GetStatus() == "unknown" || action.GetFailureReason() == ScriptRefusedReason)
 		}) {
 			return false
 		}
