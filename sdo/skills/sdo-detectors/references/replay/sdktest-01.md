@@ -210,6 +210,7 @@ type OwnIncidentResult struct {
 	Outcome   OwnIncidentOutcome `json:"outcome"`
 	Capture   string             `json:"capture,omitempty"`
 	Reason    string             `json:"reason,omitempty"`
+	Recovered *RecoveredMatch    `json:"recovered_match,omitempty"`
 }
     OwnIncidentResult is one playbook's own-incident replay verdict. Capture
     names the open@* snapshot the outcome comes from; Reason says why a failed

@@ -103,3 +103,6 @@ Build replay fixtures from recorded observations. Missing or inconclusive replay
 Accepted and working playbooks read frozen objects and telemetry from their own
 controller view. Use `MetricResult` and `LogResult` with the detector's query ID.
 Treat unavailable results as unknown.
+
+- Review any objects Diagnose matched on the recovered capture.
+  Enforced by: `playbook.matches-recovered` (informational).

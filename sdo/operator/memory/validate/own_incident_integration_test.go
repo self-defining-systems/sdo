@@ -83,3 +83,54 @@ func TestANewPlaybookThatMatchesItsOwnIncidentIsRecordedAsAMatch(t *testing.T) {
 		t.Fatalf("gaps = %v, want a match note", gaps)
 	}
 }
+
+func TestRecoveredDriftIsAnInformationalNote(t *testing.T) {
+	for _, tc := range []struct {
+		name, prefix string
+		want         bool
+	}{
+		{"false drift matches healthy object", "", true},
+		{"correct diagnose ignores healthy object", "fault-", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := strings.Replace(ownDiagnose("Match"), `"sdo.dev/operator/sdk/program"`, `"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+	"strings"`, 1)
+			source = strings.Replace(source, "context.Context, program.ReadView, program.Bindings", "_ context.Context, view program.ReadView, _ program.Bindings", 1)
+			source = strings.Replace(source, "return program.Verdict{Result: program.Match}, nil", `
+	for _, cm := range view.Pods() {
+		if strings.HasPrefix(cm.Name, "`+tc.prefix+`") {
+			ref := sdk.ObjectRef{Kind: "Pod", Namespace: cm.Namespace, Name: cm.Name}
+			return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: ref, Fact: "drift"}}}, nil
+		}
+	}
+	return program.Verdict{Result: program.NoMatch}, nil`, 1)
+			root, capture := ownIncidentRoot(t, source)
+			for file, name := range map[string]string{"open@detect.json": "fault-config", "fixed.json": "healthy-config"} {
+				raw := `{"namespace":"app","pods":[{"metadata":{"name":"` + name + `","namespace":"app"}}]}`
+				if err := os.WriteFile(filepath.Join(capture, file), []byte(raw), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			request := compileRequest(root)
+			request.OwnIncidentDirectory = capture
+			var gaps []Diagnostic
+			request.CoverageGaps = &gaps
+			if diagnostics := diagnose(t, request); len(diagnostics) != 0 {
+				t.Fatalf("recovered check refused the playbook: %v", diagnostics)
+			}
+			var count int
+			for _, gap := range gaps {
+				if gap.Rule == RuleMatchesRecovered {
+					count++
+					if !strings.Contains(gap.Message, "Pod/app/healthy-config") {
+						t.Fatalf("recovered note does not name the object: %v", gap)
+					}
+				}
+			}
+			if (count == 1) != tc.want || count > 1 {
+				t.Fatalf("recovered notes = %d, want one: %v. All notes: %v", count, tc.want, gaps)
+			}
+		})
+	}
+}

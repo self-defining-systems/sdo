@@ -588,8 +588,14 @@ func ownIncidentLines(report *contracts.MemoryCheckReport, id string) []string {
 	path := layout.PlaybookDir(id)
 	var lines []string
 	for _, gap := range report.GetCoverageGaps() {
-		if gap.GetRule() == validate.RuleOwnIncidentReplay && gap.GetPath() == path {
+		if gap.GetPath() != path {
+			continue
+		}
+		switch gap.GetRule() {
+		case validate.RuleOwnIncidentReplay:
 			lines = append(lines, "  diagnose on incident: "+gap.GetMessage())
+		case validate.RuleMatchesRecovered:
+			lines = append(lines, "  "+gap.GetMessage())
 		}
 	}
 	for _, diagnostic := range report.GetDiagnostics() {

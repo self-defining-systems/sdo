@@ -108,6 +108,17 @@ func (s *run) compile(ctx context.Context) error {
 		}
 		for _, verdict := range verdicts {
 			s.req.noteGaps(ownIncidentNote(verdict))
+			if match := verdict.Recovered; match != nil {
+				message := "Diagnose matches the recovered capture"
+				if len(match.Objects) > 0 {
+					var objects []string
+					for _, ref := range match.Objects {
+						objects = append(objects, ref.Kind+"/"+ref.Namespace+"/"+ref.Name)
+					}
+					message += ": " + strings.Join(objects, ", ")
+				}
+				s.req.noteGaps(Diagnostic{Rule: RuleMatchesRecovered, Path: layout.PlaybookDir(verdict.ProgramID), Message: message})
+			}
 		}
 		bounds, boundErr := workspace.TrafficLatencyGaps()
 		if boundErr != nil {

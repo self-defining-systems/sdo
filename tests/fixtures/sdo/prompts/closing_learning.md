@@ -7,5 +7,5 @@ Your recorded changes:
 Answer in the `reflection` field and leave `incident_result` null.
 If this cause has a signal of its own, also add a learned detector that names the playbook, with a test and a near-miss test: /opt/sdo/skills/playbook-writing/detector.md.
 Memory may name this application's tables, resources and commands. Generalize over what varies, not away from the application. A program for just the mechanical part beats none; leave judgement to the README.
-Check learned diagnoses and mitigations against recorded evidence before use. Use supported cause classes and plan forms.
+Run memory check and review matches-recovered. Use supported cause classes and plan forms.
 One-line note: what the playbook does or why none is warranted.

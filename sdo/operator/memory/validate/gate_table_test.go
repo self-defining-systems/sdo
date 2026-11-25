@@ -963,6 +963,7 @@ var gateRuleCoverage = map[string]string{
 	RuleSourceSize:            "covered by the broker source tests (broker/source_integration_test.go): they need the agent checkout's committed history",
 	RuleSourceHistory:         "covered by the broker source tests (broker/source_integration_test.go): they need the agent checkout's committed history",
 	RuleGoalMissing:           "covered by goal_missing_test.go: a non-blocking note",
+	RuleMatchesRecovered:      "covered by TestRecoveredDriftIsAnInformationalNote with the real toolchain and a recovered capture",
 	RuleOwnIncidentReplay:     "covered by own_incident_integration_test.go (a NoMatch is refused, a match is recorded) and own_incident_note_test.go; it needs a git base, a capture and the real toolchain",
 	RuleSnapshotProjection:    "no row yet: a defensive check behind the static layers; no authored change reaches it",
 	RuleTrafficDefaultLatency: "no row yet: informational, needs generated traffic replay results from the real toolchain on a tree with health-probe scenarios",

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -38,6 +39,12 @@ type OwnIncidentResult struct {
 	Outcome   OwnIncidentOutcome `json:"outcome"`
 	Capture   string             `json:"capture,omitempty"`
 	Reason    string             `json:"reason,omitempty"`
+	Recovered *RecoveredMatch    `json:"recovered_match,omitempty"`
+}
+
+// RecoveredMatch records a positive diagnosis on the verified fixed snapshot.
+type RecoveredMatch struct {
+	Objects []sdk.ObjectRef `json:"objects,omitempty"`
 }
 
 // DiagnoseOnIncident runs d's Diagnose on the incident's captured open state:
@@ -124,6 +131,46 @@ func DiagnoseOnIncident(d program.Diagnoser, dir string) (OwnIncidentResult, err
 		return *unverified, nil
 	}
 	return result, nil
+}
+
+// DiagnoseOnRecovered replays only observations recorded at the fixed boundary.
+func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) *RecoveredMatch {
+	for _, param := range d.Spec().Params {
+		if param.Kind != "" {
+			return nil // The capture does not carry role bindings.
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "fixed.json"))
+	if err != nil {
+		return nil
+	}
+	snapshot, err := decodeSnapshotStrict(raw)
+	if err != nil {
+		return nil
+	}
+	var calls []PrimitiveCall
+	for _, phase := range []string{"detect", "settle", "pre-apply"} {
+		raw, err := os.ReadFile(filepath.Join(dir, "open@"+phase+"-recordings.json"))
+		var capture CorpusCase
+		if err == nil && json.Unmarshal(raw, &capture.Recordings) == nil {
+			calls = append(calls, capture.PhaseRecordings("fixed")...)
+		}
+	}
+	view := &ReplayReadView{Snapshot: snapshot, Calls: calls}
+	verdict := program.RunDiagnose(ctx, d, view, program.Bindings{}, 500*time.Millisecond)
+	if verdict.Result != program.Match {
+		return nil
+	}
+	note := &RecoveredMatch{}
+	seen := map[sdk.ObjectRef]bool{}
+	for _, evidence := range verdict.Evidence {
+		ref := evidence.Resource
+		if ref.Name != "" && !seen[ref] && len(note.Objects) < 12 {
+			seen[ref] = true
+			note.Objects = append(note.Objects, ref)
+		}
+	}
+	return note
 }
 
 // evidenceSummary is a verdict's evidence as one short line: the facts Diagnose

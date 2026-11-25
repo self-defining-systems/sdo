@@ -138,6 +138,15 @@ func (v *RecordingReadView) ValidatingWebhookConfigurations() ([]admissionv1.Val
 
 func (v *RecordingReadView) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
 
+type RecoveredMatch struct {
+	Objects []sdk.ObjectRef `json:"objects,omitempty"`
+}
+    RecoveredMatch records a positive diagnosis on the verified fixed snapshot.
+
+func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) *RecoveredMatch
+    DiagnoseOnRecovered replays only observations recorded at the fixed
+    boundary.
+
 type ReplayReadView struct {
 	Snapshot
 	Calls []PrimitiveCall
@@ -234,13 +243,4 @@ func (v *ReplayReadView) ReadyEndpointCountForService(namespace string, service 
 
 func (v *ReplayReadView) RecentEventsFor(namespace string, kind string, name string) []corev1.Event
     RecentEventsFor notes the Event read it makes.
-
-func (v *ReplayReadView) Recorded(method string, arguments any, result any) error
-    Recorded answers a state read from the first matching recorded reply without
-    consuming it: a live read view freezes such reads per snapshot, so repeated
-    identical reads see the same answer. Missing replies are *UnrecordedError.
-
-func (v *ReplayReadView) ReplayProgramReadView(source program.ReadView) program.ReadView
-    ReplayProgramReadView overlays bounded host replies ahead of any snapshot
-    fallback, including for SDK methods that cannot return an error.
 ```

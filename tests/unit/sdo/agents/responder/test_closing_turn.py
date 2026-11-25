@@ -117,7 +117,7 @@ def test_the_learning_turn_resumes_the_responder_session_and_carries_the_changes
     assert "playbook-writing/SKILL.md" in prompt
     assert "Turn your fix into a playbook so SDO can apply it next time without you." in prompt
     assert "A program for just the mechanical part beats none; leave judgement to the README." in prompt
-    assert "Check learned diagnoses and mitigations against recorded evidence before use." in prompt
+    assert "Run memory check and review matches-recovered." in prompt
     assert "Use supported cause classes and plan forms." in prompt
     decision = ReflectionResult()
     assert result.response.Unpack(decision)
@@ -216,7 +216,14 @@ def test_a_provider_that_cannot_resume_is_a_typed_failure_not_a_new_session(
 
 def test_a_failing_check_gets_exactly_one_correction_turn(tmp_path: Path, prepare_reflection_memory) -> None:
     prepare_reflection_memory(tmp_path, INCIDENT)
-    failing = ValidationResult(1, False, '{"diagnostics": [{"rule": "x.rule", "path": "p", "message": "m"}]}', "")
+    failing = ValidationResult(
+        1,
+        False,
+        '{"diagnostics": [{"rule": "x.rule", "path": "p", "message": "m"}],'
+        ' "coverage_gaps": [{"rule": "playbook.matches-recovered", "path": ".sdo/playbooks/example",'
+        ' "message": "Diagnose matches the recovered capture: Pod/app/healthy"}]}',
+        "",
+    )
     agent = ScriptedAgent(_note())
     result = run_reflection_task(
         _task(tmp_path, _learning_request(tmp_path)),
@@ -226,7 +233,9 @@ def test_a_failing_check_gets_exactly_one_correction_turn(tmp_path: Path, prepar
     )
     assert len(agent.requests) == 2, "one turn plus one correction, then the failure is reported"
     assert result.status == "failed"
-    assert "x.rule" in expand_context(agent.prompts[1])
+    correction = expand_context(agent.prompts[1])
+    assert "x.rule" in correction
+    assert "Pod/app/healthy" in correction
 
 
 def test_the_learning_message_is_about_600_bytes_plus_the_change_list() -> None:

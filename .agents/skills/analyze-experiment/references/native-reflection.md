@@ -247,3 +247,5 @@ For every playbook the closing turn introduced (no program source at the base), 
 - A blocking diagnostic with the same rule: Diagnose returned `NoMatch` on its own incident with every read answered (a definite failure). The broker refuses the commit; the correction turn gets the text and the entry is in `reflection_rejections`.
 
 Notes are in the agent's `memory check --json` `coverage_gaps`, `memory test <id>` (first line `diagnose on incident: ...`), the accepted commit's `SDO-Coverage-Gap:` trailers and the ledger's `reflection_coverage_gaps`. No protobuf field changes. The first corpus case of such a playbook is written from the same capture (`corpus_case_not_recorded` in the controller log says why one is missing).
+
+`playbook.matches-recovered` is a separate informational note. It means Diagnose returned Match on the verified fixed snapshot using fixed-phase reads. Its message lists objects named in the verdict. Missing notes can mean NoMatch, unavailable evidence, or an exhausted replay budget. Count them as positive observations only.

@@ -92,7 +92,7 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 // ownIncidentFixtures is where the own-incident test finds the capture.
 const ownIncidentFixtures = "own-incident"
 
-// generateOwnIncidentTest stages the incident's captured open state and a test
+// generateOwnIncidentTest stages the incident's captured open and recovered states and a test
 // that runs Diagnose of every playbook new in this change on it. The capture
 // exists before Go writes a corpus case, so a playbook that has none yet is
 // still checked. No capture or no new playbook, no test.
@@ -103,6 +103,10 @@ func generateOwnIncidentTest(capture, workspace string, ids []string) error {
 	paths, err := filepath.Glob(filepath.Join(capture, "open@*.json"))
 	if err != nil {
 		return err
+	}
+	fixed := filepath.Join(capture, "fixed.json")
+	if _, err := os.Stat(fixed); err == nil {
+		paths = append(paths, fixed)
 	}
 	fixtures := filepath.Join(workspace, "generated", "testdata", ownIncidentFixtures)
 	if err := os.MkdirAll(fixtures, 0o755); err != nil {

@@ -260,6 +260,13 @@ def memory_check_correction(check: ValidationResult, idempotency_key: str) -> Re
             feedback = "\n".join(
                 f"[{item.get('rule', '')}] {item.get('path', '')}: {item.get('message', '')}" for item in diagnostics
             )
+            recovered = [
+                f"{item.get('path', '')}: {item.get('message', '')}"
+                for item in report.get("coverage_gaps", [])
+                if item.get("rule") == "playbook.matches-recovered"
+            ]
+            if recovered:
+                feedback += "\nRecovered diagnosis notes:\n" + "\n".join(recovered)
             _, path = save_context(details)
             feedback += "\nFull check: " + path
     except (ValueError, AttributeError, TypeError):
