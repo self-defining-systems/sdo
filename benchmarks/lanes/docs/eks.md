@@ -147,6 +147,7 @@ hosts:
       host_cluster: lanes-host-west  # default lanes-host-<host>
       system_instance: m6i.xlarge  # the node that runs Karpenter and the lanes' control planes (default)
       full_lanes: [full1]          # lanes that stay clusters of their own (see "Capabilities")
+      one_node_lanes: [vc3]        # lanes on one node instead of two (see "One node")
       budget_per_hour: 6.0
       vcpu_quota: 64
     clusters: [vc1, vc2, vc3, full1]
@@ -165,6 +166,18 @@ hosts:
   The vcluster's LimitRange gives a pod without one a CPU and memory request only: the chart's default `ephemeral-storage`
   request (3Gi per container) is removed, because the host scheduler counts requests, not use, and a 32-container app would
   fill a node's 89 GiB allocatable with a nearly empty disk.
+- **One node** (`one_node_lanes: [vc3]`, vcluster lanes only): the lane gets **one** node of the type its two-node layout
+  uses, so it counts half the vCPUs and costs half. Everything else (pause pods, NodePool cap, LimitRange, golden copy,
+  reseed) follows `EKS_NODES=1`. The node must hold the footprint's whole memory (less the 2 GiB overhead) or the lane is
+  refused; its cores are half. The lane is labeled `lane-nodes=1` (also beside labels of its own) and is not
+  `shared`, so a plan takes it by `selector: {lane-nodes: "1"}` only. A lane with labels of its own is also taken by a
+  selector on those alone: give one-node lanes labels of their own. The layout a lane was **made** with (nodes, instance
+  type, vCPUs, `one_node`) is the lane's `layout` in `lanes status --json`, in `run.json`, in the plan's results rows and
+  in the TSV column `layout`. Changing the list does not resize a lane that exists: it takes no new build, is deleted when
+  free and is made anew; a warm pool lane that is not free keeps its layout. A workload fits when nothing in it needs a second node (a
+  required pod anti-affinity or topology spread, two host ports); preferred anti-affinity is fine. A manager binary that
+  predates the option refuses a `hosts.yaml` that has it: install the binary first. Whether rows on one node are comparable
+  with rows on two is for a measurement to say; do not mix layouts in one comparison before it.
 - **Delete** (`down`): the vcluster, its namespace and the NodePool go; Karpenter terminates the nodes (the step waits for
   that, at most `EKS_DOWN_WAIT`, 240 s, so the cost line ends where the nodes end). The last lane of the host also scales the
   `system` group to 0: only the control plane ($0.10/h) bills until the next lane brings a system node back.

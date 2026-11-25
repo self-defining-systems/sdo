@@ -93,7 +93,7 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   keeps the later line. A row has the workload's grade (opaque JSON; it must be an object with a boolean `valid`, else
   the row is kept with `grade_error` and `valid: false`), the source identity (`source`: pins, the revisions the run
   reports, the app; `ok` is false when a reported git revision contradicts its pin), the isolation mode (`two-way`,
-  `one-way`, `one-way-ok`), OOM kills, host and lane, and the stage times in seconds. A done run whose reported revision
+  `one-way`, `one-way-ok`), OOM kills, host and lane, an EKS lane's `layout` (nodes, instance type, vCPUs; TSV column `layout` when some row has one), and the stage times in seconds. A done run whose reported revision
   contradicts its pin, or a `two-way` plan on a run that was not two-way, is not a result: it fails with
   `source-mismatch` and runs again. A grade that is still being made delays the row, not the next run; a plan is
   complete once every row is written. The real backend grades a done run through the workload's grade verb in the

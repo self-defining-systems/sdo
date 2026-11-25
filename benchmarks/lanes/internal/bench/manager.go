@@ -558,7 +558,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			continue // a release or a reset waits for a free churn slot; the next pass tries again
 		}
 		forced := !l.Gone && m.inv.Hosts[l.Host].ClusterDown != "" && m.releaseRequested(l)
-		del := forced || !l.Gone && m.inv.Hosts[l.Host].ClusterDown != "" && !m.wantedBy(l) &&
+		del := forced || m.eksLayoutStale(l) || !l.Gone && m.inv.Hosts[l.Host].ClusterDown != "" && !m.wantedBy(l) &&
 			(gcAll || m.gcWanted[l.Host] || m.ownerDone(l)) && (!m.inv.Hosts[l.Host].IsEks() || gcAll || m.eksIdle(l))
 		switch {
 		case del:
@@ -851,7 +851,10 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	// experiment (its plan may be gone) and takes it from what the lane was prepared with.
 	s.HostEnv = h.EnvFor(s.Workload)
 	if h.IsEks() {
-		p, err := h.EKS.PlanLaneFor(l.Lane, limitSpec.LaneLimit())
+		if s.Kind == StepBuild && l.Gone {
+			m.eksSettle() // the deleted cluster's entry closes before the new one opens: it gets the layout of today
+		}
+		p, err := m.eksLanePlan(l, limitSpec)
 		if err != nil {
 			m.logf("lane %s: %s refused: %v", l.Lane, s.Kind, err)
 			return false
@@ -1837,7 +1840,7 @@ func (m *Manager) endRun(x *Experiment, l *LaneFile, rs *RunSpec, res Result) {
 func (m *Manager) runFile(x *Experiment, l *LaneFile, rs *RunSpec, res Result, status, reason string) RunFile {
 	rf := RunFile{ID: rs.ID, Experiment: x.Name, Fault: rs.Fault, Position: rs.Position, Seed: rs.Seed,
 		Attempt: l.Attempt, Status: status, Reason: reason, Lane: l.Lane, Host: l.Host, OperatorLabel: rs.Label, Fuzzops: res.Fuzzops,
-		Started: res.Started, Ended: res.Ended, InjectAt: res.InjectAt, SettleEnd: res.SettleEnd, Capped: res.Capped, Isolation: res.Isolation}
+		Started: res.Started, Ended: res.Ended, InjectAt: res.InjectAt, SettleEnd: res.SettleEnd, Capped: res.Capped, Isolation: res.Isolation, Layout: m.eksLayout(l)}
 	if l.Seq != nil {
 		rf.Sequence = l.Seq.Q
 	}

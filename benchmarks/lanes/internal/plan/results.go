@@ -50,7 +50,9 @@ type Row struct {
 	GradeError string          `json:"grade_error,omitempty"`
 	Source     SourceID        `json:"source"`
 	// Isolation is the mode the run was measured under: two-way or one-way (one-way-ok: no reservation).
-	Isolation Isolation          `json:"isolation"`
+	Isolation Isolation `json:"isolation"`
+	// Layout is what an EKS lane ran on.
+	Layout    *Layout            `json:"layout,omitempty"`
 	Stages    map[string]float64 `json:"stages,omitempty"` // seconds
 	Host      string             `json:"host,omitempty"`
 	Lane      string             `json:"lane,omitempty"`
@@ -130,7 +132,7 @@ func (e *Engine) row(n *NodeState, a *AttemptRecord, rd RunData, rdErr error) Ro
 		pins = *a.Pins
 	}
 	r := Row{Plan: e.Plan.Name, Node: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Attempt: a.Attempt, Exp: a.Exp, Run: rd.Run, Position: rd.Position,
-		Status: "done", Reason: a.Reason, Host: rd.Host, Lane: rd.Lane, Isolation: rd.Isolation, Submitted: a.Submitted, Ended: a.Ended,
+		Status: "done", Reason: a.Reason, Host: rd.Host, Lane: rd.Lane, Isolation: rd.Isolation, Layout: rd.Layout, Submitted: a.Submitted, Ended: a.Ended,
 		Source: SourceID{WorkloadPinned: pins.Workload.String(), WorkloadObserved: rd.WorkloadObserved,
 			SubjectPinned: pins.Subject.String(), SubjectObserved: rd.SubjectObserved, App: rd.App, OK: e.sourceMismatch(pins, rd) == ""}}
 	if a.Reason != "" {
@@ -283,6 +285,11 @@ func TSV(w io.Writer, rows []Row, gradeFields []string) error {
 	if withPosition {
 		head = slices.Insert(head, 8, "position")
 	}
+	// Likewise the layout column (EKS lanes).
+	withLayout := slices.ContainsFunc(rows, func(r Row) bool { return r.Layout != nil })
+	if withLayout {
+		head = append(head, "layout")
+	}
 	for _, s := range stageCols {
 		head = append(head, "stage_"+s+"_s")
 	}
@@ -298,6 +305,9 @@ func TSV(w io.Writer, rows []Row, gradeFields []string) error {
 			r.Source.SubjectPinned, r.Source.SubjectObserved, r.Source.App, fmt.Sprint(r.Source.OK), stamp(r.Submitted), stamp(r.Ended)}
 		if withPosition {
 			cols = slices.Insert(cols, 8, fmt.Sprint(r.Position))
+		}
+		if withLayout {
+			cols = append(cols, r.Layout.String())
 		}
 		for _, s := range stageCols {
 			if d, ok := r.Stages[s]; ok {

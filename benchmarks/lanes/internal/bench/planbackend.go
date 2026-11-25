@@ -735,7 +735,7 @@ func (b *PlanBackend) RunsData(ctx context.Context, exp string) ([]plan.RunData,
 // runDataOf is the results data of one run of the experiment: identity at once, the grade when the workload's grade
 // verb has produced it.
 func (b *PlanBackend) runDataOf(exp string, rf *RunFile) (plan.RunData, error) {
-	rd := plan.RunData{Run: rf.ID, Host: rf.Host, Lane: rf.Lane, WorkloadObserved: rf.Fuzzops.Revision}
+	rd := plan.RunData{Run: rf.ID, Host: rf.Host, Lane: rf.Lane, Layout: rf.Layout, WorkloadObserved: rf.Fuzzops.Revision}
 	if iso := rf.Isolation; iso != nil {
 		rd.Isolation = plan.Isolation{Mode: iso.Mode, OOMKills: iso.OOMKills, Reserved: iso.Reserved, CPUs: iso.CPUs, Memory: iso.Memory}
 	}
