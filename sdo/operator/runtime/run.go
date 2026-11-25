@@ -1511,9 +1511,22 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		controller.scheduler.ExpediteAll(retryAt)
 		return nil
 	}
+	afterCompletion := func() error {
+		persistControllerState()
+		if err := survive(executeStartupEffects(runCtx, controller, applied.Paused)); err != nil && runCtx.Err() == nil {
+			return err
+		}
+		return nil
+	}
 	for {
 		if *exitAfterClosure && controller.LastAcknowledgedIncidentID() != "" {
 			return nil
+		}
+		if runCtx.Err() == nil && controller.takeReadyDispatchWork(clock.Now().UTC()) {
+			if err := afterCompletion(); err != nil {
+				return err
+			}
+			continue
 		}
 		if applied == desired && !applied.Paused {
 			acceptBaseline(retryReachabilityBaseline)
@@ -1631,11 +1644,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleDispatchCompletion(completion, clock.Now().UTC())
-			persistControllerState()
-			if err := survive(executeStartupEffects(runCtx, controller, applied.Paused)); err != nil {
-				if runCtx.Err() != nil {
-					return nil
-				}
+			if err := afterCompletion(); err != nil {
 				return err
 			}
 		case completion := <-controller.workspaceResults:
@@ -1643,11 +1652,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleWorkspaceCompletion(completion)
-			persistControllerState()
-			if err := survive(executeStartupEffects(runCtx, controller, applied.Paused)); err != nil {
-				if runCtx.Err() != nil {
-					return nil
-				}
+			if err := afterCompletion(); err != nil {
 				return err
 			}
 		case completion := <-controller.closureResults:

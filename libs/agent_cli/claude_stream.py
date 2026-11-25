@@ -43,7 +43,15 @@ from agentshim import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from agentshim import CommandExecutor, IdleConversation
+    from agentshim import (
+        CommandExecutor,
+        CommandRequest,
+        CommandResult,
+        CommandStreamSink,
+        IdleConversation,
+        Process,
+        SpawnRequest,
+    )
 
 #: Makes the CLI report ``system/session_state_changed`` (``running`` while it works, ``idle`` once
 #: nothing is queued and no background task will start another turn). It is the CLI's own signal that
@@ -138,11 +146,47 @@ class SessionWatch:
         return None
 
 
+class LaunchArgs:
+    """An executor that starts the CLI with the turn's own arguments.
+
+    agentshim opens a conversation before it knows the turn, so it starts one process for the conversation, stops
+    it unused, and starts a second one with the turn's schema and arguments. SDO runs exactly one turn per
+    conversation and knows them up front: they go on the process that opens it, which then serves the turn.
+    """
+
+    def __init__(self, live: CommandExecutor) -> None:
+        self.live = live
+        self.args: tuple[str, ...] = ()
+
+    def find_binary(self, name: str, env: Mapping[str, str]) -> str:
+        return self.live.find_binary(name, env)
+
+    def check_binary(self, path: str, env: Mapping[str, str], *, timeout: float) -> None:
+        self.live.check_binary(path, env, timeout=timeout)
+
+    def spawn(self, request: SpawnRequest) -> Process:
+        return self.live.spawn(replace(request, argv=[*request.argv, *self.args]))
+
+    def run(self, request: CommandRequest, sink: CommandStreamSink) -> CommandResult:
+        return self.live.run(request, sink)
+
+
+def structured_answer(frame: Mapping[str, Any] | None, text: str) -> object | None:
+    """The schema's answer: the result frame's payload, or the JSON text of a CLI that has no such field."""
+    if frame is not None:
+        return frame["structured_output"]
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
 class ClaudeStreamSession:
     """One Claude conversation: open (or resume), one turn, wait out the agent's own tasks, close."""
 
     def __init__(
         self,
+        launch: LaunchArgs,
         transport: ClaudeStreamTransport,
         *,
         cwd: str,
@@ -152,6 +196,7 @@ class ClaudeStreamSession:
         on_event: Callable[[AgentEvent], None],
         on_stdout: Callable[[str], None] | None = None,
     ) -> None:
+        self._launch = launch
         self._transport = transport
         self._cwd = cwd
         self._model = model
@@ -187,31 +232,32 @@ class ClaudeStreamSession:
     def turn(self, request: TurnRequest) -> TurnResult:
         """Run *request*; return the answer that stands once the agent's background tasks are done."""
         started = time.monotonic()
+        schema = request.output_schema
+        if schema is not None:
+            self._launch.args = ("--json-schema", json.dumps(schema.schema, separators=(",", ":")))
+        self._launch.args += tuple(request.extra_args)
         spec = ConversationSpec(
             cwd=self._cwd,
             model=self._model,
             permissions=NativePermissions(NativeMode.BYPASS),
             approvals=ApprovalPolicy.DENY,
+            mcp_servers=tuple(request.mcp_servers),
             reasoning_effort=request.reasoning_effort,
             resume_id=self._resume_id,
             raw_sink=self._raw,
         )
         self._conversation = self._transport.open(spec)
-        result = self._conversation.turn(replace(request, timeout=self._timeout), self._on_event)
+        result = self._conversation.turn(
+            replace(request, timeout=self._timeout, output_schema=None, extra_args=()), self._on_event
+        )
         if result.interrupted or self._cancelled.is_set():
             raise TurnCancelledError("the turn was interrupted")
-        if not self.watch.working:
-            return result
-        self._drain(started)
+        if self.watch.working:
+            self._drain(started)
         final = self.watch.final_result()
-        if final is None:
-            return result
-        text = final.get("result")
-        return replace(
-            result,
-            text=text if isinstance(text, str) else result.text,
-            structured_output=final["structured_output"],
-        )
+        text = final.get("result") if final is not None else None
+        result = replace(result, text=text if isinstance(text, str) else result.text)
+        return result if schema is None else replace(result, structured_output=structured_answer(final, result.text))
 
     def _drain(self, started: float) -> None:
         """Read the process until the CLI has nothing left to say about the agent's tasks."""
@@ -227,9 +273,7 @@ class ClaudeStreamSession:
         raise TurnCancelledError("the turn was interrupted while background tasks ran")
 
 
-def stream_transport(
-    executor: CommandExecutor, env: Mapping[str, str], *, check_timeout: float
-) -> ClaudeStreamTransport:
+def stream_transport(executor: LaunchArgs, env: Mapping[str, str], *, check_timeout: float) -> ClaudeStreamTransport:
     """The transport for a host or remote ``claude``."""
     return ClaudeStreamTransport(executor=executor, env=env, check_timeout=check_timeout)
 
@@ -241,6 +285,7 @@ def settings_args(settings: Mapping[str, object], extra: Sequence[str]) -> tuple
 
 __all__ = [
     "HEADLESS_DISALLOWED_TOOLS",
+    "LaunchArgs",
     "SessionWatch",
     "disallowed_tools_args",
     "ClaudeStreamSession",

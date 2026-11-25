@@ -554,7 +554,12 @@ func TestAutomaticHandoffVerifiesRecoveryWhileResponderWaits(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			stepAt(c.automaticDeadlineLocked(report))
+			// A stage that wrote nothing handed off when it ended, so its deadline is now.
+			at := world.clock.Now()
+			if tc.applied {
+				at = c.automaticDeadlineLocked(report)
+			}
+			stepAt(at)
 			effect, ok := c.PendingDispatchEffect()
 			if !ok || !autoReport(c).GetHandoffSelected() {
 				t.Fatal("the residual alert did not hand off to the responder")
@@ -701,5 +706,42 @@ func TestClosureFreezeBackoffDoesNotDelayAutomaticHandoff(t *testing.T) {
 	if !autoReport(c).GetHandoffSelected() ||
 		c.responseEntry(*c.currentIncidentRequest) != dispatchStagedHandoff {
 		t.Fatal("closure freeze backoff prevented automatic handoff at its deadline")
+	}
+}
+
+// A stage that wrote nothing leaves the agent's decision to the frozen request:
+// the handoff is selected when the stage ends, with no further observation.
+func TestStageThatWroteNothingHandsOffWithoutAnObservation(t *testing.T) {
+	c, _, _ := automaticRecoveryWorld(t, settlingCase{undecided: true}, settings.AfterPlaybookAgent)
+	report := autoReport(c)
+	if playbookWrote(report) {
+		t.Fatal("the synthetic stage wrote")
+	}
+	if !report.GetHandoffSelected() || len(report.GetHandoffKeys()) == 0 || c.responderDone ||
+		c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING ||
+		c.responseEntry(*c.currentIncidentRequest) != dispatchStagedHandoff {
+		t.Fatalf("no handoff when the stage ended: %+v, dispatch %s", report, c.dispatchState)
+	}
+}
+
+// Evidence queued while the stage ran still gets its automatic pass first.
+func TestStageThatWroteNothingWaitsForItsQueuedPass(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	c, _ := churnController(t, now)
+	stage := &contracts.StageReport{Stage: "deterministic",
+		RecoveryWait: &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_NOTHING_APPLIED}}
+	c.currentIncidentRequest.PriorStages = nil
+	c.responderDone = false
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+	c.responseStagesRunning = true
+	c.admitActivation(t.Context(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
+	id := c.currentIncidentRequest.IncidentID
+	c.results <- dispatchCompletion{incidentID: id, priorStages: []*contracts.StageReport{stage},
+		result: IncidentResult{IncidentID: id, Status: IncidentCompleted, ResolutionPath: "deterministic"}}
+	if !c.takeReadyDispatchWork(now) || c.takeReadyDispatchWork(now) {
+		t.Fatal("the finished stage was not taken exactly once")
+	}
+	if autoReport(c).GetHandoffSelected() || !c.pendingLearnedPassReadyLocked() {
+		t.Fatal("handed off before the queued automatic pass")
 	}
 }

@@ -86,6 +86,18 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	c.resetDispatchRetryLocked()
 }
 
+// handOffUnappliedStageLocked dispatches the agent as soon as a stage that
+// wrote nothing ends. Its decision reads the frozen request alone, and once the
+// pipeline ends only evidence already queued can start another automatic pass,
+// so a further observation could change neither.
+func (c *Controller) handOffUnappliedStageLocked(now time.Time) {
+	report := c.awaitingAutomaticRecoveryLocked()
+	if report == nil || c.config.ExternalIncidentsOnly || playbookWrote(report) || stagePlanRefused(report) {
+		return
+	}
+	c.automaticRecoveryLocked(now, report, false, recoveryCheck{}, nil)
+}
+
 func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRequest) []string {
 	keys := alertKeys(&request)
 	scope := newRecoveryScope(keys)
