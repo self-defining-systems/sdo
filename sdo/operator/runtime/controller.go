@@ -1668,6 +1668,21 @@ func (c *Controller) processDispatchCompletions(observedAt time.Time) {
 	}
 }
 
+// takeReadyDispatchWork handles one finished workspace or response pipeline
+// before the driver starts another observation. Watch events are nearly always
+// ready too, and a step started first delays the dispatch by a whole observation.
+func (c *Controller) takeReadyDispatchWork(now time.Time) bool {
+	select {
+	case completion := <-c.results:
+		c.handleDispatchCompletion(completion, now)
+	case completion := <-c.workspaceResults:
+		c.handleWorkspaceCompletion(completion)
+	default:
+		return false
+	}
+	return true
+}
+
 func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, observedAt time.Time) {
 	c.mu.Lock()
 	if c.currentIncidentRequest == nil || completion.incidentID != c.currentIncidentRequest.IncidentID {
@@ -1821,6 +1836,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 			DispatchError: c.dispatchError != "",
 		})
 	}
+	c.handOffUnappliedStageLocked(observedAt)
 	c.mu.Unlock()
 	if completion.err == nil && c.Helpers != nil {
 		c.cleanupHelpers()

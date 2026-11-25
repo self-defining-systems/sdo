@@ -96,6 +96,20 @@ def test_incident_turn_waits_for_its_subagents_then_the_closing_turn_resumes_the
     assert decision.no_change_reason == "restarts it"
 
 
+def test_a_turn_starts_one_process_with_the_turns_own_arguments(tmp_path: Path) -> None:
+    """A process started for the conversation and replaced for the turn delays the agent's first request by one CLI
+    start and one CLI stop."""
+    executor = FakeExecutor(FakeRun(), peers=lambda _spawn: ClaudeFramePeer([_frames(RESPONDER_SESSION, "done")]))
+    turn = run_structured_turn(
+        "claude", "respond", output_schema=SCHEMA, cwd=tmp_path, access="danger-full-access", executor=executor
+    )
+    assert json.loads(turn.output_json) == {"answer": "done"}
+    assert len(executor.spawns) == 1
+    argv = list(executor.spawns[0].argv)
+    assert json.loads(argv[argv.index("--json-schema") + 1]) == SCHEMA
+    assert "--disallowedTools" in argv
+
+
 def test_a_claude_session_that_cannot_resume_is_a_typed_failure_not_a_new_session(
     tmp_path: Path, prepare_reflection_memory
 ) -> None:

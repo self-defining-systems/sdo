@@ -68,6 +68,7 @@ from libs.agent_cli.claude_accounts import AccountRouter, is_claude_auth_failure
 from libs.agent_cli.claude_stream import (
     SESSION_STATE_ENV,
     ClaudeStreamSession,
+    LaunchArgs,
     disallowed_tools_args,
     settings_args,
     stream_transport,
@@ -774,8 +775,10 @@ def _run_structured_turn_once(
                     raise StructuredTurnTimeout(timeout_seconds)
             session: ClaudeStreamSession | AgentSession
             if provider == "claude":
+                launch = LaunchArgs(executor)
                 session = ClaudeStreamSession(
-                    stream_transport(executor, effective_environment, check_timeout=_CLI_CHECK_TIMEOUT_S),
+                    launch,
+                    stream_transport(launch, effective_environment, check_timeout=_CLI_CHECK_TIMEOUT_S),
                     cwd=str(workspace),
                     model=model,
                     resume_id=resume_session_id,
