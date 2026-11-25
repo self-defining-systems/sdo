@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	"log/slog"
 	"maps"
 	"reflect"
@@ -64,6 +65,10 @@ type PodReadBaseline struct {
 	// restored holds persisted store baselines awaiting their first current
 	// reading (adoptRestored).
 	restored map[string]restoredStore
+	// observed is when each store change of the last results was first read,
+	// and read when each store Pod was last read, per query.
+	observed map[string]map[string]map[string]podread.Observed
+	read     map[string]map[string]time.Time
 }
 
 // NewPodReadBaseline returns an empty holder whose promotions settle for
@@ -199,8 +204,8 @@ func (b *PodReadBaseline) attach(results map[string]podread.Result) {
 		return
 	}
 	b.adoptRestored(results)
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	for id, result := range results {
 		promoted, ok := b.results[id]
 		if !ok || !reflect.DeepEqual(promoted.Query, result.Query) {
@@ -210,8 +215,29 @@ func (b *PodReadBaseline) attach(results map[string]podread.Result) {
 		if history, ok := b.history[id]; ok && reflect.DeepEqual(history.Query, result.Query) {
 			result.History = slices.Clone(history.Readings)
 		}
+		result.Observed = b.observe(id, result)
 		results[id] = result
 	}
+}
+
+// observe returns when each change of a store result was first read, and
+// remembers it for the next one. A result already observed (the same readings,
+// carried by several evaluations) is not parsed again. The caller holds b.mu.
+func (b *PodReadBaseline) observe(id string, result podread.Result) map[string]map[string]podread.Observed {
+	if _, _, ok := storestate.ParseQueryID(id); !ok {
+		return nil
+	}
+	if b.observed == nil {
+		b.observed, b.read = map[string]map[string]map[string]podread.Observed{}, map[string]map[string]time.Time{}
+	}
+	if b.read[id] == nil {
+		b.read[id] = map[string]time.Time{}
+	}
+	if !slices.ContainsFunc(result.Readings, func(r podread.Reading) bool { return r.ObservedAt.After(b.read[id][r.Pod]) }) {
+		return b.observed[id]
+	}
+	b.observed[id] = storestate.ObserveChanges(id, result, b.observed[id], b.read[id])
+	return b.observed[id]
 }
 
 // promotePodReadBaseline feeds each complete evaluation to the pod-read
@@ -247,16 +273,13 @@ func withStoreChanges(state *StateChanges, view sdk.DetectionContext, now time.T
 			baselineAt = store.BaselineAt
 		}
 		change := StateChange{Kind: StoreStateChangeKind, Name: store.Component + "/" + store.Pod.Name, Change: StateChangeModified}
-		for _, item := range store.Changes {
-			if len(change.Fields) == maxStateFields {
+		clues := slices.DeleteFunc(store.Clues(), func(clue storestate.Clue) bool { return clue.Noisy })
+		for i, clue := range clues {
+			if i == maxStateFields {
+				change.Fields = append(change.Fields, StateFieldChange{Field: fmt.Sprintf("(%d more fields)", len(clues)-i)})
 				break
 			}
-			if item.Noisy {
-				continue
-			}
-			key, before, after := item.Describe()
-			field := StateFieldChange{Field: key, Before: bounded(before), After: bounded(after)}
-			change.Fields = append(change.Fields, field)
+			change.Fields = append(change.Fields, StateFieldChange{Field: clue.Key, Before: bounded(clue.Before), After: bounded(clue.After)})
 		}
 		if len(change.Fields) > 0 {
 			added = append(added, change)

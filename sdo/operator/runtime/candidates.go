@@ -437,10 +437,13 @@ func routineChange(row IncidentChange) bool {
 }
 
 // rowEvidence renders one change row as evidence. A store row has no change
-// time: it shows when it was read, never an offset from onset.
+// time: it shows when the change was first observed, or only when it was read.
 func rowEvidence(row IncidentChange, onset time.Time) (candidateEvidence, bool) {
 	row = maskCredentialValues(row)
 	clean := func(text string) string { return redactDetectText(text, incidentInlineValue) }
+	if row.Source == "store" {
+		clean = func(text string) string { return redactDetectText(text, storeClueValue) }
+	}
 	// An object name is not a secret: the token redaction would mask a long one.
 	object := plainName(row.ReaderOrObject, 70)
 	var body string
@@ -473,6 +476,12 @@ func rowEvidence(row IncidentChange, onset time.Time) (candidateEvidence, bool) 
 	switch {
 	case !row.At.IsZero():
 		body = relativeOffset(row.At.Sub(onset)) + " " + body
+	case !row.FirstObserved.IsZero():
+		body += fmt.Sprintf("  (first observed %s, %s", hms(row.FirstObserved), relativeOffset(row.FirstObserved.Sub(onset)))
+		if !row.LastWithout.IsZero() {
+			body += ", not yet " + hms(row.LastWithout)
+		}
+		body += ")"
 	case !row.ReadAt.IsZero():
 		body += fmt.Sprintf("  (read %s, change untimed)", hms(row.ReadAt))
 	default:
@@ -481,6 +490,9 @@ func rowEvidence(row IncidentChange, onset time.Time) (candidateEvidence, bool) 
 	if row.FirstSeen {
 		e.Unexplained, e.Routine = false, true
 		body += " (not in the last healthy read)"
+	}
+	if row.Routine {
+		e.Unexplained, e.Routine = false, true
 	}
 	if routineChange(row) {
 		e.Unexplained, e.Routine = false, true
@@ -753,8 +765,13 @@ func (v candidateView) render(cap int) string {
 			full--
 			shown = max(shown, full)
 		default:
-			text := assemble()
-			return text[:cap-3] + "…"
+			text := assemble()[:cap-3]
+			if line := strings.LastIndexByte(text, '\n'); line > 0 {
+				text = text[:line+1] // whole lines only
+			} else if word := strings.LastIndexByte(text, ' '); word > 0 {
+				text = text[:word+1]
+			}
+			return text + "…"
 		}
 	}
 	return assemble()

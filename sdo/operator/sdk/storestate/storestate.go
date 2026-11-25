@@ -249,22 +249,6 @@ type Change struct {
 	Noisy bool `json:"noisy,omitempty"`
 }
 
-// Describe renders the change for a reader: the item's key and its before and
-// after values. A digest of a large catalog's table group (catalog_group.go) is
-// described by what it says, such as "+1 trigger", never by its hashes.
-func (c Change) Describe() (key, before, after string) {
-	if key, before, after, ok := describeGroup(c); ok {
-		return key, before, after
-	}
-	if c.Before != nil {
-		before = c.Before.Value
-	}
-	if c.After != nil {
-		after = c.After.Value
-	}
-	return c.Key().String(), before, after
-}
-
 // Key returns the changed item's identity.
 func (c Change) Key() Key {
 	if c.After != nil {

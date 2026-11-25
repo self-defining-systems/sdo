@@ -82,6 +82,13 @@ type Keys struct {
     in the order they first appear (Pods in name order), at most Max. A lookup
     whose source gave no complete answer is unavailable and does not run.
 
+type Observed struct {
+	First       time.Time `json:"first"`
+	LastWithout time.Time `json:"last_without,omitzero"`
+}
+    Observed brackets when a change happened: after the last reading without it
+    (zero when there was none) and no later than the first reading with it.
+
 type Query struct {
 	ID       string        `json:"id"`
 	Target   Target        `json:"target"`
@@ -125,6 +132,9 @@ type Result struct {
 	Baseline []Reading `json:"baseline,omitempty"`
 	History  []Reading `json:"history,omitempty"`
 	Error    string    `json:"error,omitempty"`
+	// Observed is, by Pod and change, when the controller first read each
+	// change from the baseline (storestate.ObserveChanges).
+	Observed map[string]map[string]Observed `json:"observed,omitempty"`
 }
     Result is a query's frozen readings; Error is neither health nor a finding.
     Baseline holds the complete readings of the same query at the controller's

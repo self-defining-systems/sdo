@@ -57,6 +57,8 @@ type StoreChanges struct {
 	// each peer resolved to its Pod and workload through the view's Pod IPs.
 	Holders []HolderGroup `json:"holders,omitempty"`
 	Error   string        `json:"error,omitempty"`
+
+	observed map[string]podread.Observed
 }
 
 // Changes is the read-only diff of every store whose store-state pod read the
@@ -110,6 +112,7 @@ func storeChanges(view sdk.DetectionContext, adapter Adapter, component string, 
 			entry.Baselined, entry.BaselineAt = true, baseline.At
 			entry.Changes = Diff(baseline, current)
 			markNoisy(entry.Changes, pickHistory(history, reading.Pod))
+			entry.observed = result.Observed[reading.Pod]
 		} else {
 			entry.Error = NoBaseline
 		}

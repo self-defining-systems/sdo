@@ -2,35 +2,56 @@ package storestate
 
 import (
 	"fmt"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+
+	"sdo.dev/operator/sdk/podread"
 )
 
-// A postgres group value carries, after the table count and definition digest,
-// the group's index, constraint and trigger counts ("137 89f0cb69 i412 c88
-// t14"), so a changed group says what kind of object was added or dropped.
-// Other engines' values carry the first two fields only.
-var groupKinds = []struct{ tag, one, many string }{{"i", "index", "indexes"}, {"c", "constraint", "constraints"}, {"t", "trigger", "triggers"}}
+// A postgres group value carries, after the table count, the count and digest
+// of each kind of object the group's tables have ("137 i412:89f0 c88:1b2c
+// t14:99aa n1800:0c0d": indexes, constraints, triggers, columns), so a changed
+// group names the kind. Other engines' values carry a table count and one
+// digest, which name no kind. Triggers and constraints act on writes, so they
+// lead.
+var groupKinds = []struct{ tag, one, many string }{{"t", "trigger", "triggers"}, {"c", "constraint", "constraints"}, {"i", "index", "indexes"}, {"n", "column", "columns"}}
 
-// groupCounts parses a group value into its table count and the per-kind
-// counts, which are ok only when the value carries them.
-func groupCounts(value string) (tables int, kinds [3]int, ok bool) {
-	fields := strings.Fields(value)
-	if len(fields) != 5 {
-		return 0, kinds, false
+var groupField = regexp.MustCompile(`^([a-z])(\d+)(?::([0-9a-f]+))?$`)
+
+// kindState is one kind's object count and definition digest.
+type kindState struct {
+	count  int
+	digest string
+}
+
+// groupCounts parses a group value into its table count (-1 when unreadable)
+// and the state of each kind the value carries, by tag.
+func groupCounts(value string) (int, map[string]kindState) {
+	fields, kinds := strings.Fields(value), map[string]kindState{}
+	if len(fields) == 0 {
+		return -1, kinds
 	}
 	tables, err := strconv.Atoi(fields[0])
 	if err != nil {
-		return 0, kinds, false
+		tables = -1
 	}
-	for i, kind := range groupKinds {
-		n, err := strconv.Atoi(strings.TrimPrefix(fields[2+i], kind.tag))
-		if err != nil || !strings.HasPrefix(fields[2+i], kind.tag) {
-			return 0, kinds, false
+	for _, field := range fields[1:] {
+		if m := groupField.FindStringSubmatch(field); m != nil {
+			if n, err := strconv.Atoi(m[2]); err == nil {
+				kinds[m[1]] = kindState{n, m[3]}
+			}
 		}
-		kinds[i] = n
 	}
-	return tables, kinds, true
+	return tables, kinds
+}
+
+// judgedGroupValue is a group value without its columns, which are listed as a
+// change but never judged.
+func judgedGroupValue(value string) string {
+	before, _, _ := strings.Cut(value, " n")
+	return before
 }
 
 func signedCount(n int, one, many string) string {
@@ -40,52 +61,107 @@ func signedCount(n int, one, many string) string {
 	return fmt.Sprintf("%+d %s", n, many)
 }
 
-// describeGroup renders a changed group digest in readable terms: the database,
-// the group, and which kind of object was added or dropped. ok is false when
-// the change is not a group digest.
-func describeGroup(c Change) (key, before, after string, ok bool) {
-	k := c.Key()
+func plainCount(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// groupOf names the database and table group of a catalog group digest.
+func groupOf(k Key) (db, group string, ok bool) {
 	db, object, scoped := strings.Cut(k.Scope, ".")
 	if !scoped || !isCatalogGroup(object) || k.Name != catalogGroupName {
-		return "", "", "", false
+		return "", "", false
 	}
-	group, _, _ := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(object, catalogGroupPrefix), "}"), " ")
-	key = fmt.Sprintf("%s definitions (table group %s of %s)", db, group, catalogGroups)
-	if c.Before == nil || c.After == nil {
-		if c.After == nil {
-			return key + " removed", "", "", true
+	group, _, _ = strings.Cut(strings.TrimSuffix(strings.TrimPrefix(object, catalogGroupPrefix), "}"), " ")
+	return db, group, true
+}
+
+// groupPart is one kind's change in a table group.
+type groupPart struct{ kind, delta, before, after, aspect string }
+
+// groupClues renders the two sides of one table group, one clue per time its
+// parts were first observed. A table that appeared or disappeared moves a group
+// to a new scope, so the sides may come from an added and a removed item;
+// either way the group's own counts say what changed.
+func groupClues(db, group string, before, after *Item, observed map[string]podread.Observed) []Clue {
+	place := fmt.Sprintf("in %s table group %s of %s", db, group, catalogGroups)
+	if before == nil || after == nil {
+		how := "appeared"
+		if after == nil {
+			how = "disappeared"
 		}
-		return key + " added", "", "", true
+		return []Clue{{Kinds: []string{KindUnknown}, Key: "table group " + how + " " + place, aspects: []string{place + " " + how}}}
 	}
-	bt, bk, bok := groupCounts(c.Before.Value)
-	at, ak, aok := groupCounts(c.After.Value)
-	if !bok || !aok {
-		return key + ": a definition changed", "", "", true
+	bt, bk := groupCounts(before.Value)
+	at, ak := groupCounts(after.Value)
+	var parts []groupPart
+	add := func(kind, delta, beforeText, afterText, aspect string) {
+		parts = append(parts, groupPart{kind, delta, beforeText, afterText, place + " " + kind + " " + aspect})
 	}
-	var deltas []string
-	if at != bt {
-		deltas = append(deltas, signedCount(at-bt, "table", "tables"))
-	}
-	for i, kind := range groupKinds {
-		if ak[i] != bk[i] {
-			deltas = append(deltas, signedCount(ak[i]-bk[i], kind.one, kind.many))
+	ownScope, shrank := before.Scope == after.Scope, at <= bt || bt < 0
+	for _, kind := range groupKinds {
+		b, hadKind := bk[kind.tag]
+		a, hasKind := ak[kind.tag]
+		if !hadKind || !hasKind {
+			continue
+		}
+		was, is := plainCount(b.count, kind.one, kind.many), plainCount(a.count, kind.one, kind.many)
+		switch {
+		case a.count != b.count:
+			shrank = shrank || a.count < b.count
+			add(kind.one, signedCount(a.count-b.count, kind.one, kind.many), was, is, strconv.Itoa(a.count))
+		case ownScope && a.digest != b.digest && a.digest != "" && b.digest != "":
+			add(kind.one, kind.one+" changed in place", was, is, a.digest)
 		}
 	}
-	if len(deltas) == 0 {
-		deltas = []string{"a definition changed in place (same object counts)"}
+	if at != bt && at >= 0 && bt >= 0 {
+		add("table", signedCount(at-bt, "table", "tables"), plainCount(bt, "table", "tables"), plainCount(at, "table", "tables"), strconv.Itoa(at))
+	} else if !ownScope {
+		add("table", "tables replaced or renamed (same count)", "", "", after.Scope)
 	}
-	counts := func(tables int, kinds [3]int) string {
-		return fmt.Sprintf("%d tables, %d indexes, %d constraints, %d triggers", tables, kinds[0], kinds[1], kinds[2])
+	if len(parts) == 0 {
+		return []Clue{{Kinds: []string{KindUnknown}, Key: "definition changed (kind not recorded) " + place, aspects: []string{place + " definition " + after.Value}}}
 	}
-	return key + ": " + strings.Join(deltas, ", "), counts(bt, bk), counts(at, ak), true
+	var order []podread.Observed
+	byTime := map[podread.Observed][]groupPart{}
+	for _, part := range parts {
+		seen := observed[part.aspect]
+		if byTime[seen] == nil {
+			order = append(order, seen)
+		}
+		byTime[seen] = append(byTime[seen], part)
+	}
+	var out []Clue
+	for _, seen := range order {
+		var clue Clue
+		var deltas, was, is []string
+		for _, part := range byTime[seen] {
+			clue.Kinds, deltas = append(clue.Kinds, part.kind), append(deltas, part.delta)
+			was, is = append(was, part.before), append(is, part.after)
+			clue.aspects = append(clue.aspects, part.aspect)
+			clue.withTable = clue.withTable || part.kind == "table"
+		}
+		clue.Key = strings.Join(deltas, ", ") + " " + place
+		clue.Before, clue.After = joinCounts(was), joinCounts(is)
+		// A new table brings its own columns, indexes and constraints.
+		clue.Routine = clue.withTable && !shrank && !slices.Contains(clue.Kinds, "trigger")
+		out = append(out, clue)
+	}
+	return out
+}
+
+func joinCounts(counts []string) string {
+	return strings.Join(slices.DeleteFunc(slices.Clone(counts), func(s string) bool { return s == "" }), ", ")
 }
 
 // A catalog too large for the read's output budget (hundreds of tables, a
 // thousand constraints and indexes) is not cut: the read digests it by group
 // instead. Every table (or collection) falls into one of catalogGroups (16) groups
 // by a hash of its name, and the read prints one line per group: the group
-// number with a digest of its table names, and the table count with a digest
-// of the definitions of their constraints, indexes and triggers. The read is
+// number with a digest of its table names, and the table count with digests
+// of the definitions of their constraints, indexes, triggers and columns. The read is
 // complete and bounded whatever the schema's size, and stays value-free.
 //
 // A group is one item whose scope names the group and its table digest
@@ -111,4 +187,11 @@ func catalogGroupItem(kind ItemKind, db, group, value string) Item {
 // isCatalogGroup reports whether a catalog item's object is a group digest.
 func isCatalogGroup(object string) bool {
 	return strings.HasPrefix(object, catalogGroupPrefix)
+}
+
+// catalogDigestItem is the count and digest of one kind of object over a whole
+// database ("columns" or "functions"). Its scope names no table, so it is
+// listed as a change and never judged as one.
+func catalogDigestItem(db, kind, value string) Item {
+	return Item{Kind: KindValidator, Scope: db + ".{" + kind + "}", Name: kind, Value: value}
 }

@@ -410,7 +410,7 @@ func judgedCatalogChange(healthy []Facts, current Facts, c Change) bool {
 	if isCatalogGroup(object) {
 		// The scope carries the group's table digest: a change under the same
 		// scope is a definition changed on tables that all still exist.
-		return c.Before != nil && c.After != nil
+		return c.Before != nil && c.After != nil && judgedGroupValue(c.Before.Value) != judgedGroupValue(c.After.Value)
 	}
 	table := Key{Kind: KindNamespace, Scope: db, Name: object}
 	_, after := current.Lookup(table)

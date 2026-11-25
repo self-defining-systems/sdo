@@ -19,6 +19,13 @@ changed. A read that gives no answer is an error, never a healthy result.
 CONSTANTS
 
 const (
+	MaxClues     = 24
+	MaxClueBytes = 2048
+)
+    Bounds of one store Pod's rendered clues. A clue is dropped whole, never
+    cut: the last line says how many were dropped and which kinds they were.
+
+const (
 	// CredentialOK: the store accepted the credential (or needs none).
 	CredentialOK = "ok"
 	// CredentialDenied: the store reached refused the credential.
@@ -85,6 +92,9 @@ const (
 
 const CredentialMarker = "SDO-AUTH"
     CredentialMarker starts the one line a credential check prints.
+
+const KindUnknown = "unknown"
+    KindUnknown is the kind of a change whose read does not say what changed.
 
 const LockWaitThreshold = 30 * time.Second
     LockWaitThreshold is how long sessions must have waited on one holder's
@@ -166,6 +176,13 @@ func NewDetector(c Config) (sdk.Detector, error)
     complete answer is a detector error, never a clear, except a store a
     GapWithoutBaseline reader has never read healthy, which is a coverage gap.
 
+func ObserveChanges(id string, result podread.Result, previous map[string]map[string]podread.Observed, read map[string]time.Time) map[string]map[string]podread.Observed
+    ObserveChanges returns when each change of a store-state result's readings
+    from their baseline was first read, carrying previous (of the result's
+    earlier readings). read is, by Pod, when that Pod last gave an answer before
+    this result; it is updated. The result is empty for a result that is not a
+    store-state read.
+
 func QueryID(engine Engine, component string) string
     QueryID is the pod read a store-state detector declares for component.
     It names the engine, so a reader without the detector can parse the output.
@@ -234,19 +251,4 @@ type Change struct {
     Change is one item that differs between a baseline and the current facts.
     Before is nil for an added item and After is nil for a removed one.
     A restore puts Before back.
-
-func Diff(baseline, current Facts) []Change
-    Diff lists the items added, removed or changed from baseline to current,
-    sorted by key. Diff of facts with themselves is empty. An item missing from
-    current is not reported as removed when current could not read its kind.
-
-func (c Change) Describe() (key, before, after string)
-    Describe renders the change for a reader: the item's key and its before and
-    after values. A digest of a large catalog's table group (catalog_group.go)
-    is described by what it says, such as "+1 trigger", never by its hashes.
-
-func (c Change) Key() Key
-    Key returns the changed item's identity.
-
-func (c Change) String() string
 ```
