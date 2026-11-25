@@ -45,13 +45,7 @@ func startsExhausted(ctx context.Context, executor worker_registry.KubernetesExe
 	if len(failures) < worker_registry.MaxWorkerStarts {
 		return nil
 	}
-	last := failures[0]
-	for _, failure := range failures[1:] {
-		if failure.RecordedAt.After(last.RecordedAt) {
-			last = failure
-		}
-	}
-	return &WorkerNeverStartedError{Attempts: len(failures), Reason: last.Reason}
+	return &WorkerNeverStartedError{Attempts: len(failures), Reason: failures[len(failures)-1].Reason}
 }
 
 // settleWorkerStart returns errWorkerReplaced or a WorkerNeverStartedError for
