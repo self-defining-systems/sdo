@@ -33,7 +33,7 @@ class UsageCheckpoint:
     turn_id: str = field(default_factory=lambda: uuid4().hex)
 
     started: float = field(default_factory=monotonic, init=False)
-    _failures: list[Exception] = field(default_factory=list, init=False, repr=False, compare=False)
+    _failures: list[Exception] = field(default_factory=list[Exception], init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.phase not in INCIDENT_PHASES | SETUP_PHASES:

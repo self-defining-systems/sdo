@@ -410,7 +410,8 @@ def test_unwritable_or_unknown_setup_accounting_logs_once_and_runs(
     assert turn.session_id == "synthetic-session"
     warnings = [record.getMessage() for record in caplog.records if "usage checkpoint" in record.getMessage()]
     assert len(warnings) == 1
-    assert str(session / "usage" / phase) in warnings[0] and f"phase={phase}" in warnings[0]
+    assert str(session / "usage" / phase) in warnings[0]
+    assert f"phase={phase}" in warnings[0]
 
 
 @pytest.mark.parametrize("identity", [("", "task", "respond"), ("incident", "", "respond"), ("incident", "t", "new")])
