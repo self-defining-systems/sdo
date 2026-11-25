@@ -114,6 +114,10 @@ func (l *ResponderLoop) detectUserTest(ctx context.Context, workload, name strin
 		return
 	}
 	var out strings.Builder
+	if summary != nil {
+		fmt.Fprintln(&out, summary.RequestCoverage)
+	}
+	fmt.Fprintln(&out, "SDO's own test accounts:")
 	if sent != nil {
 		writeSentSample(&out, name, *sent)
 		response.Healthy = sent.Outcome == traffic.OutcomeOK

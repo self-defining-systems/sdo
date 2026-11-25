@@ -124,6 +124,7 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Run the incident's detectors on reads taken now and summarize what users see failing, since when, "
             "and the suspects. Stage verdicts are historical; use diagnose for a live verdict. "
+            "Probe results use SDO's own test accounts. Request-metrics counts may include probes. "
             "NAME is a user test (SDO sends that test's scheduled request now, the same "
             "request its prober sends, and shows the result), a detector (runs it alone), or an item of the "
             "summary (a component, clue ID, tests, conditions or background). --wait SECONDS returns early only when "

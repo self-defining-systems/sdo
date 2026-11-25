@@ -63,8 +63,9 @@ type detectInput struct {
 // detectSummary is the compact text and the full text of each item a `more:`
 // line points at.
 type detectSummary struct {
-	Text  string
-	Items map[string]string
+	Text            string
+	Items           map[string]string
+	RequestCoverage string
 }
 
 var (
@@ -833,8 +834,21 @@ func buildDetectSummary(in detectInput) detectSummary {
 	case slicesContainsFunc(openingFindings, func(f sdk.Finding) bool { return f.RuleID == requestmetrics.RuleErrors }):
 		opened = "request errors"
 	}
+	operations := requestOperations(in.Findings, alertKeys(&in.Request))
+	coverage := requestCoverageLine(operations)
+	probeStatus := "SDO's own test accounts: "
+	if len(passing) > 0 {
+		probeStatus += "passing: " + redactDetectText(strings.Join(passing, " "), 100)
+	} else {
+		probeStatus += "no passing tests shown"
+	}
+	if len(failing) > 0 {
+		probeStatus += fmt.Sprintf("; failing: %d", len(failing))
+	}
 	header := []string{
 		fmt.Sprintf("incident %s  opened on: %s  onset %s  now %s", in.Request.IncidentID, opened, hms(onset), hms(in.Now)),
+		coverage,
+		probeStatus,
 		freshnessLine(in.View, in.Now),
 		fmt.Sprintf("recovered: %s (%d alerts active)", state, active),
 	}
@@ -895,7 +909,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 	// Every active request error is an operation failing for users now, the
 	// opening alerts' first; none reaches the page only as a truncated condition.
 	var opBlocks [][]string
-	for _, op := range requestOperations(in.Findings, alertKeys(&in.Request)) {
+	for _, op := range operations {
 		opBlocks = append(opBlocks, op.lines())
 		items[op.ID] = redactDetectText(strings.Join(op.lines(), "\n"), detectItemCap)
 	}
@@ -923,7 +937,6 @@ func buildDetectSummary(in detectInput) detectSummary {
 
 	shownOps := min(len(opBlocks), detectShownTests)
 	shownTests, shownConditions, shownAlso := min(len(testBlocks), detectShownTests), min(len(conditionBlocks), detectShownTests), min(len(alsoBlocks), 2)
-	showPassing := true
 	observation := func() string {
 		out := slices.Clone(header)
 		if len(testBlocks)+len(conditionBlocks)+len(opBlocks) > 0 {
@@ -954,11 +967,6 @@ func buildDetectSummary(in detectInput) detectSummary {
 		if dropped := len(alsoBlocks) - shownAlso; dropped > 0 {
 			out = append(out, fmt.Sprintf("+%d more also failing: sdo detect tests", dropped))
 		}
-		if showPassing && len(passing) > 0 {
-			out = append(out, "passing: "+redactDetectText(strings.Join(passing, " "), 160))
-		} else if !showPassing && len(passing) > 0 {
-			out = append(out, fmt.Sprintf("passing: %d tests", len(passing)))
-		}
 		if len(unevaluated) > 0 {
 			out = append(out, "not yet evaluated: "+redactDetectText(strings.Join(unevaluated, " "), 100))
 		}
@@ -977,8 +985,6 @@ shrink:
 			shownConditions--
 		case shownTests > 1:
 			shownTests--
-		case showPassing:
-			showPassing = false
 		default:
 			break shrink
 		}
@@ -994,7 +1000,7 @@ shrink:
 		}
 		text = cut + "\n+more: sdo detect --json"
 	}
-	return detectSummary{Text: text, Items: items}
+	return detectSummary{Text: text, Items: items, RequestCoverage: coverage}
 }
 
 // freshnessLine says how current the summary is: the detectors ran on reads
