@@ -9,7 +9,9 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // automaticRecoveryLocked is the controller's only automatic-stage dispatch
@@ -34,7 +36,12 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	// its responder can verify a page, so a page never waits either.
 	failed := report.StabilityDeadline == nil && stageScriptsFailed(report) && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages)
 	page := pageOpened(request)
-	if !failed && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
+	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
+		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
+	// Nor do the writes have anything left to do for a condition they cannot clear.
+	beyond := canDispatch && report.StabilityDeadline == nil && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) &&
+		c.conditionBeyondStageLocked(now, *request, check.beyondStage)
+	if !failed && !beyond && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
 	if stabilityOnly && scoped {
@@ -70,14 +77,12 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	}
 	if applied {
 		exit := contracts.RecoveryWait_EXIT_REASON_DEADLINE
-		if page {
+		if page || beyond {
 			exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
 		}
 		markAutomaticRecovery(report, observedAt, exit)
 		markUnsettledRollouts(report, check.record, rolloutBlockers)
 	}
-	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
-		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
 	if !canDispatch || stageEscalatedIn(request.PriorStages) || !agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) || scoped && len(keys) == 0 && !page {
 		c.escalateLocked(observedAt)
 		return
@@ -106,12 +111,110 @@ func (c *Controller) handOffUnappliedStageLocked(now time.Time) {
 	c.automaticRecoveryLocked(now, report, false, recoveryCheck{}, nil)
 }
 
+// alertsBeyondStage are the alert set's Kubernetes conditions that the settled
+// writes of the automatic stage cannot clear. Such a condition reports an
+// object as it is now, so it does not lag a repair, unlike a request or
+// user-test alert; no applied program targeted it; and its component does not
+// depend, over the accepted map, on any component the stage wrote. When any of
+// that cannot be established there is none, and the stage waits its bound.
+func alertsBeyondStage(view sdk.DetectionContext, m program.AppMap, request IncidentRequest, report *contracts.StageReport) []string {
+	written, targeted := map[string]bool{}, map[string]bool{}
+	for _, attempt := range report.GetMitigations() {
+		receipt := attempt.GetApplyReceipt()
+		if !stageReceiptWrote(receipt) {
+			continue
+		}
+		// A script's writes are not all known, nor is the reach of a write to
+		// an object the map does not place.
+		if len(attempt.GetTouchedObjects()) == 0 || slices.ContainsFunc(receipt.GetPlan().GetActions(), func(a *contracts.Action) bool { return a.GetRunScript() != nil }) {
+			return nil
+		}
+		for _, ref := range attempt.GetTouchedObjects() {
+			component, ok := m.ComponentOf(view, objectRefState(ref))
+			if !ok {
+				return nil
+			}
+			written[component.Name] = true
+		}
+		for _, fp := range append(slices.Clone(attempt.GetClearedFindingFingerprints()), attempt.GetRemainingFindingFingerprints()...) {
+			targeted[fp] = true
+		}
+	}
+	var beyond []string
+	for _, finding := range newRecoveryScope(alertKeys(&request)).blocking(request.Findings) {
+		if !slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID) || targeted[FindingFingerprint(finding)] {
+			continue
+		}
+		if component, ok := m.ComponentOf(view, finding.PrimaryResource); ok && len(written) > 0 && !dependsOnAny(m, component.Name, written) {
+			beyond = append(beyond, findingKey(finding))
+		}
+	}
+	return beyond
+}
+
+// dependsOnAny reports whether the component is, or calls directly or
+// indirectly, one of the targets.
+func dependsOnAny(m program.AppMap, component string, targets map[string]bool) bool {
+	seen := map[string]bool{component: true}
+	for queue := []string{component}; len(queue) > 0; queue = queue[1:] {
+		if targets[queue[0]] {
+			return true
+		}
+		for _, edge := range m.Edges {
+			if edge.From == queue[0] && !seen[edge.To] {
+				seen[edge.To] = true
+				queue = append(queue, edge.To)
+			}
+		}
+	}
+	return false
+}
+
+// beyondStageAlerts is alertsBeyondStage once the stage's writes settled and
+// had the stability window to show an effect the map does not tell of, such as
+// freed capacity.
+func (c *Controller) beyondStageAlerts(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, request IncidentRequest, check recoveryCheck) []string {
+	report := deterministicStageReport(request.PriorStages)
+	if !playbookWrote(report) || !check.record.GetWritesSettled() ||
+		now.Before(check.record.GetSince().AsTime().Add(c.config.ClosureStabilityWindow)) {
+		return nil
+	}
+	m, _ := acceptedVerificationMap(ctx, c.gitRead, request)
+	return alertsBeyondStage(snapshot, m.Program(), request, report)
+}
+
+// conditionBeyondStageLocked reports one of the keys firing in this
+// observation's own evaluation, and continuously for a stability window: a
+// transient, a missing or an older observation starts no agent.
+func (c *Controller) conditionBeyondStageLocked(now time.Time, request IncidentRequest, keys []string) bool {
+	if len(keys) == 0 {
+		return false
+	}
+	_, _, firing := c.sampledAlertsLocked(now, request)
+	states := c.tracker.Snapshot()
+	return slices.ContainsFunc(keys, func(key string) bool {
+		state, seen := states[key]
+		return firing[key] && seen && !now.Before(state.FirstSeenAt.Add(c.config.ClosureStabilityWindow))
+	})
+}
+
 func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRequest) []string {
-	keys := alertKeys(&request)
-	scope := newRecoveryScope(keys)
-	clear := make(map[string]bool)
-	firing := make(map[string]bool)
-	sampledFiring := make(map[string]bool)
+	clear, sampledFiring, firing := c.sampledAlertsLocked(now, request)
+	var unresolved []string
+	for _, key := range alertKeys(&request) {
+		id, _, _ := strings.Cut(key, "\x00")
+		if firing[key] || !clear[id] && !sampledFiring[id] {
+			unresolved = append(unresolved, key)
+		}
+	}
+	return unresolved
+}
+
+// sampledAlertsLocked reads this observation's evaluations: the detectors that
+// are clear, those that fire, and the keys that fire.
+func (c *Controller) sampledAlertsLocked(now time.Time, request IncidentRequest) (clear, sampledFiring, firing map[string]bool) {
+	scope := newRecoveryScope(alertKeys(&request))
+	clear, sampledFiring, firing = map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, id := range c.recoveryDetectorIDs(request) {
 		if !c.recoverySamples[id].matches(now, scope) {
 			continue
@@ -130,14 +233,7 @@ func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRe
 			}
 		}
 	}
-	var unresolved []string
-	for _, key := range keys {
-		id, _, _ := strings.Cut(key, "\x00")
-		if firing[key] || !clear[id] && !sampledFiring[id] {
-			unresolved = append(unresolved, key)
-		}
-	}
-	return unresolved
+	return clear, sampledFiring, firing
 }
 
 func (c *Controller) automaticDeadlineLocked(report *contracts.StageReport) time.Time {

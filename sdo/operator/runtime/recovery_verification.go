@@ -39,6 +39,8 @@ type recoveryCheck struct {
 	verdict recoveryVerdict
 	reason  string
 	horizon time.Duration
+	// beyondStage are the alerts the automatic stage's writes cannot clear.
+	beyondStage []string
 }
 
 // verificationInput is the live view, the incident alert set and SDO writes.
