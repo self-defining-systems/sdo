@@ -713,6 +713,21 @@ def _usage_complete(usage: Usage) -> bool:
 
 
 def _worker_usage(folder: Path, incident: str, worker: str, role: str) -> ResponseSessionUsage | None:
+    phase = "investigate" if role == "investigator" else "respond"
+    checkpoints = []
+    for path in (folder / "usage").glob("*.json"):
+        checkpoint = _read(path)
+        if (
+            checkpoint.get("incident_id") == worker
+            and checkpoint.get("turn_id") == path.stem
+            and checkpoint.get("phase") in {phase, "responder"}
+        ):
+            usage = Usage.read(_object(checkpoint.get("usage")))
+            checkpoints.append((usage, checkpoint.get("complete") is True and _usage_complete(usage)))
+    if checkpoints:
+        return ResponseSessionUsage(
+            incident, worker, role, _total([usage for usage, _ in checkpoints]), all(done for _, done in checkpoints)
+        )
     turns = []
     pending = 0
     complete = True
