@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -276,14 +277,14 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 			return out, fmt.Errorf("script deadline expired before Job creation")
 		}
 		zero := int32(0)
-		env := []corev1.EnvVar{{Name: "SDO_SCRIPT_TEXT", Value: r.Script}, {Name: "SDO_SCRIPT_INDEX", Value: out.JobName}, {Name: "SDO_SCRIPT_NAMESPACE", Value: r.Namespace}, {Name: "SDO_SCRIPT_STORAGE_NAMESPACE", Value: c.ScriptNamespace}}
+		env := []corev1.EnvVar{{Name: "SDO_SCRIPT_TEXT", Value: literalEnvValue(r.Script)}, {Name: "SDO_SCRIPT_INDEX", Value: out.JobName}, {Name: "SDO_SCRIPT_NAMESPACE", Value: r.Namespace}, {Name: "SDO_SCRIPT_STORAGE_NAMESPACE", Value: c.ScriptNamespace}}
 		keys := make([]string, 0, len(r.Env))
 		for key := range r.Env {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			env = append(env, corev1.EnvVar{Name: key, Value: r.Env[key]})
+			env = append(env, corev1.EnvVar{Name: key, Value: literalEnvValue(r.Env[key])})
 		}
 		sub, prepareErr := memory.PrepareIncidentSession(c.ScriptRepositoryMount, c.ScriptRepositorySubPath, r.IncidentID)
 		if prepareErr != nil {
@@ -370,6 +371,12 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		case <-ticker.C:
 		}
 	}
+}
+
+// literalEnvValue escapes a value for a container env entry. The kubelet reads "$$" as "$" and "$(NAME)" as another
+// variable's value, so a text that contains either would not reach the process as written.
+func literalEnvValue(value string) string {
+	return strings.ReplaceAll(value, "$", "$$")
 }
 
 // Only the trusted runner mounts the incident fence and service account token.
