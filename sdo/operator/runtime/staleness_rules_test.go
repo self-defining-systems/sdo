@@ -110,7 +110,7 @@ func TestHarm1APlaybookThatMatchesItsRecoveredStateIsAHint(t *testing.T) {
 	if _, err := sdktest.LoadCorpusCase(filepath.Join(dir, "case")); err != nil {
 		t.Fatal(err)
 	}
-	proofs, _ := StalenessProofs(context.Background(), dir, []*contracts.OutcomeRecord{{IncidentId: "i1", Classification: "success", DeployedCommit: stalenessCommit}}, registry)
+	proofs, _ := StalenessProofs(context.Background(), dir, []*contracts.OutcomeRecord{{IncidentId: "i1", Classification: "success", DeployedCommit: stalenessCommit}}, registry, nil)
 	proof := proofs[p.id]
 	if proof.Hint == "" || !slices.Contains(proof.Releases, stalenessCommit) {
 		t.Fatalf("proof = %+v, want a hint proven on the release", proof)

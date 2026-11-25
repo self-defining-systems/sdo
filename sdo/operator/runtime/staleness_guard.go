@@ -180,7 +180,12 @@ func (g *StalenessGuard) pass(ctx context.Context, release, commit string, regis
 		return state, err
 	}
 	defer done()
-	proofs, plans := StalenessProofs(ctx, dir, outcomes, registry)
+	// A capture holds no application map: replays use the accepted one.
+	var accepted *program.AppMap
+	if m, err := view.AppMap(); err == nil {
+		accepted = &m
+	}
+	proofs, plans := StalenessProofs(ctx, dir, outcomes, registry, accepted)
 	state.Proofs = proofs
 	for _, spec := range registry.List() {
 		if spec.ID == SourceRestoreID {
@@ -216,7 +221,7 @@ func requiredRoles(spec program.ProgramSpec) (roles []string) {
 // StalenessProofs derives, per program, the releases it recovered users on, the
 // components its verified plan wrote, and whether it matches its own recovered
 // capture; with the verified plans whose cells a healthy pass reads.
-func StalenessProofs(ctx context.Context, corpus string, outcomes []*contracts.OutcomeRecord, registry program.ProgramRegistry) (map[string]staleness.Proof, map[string][]program.Plan) {
+func StalenessProofs(ctx context.Context, corpus string, outcomes []*contracts.OutcomeRecord, registry program.ProgramRegistry, accepted *program.AppMap) (map[string]staleness.Proof, map[string][]program.Plan) {
 	proofs, plans := map[string]staleness.Proof{}, map[string][]program.Plan{}
 	byIncident := map[string]*contracts.OutcomeRecord{}
 	prove := func(id, release string) {
@@ -266,6 +271,9 @@ func StalenessProofs(ctx context.Context, corpus string, outcomes []*contracts.O
 		c, err := sdktest.LoadCorpusCase(filepath.Join(corpus, entry.Name()))
 		if err != nil || c.Provenance.IncidentID == "" {
 			continue
+		}
+		if accepted != nil && c.Open.ApplicationMap == nil {
+			c.Open.ApplicationMap, c.Fixed.ApplicationMap = accepted, accepted
 		}
 		for _, id := range c.RootCauseProgramIDs {
 			d, ok := registry.Diagnoser(id)
