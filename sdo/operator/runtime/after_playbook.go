@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"slices"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 )
@@ -59,4 +61,26 @@ func stageReceiptWrote(receipt *contracts.PlanApplication) bool {
 	}
 	// Legacy summaries may record a write without its actions.
 	return len(actions) == 0
+}
+
+// stageScriptsFailed reports that every program that may have written ended in
+// a script that exited non-zero, timed out or was killed. Its writes stay
+// unknown evidence; only a program that returned success is worth waiting for.
+func stageScriptsFailed(report *contracts.StageReport) bool {
+	failed := false
+	for _, attempt := range report.GetMitigations() {
+		receipt := attempt.GetApplyReceipt()
+		if !stageReceiptWrote(receipt) {
+			continue
+		}
+		actions := receipt.GetPlan().GetActions()
+		if receipt.GetCompletedAt() == nil || !slices.ContainsFunc(receipt.GetActionReports(), func(action *contracts.ActionReport) bool {
+			index := int(action.GetActionIndex())
+			return index < len(actions) && actions[index].GetRunScript() != nil && action.GetStatus() == "unknown"
+		}) {
+			return false
+		}
+		failed = true
+	}
+	return failed
 }

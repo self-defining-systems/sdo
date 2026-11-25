@@ -88,7 +88,30 @@ func TestFailedScriptKeepsIncidentOpenAndDispatchesAgent(t *testing.T) {
 	c.OnError = func(err error) { t.Errorf("a failed script made invalid state: %v", err) }
 	persist(t, c)
 	requireOpen(t, c)
+	autoStep(t, c, world.clock, time.Second)
+	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING {
+		t.Fatalf("one evaluation after the script failed the agent is not dispatched: %s", c.dispatchState)
+	}
 	requireHandoff(t, c, world)
+}
+
+// An invalid record of an applied write is reduced, never dropped.
+func TestInvalidRecordOfAWriteIsKept(t *testing.T) {
+	c, _ := failedScriptWorld(t)
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	c.currentIncidentResult.RepairActions = append(c.currentIncidentResult.RepairActions, RepairActionReceipt{ActionID: "synthetic-write", Success: true, Resources: []sdk.ObjectRef{ref}})
+	report := autoReport(c).GetMitigations()[0].GetApplyReceipt().GetActionReports()[0]
+	report.Status = "bogus"
+	autoReport(c).GetMitigations()[0].KeptReason = "bogus"
+	persist(t, c)
+	requireOpen(t, c)
+	got := c.currentIncidentResult.RepairActions
+	if last := got[len(got)-1]; last.ActionID != "synthetic-write" || last.Success || last.FailureReason != "outcome_unknown" || len(last.Resources) != 1 {
+		t.Fatalf("write receipt lost: %+v", got)
+	}
+	if !playbookWrote(autoReport(c)) {
+		t.Fatalf("stage write lost: %v", autoReport(c))
+	}
 }
 
 func invalidReceipt() RepairActionReceipt {

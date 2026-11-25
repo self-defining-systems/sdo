@@ -205,7 +205,17 @@ func (r *stateRepair) drop(c *Controller, violation *validate.Violation, cause e
 		if len(r.dropped) <= invalidStateNarrowDrops && len(path) > 1 && clearOptional(r.state.GetIncidentRequest().ProtoReflect(), path[1]) {
 			return true
 		}
-		return r.baseline != nil && !proto.Equal(r.baseline.GetIncidentRequest(), r.state.GetIncidentRequest()) && r.restore(top)
+		if r.baseline == nil || proto.Equal(r.baseline.GetIncidentRequest(), r.state.GetIncidentRequest()) {
+			return false
+		}
+		stages := slices.DeleteFunc(r.state.GetIncidentRequest().GetPriorStages(), func(stage *contracts.StageReport) bool { return wire.Validate(stage) != nil })
+		if !r.restore(top) {
+			return false
+		}
+		if len(stages) > 0 {
+			r.state.IncidentRequest.PriorStages = stages
+		}
+		return true
 	}
 	if slices.Contains(lifecycleFields, top) {
 		return r.restore(top)
@@ -280,6 +290,16 @@ func failedStateResult(incidentID string, result *contracts.IncidentResult, now 
 	if result.GetResponderSessionId() != "" {
 		failed.ResponderSessionId = proto.String(result.GetResponderSessionId())
 	}
+	for _, action := range result.GetRepairActions() {
+		if wire.Validate(action) == nil {
+			failed.RepairActions = append(failed.RepairActions, action)
+		}
+	}
+	for _, application := range result.GetPlanApplications() {
+		if wire.Validate(application) == nil {
+			failed.PlanApplications = append(failed.PlanApplications, application)
+		}
+	}
 	if usage := result.GetUsage(); usage != nil && wire.Validate(usage) == nil {
 		failed.Usage = proto.Clone(usage).(*contracts.UsageMetrics)
 	}
@@ -299,6 +319,7 @@ func (c *Controller) keepIncidentDispatched(state, original *contracts.Controlle
 		c.mu.Lock()
 		if live := c.currentIncidentResult; live != nil {
 			session, path = live.ResponderSessionID, live.ResolutionPath
+			result, _ = incidentResultContract(IncidentResult{RepairActions: live.RepairActions, PlanApplications: live.PlanApplications})
 		}
 		c.mu.Unlock()
 	}
@@ -308,7 +329,7 @@ func (c *Controller) keepIncidentDispatched(state, original *contracts.Controlle
 	if !stageOnly {
 		if lostResult {
 			// The agent already ran once for this incident; keep its session.
-			state.IncidentResult = failedStateResult(state.GetIncidentRequest().GetIncidentId(), original.GetIncidentResult(), now)
+			state.IncidentResult = failedStateResult(state.GetIncidentRequest().GetIncidentId(), result, now)
 			if original.GetIncidentResult() == nil && session != "" {
 				state.IncidentResult.ResponderSessionId = proto.String(session)
 			}
@@ -343,6 +364,7 @@ func (c *Controller) keepIncidentDispatched(state, original *contracts.Controlle
 // removing one of them would attribute the others to the wrong action.
 func dropElement(message protoreflect.Message, path []*validate.FieldPathElement) bool {
 	var remove func()
+	var entry proto.Message // the list entry remove would drop
 	for _, element := range path {
 		if !message.IsValid() || message.Descriptor().FullName() == (&contracts.PlanApplication{}).ProtoReflect().Descriptor().FullName() && remove != nil {
 			break
@@ -377,7 +399,10 @@ func dropElement(message protoreflect.Message, path []*validate.FieldPathElement
 					owner.Clear(field)
 				}
 			}
-			next = list.Get(index)
+			next, entry = list.Get(index), nil
+			if field.Message() != nil {
+				entry = next.Message().Interface()
+			}
 		case field.IsMap():
 			if field.MapKey().Kind() != protoreflect.StringKind {
 				break
@@ -386,7 +411,7 @@ func dropElement(message protoreflect.Message, path []*validate.FieldPathElement
 				return false
 			}
 			key, entries := protoreflect.ValueOfString(element.GetStringKey()).MapKey(), owner.Mutable(field).Map()
-			remove = func() { entries.Clear(key) }
+			remove, entry = func() { entries.Clear(key) }, nil
 			next = entries.Get(key)
 		case field.Message() != nil:
 			next = owner.Get(field)
@@ -403,8 +428,54 @@ func dropElement(message protoreflect.Message, path []*validate.FieldPathElement
 	if remove == nil {
 		return false
 	}
+	if entry != nil && keepWrite(entry) {
+		return true
+	}
 	remove()
 	return true
+}
+
+// keepWrite reduces an invalid entry that records an applied write to a valid
+// one with an unknown outcome. It reports false when the entry can be dropped,
+// or was already reduced and is still invalid.
+func keepWrite(entry proto.Message) bool {
+	before := proto.Clone(entry)
+	switch e := entry.(type) {
+	case *contracts.RepairActionReceipt:
+		if !e.GetSuccess() && len(e.GetResources()) == 0 {
+			return false
+		}
+		at := timestamppb.New(e.GetStartedAt().AsTime())
+		kept := &contracts.RepairActionReceipt{ActionId: e.GetActionId(), Kind: e.GetKind(), Target: e.GetTarget(), Resources: e.GetResources(), Summary: e.GetSummary(), Details: e.GetDetails(), StartedAt: at, CompletedAt: at, FailureReason: "outcome_unknown"}
+		for _, text := range []*string{&kept.ActionId, &kept.Kind, &kept.Target, &kept.Summary, &kept.Details} {
+			*text = strings.ToValidUTF8(*text, "")
+			if *text == "" {
+				*text = "unavailable"
+			}
+		}
+		proto.Reset(e)
+		proto.Merge(e, kept)
+	case *contracts.PlanApplication:
+		if !stageReceiptWrote(e) {
+			return false
+		}
+		kept := &contracts.PlanApplication{Plan: &contracts.Plan{}, ApplicationId: e.GetApplicationId(), ProgramIds: e.GetProgramIds(), Applied: true, StartedAt: e.GetStartedAt(), CompletedAt: e.GetCompletedAt(), Error: "receipt reduced: invalid record"}
+		proto.Reset(e)
+		proto.Merge(e, kept)
+	case *contracts.StageReport:
+		if e.GetStage() == "" && playbookWrote(e) {
+			e.Stage = "deterministic"
+		}
+	case *contracts.StageMitigation:
+		if !stageReceiptWrote(e.GetApplyReceipt()) {
+			return false
+		}
+		kept := &contracts.StageMitigation{PlaybookId: e.GetPlaybookId(), Bindings: e.GetBindings(), PlanId: e.GetPlanId(), Result: "apply_error", Error: e.GetError(), ApplyReceipt: e.GetApplyReceipt()}
+		keepWrite(kept.ApplyReceipt)
+		proto.Reset(e)
+		proto.Merge(e, kept)
+	}
+	return !proto.Equal(before, entry)
 }
 
 // clearOptional clears one set submessage.
