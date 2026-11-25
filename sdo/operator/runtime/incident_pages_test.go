@@ -399,3 +399,18 @@ func TestDropQuietColumnsKeepsFailuresAndMovingOrUnreadyWorkloads(t *testing.T) 
 		t.Fatalf("header = %s", got)
 	}
 }
+
+// `sdo detect` reads each failing test's record before the failure from the
+// controller's signals.
+func TestDetectCommandShowsTheHealthyRecordFromTheSignals(t *testing.T) {
+	loop, _ := onDemandLoop(t, detectApp("create"), nil)
+	loop.Now = detectNow
+	signals := newIncidentSignals()
+	for second := -40; second < 0; second++ {
+		signals.Observe(detectOnset, pageSnapshot(detectOnset.Add(time.Duration(second)*time.Second), false, 1, 1, 0))
+	}
+	loop.IncidentSources = func() (*incidentSignals, AppStateChangeSource) { return signals, nil }
+	if response := loop.Handle(context.Background(), ToolRequest{Command: "detect"}); !strings.Contains(response.Text, "against a healthy 0.0% (0/40 before)") {
+		t.Fatalf("%s %s", response.Error, response.Text)
+	}
+}

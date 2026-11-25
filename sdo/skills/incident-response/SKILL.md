@@ -5,16 +5,17 @@ description: Incident repair.
 
 # Incident response
 
-- **Look at what fails.** Run the failing operation and read its exact response. The opening alert can be a side effect.
+- **Look at what fails.** Run the failing operation and read its exact response. The alert can be a side effect.
 - **Follow the change.** Look for changes on or upstream of the failing path near onset, or a latent trigger.
+  Direct writes can leave `updated_at` old: still suspect the row.
   Check all unexplained findings there.
   Passing proves liveness only.
   See stage writes in `sdo detect`. Own repairs after handoff. Test auth on Secret drift.
-- **Hold a rival.** Name the top two explanations and run the check that best distinguishes them.
-- **Test each change.** Predict what it fixes, then recheck after it takes effect. Unchanged failure counts against the hypothesis.
+- **Hold a rival.** Check what best distinguishes the top two explanations.
+- **Test each change.** Predict its fix, recheck after it takes effect. Unchanged failure counts against the hypothesis.
 - **Restore lost data.** Restore from its authoritative copy first. Before recreating, search all app and deployment backups or copies: configuration, jobs, object stores, replicas. Never seed substitute data to pass health checks.
-- Prefer the fastest supported operation with the same effect and side effects, including cache invalidation.
-- Ensure the process uses the fix. Replace it if the fix does not roll it.
+- Prefer the fastest supported operation with the same effects, including cache invalidation.
+- Ensure the process uses the fix. Replace it if not rolled.
 - **Verify recovery.** The operation must keep passing. For paged incidents, return `completed` if verified, else `failed`.
   If fenced, finish your report. Later alerts can leave it open and escalated.
   Recovery covers all users. Probes sample user health. Never change state for probe/test identities. If the app serves others, verify with real traffic or a non-SDO request.

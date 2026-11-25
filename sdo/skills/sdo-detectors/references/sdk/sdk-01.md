@@ -53,6 +53,10 @@ const MaxAdmissionWebhooks = 16
 
 const MaxObservationObjects = 500
 const MaxObservationTargets = 32
+const MetaFirstFailureAt = "first_failure_at"
+    MetaFirstFailureAt is the finding metadata key (RFC 3339) of the first
+    failure observed in the episode a user-facing alert reports.
+
 const MetadataPredicted = "predicted"
     MetadataPredicted is the Metadata key, set to true, of a finding about a
     condition the detector forecasts from a trend rather than one that holds
@@ -217,8 +221,4 @@ func PodWorkload(ctx DetectionContext, pod corev1.Pod) string
 
 func Predicted(finding Finding) bool
     Predicted reports whether the finding is a forecast (MetadataPredicted).
-
-func ProjectCABundle(ca []byte) []byte
-    ProjectCABundle replaces certificate bytes with an idempotent digest.
-    It is shared by typed observations, raw API reads and capture projection.
 ```

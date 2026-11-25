@@ -31,3 +31,7 @@ func HeldFingerprints(ctx DetectionContext, detectorID string) map[string]bool {
 	}
 	return held
 }
+
+// MetaFirstFailureAt is the finding metadata key (RFC 3339) of the first
+// failure observed in the episode a user-facing alert reports.
+const MetaFirstFailureAt = "first_failure_at"
