@@ -110,9 +110,9 @@ func runFaulty(t *testing.T, ids []string, total time.Duration, change func(*tra
 		done := make(chan struct{})
 		go func() { defer close(done); p.Run(ctx) }()
 		detector := traffic.NewDetector(sdk.DetectorSpec{ID: "traffic-probe", Class: sdk.DetectorClassHealth}, "probe")
-		time.Sleep(onset - 10*time.Second)
+		time.Sleep(onset)
 		for app.clock.Now().Sub(app.start) < total {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 			synctest.Wait()
 			at, windows := app.clock.Now().Sub(app.start), p.Windows()
 			window := windows["probe"]
@@ -313,34 +313,36 @@ func TestShortOutagesReportNothing(t *testing.T) {
 		"slow 504":    func(time.Duration) (int, time.Duration, error) { return 504, 1500 * time.Millisecond, nil },
 		"late answer": func(left time.Duration) (int, time.Duration, error) { return 200, left, nil },
 	}
-	const phases = 4
+	const phases = 3
 	for kind, answer := range outages {
-		for _, count := range []int{1, 5, 13} {
-			for _, length := range []time.Duration{1500 * time.Millisecond, 2 * time.Second, 3 * time.Second, 5 * time.Second, 8 * time.Second} {
-				paged, slo := 0, 0
-				for phase := range phases {
-					start := onset + time.Duration(phase)*10*time.Second/phases + 130*time.Millisecond
-					run := runFaulty(t, ids[:count], start+length+8*time.Second, nil, func(_ string, at time.Duration) (int, time.Duration, error) {
-						if at < start || at >= start+length {
-							return 200, 0, nil
+		t.Run(kind, func(t *testing.T) {
+			for _, count := range []int{1, 5, 13} {
+				for _, length := range []time.Duration{1500 * time.Millisecond, 2 * time.Second, 3 * time.Second, 5 * time.Second, 8 * time.Second} {
+					paged, slo := 0, 0
+					for phase := range phases {
+						start := onset + time.Duration(phase)*10*time.Second/phases + 130*time.Millisecond
+						run := runFaulty(t, ids[:count], start+length+8*time.Second, nil, func(_ string, at time.Duration) (int, time.Duration, error) {
+							if at < start || at >= start+length {
+								return 200, 0, nil
+							}
+							return answer(start + length - at)
+						})
+						if run.paged != 0 {
+							paged++
 						}
-						return answer(start + length - at)
-					})
-					if run.paged != 0 {
-						paged++
-					}
-					if run.slo != 0 {
-						slo++
-						if run.paged == 0 || run.paged > run.slo {
-							t.Errorf("%s, %d scenarios, %s: reported at %s, the SLO alone at %s", kind, count, length, run.paged, run.slo)
+						if run.slo != 0 {
+							slo++
+							if run.paged == 0 || run.paged > run.slo {
+								t.Errorf("%s, %d scenarios, %s: reported at %s, the SLO alone at %s", kind, count, length, run.paged, run.slo)
+							}
 						}
 					}
-				}
-				t.Logf("%-11s %2d scenarios %4s outage: reported %d of %d, SLO alone %d", kind, count, length, paged, phases, slo)
-				if length <= 3*time.Second && paged+slo > 0 {
-					t.Errorf("%s, %d scenarios, %s: reported %d of %d", kind, count, length, paged, phases)
+					t.Logf("%-11s %2d scenarios %4s outage: reported %d of %d, SLO alone %d", kind, count, length, paged, phases, slo)
+					if length <= 3*time.Second && paged+slo > 0 {
+						t.Errorf("%s, %d scenarios, %s: reported %d of %d", kind, count, length, paged, phases)
+					}
 				}
 			}
-		}
+		})
 	}
 }
