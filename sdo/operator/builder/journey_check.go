@@ -3,17 +3,14 @@ package builder
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
+
+	"sdo.dev/operator/safefs"
 )
 
 // BuildJourneyCheck builds the program that judges the memory's probes against
 // the live application (journeyhost.Run), from the staged diagnostics.
 func (workspace *Workspace) BuildJourneyCheck(ctx context.Context) (string, error) {
-	dir := filepath.Join(workspace.Directory, "cmd", "journey-check")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
 	main := fmt.Sprintf(`package main
 
 import (
@@ -35,7 +32,7 @@ func main() {
 	}
 }
 `, workspace.ModulePath+"/generated")
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(main), 0o644); err != nil {
+	if err := safefs.WriteFile(workspace.Directory, "cmd/journey-check/main.go", []byte(main), 0o644); err != nil {
 		return "", err
 	}
 	path := filepath.Join(workspace.Directory, "journey-check")
