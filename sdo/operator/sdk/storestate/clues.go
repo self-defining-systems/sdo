@@ -43,8 +43,9 @@ type Clue struct {
 }
 
 // changeClues renders changes as clues, unranked: a table group's added and
-// removed halves are one clue.
-func changeClues(engine Engine, changes []Change) []Clue {
+// removed halves are one clue per time it was first observed, so every part of
+// a clue shares its date.
+func changeClues(engine Engine, changes []Change, observed map[string]podread.Observed) []Clue {
 	type side struct{ before, after *Item }
 	groups, order := map[[2]string]*side{}, [][2]string(nil)
 	newTables := map[string]bool{}
@@ -74,7 +75,7 @@ func changeClues(engine Engine, changes []Change) []Clue {
 		out = append(out, itemClue(engine, c, newTables))
 	}
 	for _, id := range order {
-		out = append(out, groupClue(id[0], id[1], groups[id].before, groups[id].after))
+		out = append(out, groupClues(id[0], id[1], groups[id].before, groups[id].after, observed)...)
 	}
 	return out
 }
@@ -105,6 +106,16 @@ func itemClue(engine Engine, c Change, newTables map[string]bool) Clue {
 		clue.Before, clue.After = b, a
 	}
 	clue.aspects = []string{key.String()}
+	switch key.Kind {
+	case KindNamespace, KindKeyPattern, KindRegistryEntry:
+		// A count moves with every read; it is dated by when it left its baseline.
+	default:
+		if c.After == nil {
+			clue.aspects[0] += " absent"
+		} else {
+			clue.aspects[0] += "=" + c.After.Value
+		}
+	}
 	clue.withTable = newTables[key.Scope]
 	before, hasBefore := count(c.Before)
 	after, hasAfter := count(c.After)
@@ -149,9 +160,7 @@ func itemKind(engine Engine, item Item) string {
 // one last line that says so.
 func (s StoreChanges) Clues() []Clue {
 	var clues, routine []Clue
-	for _, clue := range changeClues(s.Engine, s.Changes) {
-		// The leading part dates the clue: a group's table may be newer than
-		// its trigger.
+	for _, clue := range changeClues(s.Engine, s.Changes, s.observed) {
 		if seen, ok := s.observed[clue.aspects[0]]; ok {
 			clue.FirstObserved, clue.LastWithout = seen.First, seen.LastWithout
 		}
@@ -282,7 +291,7 @@ func ObserveChanges(id string, result podread.Result, previous map[string]map[st
 			without = baseline.At
 		}
 		seen := map[string]podread.Observed{}
-		for _, clue := range changeClues(engine, Diff(baseline, current)) {
+		for _, clue := range changeClues(engine, Diff(baseline, current), nil) {
 			for _, aspect := range clue.aspects {
 				if earlier, ok := previous[reading.Pod][aspect]; ok {
 					seen[aspect] = earlier

@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"sdo.dev/operator/sdk/podread"
 )
 
 // A postgres group value carries, after the table count, the count and digest
@@ -76,61 +78,78 @@ func groupOf(k Key) (db, group string, ok bool) {
 	return db, group, true
 }
 
-// groupClue renders the two sides of one table group. A table that appeared or
-// disappeared moves a group to a new scope, so the sides may come from an added
-// and a removed item; either way the group's own counts say what changed.
-func groupClue(db, group string, before, after *Item) Clue {
+// groupPart is one kind's change in a table group.
+type groupPart struct{ kind, delta, before, after, aspect string }
+
+// groupClues renders the two sides of one table group, one clue per time its
+// parts were first observed. A table that appeared or disappeared moves a group
+// to a new scope, so the sides may come from an added and a removed item;
+// either way the group's own counts say what changed.
+func groupClues(db, group string, before, after *Item, observed map[string]podread.Observed) []Clue {
 	place := fmt.Sprintf("in %s table group %s of %s", db, group, catalogGroups)
 	if before == nil || after == nil {
 		how := "appeared"
 		if after == nil {
 			how = "disappeared"
 		}
-		return Clue{Kinds: []string{KindUnknown}, Key: "table group " + how + " " + place, aspects: []string{place + " " + how}}
+		return []Clue{{Kinds: []string{KindUnknown}, Key: "table group " + how + " " + place, aspects: []string{place + " " + how}}}
 	}
 	bt, bk := groupCounts(before.Value)
 	at, ak := groupCounts(after.Value)
-	clue, deltas, was, is := Clue{}, []string(nil), []string(nil), []string(nil)
+	var parts []groupPart
 	add := func(kind, delta, beforeText, afterText, aspect string) {
-		clue.Kinds, deltas = append(clue.Kinds, kind), append(deltas, delta)
-		was, is = append(was, beforeText), append(is, afterText)
-		clue.aspects = append(clue.aspects, place+" "+kind+" "+aspect)
+		parts = append(parts, groupPart{kind, delta, beforeText, afterText, place + " " + kind + " " + aspect})
 	}
-	ownScope := before.Scope == after.Scope
+	ownScope, shrank := before.Scope == after.Scope, at <= bt || bt < 0
 	for _, kind := range groupKinds {
 		b, hadKind := bk[kind.tag]
 		a, hasKind := ak[kind.tag]
 		if !hadKind || !hasKind {
 			continue
 		}
+		was, is := plainCount(b.count, kind.one, kind.many), plainCount(a.count, kind.one, kind.many)
 		switch {
 		case a.count != b.count:
-			add(kind.one, signedCount(a.count-b.count, kind.one, kind.many), plainCount(b.count, kind.one, kind.many), plainCount(a.count, kind.one, kind.many), strconv.Itoa(a.count))
+			shrank = shrank || a.count < b.count
+			add(kind.one, signedCount(a.count-b.count, kind.one, kind.many), was, is, strconv.Itoa(a.count))
 		case ownScope && a.digest != b.digest && a.digest != "" && b.digest != "":
-			add(kind.one, kind.one+" changed in place", plainCount(b.count, kind.one, kind.many), plainCount(a.count, kind.one, kind.many), a.digest)
+			add(kind.one, kind.one+" changed in place", was, is, a.digest)
 		}
 	}
-	tablesMoved := !ownScope
 	if at != bt && at >= 0 && bt >= 0 {
 		add("table", signedCount(at-bt, "table", "tables"), plainCount(bt, "table", "tables"), plainCount(at, "table", "tables"), strconv.Itoa(at))
-		tablesMoved = true
-	} else if tablesMoved {
+	} else if !ownScope {
 		add("table", "tables replaced or renamed (same count)", "", "", after.Scope)
 	}
-	if len(deltas) == 0 {
-		return Clue{Kinds: []string{KindUnknown}, Key: "definition changed (kind not recorded) " + place, aspects: []string{place + " definition " + after.Value}}
+	if len(parts) == 0 {
+		return []Clue{{Kinds: []string{KindUnknown}, Key: "definition changed (kind not recorded) " + place, aspects: []string{place + " definition " + after.Value}}}
 	}
-	clue.withTable = tablesMoved
-	clue.Key = strings.Join(deltas, ", ") + " " + place
-	clue.Before, clue.After = joinCounts(was), joinCounts(is)
-	// A new table brings its own columns, indexes and constraints.
-	clue.Routine = tablesMoved && at > bt && bt >= 0 && !slices.Contains(clue.Kinds, "trigger")
-	for _, tag := range []string{"i", "c", "n"} {
-		if ak[tag].count < bk[tag].count {
-			clue.Routine = false
+	var order []podread.Observed
+	byTime := map[podread.Observed][]groupPart{}
+	for _, part := range parts {
+		seen := observed[part.aspect]
+		if byTime[seen] == nil {
+			order = append(order, seen)
 		}
+		byTime[seen] = append(byTime[seen], part)
 	}
-	return clue
+	var out []Clue
+	for _, seen := range order {
+		var clue Clue
+		var deltas, was, is []string
+		for _, part := range byTime[seen] {
+			clue.Kinds, deltas = append(clue.Kinds, part.kind), append(deltas, part.delta)
+			was, is = append(was, part.before), append(is, part.after)
+			clue.aspects = append(clue.aspects, part.aspect)
+			clue.withTable = clue.withTable || part.kind == "table"
+		}
+		clue.Key = strings.Join(deltas, ", ") + " " + place
+		clue.Before, clue.After = joinCounts(was), joinCounts(is)
+		// A new table brings its own columns, indexes and constraints.
+		clue.Routine = clue.withTable && !shrank && !slices.Contains(clue.Kinds, "trigger")
+		out = append(out, clue)
+	}
+	return out
 }
 
 func joinCounts(counts []string) string {

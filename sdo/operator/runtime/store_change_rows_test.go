@@ -45,6 +45,10 @@ func TestStoreChangesCarryWhenTheyWereFirstObserved(t *testing.T) {
 	if csv := string(renderChanges(got, detectOnset)); !strings.Contains(csv, at(12).Format(time.RFC3339)+",12,"+at(-30).Format(time.RFC3339)) {
 		t.Fatalf("sdo changes:\n%s", csv)
 	}
+	// A second value is another change, dated by itself.
+	if got := rows(read(82, redis("10"))); got[0].After != "10" || !got[0].FirstObserved.Equal(at(82)) || !got[0].LastWithout.Equal(at(72)) {
+		t.Fatalf("second value: %+v", got)
+	}
 	// A change that went away and came back is dated by its return.
 	rows(read(102, redis("10000")))
 	if got := rows(read(132, redis("20"))); !got[0].FirstObserved.Equal(at(132)) || !got[0].LastWithout.Equal(at(102)) {

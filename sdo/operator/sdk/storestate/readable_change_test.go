@@ -176,3 +176,33 @@ func TestChangesFlagItemsThatMovedWhileHealthy(t *testing.T) {
 		t.Fatalf("noisy = %v", noisy)
 	}
 }
+
+// Kinds of one group first observed at different times are separate clues, each
+// with its own time; kinds observed together stay one. A function digest and a
+// setting are dated by their value.
+func TestCluesDateEachChangeOnItsOwn(t *testing.T) {
+	id := storestate.QueryID(storestate.EnginePostgres, "db")
+	read := func(seconds int, value, functions string) podread.Reading {
+		out := strings.Replace(groupedPostgres(map[string]string{"07 a0000000": value}), "== catalog postgres", "digest\tfunctions\t\t"+functions+"\n== catalog postgres", 1)
+		return podread.Reading{Namespace: "app", Pod: "db-0", ObservedAt: time.Unix(int64(1000+seconds), 0).UTC(), Stdout: out}
+	}
+	base := []podread.Reading{read(-300, "40 i5:aaaa c5:aaaa t5:aaaa n9:aaaa", "3:aaaa")}
+	observed, readAt := map[string]map[string]podread.Observed(nil), map[string]time.Time{}
+	var last podread.Result
+	for _, r := range []podread.Reading{
+		read(-150, "40 i6:bbbb c5:aaaa t5:aaaa n9:aaaa", "3:bbbb"),
+		read(12, "40 i6:bbbb c6:cccc t6:cccc n9:aaaa", "3:cccc"),
+	} {
+		last = podread.Result{Query: podread.Query{ID: id}, Readings: []podread.Reading{r}, Baseline: base}
+		last.Observed = storestate.ObserveChanges(id, last, observed, readAt)
+		observed = last.Observed
+	}
+	got := map[string]int64{}
+	for _, c := range storestate.Changes(snapshotOf(id, last))[0].Clues() {
+		got[c.Key] = c.FirstObserved.Unix() - 1000
+	}
+	want := map[string]int64{"+1 trigger, +1 constraint in exampledb table group 07 of 16": 12, "+1 index in exampledb table group 07 of 16": -150, "function definitions of exampledb changed in place": 12}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
