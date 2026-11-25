@@ -67,7 +67,10 @@ func recordRoutingProbeUnavailable(dir, incidentID, phase, reason, detail string
 // captureRoutingEvidence samples real TCP observations even before a program
 // exists. It uses the protected phase snapshot and never probes on corpus replay.
 func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string, findings []sdk.Finding, view program.ReadView) error {
-	releaseSessionStorage := memory.SessionStorageUse()
+	// Session storage is pinned around each file access, never across a probe: a
+	// pinned session refuses the standby claim, and a broken Service's probes
+	// run for seconds, just when the responder is dispatched.
+	releaseSessionStorage := sync.OnceFunc(memory.SessionStorageUse())
 	defer releaseSessionStorage()
 
 	live, ok := routingLiveView(view)
@@ -131,6 +134,11 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 			}
 		}
 	}
+	releaseSessionStorage()
+	pinned := func(write func() error) error {
+		defer memory.SessionStorageUse()()
+		return write()
+	}
 	budget, cancel := context.WithTimeout(ctx, routingCaptureBudget)
 	defer cancel()
 	for index, target := range targets {
@@ -138,7 +146,10 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 			break
 		}
 		if budget.Err() != nil {
-			if err := recordRoutingProbeUnavailable(dir, incidentID, phase, "budget_exhausted", fmt.Sprintf("%d of %d probes skipped", len(targets)-index, len(targets))); err != nil {
+			skipped := fmt.Sprintf("%d of %d probes skipped", len(targets)-index, len(targets))
+			if err := pinned(func() error {
+				return recordRoutingProbeUnavailable(dir, incidentID, phase, "budget_exhausted", skipped)
+			}); err != nil {
 				return err
 			}
 			break
@@ -159,7 +170,9 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 		call := sdktest.PrimitiveCall{Phase: observationPhase, Method: "ProbeTCP", Arguments: args, Result: encoded}
 		if probeErr != nil {
 			call.Error = probeErr.Error()
-			if err := recordRoutingProbeUnavailable(dir, incidentID, phase, "probe_failed", call.Error); err != nil {
+			if err := pinned(func() error {
+				return recordRoutingProbeUnavailable(dir, incidentID, phase, "probe_failed", call.Error)
+			}); err != nil {
 				return err
 			}
 		}
@@ -176,7 +189,7 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 		// A cancelled sweep is truncated; leave no marker so it is not final.
 		return err
 	}
-	return os.WriteFile(marker, []byte("sampled\n"), 0444)
+	return pinned(func() error { return os.WriteFile(marker, []byte("sampled\n"), 0444) })
 }
 
 func routingProbeTargets(snapshot sdktest.Snapshot, findings []sdk.Finding) []routingProbeTarget {
