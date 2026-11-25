@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from benchmarks.fuzzops import vanilla
 from benchmarks.fuzzops.cellevidence import cell_problems
 
@@ -252,3 +254,25 @@ def test_watch_reports_missing_traffic_on_stderr(tmp_path, capsys):
     assert captured.out == ""
     assert "requires a FuzzOps pin that publishes FUZZOPS_TRAFFIC" in captured.err
     assert json.loads((tmp_path / "vanilla" / "proof" / "done.json").read_text())["error"] in captured.err
+
+
+USER = {"type": "authorized_user", "client_id": "public", "client_secret": "synth-cs", "refresh_token": "synth-rt"}
+
+
+@pytest.mark.parametrize(
+    ("auth", "secrets"),
+    [
+        (USER, ["synth-cs", "synth-rt"]),
+        ({"type": "impersonated_service_account", "source_credentials": USER}, ["synth-cs", "synth-rt"]),
+        ({"type": "service_account", "private_key": "synth-k1\nsynth-k2\n"}, ["synth-k1", "synth-k2"]),
+    ],
+)
+def test_every_auth_secret_is_redacted_from_kept_logs(tmp_path, auth, secrets):
+    path, log, kept = (tmp_path / name for name in ("auth.json", "log", "kept"))
+    path.write_text(json.dumps(auth))
+    text = json.dumps({"output": path.read_text()}) + "\n" + " ".join(secrets) + "\n"
+    log.write_text(text)
+    found = vanilla.auth_secrets(path)
+    assert found == secrets
+    vanilla.copy_log(log, kept, found)
+    assert not [secret for secret in secrets if secret in kept.read_text()]
