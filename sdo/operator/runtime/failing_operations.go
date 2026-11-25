@@ -120,11 +120,12 @@ func addTestHistory(tests []failingTest, request IncidentRequest, history incide
 			continue
 		}
 		for _, sample := range history.operations[tests[i].id] {
-			if sample.at.Before(tests[i].onset) {
-				tests[i].before++
-				if sample.failed {
-					tests[i].failedBefore++
-				}
+			if !sample.at.Before(tests[i].onset) {
+				break
+			}
+			tests[i].passedBefore++
+			if sample.failed { // an earlier failure is not part of the healthy record
+				tests[i].passedBefore = 0
 			}
 		}
 	}
@@ -136,8 +137,8 @@ func (test failingTest) history() string {
 	if !test.onset.IsZero() {
 		out = " since " + hms(test.onset)
 	}
-	if test.before > 0 {
-		out += fmt.Sprintf(", against a healthy %.1f%% (%d/%d before)", 100*float64(test.failedBefore)/float64(test.before), test.failedBefore, test.before)
+	if test.passedBefore > 0 {
+		out += fmt.Sprintf(", against a healthy 0.0%% (0/%d before)", test.passedBefore)
 	}
 	return out
 }

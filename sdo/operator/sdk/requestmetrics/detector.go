@@ -761,8 +761,20 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		note = fmt.Sprintf(" The baseline holds fewer than %.0f healthy requests, so the rise is not called a jump: this is a clue, and it holds an incident it already belongs to until recovery is confirmed.", r.MinBaselineRequests) + note
 	}
 	// The failure episode began at the first of the unbroken steps with failures.
-	first := onset
-	for i := raisedAt; i >= 0 && r.judgeStep(steps[times[i]], best.class, healthyServer, healthyClient).failed >= 1; i-- {
+	// Failures the history shows as ordinary do not count, also on thin history.
+	first, ordinaryServer, ordinaryClient := onset, 0.0, 0.0
+	if measured {
+		ordinaryServer, ordinaryClient = observed.server/observed.total, observed.client/observed.total
+	}
+	for i := raisedAt; i >= 0; i-- {
+		c := steps[times[i]]
+		excess := c.server - ordinaryServer*c.total
+		if best.class == ClassClientJump {
+			excess = c.client - ordinaryClient*c.total
+		}
+		if excess < 1 {
+			break
+		}
 		first = times[i]
 	}
 	against, healthyShare := "", 0.0

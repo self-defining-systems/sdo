@@ -124,7 +124,7 @@ func TestRespondersSeeEachAlertsHealthyBaselineAndFirstFailure(t *testing.T) {
 	detect := buildDetectSummary(detectInput{Request: request, Findings: findings, View: detectApp("create"), Signals: signals, Now: detectNow()})
 	page := strings.Join(incidentCandidateBlock(incidentPageInput{Request: request, Findings: findings, View: detectApp("create"), Signals: signals, Now: detectNow()}), "\n")
 	for name, text := range map[string]string{"sdo detect": detect.Text, "sdo detect item": detect.Items["create"] + detect.Items[shortID(FindingFingerprint(live))], "incident page": page} {
-		for _, want := range []string{"17/26 (65%) failing against a healthy 0.0% (of 41 requests)", "since 07:28:09Z: POST /issues", "failing since 07:28:09Z, against a healthy 2.5% (1/40 before)"} {
+		for _, want := range []string{"17/26 (65%) failing against a healthy 0.0% (of 41 requests)", "since 07:28:09Z: POST /issues", "failing since 07:28:09Z, against a healthy 0.0% (0/39 before)"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("%s misses %q:\n%s", name, want, text)
 			}
@@ -151,5 +151,31 @@ func TestRefreshedAlertKeepsItsBaseline(t *testing.T) {
 	}
 	if _, ok := live.Metadata[requestmetrics.MetaHealthyShare]; ok {
 		t.Fatal("the detector's finding was changed")
+	}
+}
+
+// The recorded failure time and history are display only: the onset that cuts
+// off change evidence stays what the traffic windows say.
+func TestTestHistoryDoesNotMoveTheOnset(t *testing.T) {
+	probe := probeFinding("create")
+	request := detectRequest()
+	request.Findings, request.OpeningKeys = []sdk.Finding{probe}, []string{findingKey(probe)}
+	in := detectInput{Request: request, Findings: request.Findings, View: detectApp("create"), Now: detectNow()}
+	plain := buildSuspectSet(in)
+	recorded := detectOnset.Add(-50 * time.Second)
+	probe.Metadata = map[string]any{sdk.MetaFirstFailureAt: recorded.Format(time.RFC3339Nano)}
+	in.Request.Findings = []sdk.Finding{probe}
+	in.Signals = newIncidentSignals()
+	for second := -80; second < 0; second++ {
+		in.Signals.Observe(detectOnset, pageSnapshot(detectOnset.Add(time.Duration(second)*time.Second), second == -70 || second >= -50, 1, 1, 0))
+	}
+	set := buildSuspectSet(in)
+	if !set.onset.Equal(plain.onset) {
+		t.Fatalf("onset moved from %s to %s", plain.onset, set.onset)
+	}
+	// The test shows its recorded failure, and the passes after the earlier
+	// failure and before that one.
+	if test := set.failing[0]; !test.onset.Equal(recorded) || test.passedBefore != 19 {
+		t.Fatalf("test onset %s, %d passes before", test.onset, test.passedBefore)
 	}
 }

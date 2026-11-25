@@ -103,8 +103,8 @@ type failingTest struct {
 	last      []traffic.Sample
 	scenarios traffic.Descriptor
 	latestOK  bool // the newest sample passed
-	// before and failedBefore count the recorded samples before onset.
-	before, failedBefore int
+	// passedBefore counts the recorded samples that passed in a row up to onset.
+	passedBefore int
 }
 
 // failureLabel is the user-facing result of one failed sample.
@@ -555,9 +555,6 @@ func architectureOf(view any) (doc string, ok bool, err error) {
 func buildSuspectSet(in detectInput) detectSuspectSet {
 	g, m, note := loadCandidateGraph(in.View)
 	judged := judgedTests(in.View, m, g)
-	history := in.Signals.history()
-	addTestHistory(judged.failing, in.Request, history)
-	addTestHistory(judged.alsoFailing, in.Request, history)
 	opening := alertKeys(&in.Request)
 	var openingFindings, clues []sdk.Finding
 	for _, finding := range in.Findings {
@@ -573,6 +570,11 @@ func buildSuspectSet(in detectInput) detectSuspectSet {
 			onset = test.onset
 		}
 	}
+	// Display only: the onset above cuts off evidence, so it stays what the
+	// windows say.
+	history := in.Signals.history()
+	addTestHistory(judged.failing, in.Request, history)
+	addTestHistory(judged.alsoFailing, in.Request, history)
 	var conditions []string
 	for _, finding := range openingFindings {
 		if isProbeFinding(finding) {

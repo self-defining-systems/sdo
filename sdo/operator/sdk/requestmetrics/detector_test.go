@@ -640,4 +640,10 @@ func TestFindingCarriesOnlyAMeasuredBaselineAndTheFirstFailure(t *testing.T) {
 	if f := detect(t, thin)[0]; f.Metadata[requestmetrics.MetaHealthyShare] != 0.25 || f.Metadata[requestmetrics.MetaHealthyRequests] != 4.0 {
 		t.Fatalf("thin history: %v", f.Metadata)
 	}
+	// Ordinary 4xx of a thin baseline are not the start of the failure.
+	ordinary := []metrics.Series{series(webRoute, "200", 30, 30, 30, 30, 5, 5, 5), series(webRoute, "404", 10, 10, 10, 10, 40, 40, 40)}
+	want := t0.Add(20 * time.Second).Format(time.RFC3339Nano)
+	if f := detect(t, snapshot(ordinary, []metrics.Series{instant(webRoute, "200", 9), instant(webRoute, "404", 3)}, presence()))[0]; f.Metadata[sdk.MetaFirstFailureAt] != want {
+		t.Fatalf("first failure = %v, want %s", f.Metadata[sdk.MetaFirstFailureAt], want)
+	}
 }
