@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -73,5 +74,31 @@ func TestAStandbyCanBindWhileTheOpeningCaptureProbes(t *testing.T) {
 	}
 	if recorded != 2 {
 		t.Fatalf("recorded %d probes, want 2", recorded)
+	}
+}
+
+// A capture that waits for another one's sweep holds no pin. Correct code can
+// never refuse here, whatever the schedule; the yields let a wrong one pin.
+func TestACaptureWaitingForAnotherHoldsNoSessionStorage(t *testing.T) {
+	routingCaptureMu.Lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = captureRoutingEvidence(context.Background(), t.TempDir(), "incident-1", "open@detect", nil, LiveReadView{})
+	}()
+	refused := false
+	for range 10000 {
+		runtime.Gosched()
+		if release, ok := memory.TrySessionStorageBinding(); ok {
+			release()
+		} else {
+			refused = true
+			break
+		}
+	}
+	routingCaptureMu.Unlock()
+	<-done
+	if refused {
+		t.Fatal("a waiting capture refused a standby bind")
 	}
 }
