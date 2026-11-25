@@ -47,8 +47,13 @@ func TestPlanRemoveFreesTheNameForACorrectedPlan(t *testing.T) {
 	if _, err := os.Stat(l.root.SpecPath(exp)); err == nil {
 		t.Error("the experiment spec is still under specs/")
 	}
-	if arch, _ := filepath.Glob(filepath.Join(l.root.PlansDir(), ".removed", "rm-*", "lock.json")); len(arch) != 1 {
-		t.Errorf("the plan state is archived, not deleted: %v", arch)
+	arch, _ := filepath.Glob(filepath.Join(l.root.PlansDir(), ".removed", "rm-*", "lock.json"))
+	if len(arch) != 1 {
+		t.Fatalf("the plan state is archived, not deleted: %v", arch)
+	}
+	// The command says where the results are: the directory is gone from its usual path.
+	if want := filepath.Join(l.root.PlansDir(), ".removed", "rm-"); !strings.Contains(out.String(), want) || !strings.Contains(out.String(), "kept") {
+		t.Errorf("the command does not say that the results are kept, and where (%s): %q", want, out.String())
 	}
 	for _, n := range plan.Names(l.root.PlansDir()) {
 		t.Errorf("plan %s still listed", n)

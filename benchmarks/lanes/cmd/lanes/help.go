@@ -106,7 +106,7 @@ var helpTable = map[string]verbHelp{
 		flags: rootFlag +
 			"  --dry-run        add: validate fully and print the expanded plan; store nothing\n" +
 			"  --json           status, add --dry-run: print JSON\n" +
-			"  --keep           remove: only retire the plan; its experiments and name stay\n" +
+			"  --keep           remove: only retire the plan; its experiments and name stay (without it they move, results included, to plans/.removed/NAME-<time>/)\n" +
 			"  --all-parked     retry: retry every parked item of the plan\n" +
 			"  --repin ROLE=REV retry: run the retried nodes on a new subject or workload pin (a ref or revision, resolved now and validated like plan add; done nodes keep theirs)\n" +
 			"  --cancel         remove, skip: also cancel the runs in flight\n" +

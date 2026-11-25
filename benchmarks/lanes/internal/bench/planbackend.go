@@ -112,10 +112,11 @@ func PlanRemove(root Root, name string, keep bool, w io.Writer) error {
 	}
 	defer lf.Close()
 	if syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
-		fmt.Fprintf(w, "plan %s marked for removal; the manager cleans it up on its next pass\n", name)
+		fmt.Fprintf(w, "plan %s marked for removal; the manager cleans it up on its next pass: results are kept, moved to %s-<time>/\n",
+			name, filepath.Join(root.PlansDir(), ".removed", name))
 		return nil
 	}
-	done, err := purgePlan(root, name)
+	archive, done, err := purgePlan(root, name)
 	if err != nil {
 		return err
 	}
@@ -123,27 +124,27 @@ func PlanRemove(root Root, name string, keep bool, w io.Writer) error {
 		fmt.Fprintf(w, "plan %s: experiments still run on lanes; the next manager pass finishes the removal when they end\n", name)
 		return nil
 	}
-	fmt.Fprintf(w, "plan %s removed; its name is free\n", name)
+	fmt.Fprintf(w, "plan %s removed; its name is free; results are kept in %s\n", name, archive)
 	return nil
 }
 
-// purgePlan advances the cleanup of a plan marked for removal; done when the plan directory has moved to the archive.
-// It is idempotent: a restart repeats whatever the last pass did not finish.
-func purgePlan(root Root, name string) (done bool, err error) {
+// purgePlan advances the cleanup of a plan marked for removal; done when the plan directory has moved to the archive,
+// which holds its state and its experiments' results. It is idempotent: a restart repeats whatever the last pass did not finish.
+func purgePlan(root Root, name string) (archive string, done bool, err error) {
 	dir := plan.Dir(root.PlansDir(), name)
 	b := &PlanBackend{Root: root}
 	exps := plan.AllExperiments(dir)
 	for _, exp := range exps {
 		if err := remove(root, exp, Removal{Cancel: true}); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return false, err
+			return "", false, err
 		}
 	}
-	archive, err := plan.SetArchive(dir, filepath.Join(root.PlansDir(), ".removed", name+"-"+time.Now().UTC().Format("2006-01-02_150405")))
+	archive, err = plan.SetArchive(dir, filepath.Join(root.PlansDir(), ".removed", name+"-"+time.Now().UTC().Format("2006-01-02_150405")))
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	if err := os.MkdirAll(filepath.Join(archive, "experiments"), 0o755); err != nil {
-		return false, err
+		return "", false, err
 	}
 	pending := false
 	for _, exp := range exps {
@@ -156,23 +157,23 @@ func purgePlan(root Root, name string) (done bool, err error) {
 			continue
 		}
 		if err := os.Rename(src, filepath.Join(archive, "experiments", exp)); err != nil {
-			return false, err
+			return "", false, err
 		}
 	}
 	if pending {
-		return false, nil
+		return archive, false, nil
 	}
 	// The plan directory moves last, into the archive directory itself: its files sit beside experiments/.
 	ents, err := os.ReadDir(dir)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	for _, e := range ents {
 		if err := os.Rename(filepath.Join(dir, e.Name()), filepath.Join(archive, e.Name())); err != nil {
-			return false, err
+			return "", false, err
 		}
 	}
-	return true, os.Remove(dir)
+	return archive, true, os.Remove(dir)
 }
 
 // PlanControl applies a control request (pause, resume, remove, skip) to the plan's directory. The manager applies it
