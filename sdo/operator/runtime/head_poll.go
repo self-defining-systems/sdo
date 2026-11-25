@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -46,7 +47,10 @@ type headPollState struct {
 	nextAt  time.Time
 
 	lastObservedReceipt string
-	receiptRetryAt      time.Time
+	// target is the last broker read; heldDetail is why its head was held.
+	target         broker.Target
+	heldDetail     string
+	receiptRetryAt time.Time
 }
 
 // SetHeadPoller makes the controller deploy branch heads SDO did not write
@@ -107,12 +111,18 @@ func (c *Controller) handleHeadCompletion(completion reflectionCompletion) {
 		c.acceptDeploymentLocked(completion.head.Commit)
 	}
 	c.head.running = false
+	c.head.heldDetail = ""
+	if completion.head.Outcome == lifecycle.HeadHeld {
+		c.head.heldDetail = completion.head.Detail
+	}
 	c.mu.Unlock()
 	if completion.err != nil {
 		c.reportBrokerError("deploy branch head", completion.err)
 	}
 }
 
+// readAcceptedDeployment is the revision comparisons and restores use: the
+// newest accepted deployment, or the target the cluster was moved to since.
 func (c *Controller) readAcceptedDeployment(ctx context.Context) string {
 	c.mu.Lock()
 	var reader lifecycle.HeadBroker
@@ -128,16 +138,49 @@ func (c *Controller) readAcceptedDeployment(ctx context.Context) string {
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	revision, err := reader.TryAcceptedDeploymentRevision(ctx)
+	target, err := reader.TryTarget(ctx)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.head.receiptRetryAt = time.Time{}
 	if err != nil {
 		c.head.receiptRetryAt = c.clock().Add(DefaultHeadPollInterval)
-		slog.Warn("read accepted deployment revision", "error", err)
-		return ""
+		slog.Warn("read the deployment target", "error", err)
+		if target.Commit == "" {
+			return ""
+		}
 	}
-	return revision
+	if c.head.target != target {
+		c.head.target = target
+		// A target of the same commit that moved on renders differently.
+		c.head.lastObservedReceipt = ""
+	}
+	return target.Commit
+}
+
+// heldTargetLines tells the responder that the revision its comparisons and
+// restores use is not the accepted one.
+func (c *Controller) heldTargetLines() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	target := c.head.target
+	if !target.Unaccepted {
+		return nil
+	}
+	applied, reason := "applied", ""
+	if target.Incomplete {
+		applied = "partly applied"
+	}
+	if fields := strings.Join(strings.Fields(c.head.heldDetail), " "); fields != "" {
+		reason = " (" + strings.ToValidUTF8(fields[:min(len(fields), 300)], "") + ")"
+	}
+	lines := []string{fmt.Sprintf("Release %s is %s but not accepted%s; comparisons and restores use it.", target.Commit, applied, reason)}
+	switch {
+	case target.RefusesAll:
+		lines = append(lines, "Its apply was interrupted: every restore from source is refused.")
+	case target.Interrupted != "":
+		lines = append(lines, "Its apply of phase "+target.Interrupted+" was interrupted: restores of objects in it are refused.")
+	}
+	return lines
 }
 
 func (c *Controller) syncDeploymentReceipt(ctx context.Context) {

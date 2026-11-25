@@ -29,7 +29,8 @@ type HeadChange struct {
 }
 
 // HeadToDeploy reports the accepted head when its effective source differs
-// from the newest recorded deployment, after syncing the memory remote; an
+// from the newest recorded deployment or the cluster was last moved to a
+// revision that is not accepted, after syncing the memory remote; an
 // install with no recorded deployment (a seeded one) is measured against the
 // source it adopted (seedBaselineLocked). A memory-only head changes no
 // effective tree and needs no deployment.
@@ -60,7 +61,8 @@ func (b *Broker) headToDeployLocked(ctx context.Context) (change HeadChange, nee
 	if err != nil {
 		return change, false, err
 	}
-	if !found {
+	seeded := !found
+	if seeded {
 		// A seeded install (install-existing) adopted what runs and
 		// recorded no deployment. The source it adopted is SDO's own newest
 		// commit; an engineer's push that changes the effective source
@@ -73,7 +75,17 @@ func (b *Broker) headToDeployLocked(ctx context.Context) (change HeadChange, nee
 	if err != nil {
 		return change, false, err
 	}
-	if recorded.AcceptedCommit == head {
+	accepted := recorded.AcceptedCommit
+	if seeded {
+		accepted = ""
+	}
+	// The cluster runs another revision than the accepted one: the head is to
+	// deploy even when it returns to the accepted source.
+	target, err := b.unacceptedTargetLocked(accepted)
+	if err != nil {
+		return change, false, err
+	}
+	if recorded.AcceptedCommit == head && target == nil {
 		return change, false, nil
 	}
 	tree, err := gitText(ctx, b.target, "rev-parse", head+"^{tree}")
@@ -85,7 +97,7 @@ func (b *Broker) headToDeployLocked(ctx context.Context) (change HeadChange, nee
 		return change, false, fmt.Errorf("compute the effective tree of head %s: %w", head, err)
 	}
 	defer effective.Close()
-	if effective.ID == recorded.EffectiveTree && effective.PatchesDigest == recorded.PatchesDigest {
+	if target == nil && effective.ID == recorded.EffectiveTree && effective.PatchesDigest == recorded.PatchesDigest {
 		return change, false, nil
 	}
 	return HeadChange{Commit: head, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}, true, nil
@@ -146,7 +158,10 @@ func (b *Broker) RecordHeadDeployment(ctx context.Context, commit string, eviden
 			return fmt.Errorf("%w: %w", ErrCandidateUnbound, err)
 		}
 		evidence.AcceptedCommit = commit
-		return b.writeSourceEvidence(headDeploymentID(commit), evidence)
+		if err := b.writeSourceEvidence(headDeploymentID(commit), evidence); err != nil {
+			return err
+		}
+		return b.clearTarget()
 	})
 }
 

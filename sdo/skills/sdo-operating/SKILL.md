@@ -14,7 +14,7 @@ description: Reading and changing an application through SDO's `sdo` command.
   (agent is you, sdo, kubernetes, other), nearest onset first
 - `sdo metrics QUERY`, `sdo logs COMPONENT [--failing]`, `sdo traces`: PromQL, pod logs, traces; compare
   failing with working requests
-- `sdo source Kind/ns/name`: intended state
+- `sdo source Kind/ns/name`: last-deployed intended state
 - `sdo diagnose NAME --bind ROLE=Kind/ns/name`: test a learned playbook
 - `sdo menu [NAME]`: list fixes. `sdo mitigate NAME --bind ROLE=Kind/ns/name`: apply one
 - `sdo mitigate ReconcileFromSource --bind ref=Deployment/shop/api`: restore source

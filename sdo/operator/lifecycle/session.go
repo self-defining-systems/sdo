@@ -40,6 +40,34 @@ type CandidateSession interface {
 	Close()
 }
 
+type targetHookKey struct{}
+
+// WithTargetHook returns a context whose deployment calls hook before it
+// applies each phase, and again once that apply succeeded. An error stops the
+// deployment: nothing is written that the target does not record.
+func WithTargetHook(ctx context.Context, hook func(context.Context, rendered.TargetWrite) error) context.Context {
+	return context.WithValue(ctx, targetHookKey{}, hook)
+}
+
+// RecordTarget calls the hook WithTargetHook set, if any.
+func RecordTarget(ctx context.Context, write rendered.TargetWrite) error {
+	hook, _ := ctx.Value(targetHookKey{}).(func(context.Context, rendered.TargetWrite) error)
+	if hook == nil {
+		return nil
+	}
+	if err := hook(ctx, write); err != nil {
+		return &targetRecordError{err}
+	}
+	return nil
+}
+
+// targetRecordError is a failed record of the target: not a source fault.
+type targetRecordError struct{ err error }
+
+func (e *targetRecordError) Error() string               { return "record the deployment target: " + e.err.Error() }
+func (e *targetRecordError) Unwrap() error               { return e.err }
+func (e *targetRecordError) InfrastructureOutcome() bool { return true }
+
 type appliedHookKey struct{}
 
 // WithAppliedHook returns a context whose deployment calls hook once it has

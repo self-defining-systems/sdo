@@ -293,6 +293,7 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation
 		if len(phase.Objects) == 0 {
 			continue
 		}
+		target := targetWrite(phases[index:])
 		var documents bytes.Buffer
 		var gated []*workloadRecord
 		for _, object := range phase.Objects {
@@ -335,11 +336,19 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation
 				gated = append(gated, record)
 			}
 		}
+		target.Pins = r.appliedPins()
+		if err := lifecycle.RecordTarget(ctx, target); err != nil {
+			return err
+		}
 		if err := r.resolveConflicts(ctx, phase, documents.Bytes()); err != nil {
 			return err
 		}
 		if err := r.deployer.Applier.Apply(ctx, documents.Bytes()); err != nil {
 			return fmt.Errorf("apply phase %q: %w", phase.Name, err)
+		}
+		target.Applied = true
+		if err := lifecycle.RecordTarget(ctx, target); err != nil {
+			return err
 		}
 		if err := r.afterApply(ctx); err != nil {
 			return err
@@ -360,6 +369,22 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation
 		}
 	}
 	return nil
+}
+
+// targetWrite is the record of applying the first of phases; a hook phase
+// carries no desired state.
+func targetWrite(phases []rendered.DesiredPhase) rendered.TargetWrite {
+	var write rendered.TargetWrite
+	for i, phase := range phases {
+		switch {
+		case phase.Ephemeral || len(phase.Objects) == 0:
+		case i == 0:
+			write.Phase = phase.Name
+		default:
+			write.Later = append(write.Later, phase.Name)
+		}
+	}
+	return write
 }
 
 // appliedPins are the images the applied workloads run, as the receipt will list them once they are observed.

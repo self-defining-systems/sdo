@@ -30,6 +30,9 @@ type DesiredObject struct {
 	// but it is not desired state. Only Source.AcceptedInventory reads it, so
 	// drift can tell an object the deployer applied from a stranger.
 	Hook bool
+	// Interrupted marks an object in a phase of the deployment target whose
+	// apply did not finish: it is compared, never restored (target.go).
+	Interrupted bool
 }
 
 // DesiredPhase is a renderer phase with normalized objects.

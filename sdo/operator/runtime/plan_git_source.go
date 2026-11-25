@@ -45,4 +45,13 @@ func acceptedImagePins(native *NativeIncidentBroker) rendered.PinProvider {
 	return native.Repository
 }
 
+// deploymentTarget reads the revision the cluster was last moved to, accepted
+// or not, from the native broker.
+func deploymentTarget(native *NativeIncidentBroker) func() (*rendered.DeploymentTarget, error) {
+	if native == nil || native.Repository == nil {
+		return nil
+	}
+	return native.Repository.DeploymentTarget
+}
+
 var _ rendered.PinProvider = (*broker.Broker)(nil)

@@ -32,11 +32,15 @@ var ErrSecretSourceHook = fmt.Errorf("Secret is a render hook: %w", ErrAcceptedM
 // is rendered twice and the data must be equal, so a generated value is
 // refused instead of replaced by another. Errors never carry a value.
 func (s Source) AcceptedSecretData(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (map[string][]byte, error) {
-	first, err := s.renderSecretData(ctx, revision, namespace, ref)
+	target, err := s.target()
 	if err != nil {
 		return nil, err
 	}
-	second, err := s.renderSecretData(ctx, revision, namespace, ref)
+	first, err := s.renderSecretData(ctx, revision, namespace, ref, target)
+	if err != nil {
+		return nil, err
+	}
+	second, err := s.renderSecretData(ctx, revision, namespace, ref, target)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +50,7 @@ func (s Source) AcceptedSecretData(ctx context.Context, revision, namespace stri
 	return first, nil
 }
 
-func (s Source) renderSecretData(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (map[string][]byte, error) {
+func (s Source) renderSecretData(ctx context.Context, revision, namespace string, ref sdk.ObjectRef, target *DeploymentTarget) (map[string][]byte, error) {
 	if ref.Kind != "Secret" {
 		return nil, fmt.Errorf("accepted Secret data requires a Secret, not %s", ref.Kind)
 	}
@@ -69,6 +73,15 @@ func (s Source) renderSecretData(ctx context.Context, revision, namespace string
 	set, err := Desired(ctx, fsys, renderenv.For(s.Environment, namespace, render.SecretsInclude), s.Catalog, deployment)
 	if err != nil {
 		return nil, classifySource(err)
+	}
+	if target != nil && target.Pins.EffectiveTree == effective.ID {
+		layer, err := target.layerOf(set, ref)
+		if err != nil {
+			return nil, err
+		}
+		if layer != nil && layer != target {
+			return s.renderSecretData(ctx, layer.Commit, namespace, ref, layer)
+		}
 	}
 	for _, object := range append(set.Objects(), set.Hooks()...) {
 		if object.Ref == ref {

@@ -657,7 +657,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// Desired state includes the accepted deployment's image pins, read from
 	// the broker's evidence ledger (not a flag): the workloads run the digest
 	// the deployer applied, so the source tag alone would read as drift.
-	planSource := GitPlanSource{Repository: resolvedRoot, Deployment: deploymentSource, Catalog: options.Renderers, Git: options.PlanGit, Pins: acceptedImagePins(options.NativeBroker)}.WithCache()
+	planSource := GitPlanSource{Repository: resolvedRoot, Deployment: deploymentSource, Catalog: options.Renderers, Git: options.PlanGit, Pins: acceptedImagePins(options.NativeBroker), Target: deploymentTarget(options.NativeBroker)}.WithCache()
 	primitiveProber, _ := proberAPI.(PrimitiveProber)
 	var memoryCatalogMu sync.RWMutex
 	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)

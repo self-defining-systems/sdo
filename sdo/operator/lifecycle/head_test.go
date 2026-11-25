@@ -17,11 +17,12 @@ import (
 // headWorld is the advance fake world with a branch head someone else pushed.
 type headWorld struct {
 	*advWorld
-	needed   bool
-	recorded []broker.SourceEvidence
-	busy     string
-	pause    *recordedPause
-	holds    *memoryHolds
+	needed    bool
+	recorded  []broker.SourceEvidence
+	busy      string
+	targetErr error
+	pause     *recordedPause
+	holds     *memoryHolds
 }
 
 type memoryHolds struct{ held map[string]string }
@@ -61,8 +62,13 @@ func (w *headWorld) HeadCheckout(_ context.Context, commit string) (string, func
 	return advCheckout, func() { w.log("release") }, nil
 }
 
-func (w *headWorld) TryAcceptedDeploymentRevision(context.Context) (string, error) {
-	return "", nil
+func (w *headWorld) TryTarget(context.Context) (broker.Target, error) {
+	return broker.Target{}, nil
+}
+
+func (w *headWorld) RecordTarget(_ context.Context, commit string, write rendered.TargetWrite) error {
+	w.log("target %s %s applied=%t", commit[:4], write.Phase, write.Applied)
+	return w.targetErr
 }
 
 func (w *headWorld) RecordHeadDeployment(_ context.Context, commit string, evidence broker.SourceEvidence) error {

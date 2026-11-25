@@ -230,6 +230,9 @@ func (b *Broker) acceptStaged(ctx context.Context, candidate Candidate, evidence
 			if err := b.writeSourceEvidence(stored.IncidentID, accepted); err != nil {
 				return fmt.Errorf("source accepted but evidence finalization needs reconciliation: %w", err)
 			}
+			if err := b.clearSupersededTargetLocked(ctx); err != nil {
+				return fmt.Errorf("source accepted but evidence finalization needs reconciliation: %w", err)
+			}
 		}
 		return os.RemoveAll(b.candidateRoot(stored.IncidentID, stored.Phase))
 	})
@@ -271,6 +274,9 @@ func (b *Broker) FinalizeAcceptedDeployment(ctx context.Context, incidentID stri
 			// No deployment evidence: the stage is what a later deployment
 			// or finalization of this accepted repair would need.
 			return nil
+		}
+		if err := b.clearSupersededTargetLocked(ctx); err != nil {
+			return err
 		}
 		return os.RemoveAll(b.candidateRoot(incidentID, ProposalPhase))
 	})

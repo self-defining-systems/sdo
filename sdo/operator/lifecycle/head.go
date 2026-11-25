@@ -18,7 +18,10 @@ type HeadBroker interface {
 	// HeadToDeploy syncs the branch and names the accepted head when its
 	// effective source differs from the newest recorded deployment.
 	HeadToDeploy(ctx context.Context) (change broker.HeadChange, needed bool, err error)
-	TryAcceptedDeploymentRevision(context.Context) (string, error)
+	// TryTarget is the revision the cluster was last moved to, accepted or not; it
+	// may return a target together with an error (read without the lock).
+	TryTarget(context.Context) (broker.Target, error)
+	RecordTarget(ctx context.Context, commit string, write rendered.TargetWrite) error
 	AcceptedSourceEvidence(ctx context.Context) (accepted broker.AcceptedSource, found bool, err error)
 	HeadCheckout(ctx context.Context, commit string) (path string, release func(), err error)
 	RecordHeadDeployment(ctx context.Context, commit string, evidence broker.SourceEvidence) error
@@ -49,7 +52,8 @@ const (
 	// HeadDeployed: the head was applied, verified and recorded as the newest deployment.
 	HeadDeployed HeadOutcome = "deployed"
 	// HeadHeld: the cluster or the detectors refused the head (Hold and Detail
-	// say why). Nothing is recorded and nothing is rolled back.
+	// say why). It is not accepted and nothing is rolled back; once a write
+	// began, the head is the target comparisons and restores use.
 	HeadHeld HeadOutcome = "held"
 	// HeadDeferred: the deploy did not start (an incident is open, or the
 	// controller did not acknowledge the pause). Try again later.
@@ -169,6 +173,9 @@ func (h HeadDeployer) deploy(ctx context.Context, cfg RepairConfig, commit strin
 			})
 		}
 	}
+	applyCtx = WithTargetHook(applyCtx, func(ctx context.Context, write rendered.TargetWrite) error {
+		return h.Broker.RecordTarget(ctx, commit, write)
+	})
 	var receipt DeploymentReceipt
 	err = steps.retryInfrastructure(ctx, bounds, "head deployment", func() (err error) {
 		receipt, err = h.Deployer.Readiness.ApplyAndVerify(applyCtx, path, accepted.Plan)

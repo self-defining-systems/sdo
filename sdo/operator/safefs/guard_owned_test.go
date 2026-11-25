@@ -34,6 +34,7 @@ var operatorOwned = map[string]string{
 	"broker/source_evidence.go":                        "broker-owned ledger under the operator state directory",
 	"broker/stage.go":                                  "broker-owned candidate staging directory",
 	"broker/subprocess_validator.go":                   "removes a MkdirTemp scratch directory",
+	"broker/target.go":                                 "broker-owned deployment target record at a fixed name in the broker workspace root",
 	"builder/internal/buildio/build.go":                reasonBuild,
 	"builder/jit.go":                                   reasonBuild,
 	"builder/memory_host.go":                           reasonBuild,
