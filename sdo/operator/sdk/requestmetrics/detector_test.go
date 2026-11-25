@@ -611,3 +611,33 @@ func TestUnscrapedMetricsAreNotConfirmed(t *testing.T) {
 		t.Fatalf("a scraped target stayed unconfirmed: %s", confirmer.ConfirmationReason(scraped))
 	}
 }
+
+// The finding says what the route did before the failure, and when the failure
+// began. A baseline that was not measured, or is not used because the incident
+// holds the finding, is absent: never a healthy 0%.
+func TestFindingCarriesOnlyAMeasuredBaselineAndTheFirstFailure(t *testing.T) {
+	recent := []metrics.Series{
+		series(webRoute, "200", steady(40, 7)...),
+		series(webRoute, "404", 0, 0, 0, 5, 30, 30, 30),
+	}
+	f := detect(t, snapshot(recent, healthyBaseline(), presence()))[0]
+	if share, _ := f.Metadata[requestmetrics.MetaHealthyShare].(float64); share < 0.009 || share > 0.011 {
+		t.Fatalf("healthy share = %v", f.Metadata)
+	}
+	if want := t0.Add(15 * time.Second).Format(time.RFC3339Nano); f.Metadata[sdk.MetaFirstFailureAt] != want {
+		t.Fatalf("first failure = %v, want %s", f.Metadata[sdk.MetaFirstFailureAt], want)
+	}
+	held := snapshot(recent, healthyBaseline(), presence())
+	held.HeldKeys = []string{"request-metrics\x00requestmetrics/errors/project-show"}
+	none := snapshot([]metrics.Series{series(webRoute, "200", steady(40, 7)...), series(webRoute, "500", 0, 0, 0, 0, 0, 9, 9)}, nil, presence())
+	for name, s := range map[string]sdktest.Snapshot{"held": held, "no history": none} {
+		f := detect(t, s)[0]
+		if _, ok := f.Metadata[requestmetrics.MetaHealthyShare]; ok || strings.Contains(f.Evidence, "healthy 0.0%") {
+			t.Fatalf("%s: unmeasured baseline reported: %v %s", name, f.Metadata, f.Evidence)
+		}
+	}
+	thin := snapshot(recent, []metrics.Series{instant(webRoute, "200", 3), instant(webRoute, "404", 1)}, presence())
+	if f := detect(t, thin)[0]; f.Metadata[requestmetrics.MetaHealthyShare] != 0.25 || f.Metadata[requestmetrics.MetaHealthyRequests] != 4.0 {
+		t.Fatalf("thin history: %v", f.Metadata)
+	}
+}

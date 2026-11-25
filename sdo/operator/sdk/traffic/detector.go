@@ -288,7 +288,7 @@ func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload,
 		"violations":         verdict.Violations,
 	}
 	if !verdict.FirstFailureAt.IsZero() {
-		metadata["first_failure_at"] = verdict.FirstFailureAt.UTC().Format(time.RFC3339Nano)
+		metadata[sdk.MetaFirstFailureAt] = verdict.FirstFailureAt.UTC().Format(time.RFC3339Nano)
 	}
 	if n := len(verdict.RecentFailures); n > 0 {
 		last := verdict.RecentFailures[n-1]

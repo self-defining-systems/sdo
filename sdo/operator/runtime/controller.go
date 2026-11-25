@@ -1075,7 +1075,7 @@ func (c *Controller) mergeIntoOpenIncident(finding sdk.Finding) bool {
 	finding.Fingerprint = FindingFingerprint(finding)
 	for index, existing := range c.currentIncidentRequest.Findings {
 		if FindingStateKey(existing.DetectorID, FindingFingerprint(existing)) == key {
-			c.currentIncidentRequest.Findings[index] = finding
+			c.currentIncidentRequest.Findings[index] = keepAlertBaseline(existing, finding)
 			if c.incidentDispatchedAt.IsZero() {
 				c.currentIncidentRequest.PreparedAgentTask = ""
 			}

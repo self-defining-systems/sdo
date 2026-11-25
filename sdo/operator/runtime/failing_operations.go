@@ -2,11 +2,14 @@ package runtime
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
+	"time"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/requestmetrics"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // requestOperation is an operation failing for users now, read from an active
@@ -22,6 +25,8 @@ type requestOperation struct {
 	Window     string
 	Class      string
 	Samples    []string
+	Healthy    string    // what the route did before the failure; empty when not measured
+	Since      time.Time // first observed failure
 	Opening    bool
 	Background bool
 }
@@ -71,15 +76,82 @@ func sampleLines(m map[string]any) []string {
 	return out
 }
 
+// keepAlertBaseline keeps what an alert's first report measured before the
+// failure. The live finding cannot measure it again: once the incident holds
+// it, it is judged without history, and history fills with the failure.
+func keepAlertBaseline(first, live sdk.Finding) sdk.Finding {
+	live.Metadata = maps.Clone(live.Metadata)
+	for _, key := range []string{requestmetrics.MetaHealthyShare, requestmetrics.MetaHealthyRequests, sdk.MetaFirstFailureAt} {
+		if value, ok := first.Metadata[key]; ok {
+			if live.Metadata == nil {
+				live.Metadata = map[string]any{}
+			}
+			live.Metadata[key] = value
+		}
+	}
+	return live
+}
+
+// alertBaseline is the finding with the baseline its incident recorded.
+func alertBaseline(request IncidentRequest, finding sdk.Finding) sdk.Finding {
+	for _, first := range request.Findings {
+		if findingKey(first) == findingKey(finding) {
+			return keepAlertBaseline(first, finding)
+		}
+	}
+	return finding
+}
+
+func firstFailure(m map[string]any) time.Time {
+	at, _ := time.Parse(time.RFC3339Nano, metaString(m, sdk.MetaFirstFailureAt))
+	return at
+}
+
+// addTestHistory adds to each failing test the failure time its alert recorded
+// and what its samples before it did.
+func addTestHistory(tests []failingTest, request IncidentRequest, history incidentSignalHistory) {
+	for i := range tests {
+		for _, finding := range request.Findings {
+			if at := firstFailure(finding.Metadata); isProbeFinding(finding) && strings.TrimPrefix(finding.RuleID, traffic.RuleIDPrefix) == tests[i].id && !at.IsZero() {
+				tests[i].onset = at
+			}
+		}
+		if tests[i].onset.IsZero() {
+			continue
+		}
+		for _, sample := range history.operations[tests[i].id] {
+			if sample.at.Before(tests[i].onset) {
+				tests[i].before++
+				if sample.failed {
+					tests[i].failedBefore++
+				}
+			}
+		}
+	}
+}
+
+// history is when the test began to fail and its record before, for one line.
+func (test failingTest) history() string {
+	out := ""
+	if !test.onset.IsZero() {
+		out = " since " + hms(test.onset)
+	}
+	if test.before > 0 {
+		out += fmt.Sprintf(", against a healthy %.1f%% (%d/%d before)", 100*float64(test.failedBefore)/float64(test.before), test.failedBefore, test.before)
+	}
+	return out
+}
+
 // requestOperations are the active request-metrics errors, the opening alerts'
 // first, then the worst share first.
-func requestOperations(findings []sdk.Finding, opening []string) []requestOperation {
+func requestOperations(findings []sdk.Finding, request IncidentRequest) []requestOperation {
+	opening := alertKeys(&request)
 	var out []requestOperation
 	for _, f := range findings {
 		if f.RuleID != requestmetrics.RuleErrors || f.Status != sdk.FindingActive {
 			continue
 		}
-		m := f.Metadata
+		m := alertBaseline(request, f).Metadata
 		label := metaString(m, "route")
 		if label == "" {
 			label = metaString(m, "operation")
@@ -89,7 +161,12 @@ func requestOperations(findings []sdk.Finding, opening []string) []requestOperat
 		if label == "" {
 			label = f.Summary
 		}
+		healthy := ""
+		if share, ok := m[requestmetrics.MetaHealthyShare].(float64); ok {
+			healthy = fmt.Sprintf(" against a healthy %.1f%% (of %.0f requests)", share*100, metaFloat(m, requestmetrics.MetaHealthyRequests))
+		}
 		out = append(out, requestOperation{
+			Healthy: healthy, Since: firstFailure(m),
 			ID: shortID(FindingFingerprint(f)), Label: label, Failed: metaFloat(m, "failed"), Total: metaFloat(m, "total"),
 			Share: metaFloat(m, "share"), Window: metaString(m, "window"), Class: metaString(m, "class"), Samples: sampleLines(m),
 			Opening: containsKey(opening, findingKey(f)), Background: m[requestmetrics.MetaBackground] == true,
@@ -144,12 +221,15 @@ func middle(text string, limit int) string {
 // lines renders the operation: counts first so a cut never hides how many
 // users fail, then the route, its samples and the drill-down.
 func (op requestOperation) lines() []string {
-	counts := fmt.Sprintf("requests %.0f/%.0f (%.0f%%) failing", op.Failed, op.Total, op.Share*100)
+	counts := fmt.Sprintf("requests %.0f/%.0f (%.0f%%) failing", op.Failed, op.Total, op.Share*100) + op.Healthy
 	if op.Window != "" {
 		counts += " in " + op.Window
 	}
 	if op.Class != "" {
 		counts += ", " + redactDetectText(op.Class, 24)
+	}
+	if !op.Since.IsZero() {
+		counts += ", since " + hms(op.Since)
 	}
 	out := []string{counts + ": " + middle(op.Label, 110)}
 	for i, sample := range op.Samples {

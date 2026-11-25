@@ -56,6 +56,8 @@ type detectInput struct {
 	Now      time.Time
 	// Recovered is the incident's verified marker.
 	Recovered bool
+	// Signals holds each user test's recent results; nil shows no history.
+	Signals *incidentSignals
 	// AppState supplies the app-state changes placed on the candidates; nil lists none.
 	AppState    AppStateChangeSource
 	LiveMatches []*contracts.PlaybookMatch
@@ -101,6 +103,8 @@ type failingTest struct {
 	last      []traffic.Sample
 	scenarios traffic.Descriptor
 	latestOK  bool // the newest sample passed
+	// before and failedBefore count the recorded samples before onset.
+	before, failedBefore int
 }
 
 // failureLabel is the user-facing result of one failed sample.
@@ -551,6 +555,9 @@ func architectureOf(view any) (doc string, ok bool, err error) {
 func buildSuspectSet(in detectInput) detectSuspectSet {
 	g, m, note := loadCandidateGraph(in.View)
 	judged := judgedTests(in.View, m, g)
+	history := in.Signals.history()
+	addTestHistory(judged.failing, in.Request, history)
+	addTestHistory(judged.alsoFailing, in.Request, history)
 	opening := alertKeys(&in.Request)
 	var openingFindings, clues []sdk.Finding
 	for _, finding := range in.Findings {
@@ -763,7 +770,7 @@ func candidateViewFor(in detectInput, set detectSuspectSet) (candidateView, map[
 // recent_changes slot): the candidate view as `sdo detect` renders it, then a
 // pointer to the live commands. Both call computeCandidates.
 func incidentCandidateBlock(in incidentPageInput) []string {
-	detect := detectInput{Request: in.Request, Findings: in.Findings, View: in.View, Now: in.Now, AppState: in.AppState}
+	detect := detectInput{Request: in.Request, Findings: in.Findings, View: in.View, Now: in.Now, AppState: in.AppState, Signals: in.Signals}
 	set := buildSuspectSet(detect)
 	if set.onset.IsZero() {
 		set.onset = in.Now
@@ -773,11 +780,17 @@ func incidentCandidateBlock(in incidentPageInput) []string {
 	// Failing operations lead: the opening alerts' routes first, with their own
 	// counts, then a blip that passes again as cleared.
 	var lead []string
-	for i, op := range requestOperations(in.Findings, alertKeys(&in.Request)) {
+	for i, op := range requestOperations(in.Findings, in.Request) {
 		if i == detectShownTests {
 			break
 		}
 		lead = append(lead, op.lines()...)
+	}
+	for i, test := range set.failing {
+		if i == detectShownTests {
+			break
+		}
+		lead = append(lead, fmt.Sprintf("%s: %d/%d failing%s", redactDetectText(test.id, 40), test.failures, test.samples, test.history()))
 	}
 	for _, test := range set.judged.alsoFailing {
 		if test.latestOK {
@@ -836,7 +849,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 	case slicesContainsFunc(openingFindings, func(f sdk.Finding) bool { return f.RuleID == requestmetrics.RuleErrors }):
 		opened = "request errors"
 	}
-	operations := requestOperations(in.Findings, alertKeys(&in.Request))
+	operations := requestOperations(in.Findings, in.Request)
 	coverage := requestCoverageLine(operations)
 	probeStatus := "SDO's own test accounts: "
 	if len(passing) > 0 {
@@ -881,17 +894,14 @@ func buildDetectSummary(in detectInput) detectSummary {
 	header = append(header, diagnosisLines(in.Request.PriorStages)...)
 
 	testBlock := func(test failingTest, role string) ([]string, string) {
-		since := ""
-		if !test.onset.IsZero() {
-			since = " since " + hms(test.onset)
-		}
+		since := test.history()
 		lines := []string{
 			fmt.Sprintf("%s%s  %s %q  step %s", test.id, role, test.label, redactDetectText(test.err, 60), orQuestion(redactDetectText(test.step, 30))),
 			fmt.Sprintf("  %s  %d/%d failing%s", orQuestion(redactDetectText(strings.Join(test.path, ">"), 100)), test.failures, test.samples, since),
 			"  more: sdo detect " + test.id,
 		}
 		var detail strings.Builder
-		fmt.Fprintf(&detail, "%s: %s\npath: %s\nsince %s, %d/%d failing\nlast failing samples:\n", test.id, test.scenarios.Description, strings.Join(test.path, ">"), hms(test.onset), test.failures, test.samples)
+		fmt.Fprintf(&detail, "%s: %s\npath: %s\n%d/%d failing%s\nlast failing samples:\n", test.id, test.scenarios.Description, strings.Join(test.path, ">"), test.failures, test.samples, since)
 		for _, sample := range test.last {
 			fmt.Fprintf(&detail, "  %s step %s %s: %s %s\n", hms(sample.At), orQuestion(sample.Step), sample.Request, failureLabel(sample), redactDetectText(sample.Error, 200))
 		}

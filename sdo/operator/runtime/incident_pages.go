@@ -303,7 +303,7 @@ func (in incidentPageInput) lead() time.Duration {
 // incidentSet is the suspect set `sdo detect` shows and the onset every page
 // is measured from.
 func incidentSet(in incidentPageInput) (detectSuspectSet, time.Time) {
-	set := buildSuspectSet(detectInput{Request: in.Request, Findings: in.Findings, View: in.View, Now: in.Now})
+	set := buildSuspectSet(detectInput{Request: in.Request, Findings: in.Findings, View: in.View, Now: in.Now, Signals: in.Signals})
 	if set.onset.IsZero() {
 		return set, in.Now
 	}

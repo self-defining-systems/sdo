@@ -133,6 +133,13 @@ type Entry struct {
 // background work enters.
 const MetaBackground = "background"
 
+// MetaHealthyShare is the finding metadata key of the operation's failed share
+// before the failure; absent when it was not measured.
+const MetaHealthyShare = "healthy_share"
+
+// MetaHealthyRequests is how many requests the healthy share was measured on.
+const MetaHealthyRequests = "healthy_requests"
+
 // Operation is one user operation the detector watches.
 type Operation struct {
 	ID      string
@@ -534,20 +541,17 @@ func (p entryPlan) perStep(op Operation, series []metrics.Series) map[time.Time]
 // healthy is the operation's healthy server and client-error shares.
 // enough is false when the baseline holds fewer than minRequests requests: the
 // shares are then zero and a client-error jump cannot be judged.
-func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests float64) (server, client float64, enough bool, thinClient float64) {
+func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests float64) (server, client float64, enough bool, observed counts) {
 	var sum counts
 	for _, s := range series {
 		if v, ok := s.Last(); ok && p.matches(op, s.Labels) {
 			sum = sum.add(p.classify(s.Labels, v.Value))
 		}
 	}
-	if sum.total == 0 {
-		return 0, 0, false, 0
+	if sum.total == 0 || sum.total < minRequests {
+		return 0, 0, false, sum
 	}
-	if sum.total < minRequests {
-		return 0, 0, false, sum.client / sum.total
-	}
-	return sum.server / sum.total, sum.client / sum.total, true, 0
+	return sum.server / sum.total, sum.client / sum.total, true, sum
 }
 
 type verdict struct {
@@ -639,7 +643,14 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		return sdk.Finding{}, false
 	}
 	quiet := quietNewest(steps, times, recent.ObservedAt, r.Window)
-	healthyServer, healthyClient, enough, thinClient := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
+	healthyServer, healthyClient, enough, observed := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
+	// What the route did before is reported with how many requests say so. A
+	// held finding has no history left: the baseline fills with the failure.
+	measured := observed.total > 0 && !held
+	thinClient := 0.0
+	if !enough && observed.total > 0 {
+		thinClient = observed.client / observed.total
+	}
 	if held {
 		healthyServer, healthyClient, enough = 0, 0, true
 	}
@@ -749,6 +760,20 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		rule, severity = RuleInsufficientBaseline, sdk.SeverityInfo
 		note = fmt.Sprintf(" The baseline holds fewer than %.0f healthy requests, so the rise is not called a jump: this is a clue, and it holds an incident it already belongs to until recovery is confirmed.", r.MinBaselineRequests) + note
 	}
+	// The failure episode began at the first of the unbroken steps with failures.
+	first := onset
+	for i := raisedAt; i >= 0 && r.judgeStep(steps[times[i]], best.class, healthyServer, healthyClient).failed >= 1; i-- {
+		first = times[i]
+	}
+	against, healthyShare := "", 0.0
+	if measured {
+		healthyFailed := observed.server
+		if best.class == ClassClientJump {
+			healthyFailed = observed.client
+		}
+		healthyShare = healthyFailed / observed.total
+		against = fmt.Sprintf(" against a healthy %.1f%% of %.0f", healthyShare*100, observed.total)
+	}
 	summary := fmt.Sprintf("operation %s: %.0f of %.0f requests failed in %s (%s)", op.ID, best.failed, best.total, window, best.class)
 	if unjudged {
 		summary = fmt.Sprintf("operation %s: insufficient baseline to judge a client-error jump (%.0f of %.0f requests failed in %s)", op.ID, best.failed, best.total, window)
@@ -756,17 +781,22 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	f := sdk.Finding{
 		DetectorID: d.cfg.Spec.ID, RuleID: rule, Status: sdk.FindingActive, Severity: severity,
 		Summary: summary,
-		Evidence: fmt.Sprintf("operation %s (route %q, method %s) had %.0f failed of %.0f requests over %s, %.1f%% against a healthy %.1f%% (%s), on %d consecutive %s steps; newest step at %s.",
-			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, onset.UTC().Format(time.RFC3339)) + note + samples.text(),
+		Evidence: fmt.Sprintf("operation %s (route %q, method %s) had %.0f failed of %.0f requests over %s, %.1f%%%s (%s), on %d consecutive %s steps; newest step at %s.",
+			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, against, best.class, r.Consecutive, r.Step, onset.UTC().Format(time.RFC3339)) + note + samples.text(),
 		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
 		Playbooks:       append([]string(nil), d.cfg.Spec.Playbooks...),
 		Fingerprint:     fingerprint,
 		Metadata: map[string]any{
 			"operation": op.ID, "route": op.Route, "method": op.Method, "service": op.Service, "class": best.class,
-			"failed": best.failed, "total": best.total, "share": best.share, "healthy_share": best.healthy,
+			"failed": best.failed, "total": best.total, "share": best.share,
 			"window": window, "step": r.Step.String(), "consecutive": r.Consecutive,
-			"observed_at": recent.ObservedAt.UTC().Format(time.RFC3339),
+			"observed_at":          recent.ObservedAt.UTC().Format(time.RFC3339),
+			sdk.MetaFirstFailureAt: first.UTC().Format(time.RFC3339Nano),
 		},
+	}
+	if measured {
+		f.Metadata[MetaHealthyShare] = healthyShare
+		f.Metadata[MetaHealthyRequests] = observed.total
 	}
 	for k, v := range meta {
 		f.Metadata[k] = v
