@@ -163,6 +163,8 @@ const (
 	// written for. Blocking only when Diagnose returns NoMatch there (a definite
 	// failure); a match or a capture that cannot say is an observation.
 	RuleOwnIncidentReplay = "playbook.own-incident-replay"
+	// RuleMatchesRecovered reports a Match on the verified recovered capture.
+	RuleMatchesRecovered = "playbook.matches-recovered"
 
 	// Compile.
 	RuleProgramPlanInvalid      = "program.plan-invalid"

@@ -50,6 +50,32 @@ func ownIncidentNote(result sdktest.OwnIncidentResult) Diagnostic {
 	return Diagnostic{Rule: RuleOwnIncidentReplay, Path: layout.PlaybookDir(result.ProgramID), Message: message}
 }
 
+func recoveredMatchNote(result sdktest.OwnIncidentResult) (Diagnostic, bool) {
+	if result.Recovered == nil {
+		return Diagnostic{}, false
+	}
+	const prefix = "also Matches after recovery: "
+	const suffix = ". Narrow Diagnose to the fault's own object; a standing condition may truly match: then say so in the README"
+	var objects []string
+	size := len(prefix) + len(suffix)
+	for _, ref := range result.Recovered.Objects {
+		name := ref.Kind + "/" + ref.Namespace + "/" + ref.Name
+		if ref.Name == "" || len(name) > 120 || strings.ContainsAny(name, " \t\r\n") {
+			continue
+		}
+		if len(objects) == 12 || size+len(name)+2 >= 1500 {
+			break
+		}
+		objects = append(objects, name)
+		size += len(name) + 2
+	}
+	if len(objects) == 0 {
+		return Diagnostic{}, false
+	}
+	return Diagnostic{Rule: RuleMatchesRecovered, Path: layout.PlaybookDir(result.ProgramID),
+		Message: prefix + strings.Join(objects, ", ") + suffix}, true
+}
+
 // compile builds the detectors against the SDK in an isolated workspace, then
 // vets and tests them. It executes detector code: the broker invokes it in
 // its bounded subprocess; agent self-checks invoke the same runner locally.
@@ -108,6 +134,9 @@ func (s *run) compile(ctx context.Context) error {
 		}
 		for _, verdict := range verdicts {
 			s.req.noteGaps(ownIncidentNote(verdict))
+			if note, ok := recoveredMatchNote(verdict); ok {
+				s.req.noteGaps(note)
+			}
 		}
 		bounds, boundErr := workspace.TrafficLatencyGaps()
 		if boundErr != nil {

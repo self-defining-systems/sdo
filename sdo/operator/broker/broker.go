@@ -899,6 +899,10 @@ func (b *Broker) commitStageBody(ctx context.Context, stage, incidentID string, 
 		}
 		message += "\n" + trailer
 	}
+	// Recovered matches are check output only. Receipts also feed the ledger.
+	gaps = slices.DeleteFunc(slices.Clone(gaps), func(gap validate.Diagnostic) bool {
+		return gap.Rule == validate.RuleMatchesRecovered
+	})
 	for _, gap := range gaps {
 		message += "\nSDO-Coverage-Gap: " + strings.Join(strings.Fields(gap.Rule+": "+gap.Message), " ")
 	}

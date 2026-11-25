@@ -138,6 +138,15 @@ func (v *RecordingReadView) ValidatingWebhookConfigurations() ([]admissionv1.Val
 
 func (v *RecordingReadView) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
 
+type RecoveredMatch struct {
+	Objects []sdk.ObjectRef `json:"objects,omitempty"`
+}
+    RecoveredMatch records a positive diagnosis on the verified fixed snapshot.
+
+func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) (*RecoveredMatch, program.Result)
+    DiagnoseOnRecovered replays fixed-boundary observations. Unknown means not
+    evaluated.
+
 type ReplayReadView struct {
 	Snapshot
 	Calls []PrimitiveCall
@@ -155,6 +164,8 @@ func (v *ReplayReadView) AlertsResult() (metrics.AlertsResult, bool)
 func (v *ReplayReadView) AppMap() (program.AppMap, error)
     AppMap replays the snapshot's ApplicationMap, else the recorded read.
 
+func (v *ReplayReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
+
 func (v *ReplayReadView) ConfigMaps() []corev1.ConfigMap
 
 func (v *ReplayReadView) CronJobs() []batchv1.CronJob
@@ -166,6 +177,8 @@ func (v *ReplayReadView) DataChecks() (map[string]string, error)
     read.
 
 func (v *ReplayReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
+
+func (v *ReplayReadView) Deployments() []appsv1.Deployment
 
 func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
 
@@ -218,6 +231,10 @@ func (v *ReplayReadView) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 
 func (v *ReplayReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error)
 
+func (v *ReplayReadView) Pods() []corev1.Pod
+
+func (v *ReplayReadView) PodsForService(namespace, name string) []corev1.Pod
+
 func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (program.ProbeResult, error)
 
 func (v *ReplayReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
@@ -231,16 +248,4 @@ func (v *ReplayReadView) Read(q program.Query) (program.Observation, error)
 func (v *ReplayReadView) ReadyEndpointCountForService(namespace string, service string) int
     ReadyEndpointCountForService notes the Endpoints and EndpointSlice reads it
     makes.
-
-func (v *ReplayReadView) RecentEventsFor(namespace string, kind string, name string) []corev1.Event
-    RecentEventsFor notes the Event read it makes.
-
-func (v *ReplayReadView) Recorded(method string, arguments any, result any) error
-    Recorded answers a state read from the first matching recorded reply without
-    consuming it: a live read view freezes such reads per snapshot, so repeated
-    identical reads see the same answer. Missing replies are *UnrecordedError.
-
-func (v *ReplayReadView) ReplayProgramReadView(source program.ReadView) program.ReadView
-    ReplayProgramReadView overlays bounded host replies ahead of any snapshot
-    fallback, including for SDK methods that cannot return an error.
 ```

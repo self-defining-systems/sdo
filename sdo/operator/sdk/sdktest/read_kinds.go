@@ -39,7 +39,9 @@ func (v *ReplayReadView) KindsRead() map[string]bool {
 // Object notes the kind it reads, then answers from the snapshot.
 func (v *ReplayReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	v.noteRead(ref.Kind)
-	return v.Snapshot.Object(ref)
+	object, err := v.Snapshot.Object(ref)
+	v.noteReadFailure(err)
+	return object, err
 }
 
 // RecentEventsFor notes the Event read it makes.
@@ -133,4 +135,68 @@ func (v *ReplayReadView) Secrets() []sdk.SecretMetadata {
 func (v *ReplayReadView) Nodes() []corev1.Node {
 	v.noteRead("Node")
 	return v.Snapshot.Nodes()
+}
+
+func (v *ReplayReadView) noteReadFailure(err error) {
+	if v.checkRecoveredReads && err != nil {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		v.readFailed = true
+	}
+}
+
+func (v *ReplayReadView) hadReadFailure() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.readFailed
+}
+
+// Additional coverage tracking is advisory and cannot alter the open replay verdict.
+func (v *ReplayReadView) noteRecoveredRead(kind string) {
+	if v.checkRecoveredReads {
+		v.noteRead(kind)
+	}
+}
+
+func (v *ReplayReadView) Pods() []corev1.Pod {
+	v.noteRecoveredRead("Pod")
+	return v.Snapshot.Pods()
+}
+
+func (v *ReplayReadView) PodsForService(namespace, name string) []corev1.Pod {
+	v.noteRecoveredRead("Pod")
+	v.noteRecoveredRead("Service")
+	return v.Snapshot.PodsForService(namespace, name)
+}
+
+func (v *ReplayReadView) Services() []corev1.Service {
+	v.noteRecoveredRead("Service")
+	return v.Snapshot.Services()
+}
+
+func (v *ReplayReadView) Deployments() []appsv1.Deployment {
+	v.noteRecoveredRead("Deployment")
+	return v.Snapshot.Deployments()
+}
+
+func (v *ReplayReadView) StatefulSets() []appsv1.StatefulSet {
+	v.noteRecoveredRead("StatefulSet")
+	return v.Snapshot.StatefulSets()
+}
+
+func (v *ReplayReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if !v.checkRecoveredReads {
+		return v.Snapshot.CaptureObjects(refs)
+	}
+	// Snapshot.CaptureObjects returns the whole inventory.
+	for kind := range v.TrimmedObjects {
+		v.noteRecoveredRead(kind)
+	}
+	v.noteRecoveredRead("ConfigMap")
+	objects, err := v.Snapshot.CaptureObjects(refs)
+	v.noteReadFailure(err)
+	for i := range objects {
+		objects[i] = *objects[i].DeepCopy()
+	}
+	return objects, err
 }

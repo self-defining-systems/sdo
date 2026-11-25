@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
@@ -35,7 +36,6 @@ from tests.structured_turns import ScriptedAgent, failure, reply
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from agentshim import CommandRequest
     from agentshim.testing import FakeRun
@@ -216,7 +216,13 @@ def test_a_provider_that_cannot_resume_is_a_typed_failure_not_a_new_session(
 
 def test_a_failing_check_gets_exactly_one_correction_turn(tmp_path: Path, prepare_reflection_memory) -> None:
     prepare_reflection_memory(tmp_path, INCIDENT)
-    failing = ValidationResult(1, False, '{"diagnostics": [{"rule": "x.rule", "path": "p", "message": "m"}]}', "")
+    failing = ValidationResult(
+        1,
+        False,
+        '{"diagnostics": [{"rule": "x.rule", "path": "p", "message": "m"}],'
+        ' "coverage_gaps": [{"rule": "playbook.matches-recovered", "message": "Pod/app/healthy"}]}',
+        "",
+    )
     agent = ScriptedAgent(_note())
     result = run_reflection_task(
         _task(tmp_path, _learning_request(tmp_path)),
@@ -226,7 +232,15 @@ def test_a_failing_check_gets_exactly_one_correction_turn(tmp_path: Path, prepar
     )
     assert len(agent.requests) == 2, "one turn plus one correction, then the failure is reported"
     assert result.status == "failed"
-    assert "x.rule" in expand_context(agent.prompts[1])
+    correction = expand_context(agent.prompts[1])
+    assert "x.rule" in correction
+    assert "Pod/app/healthy" not in correction
+    assert "x.rule" in result.error_summary
+    assert "Pod/app/healthy" not in result.error_summary
+    details_path = next(
+        line.removeprefix("Full check: ") for line in correction.splitlines() if line.startswith("Full check: ")
+    )
+    assert "Pod/app/healthy" not in Path(details_path).read_text()
 
 
 def test_the_learning_message_is_about_600_bytes_plus_the_change_list() -> None:

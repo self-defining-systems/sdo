@@ -472,7 +472,7 @@ func OwnIncidentTests(ids []string) string {
 	}
 	var test strings.Builder
 	test.WriteString(`package generated
-import("encoding/json";"os";"testing";"sdo.dev/operator/sdk/sdktest")
+import("context";"encoding/json";"os";"testing";"time";"sdo.dev/operator/sdk/sdktest")
 func TestNewProgramsDiagnoseTheirOwnIncident(t *testing.T){
  registry,err:=Programs();if err!=nil{t.Fatal(err)}
  results:=[]sdktest.OwnIncidentResult{}
@@ -488,7 +488,18 @@ func TestNewProgramsDiagnoseTheirOwnIncident(t *testing.T){
 	for _, id := range ids {
 		fmt.Fprintf(&test, " check(%q)\n", id)
 	}
-	test.WriteString("}\n")
+	test.WriteString(`
+ if t.Failed(){return}
+ until:=time.Now().Add(2*time.Second)
+ if deadline,ok:=t.Deadline();ok && deadline.Add(-time.Second).Before(until){until=deadline.Add(-time.Second)}
+ ctx,cancel:=context.WithDeadline(context.Background(),until);defer cancel()
+ for i:=range results{
+  if ctx.Err()!=nil{break}
+  d,_:=registry.Diagnoser(results[i].ProgramID)
+  results[i].Recovered,_=sdktest.DiagnoseOnRecovered(ctx,d,"testdata/own-incident")
+ }
+}
+`)
 	return test.String()
 }
 

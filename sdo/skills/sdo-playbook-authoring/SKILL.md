@@ -29,9 +29,9 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    ordering: when to use it, what first, what to check after. SDO adds `fault_class` and the index entry.
 <!-- replay:on -->
 5. **Label one corpus case** per new program (rules below): `create_corpus` copies the controller's captures
-   (pass `observations` only when none exist, with `repair_receipt_ids`) and writes it in one call. Each program should Match its fault
-   capture and NoMatch healthy: decide from what the capture holds (snapshot objects, `pod_admission`, reads
-   `recordings_index` lists); a read the capture lacks replays as Unknown, so keep uncaptured live-only reads
+   (pass `observations` only when none exist, with `repair_receipt_ids`) and writes it in one call.
+   A playbook must Match its fault and NoMatch on the healthy system. Use captured objects,
+   `pod_admission`, and reads in `recordings_index`; a read the capture lacks replays as Unknown, so keep uncaptured live-only reads
    in Mitigate, as `webhook-ca-sync` does.
 <!-- /replay:on -->
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed

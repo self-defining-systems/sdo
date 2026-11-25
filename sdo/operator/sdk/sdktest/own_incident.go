@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -38,6 +39,12 @@ type OwnIncidentResult struct {
 	Outcome   OwnIncidentOutcome `json:"outcome"`
 	Capture   string             `json:"capture,omitempty"`
 	Reason    string             `json:"reason,omitempty"`
+	Recovered *RecoveredMatch    `json:"recovered_match,omitempty"`
+}
+
+// RecoveredMatch records a positive diagnosis on the verified fixed snapshot.
+type RecoveredMatch struct {
+	Objects []sdk.ObjectRef `json:"objects,omitempty"`
 }
 
 // DiagnoseOnIncident runs d's Diagnose on the incident's captured open state:
@@ -124,6 +131,67 @@ func DiagnoseOnIncident(d program.Diagnoser, dir string) (OwnIncidentResult, err
 		return *unverified, nil
 	}
 	return result, nil
+}
+
+// DiagnoseOnRecovered replays fixed-boundary observations. Unknown means not evaluated.
+func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) (*RecoveredMatch, program.Result) {
+	for _, param := range d.Spec().Params {
+		if param.Kind != "" {
+			return nil, program.Unknown // The capture does not carry role bindings.
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "fixed.json"))
+	if err != nil {
+		return nil, program.Unknown
+	}
+	snapshot, err := decodeSnapshotStrict(raw)
+	if err != nil {
+		return nil, program.Unknown
+	}
+	var calls []PrimitiveCall
+	for _, phase := range []string{"detect", "settle", "pre-apply"} {
+		raw, err := os.ReadFile(filepath.Join(dir, "open@"+phase+"-recordings.json"))
+		var capture CorpusCase
+		if err == nil && json.Unmarshal(raw, &capture.Recordings) == nil {
+			calls = append(calls, capture.PhaseRecordings("fixed")...)
+		}
+	}
+	view := &ReplayReadView{Snapshot: snapshot, Calls: calls, checkRecoveredReads: true}
+	verdict := program.RunDiagnose(ctx, d, view, program.Bindings{}, 500*time.Millisecond)
+	if ctx.Err() != nil || view.hadReadFailure() || captureLimits(snapshot, view.KindsRead()) != "" {
+		return nil, program.Unknown
+	}
+	if verdict.Result != program.Match {
+		return nil, verdict.Result
+	}
+	inventory := map[string]sdk.ObjectRef{}
+	for _, object := range append(sdk.TypedObjects(snapshot), snapshot.Objects...) {
+		ref := sdk.ObjectIdentity(object)
+		inventory[recoveredObjectName(ref)] = ref
+	}
+	note := &RecoveredMatch{}
+	for _, evidence := range verdict.Evidence {
+		ref := evidence.Resource
+		name := recoveredObjectName(ref)
+		captured, present := inventory[name]
+		if !present || ref.APIVersion != "" && ref.APIVersion != captured.APIVersion ||
+			len(name) > 120 || strings.ContainsAny(name, " \t\r\n") {
+			continue
+		}
+		delete(inventory, name)
+		note.Objects = append(note.Objects, captured)
+		if len(note.Objects) == 12 {
+			break
+		}
+	}
+	if len(note.Objects) == 0 {
+		return nil, program.Unknown
+	}
+	return note, program.Match
+}
+
+func recoveredObjectName(ref sdk.ObjectRef) string {
+	return ref.Kind + "/" + ref.Namespace + "/" + ref.Name
 }
 
 // evidenceSummary is a verdict's evidence as one short line: the facts Diagnose

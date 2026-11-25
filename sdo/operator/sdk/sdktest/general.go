@@ -50,6 +50,7 @@ func (v *RecordingReadView) KubernetesRead(q program.KubernetesRequest) (json.Ra
 }
 func (v *ReplayReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error) {
 	if err := program.ValidateKubernetesRead(q); err != nil {
+		v.noteReadFailure(err)
 		return nil, err
 	}
 	var r json.RawMessage
