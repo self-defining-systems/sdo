@@ -208,18 +208,22 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	cold := func(reason string) (KubernetesExecutor, error) {
+		slog.Info("responder_standby_not_claimed", "task_id", task.GetTaskId(), "reason", reason)
+		return e, nil
+	}
 	session, ok := warmSessionPath(e, task)
 	if p.current == nil || e.SessionPVCSubPath == "" || !ok {
-		return e, nil
+		return cold("no_standby")
 	}
 	releaseStorage, available := memory.TrySessionStorageBinding()
 	if !available {
-		return e, nil
+		return cold("session_storage_in_use")
 	}
 	defer releaseStorage()
 	slot := p.current
 	if !standbyReady(slot.Directory) {
-		return e, nil
+		return cold("not_ready")
 	}
 	request := new(contracts.IncidentRequest)
 	if err := task.GetRequest().UnmarshalTo(request); err != nil {
@@ -227,7 +231,7 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	}
 	job, jobErr := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, slot.JobName, metav1.GetOptions{})
 	if jobErr != nil || jobFailed(job) || jobCompleted(job) {
-		return e, nil
+		return cold("job_gone")
 	}
 	// A prepared cold request/result/Job owns this immutable task already.
 	// Rejoin it instead of moving a live worker's checkout/session to standby.
@@ -236,19 +240,19 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	priorName, lookupErr := e.taskJobName(lookupCtx, task)
 	if lookupErr != nil {
 		cancelLookup()
-		return e, nil
+		return cold("prior_execution_or_lookup_timeout")
 	}
 	for _, suffix := range []string{"-request", "-result"} {
 		_, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(lookupCtx, priorName+suffix, metav1.GetOptions{})
 		if err == nil || !apierrors.IsNotFound(err) {
 			cancelLookup()
-			return e, nil
+			return cold("prior_execution_or_lookup_timeout")
 		}
 	}
 	_, priorErr := e.Client.BatchV1().Jobs(e.Namespace).Get(lookupCtx, priorName, metav1.GetOptions{})
 	cancelLookup()
 	if priorErr == nil || !apierrors.IsNotFound(priorErr) {
-		return e, nil
+		return cold("prior_execution_or_lookup_timeout")
 	}
 	claim, err := os.OpenFile(filepath.Join(slot.Directory, "control", standbyClaimFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
