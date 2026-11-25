@@ -112,8 +112,9 @@ type ReplayReadView struct {
 	Calls []PrimitiveCall
 	used  map[int]bool
 	// kindsRead holds the object kinds read from the snapshot; see read_kinds.go.
-	kindsRead map[string]bool
-	mu        sync.Mutex
+	kindsRead  map[string]bool
+	readFailed bool
+	mu         sync.Mutex
 }
 
 // UnrecordedError names a read a replay was asked for that no recording holds.
@@ -140,7 +141,8 @@ func (v *ReplayReadView) Recorded(method string, arguments any, result any) erro
 	return v.lookup(method, arguments, result, false)
 }
 
-func (v *ReplayReadView) lookup(method string, arguments any, result any, consume bool) error {
+func (v *ReplayReadView) lookup(method string, arguments any, result any, consume bool) (err error) {
+	defer func() { v.noteReadFailure(err) }()
 	args, err := json.Marshal(arguments)
 	if err != nil {
 		return err
@@ -189,11 +191,13 @@ func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (pr
 	return result, err
 }
 func (v *ReplayReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
+	_, _ = v.Object(ref) // A comparison cannot establish presence on its own.
 	var result program.Diff
 	err := v.Recorded("DiffAgainstSource", []any{ref}, &result)
 	return result, err
 }
 func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error) {
+	_, _ = v.Object(ref) // A comparison cannot establish presence on its own.
 	var result program.Diff
 	err := v.Recorded("DiffAgainstBaseline", []any{ref}, &result)
 	return result, err
@@ -692,14 +696,17 @@ func (v *RecordingReadView) ObservationGeneration() string {
 }
 
 func (v *ReplayReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	v.noteRead("Deployment")
 	return v.Snapshot.ScopedSnapshot.ScopedDeployments(namespace)
 }
 
 func (v *ReplayReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	v.noteRead("Service")
 	return v.Snapshot.ScopedSnapshot.ScopedServices(namespace)
 }
 
 func (v *ReplayReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	v.noteRead("Endpoints")
 	return v.Snapshot.ScopedSnapshot.ScopedEndpoints(namespace)
 }
 

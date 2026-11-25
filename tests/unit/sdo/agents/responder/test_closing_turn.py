@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
@@ -35,7 +36,6 @@ from tests.structured_turns import ScriptedAgent, failure, reply
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from agentshim import CommandRequest
     from agentshim.testing import FakeRun
@@ -117,7 +117,7 @@ def test_the_learning_turn_resumes_the_responder_session_and_carries_the_changes
     assert "playbook-writing/SKILL.md" in prompt
     assert "Turn your fix into a playbook so SDO can apply it next time without you." in prompt
     assert "A program for just the mechanical part beats none; leave judgement to the README." in prompt
-    assert "Run memory check and review matches-recovered." in prompt
+    assert "Check learned diagnoses and mitigations against recorded evidence before use." in prompt
     assert "Use supported cause classes and plan forms." in prompt
     decision = ReflectionResult()
     assert result.response.Unpack(decision)
@@ -220,8 +220,7 @@ def test_a_failing_check_gets_exactly_one_correction_turn(tmp_path: Path, prepar
         1,
         False,
         '{"diagnostics": [{"rule": "x.rule", "path": "p", "message": "m"}],'
-        ' "coverage_gaps": [{"rule": "playbook.matches-recovered", "path": ".sdo/playbooks/example",'
-        ' "message": "Diagnose matches the recovered capture: Pod/app/healthy"}]}',
+        ' "coverage_gaps": [{"rule": "playbook.matches-recovered", "message": "Pod/app/healthy"}]}',
         "",
     )
     agent = ScriptedAgent(_note())
@@ -235,7 +234,11 @@ def test_a_failing_check_gets_exactly_one_correction_turn(tmp_path: Path, prepar
     assert result.status == "failed"
     correction = expand_context(agent.prompts[1])
     assert "x.rule" in correction
-    assert "Pod/app/healthy" in correction
+    assert "Pod/app/healthy" not in correction
+    details_path = next(
+        line.removeprefix("Full check: ") for line in correction.splitlines() if line.startswith("Full check: ")
+    )
+    assert "Pod/app/healthy" not in Path(details_path).read_text()
 
 
 def test_the_learning_message_is_about_600_bytes_plus_the_change_list() -> None:

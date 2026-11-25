@@ -159,3 +159,58 @@ func TestDiagnoseOnIncidentDowngradesNoMatchOnlyWhenItReadWhatTheCaptureWithhold
 		})
 	}
 }
+
+func TestRecoveredDiagnoseRequiresCompleteReads(t *testing.T) {
+	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "healthy"}
+	config := corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app",
+		Annotations: map[string]string{"sdo.dev/configmap-values-redacted": "true"}}}
+	for _, tc := range []struct {
+		name  string
+		setup func(*Snapshot)
+		read  func(program.ReadView)
+		want  bool
+	}{
+		{"healthy drift", func(*Snapshot) {}, func(v program.ReadView) { v.Pods() }, true},
+		{"redacted ConfigMap", func(s *Snapshot) { s.ConfigMapList = []corev1.ConfigMap{config} }, func(v program.ReadView) {
+			_, _ = v.Object(sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"})
+		}, false},
+		{"trimmed Pods", func(s *Snapshot) { s.TrimmedObjects = map[string]int{"Pod": 1} }, func(v program.ReadView) { v.Pods() }, false},
+		{"swallowed diff error", func(*Snapshot) {}, func(v program.ReadView) { _, _ = v.DiffAgainstSource(pod) }, false},
+		{"correct NoMatch", func(s *Snapshot) { s.PodList = nil }, func(v program.ReadView) { v.Pods() }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}}}
+			tc.setup(&snapshot)
+			dir := t.TempDir()
+			raw, err := json.Marshal(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "fixed.json"), raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			d := ownDiagnoser{spec: program.ProgramSpec{ID: "synthetic"}, diagnose: func(v program.ReadView) (program.Verdict, error) {
+				tc.read(v)
+				if len(v.Pods()) == 0 {
+					return program.Verdict{Result: program.NoMatch}, nil
+				}
+				absent := pod
+				absent.Name = "absent"
+				return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: pod}, {Resource: absent}}}, nil
+			}}
+			got, result := DiagnoseOnRecovered(context.Background(), d, dir)
+			wantResult := program.Unknown
+			if tc.want {
+				wantResult = program.Match
+			} else if tc.name == "correct NoMatch" {
+				wantResult = program.NoMatch
+			}
+			if result != wantResult {
+				t.Fatalf("result = %s, want %s", result, wantResult)
+			}
+			if !tc.want && got != nil || tc.want && (got == nil || len(got.Objects) != 1 || got.Objects[0] != pod) {
+				t.Fatalf("got %+v, want only captured Pod when match is evaluable: %v", got, tc.want)
+			}
+		})
+	}
+}

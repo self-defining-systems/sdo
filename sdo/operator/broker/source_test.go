@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"sdo.dev/operator/memory/validate"
 )
 
 const placeholderSecret = `apiVersion: v1
@@ -86,5 +88,29 @@ func TestCleanupMessageNamesPathsAndTheChoice(t *testing.T) {
 		if !strings.Contains(message, want) {
 			t.Fatalf("message lacks %q: %s", want, message)
 		}
+	}
+}
+
+func TestRecoveredMatchStaysOutOfCommitAndReceipt(t *testing.T) {
+	ctx := t.Context()
+	stage := t.TempDir()
+	if _, err := runGit(ctx, stage, "init", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	gaps := []validate.Diagnostic{
+		{Rule: validate.RuleMatchesRecovered, Message: "Pod/app/healthy"},
+		{Rule: validate.RuleOwnIncidentReplay, Message: "open match"},
+	}
+	receipt, err := (&Broker{}).commitStage(ctx, stage, "test", Responder, ReflectionPhase, nil, nil, gaps...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := gitText(ctx, stage, "log", "-1", "--format=%B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(message, "Pod/app/healthy") || !strings.Contains(message, "open match") ||
+		len(receipt.CoverageGaps) != 1 || receipt.CoverageGaps[0] != gaps[1] {
+		t.Fatalf("commit message %q, receipt gaps %v", message, receipt.CoverageGaps)
 	}
 }

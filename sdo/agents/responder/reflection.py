@@ -255,18 +255,17 @@ def memory_check_correction(check: ValidationResult, idempotency_key: str) -> Re
     feedback = details
     try:
         report = json.loads(check.stdout)
+        gaps = report.get("coverage_gaps", [])
+        retained_gaps = [item for item in gaps if item.get("rule") != "playbook.matches-recovered"]
+        if len(retained_gaps) != len(gaps):
+            report["coverage_gaps"] = retained_gaps
+            details = json.dumps(report) + "\n" + check.stderr
+            feedback = details
         diagnostics = report.get("diagnostics", [])
         if diagnostics:
             feedback = "\n".join(
                 f"[{item.get('rule', '')}] {item.get('path', '')}: {item.get('message', '')}" for item in diagnostics
             )
-            recovered = [
-                f"{item.get('path', '')}: {item.get('message', '')}"
-                for item in report.get("coverage_gaps", [])
-                if item.get("rule") == "playbook.matches-recovered"
-            ]
-            if recovered:
-                feedback += "\nRecovered diagnosis notes:\n" + "\n".join(recovered)
             _, path = save_context(details)
             feedback += "\nFull check: " + path
     except (ValueError, AttributeError, TypeError):

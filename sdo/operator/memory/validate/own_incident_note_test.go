@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -23,5 +24,19 @@ func TestOwnIncidentNotesNameTheOutcomeAndThePlaybook(t *testing.T) {
 	blind := ownIncidentNote(sdktest.OwnIncidentResult{ProgramID: "fresh", Outcome: sdktest.OwnIncidentUnverified, Reason: "no captured open state"})
 	if blind.Message != "unverified: no captured open state" {
 		t.Fatalf("unverified note = %+v", blind)
+	}
+}
+
+func TestRecoveredMatchNoteBoundsObjectsAndText(t *testing.T) {
+	refs := []sdk.ObjectRef{{Kind: "Pod", Namespace: "app", Name: strings.Repeat("z", 121)}}
+	for i := range 15 {
+		refs = append(refs, sdk.ObjectRef{Kind: "Pod", Namespace: "app", Name: strings.Repeat("a", 110) + string(rune('a'+i))})
+	}
+	result := sdktest.OwnIncidentResult{ProgramID: "fresh", Recovered: &sdktest.RecoveredMatch{Objects: refs}}
+	note, ok := recoveredMatchNote(result)
+	if !ok || len(note.Message) >= 1500 || strings.Count(note.Message, "Pod/app/") > 12 ||
+		strings.Contains(note.Message, "zz") || !strings.HasPrefix(note.Message, "also Matches after recovery: Pod/app/") ||
+		!strings.HasSuffix(note.Message, "a standing condition may truly match: then say so in the README") {
+		t.Fatalf("recovered note (%d bytes) = %+v", len(note.Message), note)
 	}
 }

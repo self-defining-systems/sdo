@@ -166,7 +166,7 @@ func TestMemoryTestPrintsTheOwnIncidentVerdict(t *testing.T) {
 
 func TestMemoryTestPrintsTheRecoveredMatch(t *testing.T) {
 	report := &contracts.MemoryCheckReport{CoverageGaps: []*contracts.MemoryDiagnostic{
-		{Rule: validate.RuleMatchesRecovered, Path: ".sdo/playbooks/seen", Message: "Diagnose matches the recovered capture: Pod/app/healthy"},
+		{Rule: validate.RuleMatchesRecovered, Path: ".sdo/playbooks/seen", Message: "also Matches after recovery: Pod/app/healthy"},
 	}}
 	got := ownIncidentLines(report, "seen")
 	if len(got) != 1 || !strings.Contains(got[0], "Pod/app/healthy") || strings.Contains(got[0], "blocks") {

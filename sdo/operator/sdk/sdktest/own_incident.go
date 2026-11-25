@@ -133,20 +133,20 @@ func DiagnoseOnIncident(d program.Diagnoser, dir string) (OwnIncidentResult, err
 	return result, nil
 }
 
-// DiagnoseOnRecovered replays only observations recorded at the fixed boundary.
-func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) *RecoveredMatch {
+// DiagnoseOnRecovered replays fixed-boundary observations. Unknown means not evaluated.
+func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) (*RecoveredMatch, program.Result) {
 	for _, param := range d.Spec().Params {
 		if param.Kind != "" {
-			return nil // The capture does not carry role bindings.
+			return nil, program.Unknown // The capture does not carry role bindings.
 		}
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "fixed.json"))
 	if err != nil {
-		return nil
+		return nil, program.Unknown
 	}
 	snapshot, err := decodeSnapshotStrict(raw)
 	if err != nil {
-		return nil
+		return nil, program.Unknown
 	}
 	var calls []PrimitiveCall
 	for _, phase := range []string{"detect", "settle", "pre-apply"} {
@@ -158,19 +158,40 @@ func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) *
 	}
 	view := &ReplayReadView{Snapshot: snapshot, Calls: calls}
 	verdict := program.RunDiagnose(ctx, d, view, program.Bindings{}, 500*time.Millisecond)
+	if ctx.Err() != nil || view.hadReadFailure() || captureLimits(snapshot, view.KindsRead()) != "" {
+		return nil, program.Unknown
+	}
 	if verdict.Result != program.Match {
-		return nil
+		return nil, verdict.Result
+	}
+	inventory := map[string]sdk.ObjectRef{}
+	for _, object := range append(sdk.TypedObjects(snapshot), snapshot.Objects...) {
+		ref := sdk.ObjectIdentity(object)
+		inventory[recoveredObjectName(ref)] = ref
 	}
 	note := &RecoveredMatch{}
-	seen := map[sdk.ObjectRef]bool{}
 	for _, evidence := range verdict.Evidence {
 		ref := evidence.Resource
-		if ref.Name != "" && !seen[ref] && len(note.Objects) < 12 {
-			seen[ref] = true
-			note.Objects = append(note.Objects, ref)
+		name := recoveredObjectName(ref)
+		captured, present := inventory[name]
+		if !present || ref.APIVersion != "" && ref.APIVersion != captured.APIVersion ||
+			len(name) > 120 || strings.ContainsAny(name, " \t\r\n") {
+			continue
+		}
+		delete(inventory, name)
+		note.Objects = append(note.Objects, captured)
+		if len(note.Objects) == 12 {
+			break
 		}
 	}
-	return note
+	if len(note.Objects) == 0 {
+		return nil, program.Unknown
+	}
+	return note, program.Match
+}
+
+func recoveredObjectName(ref sdk.ObjectRef) string {
+	return ref.Kind + "/" + ref.Namespace + "/" + ref.Name
 }
 
 // evidenceSummary is a verdict's evidence as one short line: the facts Diagnose

@@ -496,7 +496,7 @@ func TestNewProgramsDiagnoseTheirOwnIncident(t *testing.T){
  for i:=range results{
   if ctx.Err()!=nil{break}
   d,_:=registry.Diagnoser(results[i].ProgramID)
-  results[i].Recovered=sdktest.DiagnoseOnRecovered(ctx,d,"testdata/own-incident")
+  results[i].Recovered,_=sdktest.DiagnoseOnRecovered(ctx,d,"testdata/own-incident")
  }
 }
 `)
