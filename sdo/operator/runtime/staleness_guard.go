@@ -288,6 +288,9 @@ func StalenessProofs(ctx context.Context, corpus string, outcomes []*contracts.O
 			}
 			open := &sdktest.ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}
 			if program.RunDiagnose(ctx, d, open, c.Bindings, stalenessDiagnose).Result != program.Match {
+				// The capture lacks a read: elicit the plan's literals with made-up
+				// answers. They only name which cells to read; never a proof.
+				plans[id] = append(plans[id], elicit(ctx, m, open, c.Bindings)...)
 				continue
 			}
 			plan, err := BuildMitigationPlan(ctx, m, open, c.Bindings, stalenessDiagnose)
@@ -413,4 +416,41 @@ func stalenessOutcomes(root string) func(context.Context) ([]*contracts.OutcomeR
 		}
 		return records, err
 	}
+}
+
+// elicitView answers the reads a capture lacks with made-up values.
+type elicitView struct {
+	*sdktest.ReplayReadView
+	code int32
+	row  any
+}
+
+func (v elicitView) Observe(o program.ExternalOperation) (int32, error) {
+	if code, err := v.ReplayReadView.Observe(o); err == nil {
+		return code, nil
+	}
+	return v.code, nil
+}
+
+func (v elicitView) Read(q program.Query) (program.Observation, error) {
+	if o, err := v.ReplayReadView.Read(q); err == nil || q.Store == nil {
+		return o, err
+	}
+	row := program.Row{}
+	for _, field := range q.Store.Fields {
+		row[field] = v.row
+	}
+	return program.Observation{Count: 1, Rows: []program.Row{row}}, nil
+}
+
+// elicit returns the plans a mitigation makes under the made-up answers.
+func elicit(ctx context.Context, m program.Mitigator, open *sdktest.ReplayReadView, b program.Bindings) (plans []program.Plan) {
+	for _, code := range []int32{0, 1, 2} {
+		for _, row := range []any{int64(1), int64(0), true, int64(1) << 40} {
+			if plan, err := BuildMitigationPlan(ctx, m, elicitView{ReplayReadView: open, code: code, row: row}, b, stalenessDiagnose); err == nil {
+				plans = append(plans, plan)
+			}
+		}
+	}
+	return plans
 }

@@ -58,6 +58,7 @@ func Literals(plan program.Plan) (cells []Cell, opaque []string) {
 			cells, opaque = append(cells, c...), append(opaque, o...)
 		case program.EnsureExec:
 			cells = append(cells, observeCell(program.ExternalOperation{Exec: &a.Observe}, a.Expect))
+			cells = append(cells, updateCells(a.Ensure)...)
 		case program.EnsureHTTP:
 			cells = append(cells, observeCell(program.ExternalOperation{HTTP: &a.Observe}, a.Expect))
 		case program.SetField:
@@ -231,11 +232,40 @@ func repairCells(a program.RepairData) (cells []Cell, opaque []string) {
 	return cells, opaque
 }
 
+var update = regexp.MustCompile(`(?is)\bUPDATE\s+(?:ONLY\s+|public\.)?([a-z_][a-z0-9_]*)\s+(?:AS\s+)?(?:[a-z]\s+)?SET\s+(.+?)(?:\s+(?:WHERE|FROM)\b|;|"|$)`)
+
+// updateCells reads the literals of the SQL UPDATEs inside a command: an
+// Observe often says "no fault", not "this value".
+func updateCells(c program.Command) (cells []Cell) {
+	for _, m := range update.FindAllStringSubmatch(strings.Join(c.Args, "\n")+"\n"+c.Stdin, -1) {
+		found, _ := repairCells(program.RepairData{Target: program.StoreTarget{Engine: "postgres", Pod: c.Pod, Container: c.Container},
+			Scope: storeops.Scope{Collection: strings.ToLower(m[1])}, Statement: m[2]})
+		cells = append(cells, found...)
+	}
+	return cells
+}
+
+// grounded completes a target known only by its Pod from the application map.
+func grounded(v program.ReadView, t program.StoreTarget) (program.StoreTarget, error) {
+	if t.Component == "" {
+		m, err := v.AppMap()
+		if err != nil {
+			return t, err
+		}
+		for _, c := range m.Components {
+			if _, name, _ := strings.Cut(c.Workload, "/"); "workload/"+name == Component("Pod", t.Pod.Name) && c.Data != nil {
+				t.Component, t.Engine = c.Name, c.Data.Engine
+			}
+		}
+	}
+	return program.StoreTargetFor(v, t.Component)
+}
+
 // holds reports whether every row of the scope has the literal. An empty scope
 // holds nothing: it proves no value.
 func holds(v program.ReadView, a program.RepairData, col, value, scope string) (bool, error) {
 	target := a.Target
-	if t, err := program.StoreTargetFor(v, a.Target.Component); err == nil {
+	if t, err := grounded(v, a.Target); err == nil {
 		target = t
 	}
 	count := func(selector string) (int, error) {

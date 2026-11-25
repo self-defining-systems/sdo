@@ -191,6 +191,10 @@ func TestR2bLiterals(t *testing.T) {
 			t.Errorf("%s: %q, want %q", name, got, c.want)
 		}
 	}
+	cells, _ := staleness.Literals(program.Plan{Actions: []program.Action{program.EnsureExec{Ensure: program.Command{Args: []string{"sh", "-c", `psql -c "UPDATE limits l SET size = 20, updated_at = now() WHERE size = 0"`}}}}})
+	if len(cells) != 2 || !strings.Contains(cells[1].Keys[0], "limits.size=20") {
+		t.Errorf("SQL in a command: %+v", cells)
+	}
 	if !strings.Contains(key(lit), "where plan_id = 1") || strings.Contains(key(lit), "size < 10") {
 		t.Errorf("key %s", key(lit))
 	}
