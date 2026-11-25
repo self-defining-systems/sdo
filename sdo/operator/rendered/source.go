@@ -47,8 +47,12 @@ type Source struct {
 	// bare tag. Another effective tree keeps the source image until a new
 	// accepted deployment pins it. Digests of the render are unchanged: the
 	// pins apply after rendering. Nil means no pins.
-	Pins  PinProvider
-	cache *manifestCache
+	Pins PinProvider
+	// Target reads the recorded deployment target (nil: none), without a lock or
+	// a Git process: every cached read asks it. Reads of a revision with the
+	// target's effective tree return what the cluster was moved to.
+	Target func() (*DeploymentTarget, error)
+	cache  *manifestCache
 }
 
 // PinProvider supplies the image pins of the newest accepted deployment.
@@ -105,15 +109,9 @@ func (s Source) AcceptedManifests(ctx context.Context, revision, namespace strin
 // (not desired state; they may be deleted by their hook policy or replaced by a
 // later revision's generated names).
 func (s Source) hookManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
-	var objects []DesiredObject
-	var err error
-	if s.cache != nil {
-		objects, err = s.cache.read(ctx, s, revision, namespace)
-	} else {
-		objects, err = s.loadManifests(ctx, revision, namespace)
-	}
+	objects, err := s.objects(ctx, revision, namespace)
 	if err != nil {
-		return nil, classifySource(err)
+		return nil, err
 	}
 	var out []*unstructured.Unstructured
 	for _, object := range objects {
@@ -132,17 +130,27 @@ func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([
 // rawManifests is immutable inside this package. Public reads copy the objects
 // they return so no caller can change another reader's accepted source.
 func (s Source) rawManifests(ctx context.Context, revision, namespace string, qualified bool) ([]*unstructured.Unstructured, error) {
-	var objects []DesiredObject
-	var err error
+	objects, err := s.objects(ctx, revision, namespace)
+	if err != nil {
+		return nil, err
+	}
+	return readView(objects, qualified), nil
+}
+
+func (s Source) objects(ctx context.Context, revision, namespace string) (objects []DesiredObject, err error) {
+	target, err := s.target()
+	if err != nil {
+		return nil, err
+	}
 	if s.cache != nil {
-		objects, err = s.cache.read(ctx, s, revision, namespace)
+		objects, err = s.cache.read(ctx, s, revision, namespace, target)
 	} else {
-		objects, err = s.loadManifests(ctx, revision, namespace)
+		objects, err = s.loadManifests(ctx, revision, namespace, target)
 	}
 	if err != nil {
 		return nil, classifySource(err)
 	}
-	return readView(objects, qualified), nil
+	return objects, nil
 }
 
 // readView projects the desired set for reads: unqualified reads see only
@@ -164,8 +172,9 @@ func (s Source) env(namespace string) render.Env {
 }
 
 // loadManifests renders revision^{tree} and keeps the non-ephemeral objects,
-// with Secrets reduced to identity (defense in depth beyond SecretsOmit).
-func (s Source) loadManifests(ctx context.Context, revision, namespace string) ([]DesiredObject, error) {
+// with Secrets reduced to identity (defense in depth beyond SecretsOmit). A
+// revision with the target's effective tree reads what the target applied.
+func (s Source) loadManifests(ctx context.Context, revision, namespace string, target *DeploymentTarget) ([]DesiredObject, error) {
 	if err := s.requireDesired(namespace); err != nil {
 		return nil, err
 	}
@@ -180,8 +189,11 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string) (
 	}
 	objects := set.Objects()
 	hooks := set.Hooks()
-	pins, err := s.pinsFor(ctx, effective)
-	if err != nil {
+	applied := target != nil && target.Pins.EffectiveTree == effective.ID
+	var pins ReceiptPins
+	if applied {
+		pins = target.Pins
+	} else if pins, err = s.pinsFor(ctx, effective); err != nil {
 		return nil, err
 	}
 	for _, object := range objects {
@@ -196,7 +208,11 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string) (
 	}
 	// Hook objects follow the desired ones; every read view drops them except
 	// hookManifests.
-	return append(objects, hooks...), nil
+	objects = append(objects, hooks...)
+	if !applied {
+		return objects, nil
+	}
+	return s.composeTarget(ctx, target, set, objects, namespace)
 }
 
 // ShapeDigest returns the desired-state shape digest of revision (see
@@ -385,14 +401,18 @@ func (s Source) AcceptedManifest(ctx context.Context, revision string, ref sdk.O
 }
 
 func (s Source) acceptedObject(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	raw, err := s.rawManifests(ctx, revision, namespace, false)
+	objects, err := s.objects(ctx, revision, namespace)
 	if err != nil {
 		return nil, err
 	}
-	for _, object := range raw {
-		if objectRef(object) == ref {
-			return object.DeepCopy(), nil
+	for _, object := range objects {
+		if object.Hook || object.Foreign || objectRef(object.Object) != ref {
+			continue
 		}
+		if object.Interrupted {
+			return nil, fmt.Errorf("%w: %s/%s", ErrTargetInterrupted, ref.Kind, ref.Name)
+		}
+		return object.Object.DeepCopy(), nil
 	}
 	return nil, fmt.Errorf("%w: %s/%s", ErrAcceptedManifestAbsent, ref.Kind, ref.Name)
 }

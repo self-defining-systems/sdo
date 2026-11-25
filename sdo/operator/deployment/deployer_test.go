@@ -726,3 +726,48 @@ func TestTheAppliedHookFiresAfterTheLastWorkloadPhaseBeforeItsRollout(t *testing
 		t.Fatalf("events:\n%s\nwant the hook between the workload phase's apply and its observation, before the ephemeral smoke phase", strings.Join(cluster.events, "\n"))
 	}
 }
+
+// Every phase is recorded as the target before its first write and once its
+// apply succeeded; a phase whose record fails is never written.
+func TestEachPhaseIsRecordedAsTheTargetBeforeItIsApplied(t *testing.T) {
+	fixture := depFixtures(t)[3]
+	root := depCommit(t, fixture.files)
+	cluster := &clusterFake{}
+	deployer, _ := depDeployer(t, root, cluster)
+	ctx := lifecycle.WithTargetHook(context.Background(), func(_ context.Context, write rendered.TargetWrite) error {
+		cluster.events = append(cluster.events, fmt.Sprintf("target %q later=%v applied=%t", write.Phase, write.Later, write.Applied))
+		if write.Pins.EffectiveTree == "" {
+			t.Error("a target with no effective tree")
+		}
+		return nil
+	})
+	if _, err := deployer.ApplyAndVerify(ctx, root, depPlan(t, fixture.source(t), "Deployment/demo/web")); err != nil {
+		t.Fatal(err)
+	}
+	applies := 0
+	for i, event := range cluster.events {
+		if !strings.HasPrefix(event, "apply ") {
+			continue
+		}
+		applies++
+		if i == 0 || i+1 == len(cluster.events) || !strings.HasSuffix(cluster.events[i-1], "applied=false") || !strings.HasSuffix(cluster.events[i+1], "applied=true") {
+			t.Fatalf("%s is not between its records:\n%s", event, strings.Join(cluster.events, "\n"))
+		}
+	}
+	if applies < 2 {
+		t.Fatalf("the fixture must apply several phases: %v", cluster.events)
+	}
+
+	refused := &clusterFake{}
+	deployer, _ = depDeployer(t, root, refused)
+	ctx = lifecycle.WithTargetHook(context.Background(), func(context.Context, rendered.TargetWrite) error { return errors.New("disk full") })
+	_, err := deployer.ApplyAndVerify(ctx, root, depPlan(t, fixture.source(t), "Deployment/demo/web"))
+	if !lifecycle.IsInfrastructureOutcome(err) {
+		t.Fatalf("a failed record = %v, want an infrastructure failure, never a held head", err)
+	}
+	for _, event := range refused.events {
+		if strings.HasPrefix(event, "apply ") {
+			t.Fatalf("applied without a record: %v", refused.events)
+		}
+	}
+}

@@ -13,7 +13,7 @@ import (
 // DeploymentSource + Env digest is the design's (EffectiveTree, Deployment,
 // Env) key without a Git process per read.
 type manifestCacheKey struct {
-	repository, deployment, env string
+	repository, deployment, env, target string
 }
 
 // Keep only the latest requested revision, with a bounded set of namespace and
@@ -25,7 +25,7 @@ type manifestCache struct {
 	entries  map[manifestCacheKey][]DesiredObject
 }
 
-func (c *manifestCache) read(ctx context.Context, source Source, revision, namespace string) ([]DesiredObject, error) {
+func (c *manifestCache) read(ctx context.Context, source Source, revision, namespace string, target *DeploymentTarget) ([]DesiredObject, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -39,7 +39,7 @@ func (c *manifestCache) read(ctx context.Context, source Source, revision, names
 	if err != nil {
 		return nil, err
 	}
-	key := manifestCacheKey{source.Repository, string(deployment), env}
+	key := manifestCacheKey{source.Repository, string(deployment), env, target.key()}
 	if c.revision != revision {
 		c.revision = revision
 		c.entries = nil
@@ -47,7 +47,7 @@ func (c *manifestCache) read(ctx context.Context, source Source, revision, names
 	if objects, ok := c.entries[key]; ok {
 		return objects, nil
 	}
-	objects, err := source.loadManifests(ctx, revision, namespace)
+	objects, err := source.loadManifests(ctx, revision, namespace, target)
 	if err != nil {
 		return nil, err
 	}

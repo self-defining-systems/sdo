@@ -76,6 +76,7 @@ func (c *Controller) openExternalIncident(now time.Time, alert ExternalIncident)
 	request := IncidentRequest{SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: alert.ID, ExternalMessage: alert.Message, SourceCommit: c.config.SourceCommit, DeployedCommit: c.config.DeployedCommit, DeploymentInFlight: c.deploymentInFlight(),
 		RepositoryWorktree: c.config.RepositoryWorktree, RepositoryBaseCommit: c.config.SourceCommit,
+		RecentChanges:    c.heldTargetLines(),
 		ResponseDeadline: now.Add(c.config.ResponseTimeout).UTC(), CancellationToken: "cancel-" + alert.ID, RepairPolicy: c.config.RepairPolicy}
 	c.beginIncident(now, request, nil)
 	return nil

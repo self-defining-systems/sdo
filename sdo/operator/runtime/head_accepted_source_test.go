@@ -38,15 +38,17 @@ type headReceiptReader struct {
 	reads    int
 	err      error
 	pollErr  error
+
+	unaccepted, incomplete bool
 }
 
 func (b *headReceiptReader) HeadToDeploy(context.Context) (broker.HeadChange, bool, error) {
 	return broker.HeadChange{}, false, b.pollErr
 }
 
-func (b *headReceiptReader) TryAcceptedDeploymentRevision(context.Context) (string, error) {
+func (b *headReceiptReader) TryTarget(context.Context) (broker.Target, error) {
 	b.reads++
-	return b.revision, b.err
+	return broker.Target{Commit: b.revision, Unaccepted: b.unaccepted, Incomplete: b.incomplete}, b.err
 }
 
 func TestHeadAcceptanceRebindsSourceRepairWithoutRestart(t *testing.T) {
@@ -215,5 +217,76 @@ func TestHeadPollReadsReceiptOnErrorAndCurrent(t *testing.T) {
 		if ledger.reads != 1 || c.CurrentRenderedRevision() != "v2" || c.CurrentAcceptedCommit() != "memory" {
 			t.Fatalf("poll %v ignored receipt: reads=%d render=%s memory=%s", pollErr, ledger.reads, c.CurrentRenderedRevision(), c.CurrentAcceptedCommit())
 		}
+	}
+}
+
+// Q1 harm: a release was applied, then held, and a repair put a workload back
+// to the accepted release. Repairs, drift and the page follow the applied one,
+// also in a controller started during the hold; accepted memory does not move.
+func TestHeldReleaseIsWhatRepairsRestore(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"}
+	manifest := func(release string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind,
+			"metadata": map[string]any{"namespace": ref.Namespace, "name": ref.Name}, "data": map[string]any{"release": release}}}
+	}
+	executor := PlanExecutor{Source: cachedRevisionSource{"v1": manifest("1"), "v2": manifest("2")}}
+	ledger := &headReceiptReader{revision: "v1"}
+	start := func() *Controller {
+		cfg := testControllerConfig()
+		cfg.SourceCommit, cfg.DeployedCommit = "memory", "v1"
+		c, err := NewController(cfg, nil, staticProvider{}, &recordingDispatcher{}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetHeadPoller(&HeadPoller{Deployer: lifecycle.HeadDeployer{Broker: ledger}})
+		c.syncDeploymentReceipt(ctx)
+		return c
+	}
+	restores := func(c *Controller, live *unstructured.Unstructured, want string) {
+		t.Helper()
+		request := c.incidentRequest(now, nil)
+		next, err := executor.prepareAction(ctx, request, program.ReconcileFromSource{Ref: ref}, live)
+		if err != nil || !planValuesEqual(next.Object, manifest(want).Object) {
+			t.Fatalf("restored to %v, %v; want release %s", next, err, want)
+		}
+		if request.SourceCommit != "memory" {
+			t.Fatalf("accepted memory moved to %s", request.SourceCommit)
+		}
+	}
+	c := start()
+	restores(c, manifest("broken"), "1")
+	if lines := c.heldTargetLines(); lines != nil {
+		t.Fatalf("no hold, yet the page says %q", lines)
+	}
+	held := lifecycle.HeadResult{Outcome: lifecycle.HeadHeld, Commit: "v2", Detail: "rollout:\n not ready"}
+	ledger.unaccepted, ledger.revision = true, "v2"
+	c.handleHeadCompletion(reflectionCompletion{head: &held, deployedRevision: c.readAcceptedDeployment(ctx)})
+	for name, controller := range map[string]*Controller{"running": c, "restarted": start()} {
+		t.Run(name, func(t *testing.T) {
+			restores(controller, manifest("broken"), "2")
+			restores(controller, manifest("2"), "2") // a healthy workload is left as it is
+			if controller.CurrentRenderedRevision() != "v2" {
+				t.Fatalf("drift compares with %s", controller.CurrentRenderedRevision())
+			}
+		})
+	}
+	if lines := c.heldTargetLines(); len(lines) != 1 || lines[0] != "Release v2 is applied but not accepted (rollout: not ready); comparisons and restores use it." {
+		t.Fatalf("page line = %q", lines)
+	}
+	// The same target moving on (a retry reached more phases) renders anew.
+	invalidations := 0
+	c.invalidateSourceCache = func() { invalidations++ }
+	ledger.incomplete = true
+	c.syncDeploymentReceipt(ctx)
+	c.syncDeploymentReceipt(ctx)
+	if invalidations != 1 {
+		t.Fatalf("a changed target invalidated %d times, want 1", invalidations)
+	}
+	ledger.unaccepted, ledger.incomplete = false, false
+	c.syncDeploymentReceipt(ctx)
+	if lines := c.heldTargetLines(); lines != nil || c.CurrentRenderedRevision() != "v2" {
+		t.Fatalf("accepted later: %s, page %q", c.CurrentRenderedRevision(), lines)
 	}
 }

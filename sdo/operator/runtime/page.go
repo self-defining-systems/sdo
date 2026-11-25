@@ -116,6 +116,7 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 	clues := c.activeClues(nil)
 	request := c.incidentRequest(now, clues)
 	request.Page = alert.Message
+	request.RecentChanges = c.heldTargetLines()
 	request.StandingKeys = findingKeys(clues)
 	request.PassingTests = passingTests(snapshot)
 	request.ObservationGeneration = observationGeneration(snapshot)
