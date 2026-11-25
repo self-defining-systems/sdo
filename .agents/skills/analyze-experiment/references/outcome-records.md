@@ -117,7 +117,7 @@ candidate block), earlier attempts' notes and the result-field line. It holds no
 tells the agent to read no skill and prescribes no first command. The model-facing incident result is only
 `findings` and `agent_changes`; the worker fills `incident_id`, `status` and `timing`. Warm/cold strategy,
 `responder.incident_data`, inlined playbook bodies and their former part names
-were removed. Optional transport instructions remain `responder.additional_context`.
+were removed. Telemetry and transport notes are `template_data.responder-incident_01-extra_instructions`.
 The request still carries controller-built playbook coverage; `sdo detect` shows it. Full worker
 requests and durable outcomes remain authoritative. Reflection prompt context
 and responder-session resume behavior are unchanged by this responder rewrite.

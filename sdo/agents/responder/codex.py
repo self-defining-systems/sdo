@@ -11,7 +11,7 @@ from google.protobuf import json_format
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, turn_usage
 from libs.agent_cli.usage_checkpoint import UsageCheckpoint
 from sdo.agents.code_paths import agent_guidance
-from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
+from sdo.agents.prompt_templates import RenderedPrompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
 from sdo.agents.replay import selected_skills_root
@@ -216,9 +216,10 @@ def recent_changes_block(request: IncidentRequest) -> str:
 def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
     if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
+    shell = agent_guidance() == "shell"
     prompt = render_prompt(
         "responder",
-        "incident_shell" if agent_guidance() == "shell" else "incident_prompt",
+        "incident_shell" if shell else "incident_prompt",
         part="responder.instructions",
         incident_id=request.incident_id,
         namespace=request.namespace,
@@ -227,6 +228,9 @@ def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
         skills_root=selected_skills_root(SKILLS_ROOT),
         branch_instruction=branch_instruction("incident_result"),
     )
+    if not shell:
+        # Every incident reads the method, so it is in the first request; it is identical across incidents, so it leads.
+        prompt = render_prompt("responder", "incident_method", part="responder.method") + prompt
     extra = "\n".join(
         part
         for part in (
@@ -236,14 +240,8 @@ def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
         if part
     )
     if extra:
-        prompt += named_prompt(
-            "responder.additional_context",
-            render_prompt(
-                "responder",
-                "incident_01",
-                part="responder.additional_context",
-                extra_instructions=named_prompt("responder.additional_context", extra, required=False),
-            ),
+        prompt += render_prompt(
+            "responder", "incident_01", part="responder.additional_context", extra_instructions=extra
         )
     return prompt
 

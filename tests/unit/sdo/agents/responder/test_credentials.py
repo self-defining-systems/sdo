@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from sdo.agents.prompt_templates import render_prompt
 from sdo.agents.responder.credentials import (
     AGENT_SKILLS,
     SKILLS_ROOT,
@@ -95,7 +96,6 @@ def test_no_skills_leaves_the_home_without_a_skills_directory(tmp_path: Path) ->
         (
             "responder",
             {
-                "incident-response",
                 "sdo-operating",
                 "sdo-serving",
                 "sdo-observability",
@@ -123,6 +123,7 @@ def test_responder_home_ships_no_investigator_skill_and_the_method_names_no_suba
 
     prepare_claude_home(credentials_root=tmp_path / "none", claude_home=claude_home, skills=AGENT_SKILLS["responder"])
 
-    method = (claude_home / "skills" / "incident-response" / "SKILL.md").read_text(encoding="utf-8")
+    method = str(render_prompt("responder", "incident_method", part="responder.method"))
     assert not (claude_home / "skills" / "sdo-investigator").exists()
+    assert not (claude_home / "skills" / "incident-response").exists()
     assert "sdo-investigator" not in method

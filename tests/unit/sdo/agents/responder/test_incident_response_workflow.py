@@ -1,4 +1,4 @@
-"""The shipped skills and shortened prompt are loadable without a model call."""
+"""The method, shipped skills and shortened prompt are loadable without a model call."""
 
 from __future__ import annotations
 
@@ -6,13 +6,14 @@ from pathlib import Path
 from string import Template
 
 import pytest
-import yaml
 
 from sdo.agents.responder.credentials import AGENT_SKILLS, SKILLS_ROOT, prepare_claude_home, prepare_codex_home
-from tests.skill_sizes import SKILL_BYTE_CAPS
 
 PROMPTS = Path(__file__).resolve().parents[5] / "sdo/agents/responder/prompts"
 WORKFLOW = "incident-response"
+METHOD = PROMPTS / "incident_method.md"
+#: The method rides in every first request: trim it instead of raising this.
+METHOD_CHARS = 1792
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])
@@ -28,18 +29,16 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
         )
 
     assert {path.name for path in (destination / "skills").iterdir()} == set(AGENT_SKILLS["responder"])
-    installed = destination / "skills" / WORKFLOW / "SKILL.md"
-    document = installed.read_text(encoding="utf-8")
-    assert document == (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8")
-    _, frontmatter, body = document.split("---", 2)
-    metadata = yaml.safe_load(frontmatter)
-    assert metadata["name"] == WORKFLOW
-    assert 0 < len(metadata["description"]) <= 200
-    assert len(document.encode()) <= SKILL_BYTE_CAPS[WORKFLOW]
+    assert not (destination / "skills" / WORKFLOW).exists()
+
+
+def test_the_method_states_recovery_and_restore_rules() -> None:
+    document = METHOD.read_text(encoding="utf-8")
+    assert len(document) <= METHOD_CHARS
     assert "Recovery covers all users. Probes sample user health." in document
     assert "Never change state for probe/test identities." in document
     assert "verify with real traffic or a non-SDO request" in document
-    restore_rule = next(line for line in body.splitlines() if line.startswith("- **Restore lost data.**"))
+    restore_rule = next(line for line in document.splitlines() if line.startswith("- **Restore lost data.**"))
     assert "authoritative copy first" in restore_rule
     assert "before recreating" in restore_rule.lower()
     for location in ("configuration", "jobs", "object stores", "replicas"):
@@ -94,10 +93,7 @@ def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypat
     output = json.loads((fixtures / "incident_result.json").read_text(encoding="utf-8"))
 
     def respond(command):
-        installed = Path(command.env[variable]) / "skills" / WORKFLOW / "SKILL.md"
-        assert installed.read_text(encoding="utf-8") == (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(
-            encoding="utf-8"
-        )
+        assert command.stdin.count(METHOD.read_text(encoding="utf-8").strip()) == 1
         assert "SKILL.md" not in command.stdin
         return reply(provider, output, session_id="workflow-session", branch="incident_result")
 
@@ -108,14 +104,14 @@ def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypat
 
 
 def _responder_instructions() -> str:
-    """Everything the responder is told on its incident turn: the first message, both skills and the result field."""
+    """Everything the responder is told on its incident turn: the first message, its skill and the result field."""
 
     from sdo.agents.responder.session_turn import session_output_schema
 
     schema = session_output_schema()
     texts = [
         (PROMPTS / "incident_prompt.md").read_text(encoding="utf-8"),
-        (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8"),
+        METHOD.read_text(encoding="utf-8"),
         (SKILLS_ROOT / "sdo-operating" / "SKILL.md").read_text(encoding="utf-8"),
         str(schema["properties"]["incident_result"]["description"]),  # type: ignore[index]
     ]

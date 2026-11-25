@@ -73,8 +73,12 @@ max_chars = 1500
 reason = "CTXFAIL1: recorded validation retries combine multiple required broker diagnostics and their framing; preserve their complete actionable messages instead of dropping later errors."
 
 [responder.additional_context]
-max_chars = 744
-reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 percent headroom."
+max_chars = 100
+reason = "The heading of the environment notes (46 characters); the notes are template_data.responder-incident_01-extra_instructions."
+
+[responder.method]
+max_chars = 1800
+reason = "The incident method every responder reads, whole and first in its first message (1722 characters); it replaces the incident-response skill of the same text, which cost one model request to load in 21 of 22 incidents. Trim instead of raising."
 
 [responder.instructions]
 max_chars = 4000
@@ -119,10 +123,6 @@ reason = "Observability skill description; shares the existing 200-character ski
 [skills.sdo-onboarding]
 max_chars = 200
 reason = "Onboarding orchestration skill description; shares the existing 200-character skill-index allowance."
-
-[skills.incident-response]
-max_chars = 200
-reason = "Responder method skill description; shares the existing 200-character skill-index allowance."
 
 [skills.sdo-investigator]
 max_chars = 200
@@ -357,8 +357,8 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.responder-incident_01-extra_instructions]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+max_chars = 2000
+reason = "Two operator-provided telemetry sources (885 characters) plus the benchmark transport appendix (676) stay inline with about 25 percent headroom; spilled, the responder spends a command reading them back."
 
 [template_data.responder-incident_page-branch_instruction]
 max_chars = 256

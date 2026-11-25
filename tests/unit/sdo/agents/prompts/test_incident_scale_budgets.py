@@ -37,7 +37,7 @@ def test_responder_first_message_for_many_findings_and_stage_actions_fits() -> N
             playbook_id=f"repair-{index}-" + "p" * 200, program_revision="rev", result="apply_error", error="e" * 2000
         )
     rendered = str(responder_prompt(request))
-    assert len(rendered.encode()) <= 1100
+    assert len(rendered.encode()) <= 1100 + budget_for("responder.method")
     assert request.incident_id in rendered
     assert "repair-0-" not in rendered
 
@@ -54,7 +54,7 @@ def test_responder_first_message_carries_an_external_alert_at_the_contract_bound
     _fits(prompt)
     assert not prompt.context_files
     assert request.external_message.strip() in rendered
-    assert len(rendered.encode()) <= 5300
+    assert len(rendered.encode()) <= 5300 + budget_for("responder.method")
 
 
 def test_responder_first_message_names_every_failing_test_within_a_measured_bound() -> None:
@@ -75,7 +75,7 @@ def test_responder_first_message_names_every_failing_test_within_a_measured_boun
         request.opening_keys.append(f"{finding.detector_id}\x00{finding.fingerprint}")
     request.passing_tests.extend(f"fixture-{index}" for index in range(WORKLOADS))
     rendered = str(responder_prompt(request))
-    assert len(rendered.encode()) <= 3000
+    assert len(rendered.encode()) <= 3000 + budget_for("responder.method")
     assert "operation-00 3/6" in rendered
     assert "operation-47 3/6" in rendered
     assert 'HTTP 429 text "Retry later" (48)' in rendered

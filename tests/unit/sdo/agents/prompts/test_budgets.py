@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import (
     PromptPart,
     RenderedPrompt,
@@ -90,6 +91,6 @@ def test_parts_survive_composition() -> None:
 def test_the_first_message_stays_small_however_large_the_incident() -> None:
     for request in (incident(5, oversized=True), incident(100, oversized=True)):
         rendered = str(responder_prompt(request))
-        assert len(rendered.encode()) <= 2200
+        assert len(rendered.encode()) <= 2200 + budget_for("responder.method")
         assert "手" * 100 not in rendered
         assert "検" * 100 not in rendered
