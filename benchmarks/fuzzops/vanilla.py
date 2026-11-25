@@ -214,6 +214,27 @@ def vertex(env: Mapping[str, str]) -> tuple[Path, dict[str, str]]:
     return auth, {key: extra[key] for key in VERTEX_ENV}
 
 
+SECRET_FIELDS = ("private_key", "refresh_token", "client_secret")
+
+
+def auth_secrets(auth: Path) -> list[str]:
+    """Every secret value of a Google credential file, at any depth (an impersonated account nests its source)."""
+
+    def collect(value: Any) -> Iterator[str]:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in SECRET_FIELDS and isinstance(item, str):
+                    # A key may be logged whole, with escaped newlines, or line by line.
+                    yield from (line.strip() for line in item.splitlines())
+                else:
+                    yield from collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from collect(item)
+
+    return [secret for secret in dict.fromkeys(collect(json.loads(auth.read_text()))) if secret]
+
+
 def isolated(
     env: Mapping[str, str], box: Path, mounts: Sequence[tuple[str, str]], settings: Mapping[str, str]
 ) -> list[str]:
@@ -302,8 +323,7 @@ def capture_agent(env: Mapping[str, str], target: Path, injected: float) -> None
             EFFORT,
         ]
         token = json.loads(config.read_text())["users"][0]["user"]["token"]
-        key = json.loads(auth.read_text()).get("private_key", "")
-        secrets = [token, *key.splitlines()]
+        secrets = [token, *auth_secrets(auth)]
         prompt = page_text(ns)
         started = time.time()
         capped = False

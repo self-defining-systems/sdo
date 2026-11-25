@@ -941,6 +941,8 @@ def measure(run: Path) -> Row:
     label = str(record.get("operator") or metadata.get("operator_label") or "")
     if manifest.get("arm") == "devops-agent":
         arm = "devops-agent"
+    elif manifest.get("arm") == "external" or hooks == "external":
+        arm = "external"
     elif manifest.get("arm") == "vanilla" or hooks == "vanilla" or "vanilla" in label or (op / "done.json").is_file():
         arm = "vanilla"
     elif manifest or collect or hooks == "sdo" or label.startswith("exec:sdo"):
@@ -980,7 +982,7 @@ def measure(run: Path) -> Row:
     observed = list(_objects(_object(lifecycle.get("observed")).get("mutations") or record.get("observed_mutations")))
     if arm == "sdo":
         _sdo(row, run, manifest, collect, inject, observed)
-    elif arm in ("vanilla", "devops-agent"):
+    elif arm in ("vanilla", "devops-agent", "external"):
         _vanilla(row, op, inject, observed)
     return row
 

@@ -37,6 +37,11 @@ takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound i
   repeat/first ratios per sequence, churn findings, false alarms from healthy runs and alarms while gating).
 - `hooks.py`: SDO's operator hooks for fuzzops-bench (below).
 - `cellevidence.py` / `capture.py`: the per-cell evidence manifest and validator (below); `capture.py` takes build identity, host load, the Prometheus/Jaeger stores for the window and all application and control pod logs at collect time.
+- `external.py`: the plain Claude arm (`vanilla.py`) around any agent command (`settings.external`: `command`, `label`, `model`), called with
+  the external-agent contract of `benchmarks/sregym/fastloop/README.md` (`--phase incident` only, never `--state-in`).
+  The command confines its own agent, stops it at `--deadline-epoch`, and adds `incident/transcript.jsonl` (Claude Code
+  JSONL, shell calls as `Bash`) and `incident/usage.json` to its result; a missing one makes the row's evidence
+  incomplete. Host setup: `hook_command` entry `external: ... python -m benchmarks.fuzzops.external`.
 - `view.py`: the dashboard view of a collected run (`operator/view.json`, below).
 
 ## fuzzops-bench hooks
