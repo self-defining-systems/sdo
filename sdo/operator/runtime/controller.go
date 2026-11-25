@@ -1,12 +1,14 @@
 package runtime
 
 import (
+	"buf.build/go/protovalidate"
 	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"log/slog"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
@@ -2484,8 +2486,21 @@ func (c *Controller) latestEvaluations(
 }
 
 func (c *Controller) ExportState() (*contracts.ControllerState, error) {
+	return c.exportState(nil)
+}
+
+// exportState calls unencodable for a record that has no wire form and leaves
+// it out; without the callback that is an error.
+func (c *Controller) exportState(unencodable func(protoreflect.Name, error)) (*contracts.ControllerState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	refused := func(field protoreflect.Name, err error) error {
+		if err == nil || unencodable == nil {
+			return err
+		}
+		unencodable(field, err)
+		return nil
+	}
 	history := append([]DetectorEvaluation(nil), c.history...)
 	if len(history) > 100 {
 		history = history[len(history)-100:]
@@ -2497,17 +2512,17 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 	}
 	findingStates, err := findingStatesContract(c.tracker.Snapshot())
-	if err != nil {
+	if err = refused("finding_states", err); err != nil {
 		return nil, err
 	}
 	pendingBatch := c.batcher.Snapshot()
 	batch, err := findingsContract(pendingBatch.Findings)
-	if err != nil {
+	if err = refused("pending_batch", err); err != nil {
 		return nil, fmt.Errorf("pending batch: %w", err)
 	}
 	timeline := detectorTimelineContract(c.timeline)
 	view, err := incidentViewContract(c.incidentView)
-	if err != nil {
+	if err = refused("incident_view", err); err != nil {
 		return nil, err
 	}
 	message := &contracts.ControllerState{
@@ -2537,19 +2552,19 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 	}
 	if c.currentIncidentRequest != nil {
 		message.IncidentRequest, err = incidentRequestContract(*c.currentIncidentRequest)
-		if err != nil {
+		if err = refused("incident_request", err); err != nil {
 			return nil, fmt.Errorf("incident request: %w", err)
 		}
 	}
 	if c.currentIncidentResult != nil {
 		message.IncidentResult, err = incidentResultContract(*c.currentIncidentResult)
-		if err != nil {
+		if err = refused("incident_result", err); err != nil {
 			return nil, fmt.Errorf("incident result: %w", err)
 		}
 	}
 	if c.pendingClosure != nil {
 		message.PendingClosure, err = incidentClosureContract(*c.pendingClosure)
-		if err != nil {
+		if err = refused("pending_closure", err); err != nil {
 			return nil, fmt.Errorf("pending closure: %w", err)
 		}
 	}
@@ -2699,6 +2714,17 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 		return fmt.Errorf("state store is required")
 	}
 	state, revision, err := store.Load(ctx)
+	repaired := false
+	var invalid *protovalidate.ValidationError
+	if err != nil && state != nil && revision != "" && errors.As(err, &invalid) {
+		// The saved state breaks its contract. Keep its valid records: refusing
+		// to start would leave an open incident without an owner.
+		var dropped []string
+		if state, dropped, err = c.repairState(state, nil, nil); err == nil {
+			repaired = true
+			c.reportBrokerError("invalid saved controller state repaired", errors.New(strings.Join(dropped, "; ")))
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -2717,7 +2743,9 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 	c.durable = nil
 	c.checkpoint = nil
 	if revision != "" {
-		c.durable = proto.Clone(state).(*contracts.ControllerState)
+		if !repaired { // a repaired state is durable only once it is saved
+			c.durable = proto.Clone(state).(*contracts.ControllerState)
+		}
 		c.checkpoint = proto.Clone(state).(*contracts.ControllerState)
 	}
 	c.mu.Unlock()
