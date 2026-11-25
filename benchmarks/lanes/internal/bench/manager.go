@@ -612,10 +612,10 @@ func (m *Manager) tickPlans(ctx context.Context) {
 	checks := NewRenderedChecks(m.Log) // one session per pass: the nodes released in it share their probes
 	for _, name := range plan.Names(m.Root.PlansDir()) {
 		if ctl, err := plan.LoadControl(plan.Dir(m.Root.PlansDir(), name)); err == nil && ctl.Purge {
-			if done, err := purgePlan(m.Root, name); err != nil {
+			if archive, done, err := purgePlan(m.Root, name); err != nil {
 				m.logf("plan %s: removal: %v", name, err)
 			} else if done {
-				m.logf("plan %s removed; its name is free", name)
+				m.logf("plan %s removed; its name is free; results are kept in %s", name, archive)
 			}
 			continue
 		}
