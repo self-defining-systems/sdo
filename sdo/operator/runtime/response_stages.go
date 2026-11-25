@@ -81,7 +81,8 @@ func RunResponseStages(ctx context.Context, state *IncidentState, stages []Respo
 		}
 		state.PriorStages = append(state.PriorStages, report)
 		// A failed attempt that wrote nothing must not hold up the page's responder.
-		if err != nil && page && ctx.Err() == nil && !playbookWrote(report) {
+		// A responder that never started is reported: nothing after it would answer the page.
+		if err != nil && page && ctx.Err() == nil && !playbookWrote(report) && !workerNeverStarted(err) {
 			continue
 		}
 		if err != nil {

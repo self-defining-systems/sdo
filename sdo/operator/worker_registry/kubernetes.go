@@ -414,6 +414,12 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("get agent result ConfigMap: %w", err)
 		}
+		if apierrors.IsNotFound(err) && task.GetRequest().MessageIs(&contracts.IncidentRequest{}) && e.workerEnded(ctx, jobName) {
+			// The worker publishes before it exits: look once more after its end was seen.
+			if _, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, resultName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+				return nil, e.taskJobFailure(ctx, task, job)
+			}
+		}
 		wake := ticker.C()
 		stopWake := func() {}
 		if !resultSeenAt.IsZero() {

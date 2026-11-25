@@ -107,6 +107,7 @@ var operatorOwned = map[string]string{
 	"worker_registry/standby.go":                       reasonSession,
 	"worker_registry/standby_daemon.go":                reasonSession,
 	"worker_registry/startup.go":                       reasonSession,
+	"worker_registry/worker_start.go":                  reasonSession,
 	"worker_registry/startup_artifacts.go":             reasonSession,
 	"worker_registry/startup_dispatch.go":              reasonSession}
 

@@ -10,6 +10,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -204,6 +205,11 @@ func (d KubernetesJobDispatcher) DispatchWithClaim(ctx context.Context, request 
 
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
 	result, err := d.dispatch(ctx, request)
+	for errors.Is(err, errWorkerReplaced) {
+		// Same incident, same frozen task, same dispatch: only the worker is new.
+		d.beforeClaim = nil
+		result, err = d.dispatch(ctx, request)
+	}
 	usage, usageErr := d.ResponderUsage(request.IncidentID)
 	if usageErr != nil {
 		return result, fmt.Errorf("recover responder usage: %w", usageErr)
@@ -279,7 +285,12 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		}
 	}
 	sessionSubPath := ""
+	var modelCalls atomic.Int64
 	if d.RequireMemorySnapshot {
+		retired := worker_registry.KubernetesExecutor{Client: d.Client, Namespace: d.Namespace, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath}
+		if err := startsExhausted(ctx, retired, task); err != nil {
+			return IncidentResult{}, err
+		}
 		rejoin := false
 		rejoin, err = (worker_registry.KubernetesExecutor{RepositoryMountPath: d.RepositoryMountPath}).HasBoundStandby(task)
 		if err != nil {
@@ -333,6 +344,9 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		defer func() { stopTools(); tools.Wait() }()
 		server := SessionToolServer{Directory: directory, Handle: func(toolCtx context.Context, toolRequest ToolRequest) ToolResponse {
 			received := lifecycleio.Now().UTC()
+			if toolRequest.Command != "session-open" { // the worker itself opens the session
+				modelCalls.Add(1)
+			}
 			response := loop.Handle(toolCtx, toolRequest)
 			if toolRequest.Command == "session-open" && response.Error == "" {
 				if err := worker_registry.RecordSessionStartup(d.RepositoryMountPath, d.RepositoryPVCSubPath, sessionSubPath, received, lifecycleio.Now().UTC()); err != nil {
@@ -364,6 +378,9 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 	}
 	result, err := d.executeResponder(ctx, executor, task, loop, request)
 	if err != nil {
+		if settled := d.settleWorkerStart(ctx, executor, task, loop, request, &modelCalls, err); settled != nil {
+			return IncidentResult{}, settled
+		}
 		var failed *worker_registry.JobFailedError
 		if errors.As(err, &failed) {
 			result := IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: request.IncidentID, Status: IncidentFailed, Error: failed.Error()}
