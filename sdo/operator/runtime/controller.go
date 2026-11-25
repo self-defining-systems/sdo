@@ -271,6 +271,9 @@ type Controller struct {
 	incidentView          *IncidentView
 	broker                IncidentBroker
 	gitRead               gitRead
+	// Staleness is the prototype staleness guard; nil is off.
+	Staleness         *StalenessGuard
+	stalenessPrograms func() program.ProgramRegistry
 	openers               openers
 	workspaceResults      chan workspaceCompletion
 	closureResults        chan closureCompletion
@@ -938,6 +941,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.Baseline.Observe(now, healthy)
 		}
 		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
+		c.observeStaleness(ctx, snapshot, healthy)
 		c.promotePodReadBaseline(now, snapshot, c.storesHealthy(confirmationExpired, erroredIDs, onboardingCandidate))
 		c.observeAppState(now, healthy)
 		c.promoteObservationBaselines(now, snapshot, healthy)

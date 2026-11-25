@@ -722,6 +722,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				if policy.Response.ExternalClues && request.ExternalMessage != "" {
 					loop.Detectors, loop.ExternalClues = detectors, true
 				}
+				if stalenessEnabled() && controller != nil {
+					loop.Staleness = controller.Staleness
+				}
 				// Backups live on the repository volume beside the other
 				// controller state, outside the published .sdo/ tree.
 				loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}, Payloads: storePayloads}
@@ -1043,6 +1046,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		SourceInputs: acceptedSourceInputs(ctx, resolvedRoot, controller.CurrentAcceptedCommit),
 	}, func(err error) { fmt.Fprintln(stderr, err) })
 	controller.PodReadBaseline = podReadBaseline
+	if stalenessEnabled() {
+		controller.Staleness = &StalenessGuard{
+			Path: StalenessStatePath(*repositoryMountPath), Corpus: stalenessCorpus(controller.gitRead, resolvedRoot), View: liveView, Target: controller.deploymentTargetNow,
+			Outcomes: stalenessOutcomes(resolvedRoot),
+		}
+		controller.stalenessPrograms = func() program.ProgramRegistry {
+			memoryCatalogMu.RLock()
+			defer memoryCatalogMu.RUnlock()
+			return options.Programs
+		}
+	}
 	controller.VantageBaseline = vantageBaseline
 	controller.AppState = appStateObserver.Store()
 	controller.config.AppStateChanges = appStateObserver.Store()

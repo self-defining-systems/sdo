@@ -285,6 +285,8 @@ type ResponderLoop struct {
 	// Credits are the (symptom, component) pairs each learned playbook earned;
 	// a playbook without any keeps the finding binding.
 	Credits             ProgramCredits
+	// Staleness refuses automatic plans (prototype); nil is off.
+	Staleness *StalenessGuard
 	CorpusSessionRoot   string
 	RecoverySessionRoot string
 	capturePhase        string

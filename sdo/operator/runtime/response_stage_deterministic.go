@@ -356,6 +356,13 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
+		if reason := loop.stalenessHint(match.PlaybookId); reason != "" {
+			attempt.Error = reason
+			if err := skip(stageNotAutomatic); err != nil {
+				return report, err
+			}
+			continue
+		}
 		if loop.Programs == nil {
 			if err := skip("no_mitigation"); err != nil {
 				return report, err
@@ -497,6 +504,13 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				attempt.Error = planResponse.Error
 			}
 			if err := save(false); err != nil {
+				return report, err
+			}
+			continue
+		}
+		if reason := loop.stalenessRefusal(match.PlaybookId, loop.plans[planResponse.PlanID].plan); reason != "" {
+			attempt.Error = reason
+			if err := skip(stageNotAutomatic); err != nil {
 				return report, err
 			}
 			continue
