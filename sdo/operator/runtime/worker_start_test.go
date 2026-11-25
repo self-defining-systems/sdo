@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,9 +16,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
-	clocktesting "k8s.io/utils/clock/testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
@@ -26,16 +27,13 @@ import (
 	"sdo.dev/operator/worker_registry/registrytest"
 )
 
-// startWorld simulates the cluster, the worker processes and the clock: every
-// poll advances one second, and each created Job is given to the next script.
+// startWorld simulates the cluster and the worker processes: each created Job is given to the next script.
 type startWorld struct {
 	t       *testing.T
 	client  *fake.Clientset
-	clock   *clocktesting.FakeClock
 	mount   string
 	scripts []func(*startWorld, *batchv1.Job)
 	jobs    []string
-	created []time.Time
 	request IncidentRequest
 	task    *contracts.AgentTask
 	// onPoll runs at each look at a Job, before it is read.
@@ -44,7 +42,7 @@ type startWorld struct {
 
 func newStartWorld(t *testing.T, scripts ...func(*startWorld, *batchv1.Job)) *startWorld {
 	t.Helper()
-	w := &startWorld{t: t, client: fake.NewSimpleClientset(), clock: clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()), mount: t.TempDir(), scripts: scripts}
+	w := &startWorld{t: t, client: fake.NewSimpleClientset(), mount: t.TempDir(), scripts: scripts}
 	registry := registrytest.BuiltIn(t)
 	agentID, err := registry.AgentFor(&contracts.IncidentRequest{})
 	if err != nil {
@@ -67,7 +65,8 @@ func newStartWorld(t *testing.T, scripts ...func(*startWorld, *batchv1.Job)) *st
 	w.task, w.request.PreparedAgentTask = task, string(payload)
 	w.client.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, kruntime.Object, error) {
 		job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job)
-		w.jobs, w.created = append(w.jobs, job.Name), append(w.created, w.clock.Now())
+		job.UID = types.UID(job.Name)
+		w.jobs = append(w.jobs, job.Name)
 		if running := w.livePods(); len(running) != 0 {
 			t.Errorf("Job %s created while %v still runs", job.Name, running)
 		}
@@ -79,7 +78,6 @@ func newStartWorld(t *testing.T, scripts ...func(*startWorld, *batchv1.Job)) *st
 		return false, nil, nil
 	})
 	w.client.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, kruntime.Object, error) {
-		w.clock.Step(time.Second)
 		if w.onPoll != nil {
 			w.onPoll(w, action.(k8stesting.GetAction).GetName())
 		}
@@ -92,7 +90,7 @@ func (w *startWorld) dispatcher() KubernetesJobDispatcher {
 	registry := registrytest.BuiltIn(w.t)
 	return KubernetesJobDispatcher{
 		Client: w.client, Namespace: "sdo", Registry: registry, AgentID: w.task.GetAgentId(), RepositoryPVC: "repo",
-		RepositoryMountPath: w.mount, RequireMemorySnapshot: true, PollInterval: time.Second, Clock: w.clock,
+		RepositoryMountPath: w.mount, RequireMemorySnapshot: true, PollInterval: time.Millisecond,
 	}
 }
 
@@ -112,7 +110,7 @@ func (w *startWorld) livePods() []string {
 
 func (w *startWorld) pod(job *batchv1.Job, phase corev1.PodPhase, state corev1.ContainerState) {
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-pod", Namespace: "sdo", Labels: map[string]string{"batch.kubernetes.io/job-name": job.Name, "sdo.dev/incident": job.Name}},
+		ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-pod", Namespace: "sdo", Labels: map[string]string{"batch.kubernetes.io/job-name": job.Name, "sdo.dev/incident": job.Name}, OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: job.Name, UID: types.UID(job.Name)}}},
 		Status:     corev1.PodStatus{Phase: phase, ContainerStatuses: []corev1.ContainerStatus{{Name: "agent", State: state}}},
 	}
 	if err := w.client.Tracker().Create(corev1.SchemeGroupVersion.WithResource("pods"), pod, "sdo"); err != nil {
@@ -211,34 +209,8 @@ func TestAWorkerThatDiesBeforeItsFirstTurnIsReplacedAtOnce(t *testing.T) {
 	if len(w.jobs) != 2 || w.jobs[0] == w.jobs[1] || claims != 1 {
 		t.Fatalf("workers %v, claims %d; want two workers of one dispatch", w.jobs, claims)
 	}
-	if took := w.created[1].Sub(w.created[0]); took > worker_registry.WorkerStartStall {
-		t.Fatalf("replaced after %s", took)
-	}
 	if recorded := w.failures(); len(recorded) != 1 || !strings.Contains(recorded[0], "exit_code=1") || !strings.Contains(recorded[0], "synthetic crash") {
 		t.Fatalf("recorded failures %v; want the exit code and the failure line", recorded)
-	}
-}
-
-func TestAWorkerThatHangsAtStartIsFencedAndReplacedWithinTheBound(t *testing.T) {
-	w := newStartWorld(t, workerHangs, workerAnswers)
-	if result, err := w.dispatch(); err != nil || result.Status != IncidentCompleted {
-		t.Fatalf("Dispatch = %v, %v", result, err)
-	}
-	// The fake world forbids creating a Job while another pod runs.
-	if took := w.created[1].Sub(w.created[0]); took < worker_registry.WorkerStartStall || took > worker_registry.WorkerStartStall+5*time.Second {
-		t.Fatalf("replaced after %s; want about %s", took, worker_registry.WorkerStartStall)
-	}
-}
-
-func TestAnImageProblemReplacesTheWorkerAtOnce(t *testing.T) {
-	w := newStartWorld(t, func(w *startWorld, job *batchv1.Job) {
-		w.pod(job, corev1.PodPending, corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "not found"}})
-	}, workerAnswers)
-	if _, err := w.dispatch(); err != nil {
-		t.Fatal(err)
-	}
-	if recorded := w.failures(); len(recorded) != 1 || !strings.Contains(recorded[0], "ImagePullBackOff") {
-		t.Fatalf("recorded failures %v", recorded)
 	}
 }
 
@@ -268,57 +240,10 @@ func TestAWorkerThatDiedAfterATurnIsNeverReplaced(t *testing.T) {
 	}
 }
 
-func TestATurnHandedToTheProviderIsNeverAStall(t *testing.T) {
-	w := newStartWorld(t, func(w *startWorld, job *batchv1.Job) { workerHangs(w, job); w.usage("turn-1", `{}`) })
-	polls := 0
-	w.onPoll = func(w *startWorld, name string) {
-		// The model thinks for far longer than the stall bound, then replies.
-		if polls++; polls == 100 {
-			w.usage("turn-1", `{"input_tokens":10}`)
-			if err := w.client.Tracker().Delete(corev1.SchemeGroupVersion.WithResource("pods"), "sdo", name+"-pod"); err != nil {
-				t.Error(err)
-			}
-			w.pod(&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name}}, corev1.PodSucceeded, corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}})
-			w.result(name)
-		}
-	}
-	if _, err := w.dispatch(); err != nil || len(w.jobs) != 1 {
-		t.Fatalf("Dispatch = %v, workers %v", err, w.jobs)
-	}
-}
-
-// The first worker takes its turn between the stall verdict and the fence: no
-// second agent starts.
-func TestALateFirstTurnStartsNoSecondAgent(t *testing.T) {
-	w := newStartWorld(t, workerHangs)
-	w.client.PrependReactor("delete", "jobs", func(k8stesting.Action) (bool, kruntime.Object, error) {
-		w.usage("late", `{"input_tokens":1}`)
-		return false, nil, nil
-	})
-	_, err := w.dispatch()
-	var failed *ResponderJobFailedError
-	if !errors.As(err, &failed) || len(w.jobs) != 1 || len(w.failures()) != 0 || len(w.livePods()) != 0 {
-		t.Fatalf("Dispatch = %v, workers %v, live %v", err, w.jobs, w.livePods())
-	}
-}
-
-// A late result of the first worker is the incident's result.
-func TestALateResultIsHarvestedInsteadOfReplaced(t *testing.T) {
-	w := newStartWorld(t, workerHangs)
-	w.client.PrependReactor("delete", "jobs", func(action k8stesting.Action) (bool, kruntime.Object, error) {
-		w.usage("late", `{"input_tokens":1}`)
-		w.result(action.(k8stesting.DeleteAction).GetName())
-		return false, nil, nil
-	})
-	if result, err := w.dispatch(); err != nil || result.Status != IncidentCompleted || len(w.jobs) != 1 {
-		t.Fatalf("Dispatch = %v, %v, workers %v", result, err, w.jobs)
-	}
-}
-
 // The controller restarts at each step of a replacement: the incident still
 // gets exactly one fresh worker.
 func TestARestartDuringAReplacementStartsOneFreshWorker(t *testing.T) {
-	for _, step := range []string{"after the fence", "after the record", "after the new worker"} {
+	for _, step := range []string{"after the record", "after the new worker"} {
 		t.Run(step, func(t *testing.T) {
 			second := workerAnswers
 			if step == "after the new worker" {
@@ -327,8 +252,6 @@ func TestARestartDuringAReplacementStartsOneFreshWorker(t *testing.T) {
 			w := newStartWorld(t, workerCrashes, second)
 			ctx, restart := context.WithCancel(context.Background())
 			switch step {
-			case "after the fence":
-				w.client.PrependReactor("delete", "jobs", func(k8stesting.Action) (bool, kruntime.Object, error) { restart(); return false, nil, nil })
 			case "after the record":
 				w.client.PrependReactor("delete", "configmaps", func(k8stesting.Action) (bool, kruntime.Object, error) {
 					if ctx.Err() == nil {
@@ -363,20 +286,6 @@ func TestARestartDuringAReplacementStartsOneFreshWorker(t *testing.T) {
 	}
 }
 
-// A provider that opened a session and refused the turn gets no second worker,
-// also after a restart.
-func TestARefusedProviderSessionIsNotRetried(t *testing.T) {
-	failures := []worker_registry.StartupFailure{{JobName: "one", Reason: "refused"}}
-	loop := NewResponderLoop(IncidentRequest{IncidentID: "inc-1"}, nil, staticProvider{}, nil, PlanExecutor{}, 2)
-	if startsExhausted(nil, loop) || startsExhausted(failures, loop) {
-		t.Fatal("one failed start without a provider session allows a fresh worker")
-	}
-	loop.menuSession = &contracts.MitigationSession{ProviderSessionId: "session"}
-	if !startsExhausted(failures, loop) {
-		t.Fatal("a refused provider session must not be retried")
-	}
-}
-
 // What the automatic stage applied before the agent's workers died stays in the
 // result, whatever response.after_playbook says.
 func TestNeverStartedWorkersKeepTheStagesApplications(t *testing.T) {
@@ -397,21 +306,6 @@ func TestNeverStartedWorkersKeepTheStagesApplications(t *testing.T) {
 		if result == nil || len(result.PlanApplications) != 1 || escalated.IsZero() {
 			t.Fatalf("%s: result %v, escalated %v", after, result, escalated)
 		}
-	}
-}
-
-func TestOnlyModelTurnCallsCountAsATurn(t *testing.T) {
-	activity := &workerActivity{}
-	done := activity.received("session-open")
-	watch := activity.startWatch()
-	if !watch.Waiting() || watch.Turns() != 0 {
-		t.Fatal("an unanswered session-open waits for the controller and is no turn")
-	}
-	done()
-	activity.received("session-checkpoint")()
-	activity.received("detect")()
-	if watch.Waiting() || watch.Turns() != 1 {
-		t.Fatalf("turns = %d", watch.Turns())
 	}
 }
 
@@ -441,5 +335,91 @@ func TestWorkersThatNeverStartedEscalateTheIncident(t *testing.T) {
 	}
 	if err := h.controller.PersistState(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAPodThatMayStillWriteBlocksTheReplacement(t *testing.T) {
+	w := newStartWorld(t, func(w *startWorld, job *batchv1.Job) {
+		w.pod(job, corev1.PodRunning, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+		job.Status.Failed = 1
+	})
+	_, err := w.dispatch()
+	if err == nil || workerNeverStarted(err) || len(w.jobs) != 1 || len(w.failures()) != 0 {
+		t.Fatalf("Dispatch = %v, workers %v, failures %v", err, w.jobs, w.failures())
+	}
+}
+
+// The agent container exited while a sidecar still runs: the dispatch waits for
+// the pod to end, with no failure and no second worker meanwhile.
+func TestAnExitedAgentIsReplacedOnlyAfterItsPodEnds(t *testing.T) {
+	polls := 0
+	ended := corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}
+	w := newStartWorld(t, func(w *startWorld, job *batchv1.Job) { w.pod(job, corev1.PodRunning, ended) }, workerAnswers)
+	w.onPoll = func(w *startWorld, name string) {
+		if polls++; polls != 10 || len(w.jobs) != 1 {
+			return
+		}
+		object, err := w.client.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "sdo", name+"-pod")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		pod := object.(*corev1.Pod)
+		pod.Status.Phase = corev1.PodSucceeded
+		if err := w.client.Tracker().Update(corev1.SchemeGroupVersion.WithResource("pods"), pod, "sdo"); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := w.dispatch(); err != nil || len(w.jobs) != 2 || polls < 10 {
+		t.Fatalf("Dispatch = %v, workers %v, polls %d", err, w.jobs, polls)
+	}
+}
+
+func TestAVanishedJobThatDidNothingIsReplaced(t *testing.T) {
+	w := newStartWorld(t, func(*startWorld, *batchv1.Job) {}, workerAnswers)
+	w.onPoll = func(w *startWorld, name string) {
+		if len(w.jobs) == 1 && name == w.jobs[0] {
+			_ = w.client.Tracker().Delete(batchv1.SchemeGroupVersion.WithResource("jobs"), "sdo", name)
+		}
+	}
+	if _, err := w.dispatch(); err != nil || len(w.jobs) != 2 {
+		t.Fatalf("Dispatch = %v, workers %v", err, w.jobs)
+	}
+}
+
+// Each single piece of evidence that the worker started, and a passed response
+// deadline, leaves the failure to the ordinary rules.
+func TestEvidenceOfAStartForbidsAReplacement(t *testing.T) {
+	for _, evidence := range []string{"none", "empty usage file", "result", "tool call", "provider session", "deadline"} {
+		t.Run(evidence, func(t *testing.T) {
+			w := newStartWorld(t)
+			d := w.dispatcher()
+			executor := worker_registry.KubernetesExecutor{Client: w.client, Namespace: "sdo", RepositoryMountPath: w.mount, SessionPVCSubPath: "session"}
+			loop := NewResponderLoop(w.request, nil, staticProvider{}, nil, PlanExecutor{}, 2)
+			request := w.request
+			var calls atomic.Int64
+			switch evidence {
+			case "empty usage file":
+				w.usage("turn-1", "{}")
+			case "result":
+				w.result("job")
+			case "tool call":
+				calls.Add(1)
+			case "provider session":
+				loop.menuSession = &contracts.MitigationSession{ProviderSessionId: "session"}
+			case "deadline":
+				request.ResponseDeadline = time.Unix(1, 0)
+			}
+			err := d.settleWorkerStart(context.Background(), executor, w.task, loop, request, &calls, &worker_registry.JobFailedError{JobName: "job"})
+			if evidence == "none" {
+				if !errors.Is(err, errWorkerReplaced) || len(w.failures()) != 1 {
+					t.Fatalf("settle = %v", err)
+				}
+				return
+			}
+			if err != nil || len(w.failures()) != 0 {
+				t.Fatalf("settle = %v, failures %v", err, w.failures())
+			}
+		})
 	}
 }

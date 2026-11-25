@@ -10,12 +10,12 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/utils/clock"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
@@ -55,17 +55,13 @@ type KubernetesJobDispatcher struct {
 	Environment          map[string]string
 	DispatchEnvironment  func(context.Context) map[string]string
 	PollInterval         time.Duration
-	// Clock controls worker polling and start supervision; nil uses the wall clock.
-	Clock    clock.WithTicker
-	Catalog  memory.CatalogReader
-	Outcomes memory.Reader
+	Catalog              memory.CatalogReader
+	Outcomes             memory.Reader
 	// EarlierAttemptMaxAge bounds how old an earlier attempt shown to a new incident may be; zero is seven days.
 	EarlierAttemptMaxAge  time.Duration
 	RequireMemorySnapshot bool
 	LoopFactory           func(IncidentRequest) *ResponderLoop
 	beforeClaim           func()
-	// activity is the current dispatch's record of its worker's tool calls.
-	activity *workerActivity
 	// Investigators is response.investigators and its running sessions; nil or Count 0 starts none.
 	Investigators *InvestigatorRegistry
 }
@@ -208,9 +204,8 @@ func (d KubernetesJobDispatcher) DispatchWithClaim(ctx context.Context, request 
 }
 
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
-	d.activity = &workerActivity{}
 	result, err := d.dispatch(ctx, request)
-	for errors.Is(err, errRedispatch) {
+	for errors.Is(err, errWorkerReplaced) {
 		// Same incident, same frozen task, same dispatch: only the worker is new.
 		d.beforeClaim = nil
 		result, err = d.dispatch(ctx, request)
@@ -290,18 +285,12 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		}
 	}
 	sessionSubPath := ""
-	if d.RequireMemorySnapshot && d.RepositoryMountPath != "" {
-		retired := worker_registry.KubernetesExecutor{Client: d.Client, Namespace: d.Namespace, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath}
-		if err := retired.DropRetired(ctx, task); err != nil {
-			return IncidentResult{}, fmt.Errorf("drop retired responder worker: %w", err)
-		}
-		if failures, err := retired.StartFailures(task); err != nil {
-			return IncidentResult{}, fmt.Errorf("read responder start failures: %w", err)
-		} else if startsExhausted(failures, loop) {
-			return IncidentResult{}, neverStarted(failures)
-		}
-	}
+	var modelCalls atomic.Int64
 	if d.RequireMemorySnapshot {
+		retired := worker_registry.KubernetesExecutor{Client: d.Client, Namespace: d.Namespace, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath}
+		if err := startsExhausted(ctx, retired, task); err != nil {
+			return IncidentResult{}, err
+		}
 		rejoin := false
 		rejoin, err = (worker_registry.KubernetesExecutor{RepositoryMountPath: d.RepositoryMountPath}).HasBoundStandby(task)
 		if err != nil {
@@ -325,12 +314,9 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		Client:         d.Client, Namespace: d.Namespace, Registry: d.Registry,
 		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
 		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
-		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, Clock: d.Clock, SessionPVCSubPath: sessionSubPath,
+		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,
 		CapturedCorpusReadOnly: d.RequireMemorySnapshot,
 		TaskPayload:            request.PreparedAgentTask,
-	}
-	if sessionSubPath != "" {
-		executor.StartWatch = d.activity.startWatch()
 	}
 	if d.beforeClaim != nil {
 		d.beforeClaim()
@@ -358,9 +344,10 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		defer func() { stopTools(); tools.Wait() }()
 		server := SessionToolServer{Directory: directory, Handle: func(toolCtx context.Context, toolRequest ToolRequest) ToolResponse {
 			received := lifecycleio.Now().UTC()
-			answered := d.activity.received(toolRequest.Command)
+			if toolRequest.Command != "session-open" { // the worker itself opens the session
+				modelCalls.Add(1)
+			}
 			response := loop.Handle(toolCtx, toolRequest)
-			answered()
 			if toolRequest.Command == "session-open" && response.Error == "" {
 				if err := worker_registry.RecordSessionStartup(d.RepositoryMountPath, d.RepositoryPVCSubPath, sessionSubPath, received, lifecycleio.Now().UTC()); err != nil {
 					slog.Warn("responder_startup_session_record", "incident_id", request.IncidentID, "error", err)
@@ -391,7 +378,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 	}
 	result, err := d.executeResponder(ctx, executor, task, loop, request)
 	if err != nil {
-		if settled := d.settleWorkerStart(ctx, executor, task, loop, request, err); settled != nil {
+		if settled := d.settleWorkerStart(ctx, executor, task, loop, request, &modelCalls, err); settled != nil {
 			return IncidentResult{}, settled
 		}
 		var failed *worker_registry.JobFailedError

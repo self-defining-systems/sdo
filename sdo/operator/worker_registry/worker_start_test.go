@@ -9,7 +9,6 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -85,7 +84,7 @@ func TestRetiringAClaimedStandbyFreesTheTask(t *testing.T) {
 		t.Fatalf("still bound: %v, %v", bound, err)
 	}
 	name, err := e.taskJobName(ctx, task)
-	if err != nil || name != replacementJobName("inc-1", 1) {
+	if err != nil || name != replacementJobName("inc-1") {
 		t.Fatalf("next worker = %q, %v", name, err)
 	}
 	if err := e.ensureIncidentExecution(ctx, task, name, ""); err != nil {
@@ -93,21 +92,5 @@ func TestRetiringAClaimedStandbyFreesTheTask(t *testing.T) {
 	}
 	if names, err := IncidentExecutionNames(ctx, e.Client, "sdo", e.RepositoryMountPath, "inc-1", true); err != nil || len(names) != 2 {
 		t.Fatalf("execution names = %v, %v", names, err)
-	}
-}
-
-func TestARestartingSidecarIsNotAStartFailure(t *testing.T) {
-	always := corev1.ContainerRestartPolicyAlways
-	ended := corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}}
-	pod := corev1.Pod{
-		Spec:   corev1.PodSpec{InitContainers: []corev1.Container{{Name: "proxy", RestartPolicy: &always}, {Name: "seed"}}},
-		Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{{Name: "proxy", State: ended}}},
-	}
-	if reason := podCannotStart(pod); reason != "" {
-		t.Fatalf("sidecar restart reported: %s", reason)
-	}
-	pod.Status.InitContainerStatuses[0].Name = "seed"
-	if podCannotStart(pod) == "" {
-		t.Fatal("a failed init container is final")
 	}
 }

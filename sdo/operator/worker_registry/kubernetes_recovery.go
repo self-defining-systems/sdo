@@ -141,10 +141,10 @@ func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.Age
 		}
 		return identity.JobName, nil
 	}
-	if failures, err := e.startFailures(task); err != nil {
+	if failures, err := e.StartFailures(task); err != nil {
 		return "", err
 	} else if len(failures) > 0 {
-		return replacementJobName(task.GetTaskId(), len(failures)), nil
+		return replacementJobName(task.GetTaskId()), nil
 	}
 	boundName := TaskJobName(task)
 	maps := e.Client.CoreV1().ConfigMaps(e.Namespace)

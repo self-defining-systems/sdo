@@ -49,7 +49,7 @@ func decodeIncidentExecution(cm *corev1.ConfigMap) (*incidentExecutionIdentity, 
 		return nil, fmt.Errorf("invalid incident execution %s", cm.Name)
 	}
 	if cm.Name != incidentExecutionName(identity.Digest) || cm.Annotations["sdo.dev/incident-id"] != identity.IncidentID ||
-		(identity.JobName != JobName(identity.TaskID) && identity.JobName != "sdo-task-"+identity.Digest[:52] && !isReplacementJobName(identity.JobName, identity.TaskID) && !strings.HasPrefix(identity.JobName, "sdo-standby-")) {
+		(identity.JobName != JobName(identity.TaskID) && identity.JobName != "sdo-task-"+identity.Digest[:52] && identity.JobName != replacementJobName(identity.TaskID) && !strings.HasPrefix(identity.JobName, "sdo-standby-")) {
 		return nil, fmt.Errorf("conflicting incident execution identity %s", cm.Name)
 	}
 	return &identity, nil
