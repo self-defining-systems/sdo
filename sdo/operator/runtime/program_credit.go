@@ -172,9 +172,13 @@ func outcomeCaseContext(outcome *contracts.OutcomeRecord) memory.CaseContext {
 
 // automaticCreditApplication is the application eligible for attribution under
 // the controller-owned stage protocol. A second effective application, a
-// handoff or a reported change before Recovered makes attribution ambiguous.
+// handoff at the deadline or a reported change before Recovered makes attribution ambiguous.
 func automaticCreditApplication(report *contracts.StageReport, applications []*contracts.PlanApplication, changes []*contracts.AgentChange, recovered time.Time) string {
-	if report.GetHandoffSelected() || report.GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED || recovered.IsZero() {
+	// An early handoff leaves attribution to the agent's changes below: an alert
+	// set that cleared without one was the program's repair, shown late.
+	exit := report.GetRecoveryWait().GetExitReason()
+	early := len(report.GetHandoffKeys()) > 0 && exit == contracts.RecoveryWait_EXIT_REASON_UNCOVERED
+	if recovered.IsZero() || !early && (report.GetHandoffSelected() || exit != contracts.RecoveryWait_EXIT_REASON_CLEARED) {
 		return ""
 	}
 	for _, change := range changes {

@@ -39,9 +39,8 @@ type recoveryCheck struct {
 	verdict recoveryVerdict
 	reason  string
 	horizon time.Duration
-	// observed is whether no mutation is in flight in this observation, and
-	// settled whether every SDO write has then settled.
-	observed, settled bool
+	// observed is whether no mutation is in flight in this observation.
+	observed bool
 	// beyondStage are the alerts the automatic stage's settled writes did not clear.
 	beyondStage []string
 }

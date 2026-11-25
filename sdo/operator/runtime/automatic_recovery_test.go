@@ -639,6 +639,7 @@ func TestAutomaticRecoveryExtendsWhenClearAtDeadline(t *testing.T) {
 			c.detectors[probe.id] = probe
 			report := autoReport(c)
 			bound := report.GetRecoveryDeadline().AsTime()
+			stepSeconds(t, c, world, 10) // the writes settle, then one unsettles late
 			setUpdatedReplicas(t, world, 0)
 			autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-400*time.Millisecond)
 			probe.repaired.Store(true)

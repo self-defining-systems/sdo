@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/durationpb"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -33,9 +36,16 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	if applied && report.RecoveryDeadline == nil {
 		report.RecoveryDeadline = contractTimestamp(deadline)
 	}
-	if applied && check.observed && report.StabilityDeadline == nil && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) {
-		if bound := lastStageReceipt(report).Add(stageWaitBound(check.settled, c.config.ClosureStabilityWindow)); bound.Before(deadline) {
-			deadline = bound
+	agentFollows := applied && report.StabilityDeadline == nil && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages)
+	gaveUp := agentFollows && c.stageGaveUp && c.stageUnsettled
+	if agentFollows && c.stageUnsettled && !request.ResponseDeadline.IsZero() {
+		deadline = request.ResponseDeadline // Kubernetes owns the rollout until it gives up
+	} else if agentFollows && !c.stageSettledAt.IsZero() {
+		deadline = deadline.Add(c.stageRollout) // the estimate counts from the settle
+		for _, bound := range []time.Time{c.stageSettledAt.Add(stageSettledBound), request.ResponseDeadline} {
+			if !bound.IsZero() && bound.Before(deadline) {
+				deadline = bound
+			}
 		}
 	}
 	// A failed script has nothing to wait for: the agent takes over now. Only
@@ -47,7 +57,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	// Nor do the writes have anything left to do for an alert they did not clear.
 	beyond := canDispatch && report.StabilityDeadline == nil && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) &&
 		c.alertBeyondStageLocked(now, *request, check.beyondStage)
-	if !failed && !beyond && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
+	if !failed && !gaveUp && !beyond && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
 	if stabilityOnly && scoped {
@@ -117,62 +127,145 @@ func (c *Controller) handOffUnappliedStageLocked(now time.Time) {
 	c.automaticRecoveryLocked(now, report, false, recoveryCheck{}, nil)
 }
 
-const (
-	// stageEffectLag is how long a settled write may take to reach users
-	// through what the application still holds from the failure (connections,
-	// cached settings, retry back-off). A sample taken before that proves nothing.
-	stageEffectLag = 45 * time.Second
-	// stageStartupBound is how long the agent waits for a write that has not
-	// settled, beyond the fixed lag: a learned startup time may hold one
-	// slow start of a workload that was already failing.
-	stageStartupBound = 3 * time.Minute
-	// stageSettledBound is how long settled writes wait for alerts that have no
-	// failing evidence, such as a user test that runs every few minutes.
-	stageSettledBound = 10 * time.Minute
-)
+// stageSettledBound is how long settled writes wait for alerts that have no
+// failing evidence, such as a user test that runs every few minutes.
+const stageSettledBound = 10 * time.Minute
 
-// stageWaitBound caps the wait for the agent whatever the estimated deadline.
-func stageWaitBound(settled bool, stability time.Duration) time.Duration {
-	if settled {
-		return stageSettledBound
+// workloadRollouts is each workload's ("Kind/name") rollout: whether it is
+// complete, and whether Kubernetes' progress deadline gave up on it.
+func workloadRollouts(view sdk.DetectionContext) (complete, gaveUp map[string]bool) {
+	complete, gaveUp = map[string]bool{}, map[string]bool{}
+	for _, d := range view.Deployments() {
+		complete["Deployment/"+d.Name] = deployment.DeploymentRolloutComplete(&d)
+		gaveUp["Deployment/"+d.Name] = slices.ContainsFunc(d.Status.Conditions, func(c appsv1.DeploymentCondition) bool {
+			return c.Reason == "ProgressDeadlineExceeded" && c.Status == corev1.ConditionFalse && d.Status.ObservedGeneration >= d.Generation
+		})
 	}
-	return stageMinimumLag + stageStartupBound + stability
+	for _, s := range view.StatefulSets() {
+		complete["StatefulSet/"+s.Name] = deployment.StatefulSetRolloutComplete(&s)
+	}
+	for _, d := range view.DaemonSets() {
+		complete["DaemonSet/"+d.Name] = deployment.DaemonSetRolloutComplete(&d)
+	}
+	return complete, gaveUp
 }
 
-// observeStageSettled keeps when the stage's writes were first observed settled
-// without interruption. A restart of the controller observes it anew.
-func (c *Controller) observeStageSettled(now time.Time, check recoveryCheck) {
-	switch since := check.record.GetSince().AsTime(); {
-	case !check.observed || !check.settled:
-		c.stageSettledAt = time.Time{}
-	case c.stageSettledAt.IsZero():
-		c.stageSettledAt = now
-	case c.stageSettledAt.Before(since):
-		c.stageSettledAt = since
+// observeStageRollouts reports whether every workload whose pods the stage's
+// writes replace is rolled out and Ready, when its last pod became Ready, and
+// whether Kubernetes gave up on one that is not: its progress deadline, or a
+// condition past its self-healing with no pod still starting.
+func observeStageRollouts(view sdk.DetectionContext, report *contracts.StageReport, conditions []sdk.Finding) (ready bool, lastReady time.Time, gaveUp bool) {
+	complete, exceeded := workloadRollouts(view)
+	starting, pods, written := map[string]bool{}, map[string]corev1.Pod{}, map[string]bool{}
+	readyAt := map[string]time.Time{}
+	for _, pod := range view.Pods() {
+		workload := sdk.PodWorkload(view, pod)
+		pods[pod.Name] = pod
+		if pod.Namespace != view.Namespace() || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		at, ok := podReadySince(pod)
+		complete[workload] = complete[workload] && ok
+		starting[workload] = starting[workload] || sdk.PodStarting(view, pod)
+		readyAt[workload] = laterObservationTime(readyAt[workload], at)
+	}
+	for _, attempt := range report.GetMitigations() {
+		receipt := attempt.GetApplyReceipt()
+		for _, ref := range attempt.GetTouchedObjects() {
+			workload := ref.GetKind() + "/" + ref.GetName()
+			if pod, exists := pods[ref.GetName()]; ref.GetKind() == "Pod" && exists {
+				if pod.DeletionTimestamp == nil && pod.CreationTimestamp.Time.Before(receipt.GetStartedAt().AsTime()) {
+					continue // written into, not replaced
+				}
+				workload = sdk.PodWorkload(view, pod)
+			} else if ref.GetKind() == "Pod" {
+				workload = ""
+				for candidate := range complete {
+					_, name, _ := strings.Cut(candidate, "/")
+					if _, best, _ := strings.Cut(workload, "/"); strings.HasPrefix(ref.GetName(), name+"-") && len(name) > len(best) {
+						workload = candidate
+					}
+				}
+			}
+			if _, known := complete[workload]; known && stageReceiptWrote(receipt) {
+				written[workload] = true
+			}
+		}
+	}
+	// A condition from before the write stands until its pods had time to start.
+	held := !sdk.ObservationTime(view).Before(lastStageReceipt(report).Add(sdk.SelfHealHold(view)))
+	ready = true
+	for workload := range written {
+		lastReady = laterObservationTime(lastReady, readyAt[workload])
+		if !complete[workload] {
+			ready = false
+			gaveUp = gaveUp || exceeded[workload] || held && !starting[workload] && slices.ContainsFunc(conditions, func(f sdk.Finding) bool {
+				return f.PrimaryResource.Kind+"/"+f.PrimaryResource.Name == workload
+			})
+		}
+	}
+	return ready, lastReady, gaveUp
+}
+
+func podReadySince(pod corev1.Pod) (time.Time, bool) {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.LastTransitionTime.Time, condition.Status == corev1.ConditionTrue && pod.DeletionTimestamp == nil
+		}
+	}
+	return time.Time{}, false
+}
+
+// observeStageSettled keeps when the stage's writes settled: the later of the
+// last write and the last time one of its pods became Ready, once that held
+// for a stability window. From then on only a new write changes it, so a late
+// readiness blip neither ends nor restarts the wait.
+func (c *Controller) observeStageSettled(now time.Time, snapshot sdk.DetectionContext, request IncidentRequest, check recoveryCheck) {
+	report := deterministicStageReport(request.PriorStages)
+	if !playbookWrote(report) || !check.observed {
+		return
+	}
+	written := check.record.GetSince().AsTime()
+	if !c.stageSettledAt.IsZero() && !written.After(c.stageSettledAt) {
+		return
+	}
+	var conditions []sdk.Finding
+	for _, state := range c.tracker.Snapshot() {
+		if state.Active && slices.Contains(memory.KubernetesConditionDetectorIDs(), state.DetectorID) {
+			conditions = append(conditions, state.Finding)
+		}
+	}
+	ready, lastReady, gaveUp := observeStageRollouts(snapshot, report, conditions)
+	c.stageSettledAt, c.stageGaveUp = time.Time{}, gaveUp
+	unsettled := !ready || !check.record.GetWritesSettled()
+	c.stageUnsettled = c.stageUnsettled || unsettled
+	if settled := laterObservationTime(written, lastReady); !unsettled && !now.Before(settled.Add(c.config.ClosureStabilityWindow)) {
+		c.stageSettledAt, c.stageRollout, c.stageUnsettled = settled, settled.Sub(written), false
 	}
 }
 
 // userTestsStillFailing are the alert set's user tests that violate their SLO
-// on samples taken after the writes settled and had their effect lag. A test
-// without enough such samples, or whose newest sample passed, is not among
-// them: no new evidence is not failing evidence.
-func userTestsStillFailing(view sdk.DetectionContext, request IncidentRequest, since time.Time) []string {
+// over a full evaluation window of their own made only of samples after settled
+// and a stability window. A test without enough such samples, or whose newest
+// sample passed, is not among them: no new evidence is not failing evidence.
+func userTestsStillFailing(view sdk.DetectionContext, request IncidentRequest, settled time.Time, stability time.Duration) []string {
 	set, _ := view.(traffic.WindowSet)
-	if set == nil {
+	if set == nil || settled.IsZero() {
 		return nil
 	}
-	windows := set.TrafficWindows()
+	windows, since := set.TrafficWindows(), settled.Add(stability)
 	var failing []string
 	for _, key := range alertKeys(&request) {
 		workload, scenario, ok := openingUserTest(request, key)
-		if ok && memberFailing(windows[workload], scenario, since) {
+		window := windows[workload]
+		if ok && !window.ObservedAt.Before(since.Add(window.Workload.ScenarioHorizon(scenario))) && memberFailing(window, scenario) {
 			failing = append(failing, key)
 		}
 	}
 	return failing
 }
 
-func memberFailing(window traffic.Window, scenario string, since time.Time) bool {
+func memberFailing(window traffic.Window, scenario string) bool {
 	if window.LoadError != "" {
 		return false
 	}
@@ -180,15 +273,14 @@ func memberFailing(window traffic.Window, scenario string, since time.Time) bool
 		if observed.Scenario.ID != scenario || !observed.Qualified {
 			continue
 		}
-		var fresh []traffic.Sample
+		var usable []traffic.Sample
 		for _, sample := range observed.Samples {
-			// A sample is stamped when it started.
-			if sample.Outcome != traffic.OutcomeInvalid && !sample.At.Before(since) {
-				fresh = append(fresh, sample)
+			if sample.Outcome != traffic.OutcomeInvalid {
+				usable = append(usable, sample)
 			}
 		}
-		verdict := traffic.Evaluate(scenario, window.Workload.ScenarioSLO(scenario), fresh, window.ObservedAt)
-		return !verdict.Healthy && fresh[len(fresh)-1].Outcome != traffic.OutcomeOK
+		verdict := traffic.Evaluate(scenario, window.Workload.ScenarioSLO(scenario), usable, window.ObservedAt)
+		return !verdict.Healthy && usable[len(usable)-1].Outcome != traffic.OutcomeOK
 	}
 	return false
 }
@@ -255,7 +347,7 @@ func dependsOnAny(m program.AppMap, component string, targets map[string]bool) b
 // beyondStageAlerts are the alerts the stage's settled writes did not clear:
 // alertsBeyondStage once the writes had the stability window to show an effect
 // the map does not tell of, such as freed capacity, and the user tests still
-// failing after the effect lag.
+// failing after it.
 func (c *Controller) beyondStageAlerts(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, request IncidentRequest, check recoveryCheck) []string {
 	report := deterministicStageReport(request.PriorStages)
 	if !playbookWrote(report) ||
@@ -264,7 +356,7 @@ func (c *Controller) beyondStageAlerts(ctx context.Context, now time.Time, snaps
 	}
 	m, _ := acceptedVerificationMap(ctx, c.gitRead, request)
 	return append(alertsBeyondStage(snapshot, m.Program(), request, report),
-		userTestsStillFailing(snapshot, request, c.stageSettledAt.Add(stageEffectLag))...)
+		userTestsStillFailing(snapshot, request, c.stageSettledAt, c.config.ClosureStabilityWindow)...)
 }
 
 // alertBeyondStageLocked reports one of the keys firing in this
