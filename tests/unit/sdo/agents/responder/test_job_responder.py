@@ -3,12 +3,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from sdo.agents.responder import job
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_application_kubeconfig_defaults_to_the_incident_application_namespace(
@@ -93,3 +91,21 @@ def test_without_a_proxy_the_ambient_kubeconfig_is_untouched(monkeypatch: pytest
     job.export_proxy_kubeconfig("sdo")
 
     assert os.environ["KUBECONFIG"] == "/ambient"
+
+
+def test_api_proxy_can_use_its_harness_pod_loopback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(job.tempfile, "gettempdir", lambda: str(tmp_path))
+    proxy = "http://127.16.0.8:18080"
+    monkeypatch.setenv("SDO_API_PROXY_URL", proxy)
+    with pytest.raises(ValueError, match="localhost proxy"):
+        job.write_application_kubeconfig("app")
+    monkeypatch.setenv("SDO_API_PROXY_ADDRESS", "127.16.0.8:18080")
+    kubeconfig = job.write_application_kubeconfig("app")
+    assert kubeconfig is not None
+    config = json.loads(kubeconfig.read_text())
+    assert config["clusters"][0]["cluster"] == {"server": proxy}
+    assert config["users"][0]["user"] == {}
+    monkeypatch.setenv("SDO_API_PROXY_ADDRESS", "192.0.2.1:18080")
+    monkeypatch.setenv("SDO_API_PROXY_URL", "http://192.0.2.1:18080")
+    with pytest.raises(ValueError, match="loopback"):
+        job.write_application_kubeconfig("app")

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -291,12 +292,23 @@ func (r *Runtime) resolveEnv(ctx context.Context, pod *corev1.Pod, c corev1.Cont
 	for k, v := range r.images.Force {
 		env[k] = v
 	}
-	if automount(pod) {
-		env["KUBERNETES_SERVICE_HOST"] = "127.0.0.1"
-		env["KUBERNETES_SERVICE_PORT"] = fmt.Sprint(r.APIPort(pod))
-		env["KUBERNETES_SERVICE_PORT_HTTPS"] = env["KUBERNETES_SERVICE_PORT"]
-	}
+	// Kubernetes supplies service discovery even when the default token mount
+	// is disabled, for example when a Pod projects its own credentials.
+	env["KUBERNETES_SERVICE_HOST"] = "127.0.0.1"
+	env["KUBERNETES_SERVICE_PORT"] = fmt.Sprint(r.APIPort(pod))
+	env["KUBERNETES_SERVICE_PORT_HTTPS"] = env["KUBERNETES_SERVICE_PORT"]
+	setPodAPIProxyEnv(env, r.kubelet.podIP(pod.UID))
 	return env, nil
+}
+
+// The harness shares the host network. Each Pod's unique loopback IP gives
+// its API proxy the same isolation as localhost provides inside a real Pod.
+func setPodAPIProxyEnv(env map[string]string, podIP string) {
+	address := net.JoinHostPort(podIP, "18080")
+	env["SDO_API_PROXY_ADDRESS"] = address
+	if env["SDO_API_PROXY_URL"] == "http://127.0.0.1:18080" {
+		env["SDO_API_PROXY_URL"] = "http://" + address
+	}
 }
 
 func automount(pod *corev1.Pod) bool {
@@ -355,7 +367,18 @@ func (r *Runtime) runContainer(ctx context.Context, pod *corev1.Pod, c corev1.Co
 	final := append([]string{"--clearenv"}, args...)
 	final = append(final, "--")
 	final = append(final, command...)
-	cmd := exec.Command("bwrap", final...)
+	// The trusted script runner must drop to UID/GID 65534. In a
+	// single-UID rootless namespace that transition fails with EINVAL.
+	// Keep the restricted privileges on the runner, never its authored child.
+	trustedScript := len(command) == 2 && command[0] == "/usr/local/bin/sdo-operator" && command[1] == "script-runner"
+	var cmd *exec.Cmd
+	if trustedScript {
+		caps := []string{"--cap-add", "CAP_SETUID", "--cap-add", "CAP_SETGID", "--cap-add", "CAP_DAC_OVERRIDE", "--cap-add", "CAP_KILL"}
+		final = append(caps, final...)
+		cmd = exec.Command("sudo", append([]string{"-n", "--", "bwrap"}, final...)...)
+	} else {
+		cmd = exec.Command("bwrap", final...)
+	}
 	cmd.Stdout, cmd.Stderr = buffer, buffer
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	if err := cmd.Start(); err != nil {
@@ -371,7 +394,11 @@ func (r *Runtime) runContainer(ctx context.Context, pod *corev1.Pod, c corev1.Co
 	select {
 	case waitErr = <-exited:
 	case <-ctx.Done():
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if trustedScript {
+			_ = exec.Command("sudo", "-n", "--", "kill", "-KILL", "--", fmt.Sprint(-cmd.Process.Pid)).Run()
+		} else {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
 		waitErr = <-exited
 	}
 	code := 0
@@ -544,8 +571,12 @@ func (r *Runtime) prepareVolumes(ctx context.Context, pod *corev1.Pod, podDir st
 			if err := writeFiles(dir, secret.Data); err != nil {
 				return nil, err
 			}
+		case v.Projected != nil:
+			if err := r.projectVolume(ctx, pod.Namespace, dir, v.Projected); err != nil {
+				return nil, fmt.Errorf("project volume %s: %w", v.Name, err)
+			}
 		default:
-			return nil, fmt.Errorf("volume %s: the fake kubelet supports emptyDir, persistentVolumeClaim, configMap and secret", v.Name)
+			return nil, fmt.Errorf("volume %s: unsupported source in the fake kubelet", v.Name)
 		}
 		volumes[v.Name] = dir
 	}
@@ -558,6 +589,68 @@ func (r *Runtime) prepareVolumes(ctx context.Context, pod *corev1.Pod, podDir st
 		volumes["__serviceaccount"] = dir
 	}
 	return volumes, nil
+}
+
+// projectVolume supports the projected sources used by the trusted script
+// runner. Use the same synthetic identity as the default test token mount.
+func (r *Runtime) projectVolume(ctx context.Context, namespace, dir string, volume *corev1.ProjectedVolumeSource) error {
+	mode := os.FileMode(0644)
+	if volume.DefaultMode != nil {
+		mode = os.FileMode(*volume.DefaultMode)
+	}
+	write := func(path string, data []byte, fileMode os.FileMode) error {
+		if !filepath.IsLocal(path) {
+			return fmt.Errorf("invalid projected path %q", path)
+		}
+		name := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			return err
+		}
+		return os.WriteFile(name, data, fileMode)
+	}
+	for _, source := range volume.Sources {
+		switch {
+		case source.ServiceAccountToken != nil:
+			if err := write(source.ServiceAccountToken.Path, []byte(r.cluster.Token), mode); err != nil {
+				return err
+			}
+		case source.ConfigMap != nil:
+			projection := source.ConfigMap
+			cm, err := r.cluster.Client.CoreV1().ConfigMaps(namespace).Get(ctx, projection.Name, metav1GetOptions)
+			if err != nil {
+				return err
+			}
+			items := projection.Items
+			if len(items) == 0 {
+				for key := range cm.Data {
+					items = append(items, corev1.KeyToPath{Key: key, Path: key})
+				}
+				for key := range cm.BinaryData {
+					items = append(items, corev1.KeyToPath{Key: key, Path: key})
+				}
+			}
+			for _, item := range items {
+				data, ok := cm.BinaryData[item.Key]
+				if !ok {
+					value, exists := cm.Data[item.Key]
+					if !exists {
+						return fmt.Errorf("configmap %s has no key %s", projection.Name, item.Key)
+					}
+					data = []byte(value)
+				}
+				fileMode := mode
+				if item.Mode != nil {
+					fileMode = os.FileMode(*item.Mode)
+				}
+				if err := write(item.Path, data, fileMode); err != nil {
+					return err
+				}
+			}
+		default:
+			return errors.New("unsupported projected source in the fake kubelet")
+		}
+	}
+	return nil
 }
 
 func writeFiles(dir string, files map[string][]byte) error {

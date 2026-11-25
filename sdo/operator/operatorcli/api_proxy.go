@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 
@@ -19,11 +20,29 @@ import (
 
 const APIProxyAddress = "127.0.0.1:18080"
 
+// apiProxyAddress lets the process-backed test harness give each Pod its
+// own loopback listener while retaining the normal Pod-local default.
+func apiProxyAddress() (string, error) {
+	override := processio.Environment("SDO_API_PROXY_ADDRESS")
+	if override == "" {
+		return APIProxyAddress, nil
+	}
+	parsed, err := netip.ParseAddrPort(override)
+	if err != nil || !parsed.Addr().Is4() || !parsed.Addr().IsLoopback() || parsed.Port() != 18080 {
+		return "", errors.New("SDO_API_PROXY_ADDRESS must be an IPv4 loopback address on port 18080")
+	}
+	return parsed.String(), nil
+}
+
 // RunAPIProxy uses only the Job Pod's in-cluster service-account identity.
 // Provider credentials and incoming Authorization are never inspected or stored.
 func RunAPIProxy(ctx context.Context, args []string) error {
+	address, err := apiProxyAddress()
+	if err != nil {
+		return err
+	}
 	if len(args) == 1 && args[0] == "ready" {
-		return processio.DialReady(APIProxyAddress)
+		return processio.DialReady(address)
 	}
 	flags := flag.NewFlagSet("api-proxy", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -86,7 +105,7 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 			return processio.HeadCommit(ctx, *worktree), processio.Dirty(ctx, *worktree)
 		}
 	}
-	return processio.ServeHTTP(ctx, APIProxyAddress, kubeproxy.NewRecording(upstream, reads, writes, proxyConfig))
+	return processio.ServeHTTP(ctx, address, kubeproxy.NewRecording(upstream, reads, writes, proxyConfig))
 }
 
 // proxyScope is whom the proxy fronts. An incident scope is a responder: it may write, every write is forced to

@@ -28,6 +28,12 @@ bwrap --ro-bind / / --dev /dev --proc /proc true 2>/dev/null || {
     echo "bubblewrap cannot create user namespaces here (kernel.apparmor_restrict_unprivileged_userns=0 on Ubuntu 24.04)" >&2
     exit 2
 }
+if [[ "$scenario" == scenario1 || "$scenario" == all ]]; then
+    sudo -n true 2>/dev/null || {
+        echo "learned-script scenario requires passwordless sudo for the trusted runner's UID transition in bubblewrap" >&2
+        exit 2
+    }
+fi
 if [[ -z "${KUBEBUILDER_ASSETS:-}" ]]; then
     KUBEBUILDER_ASSETS="$(bash "$root/scripts/install_envtest.sh")"
     export KUBEBUILDER_ASSETS

@@ -437,6 +437,11 @@ Scenarios call `Quiesce()` when they stop injecting faults, then `CheckPropertie
 
 Scenario 1 injects one toy fault, requires a scripted-agent repair, a reflection commit, a memory-host activation and no controller restart, then injects it again and requires the repeat to be cleared with no responder Job. Scenario 2 injects API latency, a crashing agent, `kill -9` of the controller mid-incident and a killed memory host. `TestControllerToleratesAPIErrors` answers 10% of API requests with 500 (and restarts the controller under them) and requires no controller exit; `TestControllerEndsHungAgent` hangs the responder and requires the controller to end it at its response deadline, record an outcome and handle the next incident. Fidelity limits are in [simulation-fidelity.md](simulation-fidelity.md#controller-end-to-end-fake-kubelet-and-limits). Run directories are kept on failure (`SDO_E2E_DIR` picks one; `SDO_E2E_KEEP=1` keeps it on success); each Pod's container output is under `pods/<namespace>_<pod>/logs/`.
 
+The learned-script scenario requires passwordless `sudo` for the process-backed
+script runner's bubblewrap sandbox. The sandbox lets the trusted runner read
+its projected identity and then drop to the unprivileged script UID and GID.
+Other containers use the normal rootless sandbox.
+
 ### Lifecycle separation
 
 Use backend test doubles to prove that source deployment and each health-judge attempt receive only their declared inputs. Verify fresh session identifiers, bounded correction feedback, source commit attribution, and independent acceptance.
