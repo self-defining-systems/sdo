@@ -113,7 +113,7 @@ and revision; it returns nothing otherwise. Scaling a current revision is refuse
 `DeletePod` checks UID/version; a terminating Pod counts as deleted and is never recreated on undo.
 `ScaleWorkload` verifies `spec.replicas`. `Exec` runs as the controller, reports only the exit code and
 earns no repair credit when refused. `RunScript` defaults to 60 s, at most 5 min; script
-text keeps at most 64 KiB. A matching Diagnose can return `RunScript` or typed actions.
+text is UTF-8, at most 64 KiB, and runs byte for byte. A matching Diagnose can return `RunScript` or typed actions.
 
 ## Database catalogs
 

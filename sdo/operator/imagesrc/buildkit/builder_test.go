@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/sdk/podtext/podtexttest"
 	"strings"
 	"testing"
 	"time"
@@ -87,11 +88,8 @@ func jobEnvironment(t *testing.T, backend Builder, image string) (map[string]str
 	t.Helper()
 	job := backend.job("j", "proposal", ".", "svc/Dockerfile", image, time.Minute)
 	container := job.Spec.Template.Spec.Containers[0]
-	environment := map[string]string{}
-	for _, variable := range container.Env {
-		environment[variable.Name] = variable.Value
-	}
-	return environment, container.Args[0]
+	environment, argv := podtexttest.Process(container)
+	return environment, argv[len(container.Command)]
 }
 
 // Layers survive across build Jobs through the app's own registry repository,

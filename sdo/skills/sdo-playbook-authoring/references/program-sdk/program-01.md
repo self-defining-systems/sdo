@@ -95,6 +95,9 @@ const MongoDB = "mongodb"
 const ProbeIdentityParam = "username"
     ProbeIdentityParam is the probe-identity procedure's only parameter.
 
+const ScriptRefusalKey = "refused.json"
+    ScriptRefusalKey holds a ScriptRefusal in a script's index ConfigMap.
+
 
 VARIABLES
 
@@ -251,8 +254,4 @@ func ValidateRemoveServicePort(a RemoveServicePort) error
 func ValidateResolvedSetField(f SetField, value any) error
     ValidateResolvedSetField checks the resolved schema without changing
     provenance.
-
-func ValidateRestartRollout(a RestartRollout) error
-    ValidateRestartRollout accepts one named, namespaced apps/v1 Deployment,
-    StatefulSet or DaemonSet: the workloads kubectl rollout restart restarts.
 ```

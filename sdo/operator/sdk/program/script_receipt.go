@@ -46,7 +46,20 @@ type ScriptExecutionResult struct {
 	TimedOut      bool                       `json:"timed_out,omitempty"`
 	Receipts      []ScriptAPIReceipt         `json:"receipts,omitempty"`
 	Objects       []ScriptObjectCapture      `json:"objects,omitempty"`
-	CaptureGaps   []string                   `json:"capture_gaps,omitempty"`
+	// Refused is why SDO did not run the script; nothing it would do happened.
+	Refused     string   `json:"refused,omitempty"`
+	CaptureGaps []string `json:"capture_gaps,omitempty"`
+}
+
+// ScriptRefusalKey holds a ScriptRefusal in a script's index ConfigMap.
+const ScriptRefusalKey = "refused.json"
+
+// ScriptRefusal is published instead of a result when a script is refused
+// before its first command. JobUID binds it to the Job that refused, and is
+// empty when no Job was created.
+type ScriptRefusal struct {
+	JobUID string `json:"job_uid"`
+	Reason string `json:"reason"`
 }
 
 // RecordedRepairReceipt is evidence of a successful repair. ScriptDigest,

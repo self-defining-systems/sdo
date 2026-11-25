@@ -2,10 +2,16 @@ package operatorcli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sdo.dev/operator/sdk/program"
 	"strings"
 	"testing"
 	"time"
@@ -95,5 +101,44 @@ func TestScriptTimeoutDrainsPatchBeforeFence(t *testing.T) {
 	defer guard.Close()
 	if err := guard.Fence(time.Unix(1, 0)); err != nil || response.Code != http.StatusOK {
 		t.Fatalf("drained PATCH status %d, fence: %v", response.Code, err)
+	}
+}
+
+func TestScriptRefusalNamesEveryFailedIdentityClause(t *testing.T) {
+	index := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "script", Namespace: "control"}, Data: map[string]string{"application_id": "app-1", "namespace": "app", "script_digest": "digest"}}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "script", UID: "uid", Annotations: map[string]string{"sdo.dev/script-application": "app-1"}}}
+	same := program.ScriptExecutionResult{ApplicationID: "app-1", JobName: "script", JobUID: "uid", ScriptDigest: "digest"}
+	if err := scriptIdentityConflict(index, job, "app", same); err != nil {
+		t.Fatal(err)
+	}
+	for clause, change := range map[string]func(*corev1.ConfigMap, *batchv1.Job, *program.ScriptExecutionResult){
+		"script digest": func(_ *corev1.ConfigMap, _ *batchv1.Job, out *program.ScriptExecutionResult) {
+			out.ScriptDigest = "other"
+		},
+		"namespace": func(index *corev1.ConfigMap, _ *batchv1.Job, _ *program.ScriptExecutionResult) {
+			index.Data["namespace"] = "other"
+		},
+		"application": func(_ *corev1.ConfigMap, job *batchv1.Job, _ *program.ScriptExecutionResult) { job.Annotations = nil },
+		"Job UID": func(index *corev1.ConfigMap, _ *batchv1.Job, _ *program.ScriptExecutionResult) {
+			index.Data["job_uid"] = "other"
+		},
+		"Job UID unavailable": func(_ *corev1.ConfigMap, _ *batchv1.Job, out *program.ScriptExecutionResult) { out.JobUID = "" },
+	} {
+		index, job, out := index.DeepCopy(), job.DeepCopy(), same
+		change(index, job, &out)
+		err := scriptIdentityConflict(index, job, "app", out)
+		if err == nil || !strings.Contains(err.Error(), clause) {
+			t.Fatalf("%s: %v", clause, err)
+		}
+		kube := fake.NewSimpleClientset(index)
+		refused := refuseScript(t.Context(), kube, "control", "script", "uid", err)
+		if !strings.Contains(refused.Error(), "not run") || !strings.Contains(refused.Error(), clause) {
+			t.Fatalf("runner logs %v", refused)
+		}
+		stored, getErr := kube.CoreV1().ConfigMaps("control").Get(t.Context(), "script", metav1.GetOptions{})
+		var refusal program.ScriptRefusal
+		if getErr != nil || json.Unmarshal([]byte(stored.Data[program.ScriptRefusalKey]), &refusal) != nil || refusal.JobUID != "uid" || !strings.Contains(refusal.Reason, clause) {
+			t.Fatalf("published %+v %v", stored, getErr)
+		}
 	}
 }

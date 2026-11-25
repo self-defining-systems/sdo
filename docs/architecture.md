@@ -163,6 +163,7 @@ user, Job, script), after each such action's own recorded success.
 | Package | Responsibility |
 |---|---|
 | `benchmarks/sregym/fastloop/replay_go/`, `internal/replayio/` | Benchmark-only replay driver and private Git process adapter; a temporary workspace selects the requested frozen operator modules. It cannot publish production artifacts. |
+| `sdo/operator/sdk/podtext` | Escapes the text of every Pod spec SDO authors so the kubelet's `$(NAME)`/`$$` expansion returns it byte for byte; a whole-tree test requires it of every builder. Specs copied from the application keep Kubernetes' meaning. |
 | `sdo/operator/sdk/usage`, `runtime/usage_observer.go` | Deterministic resource usage windows and helpers; bounded namespace-filtered kubelet Summary API collection through the API server, with opt-in cAdvisor CFS counters and no observability service. |
 | `sdo/agents/{source_deployment,health_judge,responder}/` | Built-in agent sessions, prompts, local provider adapters, worker entry points, and typed task/result contracts; reflection and the judge author final files in their private checkouts |
 | `sdo/agents/lifecycle/` | Detection designer prompts and DTOs |

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sdo.dev/operator/sdk/podtext"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -51,6 +52,7 @@ func RunnerResources(c RunnerConfig) ([]kruntime.Object, error) {
 		}},
 		Volumes: []corev1.Volume{{Name: "repository", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: c.RepositoryPVC, ReadOnly: true}}}, {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
 	}}
+	podtext.Literal(&pod.Spec)
 	encoded, _ := json.Marshal(pod.Spec)
 	digest := sha256.Sum256(encoded)
 	pod.Annotations = map[string]string{"sdo.dev/runner-config": fmt.Sprintf("%x", digest)}

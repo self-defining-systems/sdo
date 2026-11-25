@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/sdk/podtext"
 	"strconv"
 	"strings"
 	"time"
@@ -257,7 +258,7 @@ printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
 		script = `printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$SDO_REGISTRY_HOST" > /tmp/buildkitd.toml
 ` + script
 	}
-	return &batchv1.Job{
+	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: b.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", "sdo.dev/component": "image-build"}},
 		Spec: batchv1.JobSpec{BackoffLimit: ptr32(0), ActiveDeadlineSeconds: &deadline, TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: b.ServiceAccount, AutomountServiceAccountToken: &no,
@@ -274,6 +275,8 @@ printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
 			}},
 		},
 	}
+	podtext.Literal(&job.Spec.Template.Spec)
+	return job
 }
 
 func (b Builder) deleteJob(ctx context.Context, name string) {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sdo.dev/operator/sdk/podtext"
 	"sort"
 	"strconv"
 	"strings"
@@ -677,6 +678,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if devmount.Enabled() {
 		devmount.ApplyWorker(&job.Spec.Template.Spec)
 	}
+	podtext.Literal(&job.Spec.Template.Spec)
 	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("create agent Job: %w", err)
 	}

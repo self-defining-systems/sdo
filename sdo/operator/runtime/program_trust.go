@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"google.golang.org/protobuf/proto"
+	"slices"
 	"sort"
 	"strings"
 
@@ -133,7 +134,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 		if class := outcome.GetClassification(); class == outcomeclass.Failed || class == outcomeclass.Escalated {
 			for _, application := range outcome.GetPlanApplications() {
 				// "Applied" means what the application loop above counts.
-				if application.GetDryRun() || (application.GetRolloutPending() != nil && !applicationExecutionFailed(application)) ||
+				if application.GetDryRun() || applicationRefused(application) || (application.GetRolloutPending() != nil && !applicationExecutionFailed(application)) ||
 					(!application.GetApplied() && len(application.GetActionsApplied()) == 0 && !applicationExecutionFailed(application)) {
 					continue
 				}
@@ -348,10 +349,18 @@ func parseTrustFailureSignal(signal, prefix string) (id, revision string, ok boo
 	return id, revision, true
 }
 
+// applicationRefused reports an application SDO cut short by refusing one of
+// its scripts: the plan's repair was never tried.
+func applicationRefused(app *contracts.PlanApplication) bool {
+	return slices.ContainsFunc(app.GetActionReports(), func(report *contracts.ActionReport) bool {
+		return report.GetFailureReason() == ScriptRefusedReason
+	})
+}
+
 // Observation, health and incident summaries cannot prove an execution failure.
 // Only immutable adverse execution facts (or an exact false match) do so.
 func applicationExecutionFailed(app *contracts.PlanApplication) bool {
-	if app.GetDryRun() {
+	if app.GetDryRun() || applicationRefused(app) {
 		return false
 	}
 	if app.GetRolledBack() || app.GetRollbackError() != "" {

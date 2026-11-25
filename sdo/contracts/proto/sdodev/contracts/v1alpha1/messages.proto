@@ -555,7 +555,7 @@ message RepairActionReceipt {
   // never ran (the incident is verified as a whole). Records written before
   // the application reasons (rolled_back to verification_failed) existed can
   // leave a rollback, error or pending application without one.
-  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "incident_verified", "source_residual", "rolled_back", "rollback_failed", "application_error", "settlement_rejected", "application_pending", "verification_failed"]}];
+  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "refused_by_sdo_not_run", "incident_verified", "source_residual", "rolled_back", "rollback_failed", "application_error", "settlement_rejected", "application_pending", "verification_failed"]}];
   // Controller ownerReference chains of written resources, read from the
   // live object before the write. Cause attribution follows these chains,
   // never generated names.

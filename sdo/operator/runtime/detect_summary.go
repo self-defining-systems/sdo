@@ -897,10 +897,8 @@ func buildDetectSummary(in detectInput) detectSummary {
 			header = append(header, "stage: "+droppedStateNote+redactDetectText(dropped, 300))
 		}
 		for _, mitigation := range note.GetMitigations() {
-			if automaticPlanRefused(mitigation) {
-				header = append(header, fmt.Sprintf("stage: by sdo (playbook %s): plan validation refused: %s", mitigation.GetPlaybookId(), redactDetectText(mitigation.GetError(), 200)))
-			} else if mitigation.GetResult() != "skipped" {
-				header = append(header, fmt.Sprintf("stage: by sdo (playbook %s): %s", mitigation.GetPlaybookId(), redactDetectText(mitigation.GetResult(), 40)))
+			if line := stageAttemptLine(mitigation); line != "" {
+				header = append(header, line)
 			}
 		}
 	}
@@ -1133,4 +1131,18 @@ func alertSetLine(request *IncidentRequest) string {
 	}
 	sort.Strings(names)
 	return fmt.Sprintf("alert set: %d opening + %d joined alerts (%s); recovered needs all of them clear and staying clear", len(openingKeys(request)), len(names), strings.Join(names, ", "))
+}
+
+// stageAttemptLine tells the agent what SDO did with one matched playbook.
+func stageAttemptLine(mitigation *contracts.StageMitigation) string {
+	by := fmt.Sprintf("stage: by sdo (playbook %s): ", mitigation.GetPlaybookId())
+	switch {
+	case automaticPlanRefused(mitigation):
+		return by + "plan validation refused: " + redactDetectText(mitigation.GetError(), 200)
+	case applicationRefused(mitigation.GetApplyReceipt()):
+		return by + redactDetectText(mitigation.GetError(), 200)
+	case mitigation.GetResult() != "skipped":
+		return by + redactDetectText(mitigation.GetResult(), 40)
+	}
+	return ""
 }

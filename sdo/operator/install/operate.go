@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/sdk/podtext"
 	"strings"
 	"time"
 
@@ -193,6 +194,7 @@ func OperateJob(cfg Config, healthObjective, operationID string) (*batchv1.Job, 
 	if err := worker_registry.ApplyProviderCapacity(pod, worker_registry.ProviderCapacityEnvironment()); err != nil {
 		return nil, err
 	}
+	podtext.Literal(pod)
 	return job, nil
 }
 

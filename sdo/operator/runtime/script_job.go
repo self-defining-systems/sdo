@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"path"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/sdk/podtext"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -67,12 +69,14 @@ func prewarmScriptImage(ctx context.Context, client kubernetes.Interface, namesp
 	digest := sha256.Sum256([]byte(node + "\x00" + image))
 	name := fmt.Sprintf("sdo-script-prewarm-%x", digest[:8])
 	zero, ttl, deadline, no := int32(0), int32(60), int64(45), false
-	_, err := client.BatchV1().Jobs(namespace).Create(ctx, &batchv1.Job{
+	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: batchv1.JobSpec{BackoffLimit: &zero, TTLSecondsAfterFinished: &ttl, ActiveDeadlineSeconds: &deadline,
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeName: node, AutomountServiceAccountToken: &no, RestartPolicy: corev1.RestartPolicyNever,
 				Containers: []corev1.Container{{Name: "prewarm", Image: image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/true"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no}}}}}},
-	}, metav1.CreateOptions{})
+	}
+	podtext.Literal(&job.Spec.Template.Spec)
+	_, err := client.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil && !apierrors.IsAlreadyExists(err) {
 		logger.Warn("script image prewarm failed; continuing", "error", err)
 		return
@@ -134,13 +138,15 @@ func (c TypedPlanClient) finishInterruptedScript(ctx context.Context, deadline t
 	}
 	read, stop := context.WithTimeout(ctx, 3*time.Second)
 	defer stop()
-	maps := c.Client.CoreV1().ConfigMaps(c.ScriptNamespace)
+	indexes := c.Client.CoreV1().ConfigMaps(c.ScriptNamespace)
 	if !stopped {
 		stopped = scriptJobStopped(read, c.Client, c.ScriptNamespace, out.JobName)
 	}
-	index, readErr := maps.Get(read, out.JobName, metav1.GetOptions{})
+	index, readErr := indexes.Get(read, out.JobName, metav1.GetOptions{})
 	final := false
+	var refusal program.ScriptRefusal
 	if readErr == nil {
+		_ = json.Unmarshal([]byte(index.Data[program.ScriptRefusalKey]), &refusal)
 		for _, key := range []string{"result.json", "capture.json"} {
 			if raw := index.Data[key]; raw != "" {
 				if recovered, err := decodeScriptResult(out, raw); err == nil {
@@ -159,7 +165,7 @@ func (c TypedPlanClient) finishInterruptedScript(ctx context.Context, deadline t
 			out.JobUID = string(job.UID)
 		}
 	}
-	records, receiptErr := maps.List(read, metav1.ListOptions{LabelSelector: "sdo.dev/script-capture=" + out.JobName})
+	records, receiptErr := indexes.List(read, metav1.ListOptions{LabelSelector: "sdo.dev/script-capture=" + out.JobName})
 	if receiptErr == nil && out.JobUID != "" {
 		seen := map[string]bool{}
 		for _, receipt := range out.Receipts {
@@ -193,7 +199,42 @@ func (c TypedPlanClient) finishInterruptedScript(ctx context.Context, deadline t
 	if final && receiptErr == nil {
 		return out, nil
 	}
+	// A refusal stands only when nothing shows that the script ran.
+	if refusal.Reason != "" && refusal.JobUID == out.JobUID && receiptErr == nil && len(records.Items) == 0 && index.Data["result.json"] == "" && index.Data["capture.json"] == "" {
+		out.Refused = refusal.Reason
+		return out, scriptRefusedError(refusal.Reason)
+	}
 	return out, fmt.Errorf("script effects unknown: final result or API receipt inventory unavailable")
+}
+
+func scriptRefusedError(reason string) error {
+	return fmt.Errorf("script refused by SDO, not run: %s", reason)
+}
+
+// refuseScriptBeforeJob records that no Job was created for a reservation, so
+// its script did not run. Without the record the outcome stays unknown.
+func (c TypedPlanClient) refuseScriptBeforeJob(ctx context.Context, name string, reason error) error {
+	raw, _ := json.Marshal(program.ScriptRefusal{Reason: reason.Error()})
+	patch, _ := json.Marshal(map[string]any{"data": map[string]string{program.ScriptRefusalKey: string(raw)}})
+	write, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	if _, err := c.Client.CoreV1().ConfigMaps(c.ScriptNamespace).Patch(write, name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("%w (record refusal: %w)", reason, err)
+	}
+	return reason
+}
+
+// scriptDeliveryError reports text the script's Pod could not carry unchanged.
+func scriptDeliveryError(r ScriptExecutionRequest) error {
+	if err := podtext.Check(r.Script); err != nil {
+		return fmt.Errorf("script cannot be delivered unchanged: %w", err)
+	}
+	for _, key := range slices.Sorted(maps.Keys(r.Env)) {
+		if err := podtext.Check(r.Env[key]); err != nil {
+			return fmt.Errorf("script environment %s cannot be delivered unchanged: %w", key, err)
+		}
+	}
+	return nil
 }
 
 // RunScript reserves a durable application before creating a nonretrying Job.
@@ -216,12 +257,15 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	if len(r.Script) == 0 || len(r.Script) > program.MaxScriptBytes || r.Timeout <= 0 || r.Timeout > program.MaxScriptTimeout {
 		return out, fmt.Errorf("script Job request exceeds execution bounds")
 	}
+	if err = scriptDeliveryError(r); err != nil {
+		return out, err
+	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(r.IncidentID+"\x00"+r.ApplicationID)))
 	out.JobName = "sdo-script-" + digest[:32]
 	out.ResultRef = "ConfigMap/" + c.ScriptNamespace + "/" + out.JobName
-	maps := c.Client.CoreV1().ConfigMaps(c.ScriptNamespace)
+	indexes := c.Client.CoreV1().ConfigMaps(c.ScriptNamespace)
 	jobs := c.Client.BatchV1().Jobs(c.ScriptNamespace)
-	index, getErr := maps.Get(ctx, out.JobName, metav1.GetOptions{})
+	index, getErr := indexes.Get(ctx, out.JobName, metav1.GetOptions{})
 	provenance, _ := json.Marshal(r.Inputs)
 	fresh := false
 	if r.recoverOnly && apierrors.IsNotFound(getErr) {
@@ -235,9 +279,9 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 			deadline = d
 		}
-		index, err = maps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: out.JobName, Namespace: c.ScriptNamespace, Labels: map[string]string{"sdo.dev/script-application": digest[:32], "app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"application_id": r.ApplicationID, "incident_id": r.IncidentID, "script_digest": out.ScriptDigest, "deadline": deadline.UTC().Format(time.RFC3339Nano), "phase": "creating", "inputs": string(provenance), "namespace": r.Namespace}}, metav1.CreateOptions{})
+		index, err = indexes.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: out.JobName, Namespace: c.ScriptNamespace, Labels: map[string]string{"sdo.dev/script-application": digest[:32], "app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"application_id": r.ApplicationID, "incident_id": r.IncidentID, "script_digest": out.ScriptDigest, "deadline": deadline.UTC().Format(time.RFC3339Nano), "phase": "creating", "inputs": string(provenance), "namespace": r.Namespace}}, metav1.CreateOptions{})
 		if apierrors.IsAlreadyExists(err) {
-			index, err = maps.Get(ctx, out.JobName, metav1.GetOptions{})
+			index, err = indexes.Get(ctx, out.JobName, metav1.GetOptions{})
 		} else {
 			fresh = err == nil
 		}
@@ -274,25 +318,29 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	if apierrors.IsNotFound(getErr) && fresh {
 		seconds := int64(math.Ceil(lifecycleio.Until(deadline).Seconds()))
 		if seconds < 1 {
-			return out, fmt.Errorf("script deadline expired before Job creation")
+			return out, c.refuseScriptBeforeJob(ctx, out.JobName, fmt.Errorf("script deadline expired before Job creation"))
 		}
 		zero := int32(0)
-		env := []corev1.EnvVar{{Name: "SDO_SCRIPT_TEXT", Value: literalEnvValue(r.Script)}, {Name: "SDO_SCRIPT_INDEX", Value: out.JobName}, {Name: "SDO_SCRIPT_NAMESPACE", Value: r.Namespace}, {Name: "SDO_SCRIPT_STORAGE_NAMESPACE", Value: c.ScriptNamespace}}
+		env := []corev1.EnvVar{{Name: "SDO_SCRIPT_TEXT", Value: r.Script}, {Name: "SDO_SCRIPT_INDEX", Value: out.JobName}, {Name: "SDO_SCRIPT_NAMESPACE", Value: r.Namespace}, {Name: "SDO_SCRIPT_STORAGE_NAMESPACE", Value: c.ScriptNamespace}}
 		keys := make([]string, 0, len(r.Env))
 		for key := range r.Env {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			env = append(env, corev1.EnvVar{Name: key, Value: literalEnvValue(r.Env[key])})
+			env = append(env, corev1.EnvVar{Name: key, Value: r.Env[key]})
 		}
 		sub, prepareErr := memory.PrepareIncidentSession(c.ScriptRepositoryMount, c.ScriptRepositorySubPath, r.IncidentID)
 		if prepareErr != nil {
-			return out, prepareErr
+			return out, c.refuseScriptBeforeJob(ctx, out.JobName, prepareErr)
 		}
 		job, err = jobs.Create(ctx, scriptJob(c, out.JobName, r.ApplicationID, out.ScriptDigest, digest[:32], seconds, zero, env, sub), metav1.CreateOptions{})
-		if apierrors.IsAlreadyExists(err) {
+		switch {
+		case apierrors.IsAlreadyExists(err):
 			job, err = jobs.Get(ctx, out.JobName, metav1.GetOptions{})
+		case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err), apierrors.IsInvalid(err), apierrors.IsBadRequest(err), apierrors.IsRequestEntityTooLargeError(err):
+			// The API server answered that it stored no Job.
+			err = c.refuseScriptBeforeJob(ctx, out.JobName, err)
 		}
 	} else {
 		err = getErr
@@ -309,7 +357,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	out.JobUID = string(job.UID)
 	// Update only our identity field, retaining a concurrently published result.
 	for attempt := 0; attempt < 4; attempt++ {
-		index, err = maps.Get(ctx, out.JobName, metav1.GetOptions{})
+		index, err = indexes.Get(ctx, out.JobName, metav1.GetOptions{})
 		if err != nil {
 			return out, err
 		}
@@ -319,7 +367,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		index.OwnerReferences = []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID}}
 		index.Data["job_uid"] = out.JobUID
 		index.Data["phase"] = "started"
-		_, err = maps.Update(ctx, index, metav1.UpdateOptions{})
+		_, err = indexes.Update(ctx, index, metav1.UpdateOptions{})
 		if !apierrors.IsConflict(err) {
 			break
 		}
@@ -334,7 +382,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	ticker := lifecycleio.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		index, err = maps.Get(ctx, out.JobName, metav1.GetOptions{})
+		index, err = indexes.Get(ctx, out.JobName, metav1.GetOptions{})
 		if err != nil {
 			return out, err
 		}
@@ -373,19 +421,13 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	}
 }
 
-// literalEnvValue escapes a value for a container env entry. The kubelet reads "$$" as "$" and "$(NAME)" as another
-// variable's value, so a text that contains either would not reach the process as written.
-func literalEnvValue(value string) string {
-	return strings.ReplaceAll(value, "$", "$$")
-}
-
 // Only the trusted runner mounts the incident fence and service account token.
 // The runner drops credentials before executing authored shell code.
 func scriptJob(c TypedPlanClient, name, application, scriptDigest, label string, seconds int64, zero int32, env []corev1.EnvVar, session string) *batchv1.Job {
 	no, root, mode := false, int64(0), int32(0600)
 	replace := batchv1.Failed
 	ttl := int32(24 * 60 * 60)
-	return &batchv1.Job{
+	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.ScriptNamespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}, Annotations: map[string]string{"sdo.dev/script-application": application, "sdo.dev/script-digest": scriptDigest}},
 		Spec: batchv1.JobSpec{TTLSecondsAfterFinished: &ttl, BackoffLimit: &zero, ActiveDeadlineSeconds: &seconds, PodReplacementPolicy: &replace,
 			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"sdo.dev/script-application": label, "app.kubernetes.io/managed-by": "sdo"}}, Spec: corev1.PodSpec{
@@ -408,6 +450,8 @@ func scriptJob(c TypedPlanClient, name, application, scriptDigest, label string,
 			}},
 		},
 	}
+	podtext.Literal(&job.Spec.Template.Spec)
+	return job
 }
 
 func decodeScriptResult(identity ScriptExecutionResult, raw string) (ScriptExecutionResult, error) {

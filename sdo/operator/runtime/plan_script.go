@@ -33,6 +33,10 @@ type ScriptAPIReceipt = program.ScriptAPIReceipt
 type ScriptObjectCapture = program.ScriptObjectCapture
 type ScriptExecutionResult = program.ScriptExecutionResult
 
+// ScriptRefusedReason is the failure reason of a script SDO did not run. It
+// says nothing about the playbook, so it costs no trust.
+const ScriptRefusedReason = "refused_by_sdo_not_run"
+
 type PlanScriptClient interface {
 	RunScript(context.Context, ScriptExecutionRequest) (ScriptExecutionResult, error)
 }
@@ -121,6 +125,16 @@ func (r *PlanApplicationResult) attachScriptResult(incident IncidentRequest, a p
 	}
 	r.ActionReports[index].Script = &public
 	r.ActionReports[index].ExitCode = run.ExitCode
+	// No reservation exists before a Job has a name.
+	if runErr != nil && (run.Refused != "" || run.JobName == "") {
+		r.ActionReports[index].Status = "refused"
+		r.ActionReports[index].FailureReason = ScriptRefusedReason
+		if run.Refused != "" {
+			return runErr
+		}
+		public.Refused = runErr.Error()
+		return scriptRefusedError(public.Refused)
+	}
 	if run.JobName != "" {
 		r.Applied = true
 		if !slices.ContainsFunc(r.ActionsApplied, func(other program.Action) bool {

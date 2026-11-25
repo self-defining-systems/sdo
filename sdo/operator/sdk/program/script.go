@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const MaxScriptBytes = 64 << 10
@@ -26,6 +27,9 @@ type RunScript struct {
 func (RunScript) action() {}
 
 func (a RunScript) Validate() error {
+	if !utf8.ValidString(a.Script) {
+		return fmt.Errorf("RunScript script is not valid UTF-8 and cannot be delivered unchanged")
+	}
 	if strings.TrimSpace(a.Script) == "" || len(a.Script) > MaxScriptBytes || strings.ContainsRune(a.Script, 0) {
 		return fmt.Errorf("RunScript requires nonempty script of at most 64 KiB without NUL")
 	}
@@ -72,6 +76,12 @@ func ScriptEnvText(value any) (string, error) {
 	text := fmt.Sprint(value)
 	if strings.ContainsRune(text, 0) {
 		return "", fmt.Errorf("script environment contains NUL")
+	}
+	if !utf8.ValidString(text) {
+		return "", fmt.Errorf("script environment is not valid UTF-8")
+	}
+	if len(text) > MaxScriptBytes {
+		return "", fmt.Errorf("script environment exceeds 64 KiB")
 	}
 	return text, nil
 }

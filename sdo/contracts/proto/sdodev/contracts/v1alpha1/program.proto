@@ -214,7 +214,7 @@ message ActionReport {
   SourceReconcileResult source_reconcile = 12;
   // A ProposeSourceChange with its value resolved: {ref, path, value, reason}.
   bytes source_change_json = 13;
-  string failure_reason = 9 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "source_residual"]}];
+  string failure_reason = 9 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "refused_by_sdo_not_run", "source_residual"]}];
 }
 
 // Direct readback of the fields this accepted-source action owns. No payload
