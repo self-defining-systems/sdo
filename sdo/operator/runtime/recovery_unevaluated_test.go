@@ -139,9 +139,35 @@ func TestTheUnevaluatedWaitNeverOutlivesAnExistingDeadline(t *testing.T) {
 	if !hold(grace.Add(-time.Millisecond)) || hold(grace) {
 		t.Fatal("a returned responder's verification bound must end the wait")
 	}
+	if !hold(grace.Add(-3*time.Second)) || hold(grace) || !c.unevaluatedHoldSince.IsZero() {
+		t.Fatal("an ended wait must close its duration")
+	}
 	c.responderDone = false
 	deadline := c.currentIncidentRequest.ResponseDeadline
 	if hold(deadline) {
 		t.Fatal("the response deadline must end the wait")
+	}
+}
+
+func TestUnevaluatedTestsSkipBrokenWorkloadsAndFollowTheirSchedule(t *testing.T) {
+	// One arrival per 20 s: three samples take longer than maxAge.
+	slow := traffic.Workload{Name: "probe", RatePerSecond: 0.05, Scenarios: []traffic.WorkloadScenario{{ID: "write", Weight: 1}}}
+	broken := slow
+	broken.Scenarios = []traffic.WorkloadScenario{{ID: "write", Weight: 1, KnownBroken: &traffic.KnownBroken{Reason: "synthetic", FailsWith: []string{"404"}}}}
+	for name, tc := range map[string]struct {
+		workload  traffic.Workload
+		loadError string
+		held      bool
+	}{
+		"waits for its schedule": {workload: slow, held: true},
+		"known broken":           {workload: broken},
+		"cannot be loaded":       {workload: slow, loadError: "synthetic"},
+	} {
+		view := sdktest.Snapshot{NamespaceName: "app", Traffic: map[string]traffic.Window{"probe": {Workload: tc.workload, LoadError: tc.loadError,
+			Scenarios: []traffic.ScenarioObservations{{Scenario: traffic.Descriptor{ID: "write"}, Qualified: true, UserTest: true}}}}}
+		waiting, need := unevaluatedRecoveryTests(view, IncidentRequest{})
+		if want := time.Duration(traffic.DefaultMinSamples) * 20 * time.Second; tc.held && (len(waiting) != 1 || need != want) || !tc.held && len(waiting) != 0 {
+			t.Errorf("%s: waiting %v need %s, want held %v %s", name, waiting, need, tc.held, want)
+		}
 	}
 }

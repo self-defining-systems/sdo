@@ -212,7 +212,7 @@ type Controller struct {
 	incidentOpen  bool
 	responderDone bool
 	// unevaluatedHoldUntil ends the running wait for user tests without a verdict.
-	unevaluatedHoldUntil time.Time
+	unevaluatedHoldUntil, unevaluatedHoldSince time.Time
 	// recoveryFenceMayStand: this incident's write fence was published, or a
 	// restart cannot tell.
 	recoveryFenceMayStand   bool

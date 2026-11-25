@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -115,6 +116,19 @@ func servicesOf(view sdk.DetectionContext, ref sdk.ObjectRef) []string {
 // timeout or any deadline that already governs this recovery. A test that
 // never evaluates therefore falls back to the proof alone. "" holds nothing.
 func (c *Controller) unevaluatedHoldLocked(now time.Time, waiting []string, need time.Duration) string {
+	reason := c.unevaluatedReasonLocked(now, waiting, need)
+	switch {
+	case reason != "" && (c.unevaluatedHoldSince.IsZero() || c.unevaluatedHoldSince.Before(c.closureStableSince)):
+		c.unevaluatedHoldSince = now
+	case reason == "" && !c.unevaluatedHoldSince.IsZero():
+		slog.Info("recovery_held_for_unevaluated_tests", "incident_id", c.currentIncidentRequest.IncidentID,
+			"held_ms", now.Sub(c.unevaluatedHoldSince).Milliseconds(), "still_unevaluated", waiting)
+		c.unevaluatedHoldSince = time.Time{}
+	}
+	return reason
+}
+
+func (c *Controller) unevaluatedReasonLocked(now time.Time, waiting []string, need time.Duration) string {
 	c.unevaluatedHoldUntil = time.Time{}
 	if len(waiting) == 0 || c.closureStableSince.IsZero() {
 		return ""
