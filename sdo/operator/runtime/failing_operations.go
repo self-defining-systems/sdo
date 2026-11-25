@@ -14,15 +14,16 @@ import (
 // Opening is true for the operation of an opening alert; it leads, then the
 // rest by the share of requests failing.
 type requestOperation struct {
-	ID      string // drill-down item id
-	Label   string
-	Failed  float64
-	Total   float64
-	Share   float64
-	Window  string
-	Class   string
-	Samples []string
-	Opening bool
+	ID         string // drill-down item id
+	Label      string
+	Failed     float64
+	Total      float64
+	Share      float64
+	Window     string
+	Class      string
+	Samples    []string
+	Opening    bool
+	Background bool
 }
 
 func metaFloat(m map[string]any, key string) float64 {
@@ -91,7 +92,7 @@ func requestOperations(findings []sdk.Finding, opening []string) []requestOperat
 		out = append(out, requestOperation{
 			ID: shortID(FindingFingerprint(f)), Label: label, Failed: metaFloat(m, "failed"), Total: metaFloat(m, "total"),
 			Share: metaFloat(m, "share"), Window: metaString(m, "window"), Class: metaString(m, "class"), Samples: sampleLines(m),
-			Opening: containsKey(opening, findingKey(f)),
+			Opening: containsKey(opening, findingKey(f)), Background: m[requestmetrics.MetaBackground] == true,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -101,6 +102,22 @@ func requestOperations(findings []sdk.Finding, opening []string) []requestOperat
 		return out[i].Share > out[j].Share
 	})
 	return out
+}
+
+// Request counters are aggregate. The prober's scenario samples cannot
+// partition them into per-route probe and non-probe counts.
+func requestCoverageLine(operations []requestOperation) string {
+	for _, op := range operations {
+		if !op.Background && op.Failed > 0 && op.Total > 0 {
+			window := "window unknown"
+			if op.Window != "" {
+				window = "in " + middle(op.Window, 24)
+			}
+			return fmt.Sprintf("request failures still observed (%.0f of %.0f %s): %s; non-probe coverage unavailable",
+				op.Failed, op.Total, window, middle(op.Label, 96))
+		}
+	}
+	return "non-probe coverage unavailable (no active user-route counts)"
 }
 
 func containsKey(keys []string, key string) bool {

@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/requestmetrics"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -325,5 +326,27 @@ func TestDetectSummaryWithoutOpeningKeysTreatsEveryFindingAsOpening(t *testing.T
 	text := buildDetectSummary(detectInput{Request: request, Findings: request.Findings, View: detectApp(), Now: detectNow()}).Text
 	if !strings.Contains(text, "Deployment/api  legacy finding") || strings.Contains(text, "OTHER CLUES") {
 		t.Fatalf("legacy request:\n%s", text)
+	}
+}
+
+func TestPassingProbeDoesNotHideRequestFailures(t *testing.T) {
+	input := detectInput{Request: detectRequest(), View: detectApp(), Now: detectNow(), Recovered: true}
+	input.Findings = []sdk.Finding{{
+		RuleID: requestmetrics.RuleErrors, Status: sdk.FindingActive,
+		Metadata: map[string]any{"route": "GET /items", "failed": 7, "total": 12, "window": "30s"},
+	}}
+	summary := buildDetectSummary(input).Text
+	header := strings.SplitN(summary, "\n", 5)
+	for _, want := range []string{"request failures still observed", "7 of 12", "30s", "GET /items", "non-probe coverage unavailable", "SDO's own test accounts: passing: create list"} {
+		if !strings.Contains(strings.Join(header[:4], "\n"), want) {
+			t.Fatalf("missing %q in first lines:\n%s", want, summary)
+		}
+	}
+	if !strings.Contains(summary, "recovered: yes (0 alerts active)") {
+		t.Fatalf("display changed the controller recovery verdict:\n%s", summary)
+	}
+	input.Findings = nil
+	if text := buildDetectSummary(input).Text; !strings.Contains(text, "non-probe coverage unavailable") {
+		t.Fatalf("missing coverage must remain explicit:\n%s", text)
 	}
 }
