@@ -362,7 +362,10 @@ completion time of SDO's last write. A pending workload write must be observed b
 progress on the written revision. A later Pod Ready transition does not move the write epoch. An opening user test recovers when its fresh samples since `since` meet its SLO,
 so do those in the trailing stability window, and its latest sample is good; its detector clearing is not enough,
 because its SLO window can still hold samples from before the fix. An opening Kubernetes condition recovers when its
-finding is inactive with a clear streak of the stability window. The alert set is `opening_keys` plus `joined_keys`. New user tests, traffic errors and held Kubernetes conditions
+finding is inactive with a clear streak of the stability window. A complete proof is still held while a user test of the
+alert set's Services has no verdict (`unevaluatedHoldLocked`): at most the test's `maxAge` or `minSamples` arrivals from the start of the
+stability window, capped by the verification timeout, the response deadline, the automatic stage's deadline and the returned responder's grace.
+The alert set is `opening_keys` plus `joined_keys`. New user tests, traffic errors and held Kubernetes conditions
 join after firing persistence activates them, within `AlertJoinWindow` (5 minutes) of detection while recovery is
 provisional. A join resets the recovery proof. If an alert joins, or an alert of the set fires again, after SDO verified and before publication while the
 responder still runs, the controller returns the incident to open in the same step and removes the write fence, with no re-prompt; a later step
