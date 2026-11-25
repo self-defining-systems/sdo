@@ -211,6 +211,8 @@ type Controller struct {
 	checkpoint    *contracts.ControllerState
 	incidentOpen  bool
 	responderDone bool
+	// unevaluatedHoldUntil ends the running wait for user tests without a verdict.
+	unevaluatedHoldUntil, unevaluatedHoldSince time.Time
 	// recoveryFenceMayStand: this incident's write fence was published, or a
 	// restart cannot tell.
 	recoveryFenceMayStand   bool
@@ -1382,6 +1384,9 @@ func (c *Controller) nextWake() (time.Time, string) {
 	earlyReason := "closure stability window"
 	if c.incidentOpen && !c.closurePreparingLocked() && !c.closureStableSince.IsZero() {
 		earlyDeadline = c.closureStableSince.Add(c.config.ClosureStabilityWindow)
+		if c.unevaluatedHoldUntil.After(earlyDeadline) {
+			earlyDeadline = c.unevaluatedHoldUntil
+		}
 	}
 	if c.earlyReportPendingLocked() {
 		earlyDeadline = c.earlyReportWakeLocked()
@@ -2035,6 +2040,11 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		}
 		return false
 	}
+	var unevaluated []string
+	var unevaluatedNeed time.Duration
+	if observationErr == nil {
+		unevaluated, unevaluatedNeed = unevaluatedRecoveryTests(snapshot, request)
+	}
 	c.mu.Lock()
 	if c.midStage.running || c.pendingLearnedPassReadyLocked() || automatic != c.awaitingAutomaticRecoveryLocked() {
 		c.mu.Unlock()
@@ -2118,6 +2128,8 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		verified = c.recoveryProofForEpochLocked(now, finalStates, true, since)
 		if !verified {
 			verification.Summary = recoveryStabilitySummary
+		} else if reason := c.unevaluatedHoldLocked(now, unevaluated, unevaluatedNeed); reason != "" {
+			verified, verification.Summary = false, reason
 		}
 		verification.Healthy = verified
 		c.cacheVerificationLocked(verification)

@@ -222,6 +222,7 @@ func (c *Controller) retirementWakeLocked(now time.Time) time.Time {
 func (c *Controller) clearIncidentLocked() {
 	c.closureFreezeDelay, c.closureFreezeRetryAt, c.closureFreezeCauses = 0, time.Time{}, nil
 	c.closureStableSince = time.Time{}
+	c.unevaluatedHoldUntil, c.unevaluatedHoldSince = time.Time{}, time.Time{}
 	c.closureMutationRevision = ""
 	c.earlyLastMutationAt = time.Time{}
 	c.responderLoop = nil
