@@ -12,6 +12,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // automaticRecoveryLocked is the controller's only automatic-stage dispatch
@@ -32,15 +33,20 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	if applied && report.RecoveryDeadline == nil {
 		report.RecoveryDeadline = contractTimestamp(deadline)
 	}
+	if applied && check.observed && report.StabilityDeadline == nil && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) {
+		if bound := lastStageReceipt(report).Add(stageWaitBound(check.settled, c.config.ClosureStabilityWindow)); bound.Before(deadline) {
+			deadline = bound
+		}
+	}
 	// A failed script has nothing to wait for: the agent takes over now. Only
 	// its responder can verify a page, so a page never waits either.
 	failed := report.StabilityDeadline == nil && stageScriptsFailed(report) && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages)
 	page := pageOpened(request)
 	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
 		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
-	// Nor do the writes have anything left to do for a condition they cannot clear.
+	// Nor do the writes have anything left to do for an alert they did not clear.
 	beyond := canDispatch && report.StabilityDeadline == nil && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) &&
-		c.conditionBeyondStageLocked(now, *request, check.beyondStage)
+		c.alertBeyondStageLocked(now, *request, check.beyondStage)
 	if !failed && !beyond && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
@@ -111,6 +117,82 @@ func (c *Controller) handOffUnappliedStageLocked(now time.Time) {
 	c.automaticRecoveryLocked(now, report, false, recoveryCheck{}, nil)
 }
 
+const (
+	// stageEffectLag is how long a settled write may take to reach users
+	// through what the application still holds from the failure (connections,
+	// cached settings, retry back-off). A sample taken before that proves nothing.
+	stageEffectLag = 45 * time.Second
+	// stageStartupBound is how long the agent waits for a write that has not
+	// settled, beyond the fixed lag: a learned startup time may hold one
+	// slow start of a workload that was already failing.
+	stageStartupBound = 3 * time.Minute
+	// stageSettledBound is how long settled writes wait for alerts that have no
+	// failing evidence, such as a user test that runs every few minutes.
+	stageSettledBound = 10 * time.Minute
+)
+
+// stageWaitBound caps the wait for the agent whatever the estimated deadline.
+func stageWaitBound(settled bool, stability time.Duration) time.Duration {
+	if settled {
+		return stageSettledBound
+	}
+	return stageMinimumLag + stageStartupBound + stability
+}
+
+// observeStageSettled keeps when the stage's writes were first observed settled
+// without interruption. A restart of the controller observes it anew.
+func (c *Controller) observeStageSettled(now time.Time, check recoveryCheck) {
+	switch since := check.record.GetSince().AsTime(); {
+	case !check.observed || !check.settled:
+		c.stageSettledAt = time.Time{}
+	case c.stageSettledAt.IsZero():
+		c.stageSettledAt = now
+	case c.stageSettledAt.Before(since):
+		c.stageSettledAt = since
+	}
+}
+
+// userTestsStillFailing are the alert set's user tests that violate their SLO
+// on samples taken after the writes settled and had their effect lag. A test
+// without enough such samples, or whose newest sample passed, is not among
+// them: no new evidence is not failing evidence.
+func userTestsStillFailing(view sdk.DetectionContext, request IncidentRequest, since time.Time) []string {
+	set, _ := view.(traffic.WindowSet)
+	if set == nil {
+		return nil
+	}
+	windows := set.TrafficWindows()
+	var failing []string
+	for _, key := range alertKeys(&request) {
+		workload, scenario, ok := openingUserTest(request, key)
+		if ok && memberFailing(windows[workload], scenario, since) {
+			failing = append(failing, key)
+		}
+	}
+	return failing
+}
+
+func memberFailing(window traffic.Window, scenario string, since time.Time) bool {
+	if window.LoadError != "" {
+		return false
+	}
+	for _, observed := range window.Scenarios {
+		if observed.Scenario.ID != scenario || !observed.Qualified {
+			continue
+		}
+		var fresh []traffic.Sample
+		for _, sample := range observed.Samples {
+			// A sample is stamped when it started.
+			if sample.Outcome != traffic.OutcomeInvalid && !sample.At.Before(since) {
+				fresh = append(fresh, sample)
+			}
+		}
+		verdict := traffic.Evaluate(scenario, window.Workload.ScenarioSLO(scenario), fresh, window.ObservedAt)
+		return !verdict.Healthy && fresh[len(fresh)-1].Outcome != traffic.OutcomeOK
+	}
+	return false
+}
+
 // alertsBeyondStage are the alert set's Kubernetes conditions that the settled
 // writes of the automatic stage cannot clear. Such a condition reports an
 // object as it is now, so it does not lag a repair, unlike a request or
@@ -170,23 +252,25 @@ func dependsOnAny(m program.AppMap, component string, targets map[string]bool) b
 	return false
 }
 
-// beyondStageAlerts is alertsBeyondStage once the stage's writes settled and
-// had the stability window to show an effect the map does not tell of, such as
-// freed capacity.
+// beyondStageAlerts are the alerts the stage's settled writes did not clear:
+// alertsBeyondStage once the writes had the stability window to show an effect
+// the map does not tell of, such as freed capacity, and the user tests still
+// failing after the effect lag.
 func (c *Controller) beyondStageAlerts(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, request IncidentRequest, check recoveryCheck) []string {
 	report := deterministicStageReport(request.PriorStages)
-	if !playbookWrote(report) || !check.record.GetWritesSettled() ||
+	if !playbookWrote(report) ||
 		now.Before(check.record.GetSince().AsTime().Add(c.config.ClosureStabilityWindow)) {
 		return nil
 	}
 	m, _ := acceptedVerificationMap(ctx, c.gitRead, request)
-	return alertsBeyondStage(snapshot, m.Program(), request, report)
+	return append(alertsBeyondStage(snapshot, m.Program(), request, report),
+		userTestsStillFailing(snapshot, request, c.stageSettledAt.Add(stageEffectLag))...)
 }
 
-// conditionBeyondStageLocked reports one of the keys firing in this
+// alertBeyondStageLocked reports one of the keys firing in this
 // observation's own evaluation, and continuously for a stability window: a
 // transient, a missing or an older observation starts no agent.
-func (c *Controller) conditionBeyondStageLocked(now time.Time, request IncidentRequest, keys []string) bool {
+func (c *Controller) alertBeyondStageLocked(now time.Time, request IncidentRequest, keys []string) bool {
 	if len(keys) == 0 {
 		return false
 	}

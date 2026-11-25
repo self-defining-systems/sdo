@@ -148,6 +148,8 @@ type settlingWorld struct {
 	startup time.Duration
 	// effectAt is when the restart's effect reaches the samples.
 	effectAt time.Time
+	// probes are further user-test windows as of a time.
+	probes func(time.Time) map[string]traffic.Window
 	// saved collects the controller's tool-state checkpoints when set.
 	saved *[][]byte
 }
@@ -165,6 +167,9 @@ func (w *settlingWorld) Snapshot(ctx context.Context) (sdk.DetectionContext, err
 	snapshot.StatefulSetList = sets.Items
 	if w.startup > 0 {
 		snapshot.ObservedStartupTimes = map[string]time.Duration{"Deployment/api": w.startup}
+	}
+	if w.probes != nil {
+		snapshot.Traffic = w.probes(w.clock.Now())
 	}
 	if w.traffic == nil {
 		return snapshot, nil

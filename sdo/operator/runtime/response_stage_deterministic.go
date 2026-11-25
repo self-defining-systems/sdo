@@ -915,13 +915,16 @@ func (stage *DeterministicResponseStage) armRecovery(state *IncidentState, loop 
 	report.RecoveryWait = nil
 }
 
+// stageMinimumLag is the least time alerts get to clear after a write.
+const stageMinimumLag = 90 * time.Second
+
 func automaticRecoveryDeadline(request IncidentRequest, report *contracts.StageReport, completed time.Time, view sdk.DetectionContext, detectors []sdk.Detector, wait, stability time.Duration) time.Time {
 	if completed.IsZero() {
 		return completed
 	}
 	budget := wait
 	if budget <= 0 {
-		lag := 90 * time.Second
+		lag := stageMinimumLag
 		var refs []sdk.ObjectRef
 		for _, attempt := range report.GetMitigations() {
 			for _, ref := range attempt.GetTouchedObjects() {

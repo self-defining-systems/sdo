@@ -227,6 +227,8 @@ type Controller struct {
 	recoverySafetyLost      bool
 	recoverySamples         map[string]recoverySample
 	closureStableSince      time.Time
+	// stageSettledAt is read and written by the recovery observation alone.
+	stageSettledAt          time.Time
 	closureMutationRevision string
 	earlyLastMutationAt     time.Time
 	cachedVerification      *ToolResponse
@@ -2032,7 +2034,10 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		detected, stability := c.incidentDetectedAt, c.config.ClosureStabilityWindow
 		c.mu.Unlock()
 		recovery = c.recoveryCheck(observationCtx, snapshot, *request, result, detected, stability)
-		if safe && (guard == nil || !guard.Pending) && len(source.Rollouts) == 0 && !restorePending {
+		recovery.observed = safe && (guard == nil || !guard.Pending) && !restorePending
+		recovery.settled = recovery.record.GetWritesSettled() && len(source.Rollouts) == 0
+		c.observeStageSettled(now, recovery)
+		if recovery.observed && recovery.settled {
 			recovery.beyondStage = c.beyondStageAlerts(observationCtx, now, snapshot, *request, recovery)
 		}
 	}
