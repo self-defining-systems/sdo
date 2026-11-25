@@ -447,9 +447,25 @@ def _db_stamps(command: str, output: str) -> Iterator[datetime]:
 
 
 def _transcript(path: Path) -> Iterator[Write]:
+    yield from _writes(_tool_results(path))
+
+
+def _applied_plan(path: Path) -> Iterator[Write]:
+    """The writes of a recommend-only agent's plan, as the DevOps Agent subject's applier ran it."""
+
+    def results() -> Iterator[tuple[ToolCall, datetime, str, str, bool]]:
+        for item in _objects(_read(path).get("commands")):
+            start, end, command = _time(item.get("started_at")), _time(item.get("ended_at")), item.get("command")
+            if start and end and isinstance(command, str):
+                yield ToolCall(start, command), end, "applied_plan", str(item.get("output", "")), item.get("exit") != 0
+
+    yield from _writes(results())
+
+
+def _writes(results: Iterable[tuple[ToolCall, datetime, str, str, bool]]) -> Iterator[Write]:
     writes: list[Write] = []
     stamps: set[datetime] = set()
-    for call, end, provider, output, error in _tool_results(path):
+    for call, end, provider, output, error in results:
         acknowledged = _RECEIPT.search(output) or (_REDIS_WRITE.search(call.command) and _REDIS_REPLY.search(output))
         if (error or _NO_EFFECT.search(output)) and not acknowledged:
             continue
@@ -536,12 +552,9 @@ def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Documen
         return
     # LastBadSecond denotes the final bad bucket. Writes starting after that bucket
     # cannot explain graded recovery, even if the agent kept working.
-    writes = [
-        w
-        for path in [*sorted((op / "session-dir").rglob("*.jsonl")), transcript]
-        for w in _transcript(path)
-        if start <= w.at
-    ]
+    sources = [*sorted((op / "session-dir").rglob("*.jsonl")), transcript]
+    found = [*_applied_plan(op / "apply.json"), *(w for path in sources for w in _transcript(path))]
+    writes = [w for w in found if start <= w.at]
     last = _last_write(writes, *_capped(_recovery_bounds(row, inject), end), _last_bad(row, inject))
     if last:
         _record_write(row, start, last, observed)
@@ -926,7 +939,11 @@ def measure(run: Path) -> Row:
     manifest, collect = (_read(op / name) for name in ("evidence-manifest.json", "collect.json"))
     hooks = _object(result.get("prepared")).get("hooks")
     label = str(record.get("operator") or metadata.get("operator_label") or "")
-    if manifest.get("arm") == "vanilla" or hooks == "vanilla" or "vanilla" in label or (op / "done.json").is_file():
+    if manifest.get("arm") == "devops-agent":
+        arm = "devops-agent"
+    elif manifest.get("arm") == "external" or hooks == "external":
+        arm = "external"
+    elif manifest.get("arm") == "vanilla" or hooks == "vanilla" or "vanilla" in label or (op / "done.json").is_file():
         arm = "vanilla"
     elif manifest or collect or hooks == "sdo" or label.startswith("exec:sdo"):
         arm = "sdo"
@@ -965,7 +982,7 @@ def measure(run: Path) -> Row:
     observed = list(_objects(_object(lifecycle.get("observed")).get("mutations") or record.get("observed_mutations")))
     if arm == "sdo":
         _sdo(row, run, manifest, collect, inject, observed)
-    elif arm == "vanilla":
+    elif arm in ("vanilla", "devops-agent", "external"):
         _vanilla(row, op, inject, observed)
     return row
 

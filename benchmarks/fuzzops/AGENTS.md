@@ -37,6 +37,11 @@ takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound i
   repeat/first ratios per sequence, churn findings, false alarms from healthy runs and alarms while gating).
 - `hooks.py`: SDO's operator hooks for fuzzops-bench (below).
 - `cellevidence.py` / `capture.py`: the per-cell evidence manifest and validator (below); `capture.py` takes build identity, host load, the Prometheus/Jaeger stores for the window and all application and control pod logs at collect time.
+- `external.py`: the plain Claude arm (`vanilla.py`) around any agent command (`settings.external`: `command`, `label`, `model`), called with
+  the external-agent contract of `benchmarks/sregym/fastloop/README.md` (`--phase incident` only, never `--state-in`).
+  The command confines its own agent, stops it at `--deadline-epoch`, and adds `incident/transcript.jsonl` (Claude Code
+  JSONL, shell calls as `Bash`) and `incident/usage.json` to its result; a missing one makes the row's evidence
+  incomplete. Host setup: `hook_command` entry `external: ... python -m benchmarks.fuzzops.external`.
 - `view.py`: the dashboard view of a collected run (`operator/view.json`, below).
 
 ## fuzzops-bench hooks
@@ -162,6 +167,18 @@ effective_config`; the experiment's `config` may not set `mode`): detectors, syn
 observing and `sdo detect` serves the candidate view, but their findings never open, join or close the incident; the
 responder's completion closes it (frozen memory). Page to first write and page to fixed are measured from the
 page time in `page.json`, comparable with B1.
+
+## AWS DevOps Agent baseline
+
+`devops_agent.py` is a lanes subject built on `vanilla.py`'s lane side (same page text, harm-onset wait, ServiceAccount,
+sandbox and 25-minute cap). The service only recommends, so a row has a diagnosis (`diagnosis.json`, `$FUZZOPS_REPORT`),
+a plan (`plan.json`) and the result of running the plan's `prepare` and `apply` commands unchanged (`apply.json`: stops
+at the first failed apply command; text steps are counted as `manual`). `task.json`, `executions.json`, `journal.jsonl`,
+`usage.json` (execution spans at list price, no tokens) and `space.json` (Agent Space assets, account counters) are the rest
+of the evidence. Settings: `window_seconds` and `devops_agent: {region, lanes: {<lane>: {agent_space_id, cluster}}}`, one
+Agent Space and EKS cluster per lane. `prepare` refuses a vcluster lane (the service reads EKS clusters only) and an Agent
+Space with directed actions on. The hooks never create or configure AWS resources; they start and cancel investigations,
+which are billed. A task the service linked or skipped, or that failed, is a problem (no row).
 
 ## Cell evidence manifest and validator
 

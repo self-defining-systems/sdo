@@ -140,9 +140,13 @@ runs. Grader metrics come from `record.json`. Validity also honors the lanes sta
   found). The vanilla session end, which includes the agent's own verification after the fix,
   is `agent_wall_s`. For a recovered row, the tool searches calls issued through the final
   graded bad bucket. A database timestamp can place the exact write later than that bucket.
+- An `external` row (an agent command, `benchmarks/fuzzops/external.py`) is read like a vanilla row; `done.json` `label` and
+  `agent_version` name the agent and `session-dir/incident/` holds its own evidence.
 - `first_episode_end_s` is the inject to the last bad second of the first failure episode, which
   ends at the first clean gap of 30 s; read it beside `inject_to_last_bad_s`, which isolated
   later blips (churn, one failed request) can extend.
+- Arm `devops-agent` (AWS DevOps Agent, plan applied by a fixed applier) is measured like vanilla from its page; its
+  fixing writes come from `apply.json` (`applied_plan_tool_start`), its cost from `usage.json`, and it has no tokens.
 - When the transcript only brackets the write, the `*_tool_start` source gives the invocation's
   start as a lower bound and `last_write_tool_end_at` gives the result timestamp. The tool
   recognizes common Kubernetes and in-pod write commands. Shell scripts that hide their effects

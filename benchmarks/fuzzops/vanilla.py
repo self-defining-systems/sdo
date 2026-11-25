@@ -21,7 +21,7 @@ from benchmarks.fuzzops.hooks import HookError, fuzzops_app, prove_golden
 from benchmarks.fuzzops.view import redact_json_line
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
 MODEL = "claude-opus-5-5"
 EFFORT = "medium"
@@ -30,6 +30,7 @@ IDENTITY = "vanilla-agent"
 MODULE = "benchmarks.fuzzops.vanilla"
 VERTEX_ENV = ("CLAUDE_CODE_USE_VERTEX", "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID")
 ONSET_EVIDENCE = "onset-probes.jsonl"
+LANE_VERBS = ("prepare", "idle", "snapshot", "reset", "swap", "teardown")
 EVIDENCE_FILES = (
     "start.json",
     "onset.json",
@@ -39,6 +40,11 @@ EVIDENCE_FILES = (
     "transcript.jsonl",
     "stderr.log",
 )
+
+
+def page_text(namespace: str) -> str:
+    """What every paged baseline is told."""
+    return f"Users are reporting problems with the application in namespace {namespace}; investigate and fix it."
 
 
 def timestamp(t: float) -> str:
@@ -145,7 +151,7 @@ def role_objects(namespace: str) -> dict[str, Any]:
     }
 
 
-def prepare(env: Mapping[str, str]) -> None:
+def prepare(env: Mapping[str, str], version: str = f"{MODEL}/{EFFORT}") -> None:
     ns = env["FUZZOPS_NAMESPACE"]
     proof = prove_no_sdo(env)
     cluster = json.loads(kubectl(env, None, "config", "view", "--minify", "--flatten", "--raw", "-o", "json"))
@@ -186,7 +192,7 @@ def prepare(env: Mapping[str, str]) -> None:
         config.unlink(missing_ok=True)
         raise
     atomic_write_json(state(env) / "isolation.json", proof)
-    print(json.dumps({"pack": env["BENCH_PACK"], "operator_version": f"{MODEL}/{EFFORT}", "memory": "none"}))
+    print(json.dumps({"pack": env["BENCH_PACK"], "operator_version": version, "memory": "none"}))
 
 
 def operator_settings(env: Mapping[str, str]) -> dict[str, Any]:
@@ -208,7 +214,31 @@ def vertex(env: Mapping[str, str]) -> tuple[Path, dict[str, str]]:
     return auth, {key: extra[key] for key in VERTEX_ENV}
 
 
-def sandbox(env: Mapping[str, str], box: Path, auth: Path, config: Path, extra: Mapping[str, str]) -> list[str]:
+SECRET_FIELDS = ("private_key", "refresh_token", "client_secret")
+
+
+def auth_secrets(auth: Path) -> list[str]:
+    """Every secret value of a Google credential file, at any depth (an impersonated account nests its source)."""
+
+    def collect(value: Any) -> Iterator[str]:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in SECRET_FIELDS and isinstance(item, str):
+                    # A key may be logged whole, with escaped newlines, or line by line.
+                    yield from (line.strip() for line in item.splitlines())
+                else:
+                    yield from collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from collect(item)
+
+    return [secret for secret in dict.fromkeys(collect(json.loads(auth.read_text()))) if secret]
+
+
+def isolated(
+    env: Mapping[str, str], box: Path, mounts: Sequence[tuple[str, str]], settings: Mapping[str, str]
+) -> list[str]:
+    """The bwrap argv, up to the command: the host's tools read-only, no host environment, writable state under box."""
     args = [
         binary(env, "bwrap"),
         "--unshare-user",
@@ -229,15 +259,22 @@ def sandbox(env: Mapping[str, str], box: Path, auth: Path, config: Path, extra: 
         if Path(path).exists():
             args += ["--ro-bind", path, path]
     for directory in ("home", "config", "work"):
-        (box / directory).mkdir()
+        (box / directory).mkdir(exist_ok=True)
         args += ["--bind", str(box / directory), f"/{directory}"]
-    for source, target in (
+    for source, target in mounts:
+        args += ["--ro-bind", source, target]
+    for key, value in settings.items():
+        args += ["--setenv", key, value]
+    return [*args, "--chdir", "/work", "--"]
+
+
+def sandbox(env: Mapping[str, str], box: Path, auth: Path, config: Path, extra: Mapping[str, str]) -> list[str]:
+    mounts = (
         (binary(env, "claude"), "/tools/claude"),
         (binary(env, "kubectl"), "/tools/kubectl"),
         (str(auth), "/vertex.json"),
         (str(config), "/kubeconfig"),
-    ):
-        args += ["--ro-bind", source, target]
+    )
     settings = {
         **extra,
         "HOME": "/home",
@@ -248,9 +285,7 @@ def sandbox(env: Mapping[str, str], box: Path, auth: Path, config: Path, extra: 
         "DISABLE_AUTOUPDATER": "1",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     }
-    for key, value in settings.items():
-        args += ["--setenv", key, value]
-    return [*args, "--chdir", "/work", "--", "/tools/claude"]
+    return [*isolated(env, box, mounts, settings), "/tools/claude"]
 
 
 def copy_log(source: Path, dest: Path, identities: Sequence[str]) -> dict[str, Any]:
@@ -288,9 +323,8 @@ def capture_agent(env: Mapping[str, str], target: Path, injected: float) -> None
             EFFORT,
         ]
         token = json.loads(config.read_text())["users"][0]["user"]["token"]
-        key = json.loads(auth.read_text()).get("private_key", "")
-        secrets = [token, *key.splitlines()]
-        prompt = f"Users are reporting problems with the application in namespace {ns}; investigate and fix it."
+        secrets = [token, *auth_secrets(auth)]
+        prompt = page_text(ns)
         started = time.time()
         capped = False
         with (box / "stream").open("w") as stream, (box / "stderr").open("w") as stderr:
@@ -372,7 +406,7 @@ def supervise(env: Mapping[str, str], injected: float, lock_fd: int) -> None:
     capture_agent(env, run_dir(env), injected)
 
 
-def watch(env: Mapping[str, str]) -> int:
+def watch(env: Mapping[str, str], module: str = MODULE, agent: str = "Claude Code") -> int:
     watch_at = time.time()
     target = run_dir(env)
     target.mkdir(mode=0o700)
@@ -397,7 +431,7 @@ def watch(env: Mapping[str, str]) -> int:
         return 0
     with lane_lock(env) as lock:
         proc = subprocess.Popen(
-            [sys.executable, "-m", MODULE, "supervise", str(injected), str(lock.fileno())],
+            [sys.executable, "-m", module, "supervise", str(injected), str(lock.fileno())],
             env=env,
             start_new_session=True,
             pass_fds=(lock.fileno(),),
@@ -405,42 +439,50 @@ def watch(env: Mapping[str, str]) -> int:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    print("vanilla: launched Claude Code", file=sys.stderr, flush=True)
+    print(f"vanilla: launched {agent}", file=sys.stderr, flush=True)
     return proc.wait()
 
 
-def collect(env: Mapping[str, str]) -> int:
+def problems_of(dest: Path, done: Mapping[str, Any]) -> list[str]:
+    problems = cell_problems(dest, "vanilla")
+    if not done.get("result_event"):
+        problems.append("Claude Code result event missing" + (f" ({done['error']})" if done.get("error") else ""))
+    elif done.get("is_error") or done.get("exit") not in (None, 0):
+        problems.append("Claude Code exited with an error")
+    return problems
+
+
+def publish(
+    env: Mapping[str, str],
+    arm: str,
+    files: Sequence[str],
+    check: Callable[[Path, Mapping[str, Any]], list[str]],
+) -> int:
+    """Copy the run's evidence out and write its manifest. The caller holds the lane lock."""
     target, dest = run_dir(env), Path(env["BENCH_OUT"])
     dest.mkdir(parents=True, exist_ok=True)
-    with lane_lock(env):
-        manifest = dest / "evidence-manifest.json"
-        if not target.exists() and manifest.is_file():
-            return int(bool(json.loads(manifest.read_text())["problems"]))
-        for name in EVIDENCE_FILES:
-            if (target / name).is_file():
-                shutil.copyfile(target / name, dest / name)
-        if (target / "session-dir").is_dir():
-            shutil.copytree(target / "session-dir", dest / "session-dir", dirs_exist_ok=True)
-        proof = state(env) / "isolation.json"
-        if proof.is_file():
-            shutil.copyfile(proof, dest / proof.name)
-        done = json.loads((target / "done.json").read_text()) if (target / "done.json").exists() else {}
-        problems = [] if done.get("skipped") else cell_problems(dest, "vanilla")
-        if not done.get("skipped") and not done.get("result_event"):
-            problems.append("Claude Code result event missing" + (f" ({done['error']})" if done.get("error") else ""))
-        elif done.get("is_error") or done.get("exit") not in (None, 0):
-            problems.append("Claude Code exited with an error")
-        atomic_write_json(
-            manifest,
-            {
-                "arm": "vanilla",
-                "inject_at": env.get("BENCH_INTERVAL_START"),
-                "problems": problems,
-            },
-        )
-        if target.is_dir():
-            shutil.rmtree(target)
+    manifest = dest / "evidence-manifest.json"
+    if not target.exists() and manifest.is_file():
+        return int(bool(json.loads(manifest.read_text())["problems"]))
+    for name in files:
+        if (target / name).is_file():
+            shutil.copyfile(target / name, dest / name)
+    if (target / "session-dir").is_dir():
+        shutil.copytree(target / "session-dir", dest / "session-dir", dirs_exist_ok=True)
+    proof = state(env) / "isolation.json"
+    if proof.is_file():
+        shutil.copyfile(proof, dest / proof.name)
+    done = json.loads((target / "done.json").read_text()) if (target / "done.json").exists() else {}
+    problems = [] if done.get("skipped") else check(dest, done)
+    atomic_write_json(manifest, {"arm": arm, "inject_at": env.get("BENCH_INTERVAL_START"), "problems": problems})
+    if target.is_dir():
+        shutil.rmtree(target)
     return int(bool(problems))
+
+
+def collect(env: Mapping[str, str]) -> int:
+    with lane_lock(env):
+        return publish(env, "vanilla", EVIDENCE_FILES, problems_of)
 
 
 def preflight(env: Mapping[str, str]) -> None:
@@ -459,6 +501,32 @@ def preflight(env: Mapping[str, str]) -> None:
     ok = proc.returncode == 0
     detail = "Claude Code starts in the namespace sandbox" if ok else "sandboxed Claude Code --version failed"
     print(json.dumps({"checks": [{"check": "vanilla-sandbox", "ok": ok, "detail": detail}]}))
+
+
+def lifecycle(env: Mapping[str, str], verb: str, prepare_lane: Callable[[Mapping[str, str]], None]) -> None:
+    """The lane verbs that need no agent, under the lane lock."""
+    with lane_lock(env):
+        if verb == "prepare":
+            prepare_lane(env)
+        elif verb == "idle":
+            print("idle")
+        elif verb == "swap":
+            prove_no_sdo(env)
+            prove_golden(lambda: fuzzops_app(env, "verify"), lambda: fuzzops_app(env, "reset"))
+            prepare_lane(env)
+        elif verb in ("snapshot", "reset"):
+            print(json.dumps(fuzzops_app(env, verb)))
+        else:
+            kubectl(
+                env,
+                None,
+                "delete",
+                f"rolebinding/{IDENTITY}",
+                f"role/{IDENTITY}",
+                f"serviceaccount/{IDENTITY}",
+                "--ignore-not-found",
+            )
+            (state(env) / "kubeconfig").unlink(missing_ok=True)
 
 
 def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None) -> int:
@@ -485,29 +553,8 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         elif verb == "transcripts":
             # Lanes asks on pool build and teardown, outside a row. Collect validates each row's transcript.
             print("row transcripts are verified by collect")
-        elif verb in ("prepare", "idle", "snapshot", "reset", "swap", "teardown"):
-            with lane_lock(environ):
-                if verb == "prepare":
-                    prepare(environ)
-                elif verb == "idle":
-                    print("idle")
-                elif verb == "swap":
-                    prove_no_sdo(environ)
-                    prove_golden(lambda: fuzzops_app(environ, "verify"), lambda: fuzzops_app(environ, "reset"))
-                    prepare(environ)
-                elif verb in ("snapshot", "reset"):
-                    print(json.dumps(fuzzops_app(environ, verb)))
-                else:
-                    kubectl(
-                        environ,
-                        None,
-                        "delete",
-                        f"rolebinding/{IDENTITY}",
-                        f"role/{IDENTITY}",
-                        f"serviceaccount/{IDENTITY}",
-                        "--ignore-not-found",
-                    )
-                    (state(environ) / "kubeconfig").unlink(missing_ok=True)
+        elif verb in LANE_VERBS:
+            lifecycle(environ, verb, prepare)
         else:
             return 64
     except (HookError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
