@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
 )
@@ -189,6 +191,71 @@ func (c *Controller) earlyProofInvalidatedLocked() bool {
 	return c.earlyReportPendingLocked() && !slices.Equal(c.currentIncidentRequest.JoinedKeys, c.pendingClosure.Request.JoinedKeys)
 }
 
+// withdrawRecoveryLocked returns an early-verified incident to open work while
+// its session still runs, and lets that session write again. It is the only
+// path that withdraws recovery from a running session; a returned or expired
+// one keeps its closure for finishEarlyReport, which escalates it. A step that
+// fails leaves that fallback in place.
+func (c *Controller) withdrawRecoveryLocked(now time.Time, finding sdk.Finding) {
+	if !c.earlyReportPendingLocked() {
+		return
+	}
+	if c.responderDone || c.config.WatchOnly || !c.earlyStopRetryAt.IsZero() || !now.Before(c.finalResultDeadlineLocked()) {
+		return
+	}
+	closure := c.pendingClosure
+	if _, err := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Reobserve, At: now}); err != nil || c.pendingClosure != nil {
+		slog.Error("recovery_withdraw_failed", "incident_id", closure.Request.IncidentID, "error", err)
+		return
+	}
+	// Early verification cleared only the open flag and the timeline: the
+	// loop, dispatch and deadlines still belong to the running session.
+	c.incidentOpen = true
+	late := c.timeline
+	c.timeline = cloneTimeline(closure.DetectorTimeline)
+	for _, entry := range late {
+		index := slices.IndexFunc(c.timeline, func(prior DetectorTimelineEntry) bool { return prior.key() == entry.key() })
+		if index < 0 {
+			c.timeline = append(c.timeline, entry)
+			continue
+		}
+		prior := &c.timeline[index]
+		prior.ClearedAt, prior.LastSeenAt = entry.ClearedAt, entry.LastSeenAt
+		prior.Activations += entry.Activations
+	}
+	c.lateJoinedKeys = lateJoinedFromTimeline(c.timeline)
+	c.closureStableSince = time.Time{}
+	c.recoverySafetyLost = true
+	c.publishHeldLocked()
+	c.cacheVerificationLocked(ToolResponse{Command: "verify", Summary: "recovery withdrawn: an alert of the incident fires; writes are accepted again", Findings: []sdk.Finding{finding}})
+	slog.Info("incident_recovery_withdrawn", "incident_id", closure.Request.IncidentID, "finding", findingKey(finding))
+	c.reconcileRecoveryFenceLocked()
+}
+
+// reconcileRecoveryFenceLocked removes a recovery fence that outlived its
+// recovery: an open incident with an unfinished responder accepts writes. Each
+// step repeats it, so a busy gate, a restart or a closure that failed to begin
+// cannot leave the session fenced. A finished responder's fence stays until a
+// new dispatch proves it quiescent (reopenWithdrawnRecovery).
+func (c *Controller) reconcileRecoveryFenceLocked() {
+	if !c.recoveryFenceMayStand || !c.incidentOpen || c.responderDone || c.currentIncidentRequest == nil ||
+		c.incidentDispatchedAt.IsZero() || c.incidentGate == nil {
+		return
+	}
+	gate, err := c.incidentGate(c.currentIncidentRequest.IncidentID)
+	if err == nil {
+		var verified *apihistory.IncidentVerified
+		if verified, err = gate.Verified(); err == nil && verified != nil {
+			err = gate.Reopen()
+		}
+	}
+	if err != nil {
+		slog.Warn("recovery_fence_reopen_pending", "incident_id", c.currentIncidentRequest.IncidentID, "error", err)
+		return
+	}
+	c.recoveryFenceMayStand = false
+}
+
 // A verified closure waits for a running session's final result, bounded by the
 // response deadline, then retires it. Uncertain quiescence retries retain their
 // own deadline. Mutation fencing and independently observed quiescence hold the
@@ -219,6 +286,7 @@ func (c *Controller) finalResultDeadlineLocked() time.Time {
 
 func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 	c.mu.Lock()
+	c.reconcileRecoveryFenceLocked()
 	if !c.earlyReportPendingLocked() {
 		c.mu.Unlock()
 		return

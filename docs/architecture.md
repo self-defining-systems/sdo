@@ -364,7 +364,9 @@ so do those in the trailing stability window, and its latest sample is good; its
 because its SLO window can still hold samples from before the fix. An opening Kubernetes condition recovers when its
 finding is inactive with a clear streak of the stability window. The alert set is `opening_keys` plus `joined_keys`. New user tests, traffic errors and held Kubernetes conditions
 join after firing persistence activates them, within `AlertJoinWindow` (5 minutes) of detection while recovery is
-provisional. A join resets the recovery proof. A responder fenced to finish its report retires after that report.
+provisional. A join resets the recovery proof. If an alert joins, or an alert of the set fires again, after SDO verified and before publication while the
+responder still runs, the controller returns the incident to open in the same step and removes the write fence, with no re-prompt; a later step
+retries the removal when the gate was busy or the controller restarted. A responder past its response deadline retires instead.
 If an alert joins after an automatic-only recovery, the incident resumes the automatic recovery policy
 and can hand off to its first responder at the original bound. If an alert joins after the responder returns,
 the same incident stays open and escalated until recovery.

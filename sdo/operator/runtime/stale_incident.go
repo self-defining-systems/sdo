@@ -229,6 +229,7 @@ func (c *Controller) clearIncidentLocked() {
 	c.responderCancel = nil
 	c.finishedHoldWake = time.Time{}
 	c.earlyStopRetryAt = time.Time{}
+	c.recoveryFenceMayStand = false
 	c.incidentOpen = false
 	c.escalatedAt = time.Time{}
 	c.responderDone = false

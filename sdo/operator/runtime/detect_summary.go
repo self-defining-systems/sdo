@@ -78,13 +78,24 @@ var (
 	redactLongToke = regexp.MustCompile(`[A-Za-z0-9+/_=-]{32,}`)
 )
 
+// kubernetesObjectName is Kind/name inside free text: object identity, never a
+// Secret's value, however long the name is.
+var kubernetesObjectName = regexp.MustCompile(`^[A-Z][A-Za-z]{2,}(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*/[a-z0-9]+(?:-[a-z0-9]+)+$`)
+
 // redactDetectText collapses whitespace, masks credential-shaped text and
-// bounds the result to limit runes.
+// bounds the result to limit runes. It is for values and free text. A field
+// that only holds a name (a component, object, writer or user test) is
+// identity, not a value: print it with plainName.
 func redactDetectText(text string, limit int) string {
 	text = strings.Join(strings.Fields(text), " ")
 	text = redactSecret.ReplaceAllString(text, "${1}[redacted]")
 	text = redactBearer.ReplaceAllString(text, "$1 [redacted]")
-	text = redactLongToke.ReplaceAllString(text, "[redacted]")
+	text = redactLongToke.ReplaceAllStringFunc(text, func(run string) string {
+		if kubernetesObjectName.MatchString(run) {
+			return run
+		}
+		return "[redacted]"
+	})
 	if runes := []rune(text); len(runes) > limit {
 		return string(runes[:limit-1]) + "…"
 	}
@@ -792,7 +803,7 @@ func incidentCandidateBlock(in incidentPageInput) []string {
 		if i == detectShownTests {
 			break
 		}
-		lead = append(lead, fmt.Sprintf("%s: %d/%d failing%s", redactDetectText(test.id, 40), test.failures, test.samples, test.history()))
+		lead = append(lead, fmt.Sprintf("%s: %d/%d failing%s", plainName(test.id, 40), test.failures, test.samples, test.history()))
 	}
 	for _, test := range set.judged.alsoFailing {
 		if test.latestOK {
@@ -855,7 +866,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 	coverage := requestCoverageLine(operations)
 	probeStatus := "SDO's own test accounts: "
 	if len(passing) > 0 {
-		probeStatus += "passing: " + redactDetectText(strings.Join(passing, " "), 100)
+		probeStatus += "passing: " + plainName(strings.Join(passing, " "), 100)
 	} else {
 		probeStatus += "no passing tests shown"
 	}
@@ -898,8 +909,8 @@ func buildDetectSummary(in detectInput) detectSummary {
 	testBlock := func(test failingTest, role string) ([]string, string) {
 		since := test.history()
 		lines := []string{
-			fmt.Sprintf("%s%s  %s %q  step %s", test.id, role, test.label, redactDetectText(test.err, 60), orQuestion(redactDetectText(test.step, 30))),
-			fmt.Sprintf("  %s  %d/%d failing%s", orQuestion(redactDetectText(strings.Join(test.path, ">"), 100)), test.failures, test.samples, since),
+			fmt.Sprintf("%s%s  %s %q  step %s", test.id, role, test.label, redactDetectText(test.err, 60), orQuestion(plainName(test.step, 30))),
+			fmt.Sprintf("  %s  %d/%d failing%s", orQuestion(plainName(strings.Join(test.path, ">"), 100)), test.failures, test.samples, since),
 			"  more: sdo detect " + test.id,
 		}
 		var detail strings.Builder
@@ -990,7 +1001,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 			out = append(out, fmt.Sprintf("+%d more also failing: sdo detect tests", dropped))
 		}
 		if len(unevaluated) > 0 {
-			out = append(out, "not yet evaluated: "+redactDetectText(strings.Join(unevaluated, " "), 100))
+			out = append(out, "not yet evaluated: "+plainName(strings.Join(unevaluated, " "), 100))
 		}
 		return strings.Join(out, "\n")
 	}

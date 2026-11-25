@@ -179,6 +179,7 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	}
 	key := findingKey(finding)
 	if slices.Contains(alertKeys(request), key) {
+		c.withdrawRecoveryLocked(now, finding)
 		return true
 	}
 	if now.Sub(detected) > AlertJoinWindow {
@@ -206,6 +207,7 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	c.recoverySafetyLost = true
 	if c.earlyReportPendingLocked() {
 		c.cacheVerificationLocked(ToolResponse{Command: "verify", Summary: "recovery proof invalidated by a joined alert", Findings: []sdk.Finding{finding}})
+		c.withdrawRecoveryLocked(now, finding)
 	} else if c.responderDone && c.awaitingAutomaticRecoveryLocked() == nil {
 		// A finished responder is retired. A stage-only outcome still
 		// owes its first handoff under the automatic recovery policy.

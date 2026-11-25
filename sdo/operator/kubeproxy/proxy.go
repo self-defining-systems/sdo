@@ -119,6 +119,10 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 			lease, err := gate.Begin()
 			if err != nil {
 				warning, _ := gate.Verified()
+				message := "incident mutation rejected"
+				if warning != nil {
+					message += ": " + warning.Message
+				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusConflict)
 				_ = json.NewEncoder(w).Encode(struct {
@@ -129,7 +133,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 					Message          string                       `json:"message"`
 					Code             int                          `json:"code"`
 					IncidentVerified *apihistory.IncidentVerified `json:"incident_verified,omitempty"`
-				}{"Status", "v1", "Failure", err.Error(), "incident mutation rejected", 409, warning})
+				}{"Status", "v1", "Failure", err.Error(), message, 409, warning})
 				return
 			}
 			defer func() { _ = lease.Finish(uncertain.Load()) }()
