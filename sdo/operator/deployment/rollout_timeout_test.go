@@ -349,3 +349,13 @@ func TestObserveDoesNotFailMainContainerRestartsWhileEarlierJobRuns(t *testing.T
 		t.Fatalf("failed after %s, before the 10m deadline", waited)
 	}
 }
+
+func TestRolloutMountEventsStopApplyingOnceInitStarts(t *testing.T) {
+	now := time.Date(2026, 11, 25, 0, 49, 18, 0, time.UTC)
+	pods := `{"items":[{"metadata":{"name":"web-1","creationTimestamp":"2026-11-25T00:47:45Z"},"status":{"phase":"Pending","initContainerStatuses":[{"name":"dependencies","state":{"running":{"startedAt":"2026-11-25T00:47:49Z"}}}],"containerStatuses":[{"name":"web","state":{"waiting":{"reason":"PodInitializing"}}}]}}]}`
+	events := `{"items":[{"reason":"FailedMount","message":"failed to sync configmap cache: timed out","lastTimestamp":"2026-11-25T00:47:47Z","count":2,"involvedObject":{"kind":"Pod","name":"web-1"}}]}`
+	got := assessRollout("Deployment/demo/web", []byte(pods), []byte(events), now, rolloutInputs{})
+	if got.Stuck || !got.Progressing {
+		t.Fatalf("expected init progress at pod age 93s: %+v", got)
+	}
+}

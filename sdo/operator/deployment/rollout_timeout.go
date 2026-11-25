@@ -363,6 +363,18 @@ const (
 	adviceNoPods   = "the controller cannot create pods: fix the ServiceAccount, namespace, quota or pod security settings named in the events"
 )
 
+// A container that has run proves the pod passed volume setup.
+func podHasStartedContainer(pod podObject) bool {
+	for _, statuses := range [][]containerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for _, status := range statuses {
+			if status.State.Running != nil || status.State.Terminated != nil || status.LastState.Terminated != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func assessPod(pod podObject, events []rolloutEvent, now time.Time, in rolloutInputs) podVerdict {
 	var v podVerdict
 	age := now.Sub(pod.Metadata.CreationTimestamp)
@@ -372,7 +384,7 @@ func assessPod(pod podObject, events []rolloutEvent, now time.Time, in rolloutIn
 			unscheduled, scheduleMessage = true, c.Reason+": "+c.Message
 		}
 	}
-	mountFailing := hasEvent(events, "FailedMount", "FailedAttachVolume", "FailedCreatePodSandBox")
+	mountFailing := !podHasStartedContainer(pod) && hasEvent(events, "FailedMount", "FailedAttachVolume", "FailedCreatePodSandBox")
 	if unscheduled {
 		v.notes = append(v.notes, "not scheduled ("+clip(scheduleMessage, 200)+")")
 		v.advice = append(v.advice, adviceSchedule)
