@@ -67,6 +67,13 @@ def test_failing_tests_sharing_a_status_and_error_are_grouped_with_their_counts(
     )
 
 
+def test_a_test_name_failing_in_two_workloads_is_listed_twice_not_compared_by_its_readings() -> None:
+    fast, slow = _test_finding("write-commit", errors=1), _test_finding("write-commit", errors=2)
+    slow.detector_id, slow.fingerprint = "traffic-probe-write", "fp-write-commit-2"
+    assert "(2): write-commit 1/6, write-commit 2/6" in symptom(_request(fast, slow))
+    assert "(2): write-commit 2/6, write-commit 1/6" in symptom(_request(slow, fast))
+
+
 def test_the_onset_is_the_earliest_first_failing_sample_not_the_open_time() -> None:
     request = _request(
         _test_finding("late", first="2026-01-01T12:00:30Z"),
