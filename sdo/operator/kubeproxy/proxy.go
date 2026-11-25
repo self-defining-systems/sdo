@@ -102,14 +102,6 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 				e.Command = apihistory.RedactCommand(query["command"])
 			}
 		}
-		// The transport can still be probing the request body for EOF when an
-		// upstream response arrives. HTTP/1's default response flush drains and
-		// closes that same body, racing the probe and aborting response copying.
-		// HTTP/2 already permits concurrent reads and writes; custom writers may
-		// not expose this optional control.
-		// Enabled only after the early refusals above: a refused request leaves its body unread, which full
-		// duplex forbids the server to drain.
-		_ = http.NewResponseController(w).EnableFullDuplex()
 		var requestBody *bodyPrefix
 		if recorder != nil && mutating(r.Method) && !session && r.Body != nil && r.Body != http.NoBody {
 			requestBody = &bodyPrefix{ReadCloser: r.Body}
@@ -165,6 +157,14 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 		if mutating(r.Method) {
 			transport = writeTransport
 		}
+		// The transport can still be probing the request body for EOF when an
+		// upstream response arrives. HTTP/1's default response flush drains and
+		// closes that same body, racing the probe and aborting response copying.
+		// HTTP/2 already permits concurrent reads and writes; custom writers may
+		// not expose this optional control.
+		// Enabled only once the request is forwarded: a refused one leaves its body unread, and under full
+		// duplex the server's read of the next request then panics.
+		_ = http.NewResponseController(w).EnableFullDuplex()
 		proxy := httputil.NewSingleHostReverseProxy(upstream)
 		proxy.Transport = transport
 		proxy.ErrorLog = log.New(io.Discard, "", 0)
@@ -253,6 +253,8 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 			return nil
 		}
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			// The upstream may have left the body unread; see EnableFullDuplex above.
+			w.Header().Set("Connection", "close")
 			markUncertain()
 			end := e
 			end.Phase = "end"
