@@ -144,3 +144,70 @@ func TestAbandonedWriteStaysUncertain(t *testing.T) {
 		})
 	}
 }
+
+// kubectl prints a Warning header: reads carry the notice once, writes always,
+// and a fence that outlived its recovery never says the incident is verified.
+func TestAWithdrawnRecoveryIsToldToKubectl(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "{}") }))
+	t.Cleanup(upstream.Close)
+	address, _ := url.Parse(upstream.URL)
+	gate, err := apihistory.PrepareMutationGate(filepath.Join(t.TempDir(), "gate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewServer(kubeproxy.NewRecording(address, http.DefaultTransport, http.DefaultTransport, kubeproxy.Config{Gate: gate}))
+	t.Cleanup(proxy.Close)
+	send := func(method string) (string, int, string) {
+		t.Helper()
+		request, _ := http.NewRequest(method, proxy.URL+"/api/v1/namespaces/app/pods/a", nil)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, _ := io.ReadAll(response.Body)
+		return response.Header.Get("Warning"), response.StatusCode, string(body)
+	}
+	fence := func() {
+		t.Helper()
+		observation, err := gate.TryObserve()
+		if err != nil || observation == nil {
+			t.Fatal(err)
+		}
+		defer observation.Close()
+		if err := observation.Fence(time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fence()
+	if warning, status, body := send("DELETE"); warning != "" || status != 409 || !strings.Contains(body, "retry") || strings.Contains(body, "finish") {
+		t.Fatalf("%q %d %s", warning, status, body)
+	}
+	if err := gate.Withdraw("recovery withdrawn: write-item fires"); err != nil {
+		t.Fatal(err)
+	}
+	if _, status, body := send("DELETE"); status != 409 || !strings.Contains(body, "recovery withdrawn: write-item fires") || strings.Contains(body, "Recovery judged") {
+		t.Fatalf("%d %s", status, body)
+	}
+	if err := gate.Reopen(); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"DELETE", "DELETE"} {
+		if warning, status, _ := send(method); status != 200 || !strings.Contains(warning, "write-item") {
+			t.Fatalf("%d %q", status, warning)
+		}
+	}
+	if warning, _, _ := send("GET"); warning != "" {
+		t.Fatalf("a read repeated the notice: %q", warning)
+	}
+	if err := gate.Withdraw("recovery withdrawn: read-item fires"); err != nil {
+		t.Fatal(err)
+	}
+	if warning, _, _ := send("GET"); !strings.Contains(warning, "read-item") {
+		t.Fatalf("a read missed the notice: %q", warning)
+	}
+	fence()
+	if warning, _, _ := send("GET"); warning != "" {
+		t.Fatalf("a verified incident repeats the old notice: %q", warning)
+	}
+}

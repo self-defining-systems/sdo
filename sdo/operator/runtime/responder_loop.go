@@ -131,9 +131,11 @@ type ToolResponse struct {
 	// NewSinceDispatch are the current findings that first activated after
 	// this incident's responder launched. The controller runs one incident at
 	// a time, so they may be a separate fault; closure still waits on health.
-	NewSinceDispatch        []sdk.Finding                  `json:"new_since_dispatch,omitempty"`
-	Progress                *FindingProgress               `json:"progress,omitempty"`
-	IncidentVerified        *apihistory.IncidentVerified   `json:"incident_verified,omitempty"`
+	NewSinceDispatch []sdk.Finding                `json:"new_since_dispatch,omitempty"`
+	Progress         *FindingProgress             `json:"progress,omitempty"`
+	IncidentVerified *apihistory.IncidentVerified `json:"incident_verified,omitempty"`
+	// RecoveryWithdrawn says which alert withdrew a verified recovery, until the next one.
+	RecoveryWithdrawn       string                         `json:"recovery_withdrawn,omitempty"`
 	FailureReason           string                         `json:"failure_reason,omitempty"`
 	Receipt                 *contracts.RepairActionReceipt `json:"-"`
 	MitigationRoundsUsed    int                            `json:"mitigation_rounds_used"`
@@ -589,12 +591,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			progress := CompareFindingProgress(before, after.Findings)
 			response.Progress = &progress
 		}
-		if l.IncidentStatus != nil {
+		// The controller decides; the fence file can outlive a withdrawn recovery.
+		switch {
+		case l.IncidentStatus != nil:
 			response.IncidentVerified = l.IncidentStatus()
-		}
-		if response.IncidentVerified == nil && l.MutationGate != nil {
+		case l.MutationGate != nil:
 			response.IncidentVerified, _ = l.MutationGate.Verified()
 		}
+		response.RecoveryWithdrawn = l.recoveryWithdrawn()
 		response.MitigationRoundsUsed = l.batches
 		response.MitigationRoundsAllowed = l.batchLimit()
 		if response.Error != "" {
@@ -1244,6 +1248,13 @@ func (l *ResponderLoop) rememberMatchedViews(ctx context.Context, runs []Program
 			l.matchedPlans[key] = preview
 		}
 	}
+}
+
+func (l *ResponderLoop) recoveryWithdrawn() string {
+	if l.MutationGate == nil {
+		return ""
+	}
+	return l.MutationGate.Withdrawn()
 }
 
 func logicalToolResponse(response ToolResponse) ToolResponse {

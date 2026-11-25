@@ -326,7 +326,7 @@ def test_refused_write_keeps_the_retry_instruction(tmp_path, monkeypatch, capsys
     # The production text is mutation_gate.go's VerificationWarning.
     message = (
         "write refused while recovered; retry if `sdo detect` shows recovered: no. "
-        "SDO verified this incident at 2026-01-01T00:00:00.123456789Z; you may finish your report"
+        "Recovery judged at 2026-01-01T00:00:00.123456789Z; return only when every user test passes"
     )
     action = {
         "command": "mitigate",

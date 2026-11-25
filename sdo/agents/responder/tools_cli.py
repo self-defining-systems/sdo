@@ -541,11 +541,6 @@ def verify_incident() -> dict[str, object]:
 
 
 def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
-    history = os.environ.get("SDO_API_HISTORY_DIR")
-    if history and "incident_verified" not in response:
-        marker = Path(history) / "incident-verified.json"
-        if marker.exists():
-            response["incident_verified"] = json.loads(marker.read_text())
     if response.get("command") in MUTATION_COMMANDS:
         before = response.get("before_findings")
         after = response.get("controller_findings")
@@ -569,7 +564,9 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
         return
     output = write_response(response)
     if response.get("command") in TEXT_COMMANDS and response.get("text") and not full_json:
-        print(cap_text(str(response["text"]), budget_for("tool_stdout." + str(response["command"])) - 1))
+        notice = response.get("recovery_withdrawn")
+        text = f"{notice}\n{response['text']}" if notice else str(response["text"])
+        print(cap_text(text, budget_for("tool_stdout." + str(response["command"])) - 1))
         return
     text = json.dumps(response, ensure_ascii=False, sort_keys=True) if full_json else render_summary(output)
     limit = budget_for("tool_stdout." + str(response["command"]))

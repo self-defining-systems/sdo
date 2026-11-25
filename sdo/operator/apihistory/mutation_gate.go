@@ -24,7 +24,7 @@ type IncidentVerified struct {
 }
 
 func VerificationWarning(at time.Time) *IncidentVerified {
-	return &IncidentVerified{VerifiedAt: at.UTC(), Message: fmt.Sprintf("write refused while recovered; retry if `sdo detect` shows recovered: no. SDO verified this incident at %s; you may finish your report", at.UTC().Format(time.RFC3339Nano))}
+	return &IncidentVerified{VerifiedAt: at.UTC(), Message: fmt.Sprintf("write refused while recovered; retry if `sdo detect` shows recovered: no. Recovery judged at %s; return only when every user test passes", at.UTC().Format(time.RFC3339Nano))}
 }
 
 // MutationGate coordinates the controller and the API sidecar through their
@@ -199,12 +199,34 @@ func (o *MutationObservation) Fence(at time.Time) error {
 	if err != nil {
 		return err
 	}
+	if err := os.Remove(filepath.Join(o.gate.Directory, withdrawnFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	temporary := filepath.Join(o.gate.Directory, ".incident-verified-"+apiio.Text())
 	if err := os.WriteFile(temporary, b, 0600); err != nil {
 		return err
 	}
 	defer os.Remove(temporary)
 	return os.Rename(temporary, filepath.Join(o.gate.Directory, "incident-verified.json"))
+}
+
+const withdrawnFile = "recovery-withdrawn"
+
+// Withdraw records why the recovery no longer holds, until the next fence. It
+// needs no lock: the responder is told even while a busy gate keeps the fence.
+func (g *MutationGate) Withdraw(reason string) error {
+	temporary := filepath.Join(g.Directory, "."+withdrawnFile+"-"+apiio.Text())
+	if err := os.WriteFile(temporary, []byte(reason), 0600); err != nil {
+		return err
+	}
+	defer os.Remove(temporary)
+	return os.Rename(temporary, filepath.Join(g.Directory, withdrawnFile))
+}
+
+// Withdrawn is why the last recovery was withdrawn, or "".
+func (g *MutationGate) Withdrawn() string {
+	b, _ := os.ReadFile(filepath.Join(g.Directory, withdrawnFile))
+	return string(b)
 }
 
 // Seal prevents further writes after a terminal closure without recording health proof.

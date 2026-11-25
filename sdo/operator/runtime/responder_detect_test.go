@@ -236,7 +236,7 @@ func TestDetectWaitReturnsOnceRecovered(t *testing.T) {
 	loop.IncidentStatus = func() *apihistory.IncidentVerified { return &apihistory.IncidentVerified{} }
 	started := clock.Now()
 	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 60})
-	if first := strings.SplitN(response.Text, "\n", 2)[0]; first != "wait: after 0s, recovered: SDO is ending your incident work" {
+	if first := strings.SplitN(response.Text, "\n", 2)[0]; first != "wait: after 0s, "+detectRecoveredMessage {
 		t.Fatalf("first line = %q", first)
 	}
 	if clock.Since(started) != 0 {
@@ -462,7 +462,7 @@ func TestDetectWaitReturnsWhenTheIncidentRecoversDuringARead(t *testing.T) {
 				select {
 				case response := <-done:
 					first := strings.SplitN(response.Text, "\n", 2)[0]
-					if response.Error != "" || !strings.HasSuffix(first, "recovered: SDO is ending your incident work") {
+					if response.Error != "" || !strings.HasSuffix(first, detectRecoveredMessage) {
 						t.Fatalf("detect wait did not report recovery: %+v", response)
 					}
 				default:

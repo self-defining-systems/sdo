@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,6 +18,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -229,7 +231,25 @@ func (c *Controller) withdrawRecoveryLocked(now time.Time, finding sdk.Finding) 
 	c.publishHeldLocked()
 	c.cacheVerificationLocked(ToolResponse{Command: "verify", Summary: "recovery withdrawn: an alert of the incident fires; writes are accepted again", Findings: []sdk.Finding{finding}})
 	slog.Info("incident_recovery_withdrawn", "incident_id", closure.Request.IncidentID, "finding", findingKey(finding))
+	if c.incidentGate != nil {
+		gate, err := c.incidentGate(closure.Request.IncidentID)
+		if err == nil {
+			err = gate.Withdraw("recovery withdrawn: " + alertName(finding) + " fires; writes are accepted, keep working")
+		}
+		if err != nil {
+			slog.Error("recovery_withdrawn_notice_failed", "incident_id", closure.Request.IncidentID, "error", err)
+		}
+	}
 	c.reconcileRecoveryFenceLocked()
+}
+
+// alertName is one alert in a line: its user test, or its rule and object.
+func alertName(finding sdk.Finding) string {
+	name, isTest := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix)
+	if !isTest && finding.PrimaryResource.Name != "" {
+		name += " " + finding.PrimaryResource.Kind + "/" + finding.PrimaryResource.Name
+	}
+	return plainName(name, 50)
 }
 
 // reconcileRecoveryFenceLocked removes a recovery fence that outlived its
