@@ -12,7 +12,7 @@ description: Reading and changing an application through SDO's `sdo` command.
 - `sdo map [path OP | near COMPONENT]`: the map, a path, neighbours
 - `sdo changes`, `sdo timeline`: CSV; `--since 30m`, `--component NODE`, `--limit N`; changes name an actor
   (agent is you, sdo, kubernetes, other), nearest onset first; store: rarest kind first
-- `sdo metrics QUERY`, `sdo logs COMPONENT [--failing]`, `sdo traces`: PromQL, pod logs, traces; compare
+- `sdo metrics QUERY`, `sdo logs COMPONENT [--failing]`, `sdo traces`: PromQL; compare
   failing with working requests
 - `sdo source Kind/ns/name`: last-deployed intended state
 - `sdo diagnose NAME --bind ROLE=Kind/ns/name`: test a learned playbook
