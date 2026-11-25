@@ -355,7 +355,10 @@ executor records its resolved value, and only after a `success` outcome does Go 
 responder-owned patch in the reflection checkout, published through the broker's patch validation. Every store action is grounded in the accepted map (the component declares data with
 the action's engine and the Pod belongs to its workload); `RepairData` refuses only a count outside its
 expected bounds or a named backup that is not one of this incident, and `RestoreBackup` needs the ID of
-the backup to put back.
+the backup to put back. A statement or selector is judged by one scanner per SQL dialect
+(`sdk/storeops/sqlscan.go`): only text outside quotes can leave its clause, and a quoted value may hold any
+character. What a program states in Go constants, and the plan its `Mitigate` yields on the incident's capture with
+the accepted map, are judged by the same validation in the memory check as at apply time.
 Readiness is not recovery. One predicate, Recovered (`runtime/recovery_verification.go`), closes an incident,
 clears the automatic stage and ends the responder session: the incident's alert set cleared
 and stayed clear for the stability window after SDO's last change settled. `since` is the later of detection and the

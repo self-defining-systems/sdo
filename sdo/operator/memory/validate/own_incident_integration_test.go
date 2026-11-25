@@ -83,3 +83,37 @@ func TestANewPlaybookThatMatchesItsOwnIncidentIsRecordedAsAMatch(t *testing.T) {
 		t.Fatalf("gaps = %v, want a match note", gaps)
 	}
 }
+
+// A program whose plan the host would refuse is refused by the compile the broker's subprocess runs, on a capture that
+// did not record the application map: the map is the repository's. The statement is computed, so only the plan says it.
+func TestANewPlaybookWhosePlanTheHostRefusesIsRefused(t *testing.T) {
+	root, capture := ownIncidentRoot(t, ownDiagnose("Match"))
+	write(t, root, ".sdo/arch.md", mapInventory+"\n"+mapRegion(mapYAML))
+	write(t, root, ".sdo/playbooks/fresh/mitigate.go", `package fresh
+
+import (
+	"context"
+	"strings"
+
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+)
+
+func (Program) Mitigate(_ context.Context, v program.ReadView, _ program.Bindings) (program.Plan, error) {
+	if _, err := v.AppMap(); err != nil {
+		return program.Plan{}, err
+	}
+	target := program.StoreTarget{Component: "db", Engine: "postgres", Pod: sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "db-0"}, Container: "db"}
+	return program.Plan{Actions: []program.Action{program.RepairData{Target: target, Scope: program.DataScope{Collection: "items"}, Statement: "a = 1 " + strings.Repeat("-", 2), ExpectMin: 1, ExpectMax: 1}}}, nil
+}
+`)
+	request := compileRequest(root)
+	request.OwnIncidentDirectory = capture
+	diagnostics := diagnose(t, request)
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "program.plan-invalid") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %v, want a refused plan", diagnostics)
+}

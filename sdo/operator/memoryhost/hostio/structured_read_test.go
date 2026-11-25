@@ -136,7 +136,7 @@ func TestStoreScalarsSurviveLiveProgramReadsAndCorpusReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if unverified, err := sdktest.CheckPlansOnIncident(rowMitigator{query: q}, capture); err != nil || len(unverified) != 0 {
+	if unverified, err := sdktest.CheckPlansOnIncident(rowMitigator{query: q}, capture, nil); err != nil || len(unverified) != 0 {
 		t.Fatalf("memory check plan has gaps: %v, %v", unverified, err)
 	}
 }

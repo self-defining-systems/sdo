@@ -286,8 +286,9 @@ func planOnState(m program.Mitigator, c CorpusCase) (unverified string, err erro
 // CheckPlansOnIncident runs CheckPlanValid on the incident's own captured open state: the controller's
 // open@* snapshots in dir, with their recorded reads. The closing turn's check has them before Go writes any
 // corpus case, so a brand-new program's plan is built and validated on real state. A program that needs bindings
-// the capture does not carry cannot run there, which CheckPlanValid treats as unverified.
-func CheckPlansOnIncident(m program.Mitigator, dir string) (unverified []string, err error) {
+// the capture does not carry cannot run there, which CheckPlanValid treats as unverified. appMap is the application map
+// the host will serve (nil without one): it is the repository's, so no capture needs to have recorded it.
+func CheckPlansOnIncident(m program.Mitigator, dir string, appMap *program.AppMap) (unverified []string, err error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "open@*.json"))
 	if err != nil {
 		return nil, err
@@ -312,6 +313,9 @@ func CheckPlansOnIncident(m program.Mitigator, dir string) (unverified []string,
 			}
 		}
 		c.Open.SourceName = filepath.Base(path)
+		if appMap != nil {
+			c.Open.ApplicationMap = appMap
+		}
 		why, err := planOnState(m, c)
 		if err != nil {
 			return unverified, fmt.Errorf("%s: %w", filepath.Base(path), err)
