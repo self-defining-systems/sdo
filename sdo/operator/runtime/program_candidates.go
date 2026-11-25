@@ -106,6 +106,9 @@ type KeyedMatching struct {
 	// candidates; whether the stage applies one is the loop's BuiltinRestoreAuto.
 	Restore   []sourceRestoreCandidate
 	Attempted map[string]bool
+	// Scan asks every learned playbook without a finding: a playbook with a
+	// component role binds each component it was credited for.
+	Scan bool
 }
 
 func (k KeyedMatching) active() bool { return len(k.Credits) > 0 }
@@ -183,7 +186,22 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 			add(SourceRestoreID, restore.bindings, restore.fingerprint, BindingSourceSuspect, RetrievalSuspect, restore.rank)
 		}
 	}
-	if keyed.active() {
+	if keyed.Scan {
+		for _, spec := range registry.List() {
+			if spec.ID == SourceRestoreID {
+				continue
+			}
+			if program.ValidateBindings(spec, program.Bindings{}) == nil {
+				add(spec.ID, program.Bindings{Objects: program.ObjectBindings{}}, "", BindingSourceFinding, RetrievalRoleLessScan, 0)
+			}
+			for _, key := range keyed.Credits[spec.ID] {
+				bindings := program.Bindings{Objects: program.ObjectBindings{ComponentRole: key.Component}}
+				if program.ValidateBindings(spec, bindings) == nil {
+					add(spec.ID, bindings, "", BindingSourceCredited, RetrievalCredited, 0)
+				}
+			}
+		}
+	} else if keyed.active() {
 		for _, spec := range registry.List() {
 			if spec.ID == SourceRestoreID {
 				continue

@@ -30,9 +30,11 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	if applied && report.RecoveryDeadline == nil {
 		report.RecoveryDeadline = contractTimestamp(deadline)
 	}
-	// A failed script has nothing to wait for: the agent takes over now.
+	// A failed script has nothing to wait for: the agent takes over now. Only
+	// its responder can verify a page, so a page never waits either.
 	failed := report.StabilityDeadline == nil && stageScriptsFailed(report) && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages)
-	if !failed && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
+	page := pageOpened(request)
+	if !failed && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
 	if stabilityOnly && scoped {
@@ -54,7 +56,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	} else if !stageEscalatedIn(request.PriorStages) {
 		keys = findingKeys(request.Findings)
 	}
-	if scoped && len(keys) == 0 && report.StabilityDeadline == nil {
+	if scoped && len(keys) == 0 && report.StabilityDeadline == nil && !page {
 		interval := time.Second
 		for _, id := range c.recoveryDetectorIDs(*request) {
 			interval = max(interval, c.detectorSpecs[id].Interval)
@@ -67,12 +69,16 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 		return
 	}
 	if applied {
-		markAutomaticRecovery(report, observedAt, contracts.RecoveryWait_EXIT_REASON_DEADLINE)
+		exit := contracts.RecoveryWait_EXIT_REASON_DEADLINE
+		if page {
+			exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
+		}
+		markAutomaticRecovery(report, observedAt, exit)
 		markUnsettledRollouts(report, check.record, rolloutBlockers)
 	}
 	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
 		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
-	if !canDispatch || stageEscalatedIn(request.PriorStages) || !agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) || scoped && len(keys) == 0 {
+	if !canDispatch || stageEscalatedIn(request.PriorStages) || !agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) || scoped && len(keys) == 0 && !page {
 		c.escalateLocked(observedAt)
 		return
 	}
@@ -184,7 +190,7 @@ func markUnsettledRollouts(report *contracts.StageReport, recovery *contracts.Re
 // request retains the full opening and joined alert descriptions for closure.
 func stageDispatchRequest(request IncidentRequest) IncidentRequest {
 	report := deterministicStageReport(request.PriorStages)
-	if !report.GetHandoffSelected() {
+	if !report.GetHandoffSelected() || pageOpened(&request) {
 		return request
 	}
 	findings := make([]sdk.Finding, 0, len(report.GetHandoffKeys()))

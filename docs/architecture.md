@@ -77,8 +77,13 @@ detector catalog and detector tools report awaiting responder completion.
 In detector mode the same inbox is a page (`runtime/page.go`): a person's or
 on-call system's report, the one opener that is not a detector alert. Detectors
 keep running. A page opens an incident even during install startup. Its alert
-set starts empty (`IncidentRequest.page` set, no `opening_keys`), and the direct
-dispatch path starts the responder once with the page and active clues.
+set starts empty (`IncidentRequest.page` set, no `opening_keys`). The automatic
+stage makes one attempt: it diagnoses every learned playbook that binds without
+a finding (no required parameter, or its credited component) within one second,
+and applies a single Match when every other answer is NoMatch. A write starts
+within two seconds or not at all. SDO then starts the responder once with the
+page, active clues and the attempt's receipts. During startup, or when
+`response.after_playbook` rules out the agent, the responder starts directly.
 A page arriving while an incident is open joins it as evidence. If a responder
 is already working, closure waits for its return without re-prompting it.
 During automatic recovery of a detector-opened incident, the opening and
