@@ -124,8 +124,6 @@ func StartupTimingArtifact(base string) bool {
 	return false
 }
 
-// descend reports whether a runtime directory can hold allowed evidence, so a scan never walks build caches,
-// toolchains or backups, and only the redacted API recording (never its blobs).
 func setupUsagePhase(name string) bool {
 	return name == "deploy" || name == "design"
 }
@@ -134,6 +132,8 @@ func closingUsagePhase(name string) bool {
 	return name == "reflect" || name == "source_repair"
 }
 
+// descend reports whether a runtime directory can hold allowed evidence, so a scan never walks build caches,
+// toolchains or backups, and only the redacted API recording (never its blobs).
 func descend(relative string) bool {
 	parts := strings.Split(relative, "/")
 	lower := strings.ToLower(parts[len(parts)-1])

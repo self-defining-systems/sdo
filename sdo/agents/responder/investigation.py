@@ -76,7 +76,7 @@ def execute_investigation(request: IncidentRequest) -> IncidentResult:
     started = datetime.now(UTC).isoformat()
     usage_directory = os.environ.get("SDO_RESPONDER_USAGE_DIR", "")
     checkpoint = (
-        UsageCheckpoint(
+        UsageCheckpoint.open(
             Path(usage_directory),
             request.incident_id,
             os.environ.get("SDO_RESPONDER_TASK_ID", request.incident_id),
@@ -85,8 +85,6 @@ def execute_investigation(request: IncidentRequest) -> IncidentResult:
         if usage_directory
         else None
     )
-    if checkpoint is not None:
-        checkpoint.publish({}, False)
     try:
         completed = run_structured_turn(
             provider,  # type: ignore[arg-type]

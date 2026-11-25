@@ -45,13 +45,37 @@ func PhaseUsage(repositoryMount, pvcSubPath, incidentID, phase string) (*contrac
 		return nil, nil, err
 	}
 	directory := filepath.Join(repositoryMount, relative, "usage")
+	var validTask func(string) bool
 	switch phase {
 	case "respond", "investigate":
+		validTask = func(task string) bool {
+			suffix, continuation := strings.CutPrefix(task, incidentID+"-continue-")
+			attempt, parseErr := strconv.Atoi(suffix)
+			return task == incidentID || (continuation && parseErr == nil && attempt > 0 && strconv.Itoa(attempt) == suffix)
+		}
 	case "reflect", "source_repair":
 		directory = filepath.Join(directory, phase)
+		prefix := map[string]string{"reflect": "reflection-", "source_repair": "closing-cleanup-"}[phase]
+		validTask = func(task string) bool { return strings.HasPrefix(task, prefix) }
 	default:
 		return nil, nil, fmt.Errorf("unsupported incident usage phase %q", phase)
 	}
+	return readUsage(directory, incidentID, phase, validTask)
+}
+
+// SetupUsage reads one setup task's checkpoints from its evidence directory. A setup phase (deploy, design)
+// belongs to no incident: its task is its whole identity and its checkpoints carry no incident ID.
+func SetupUsage(taskDirectory, taskID, phase string) (*contracts.UsageMetrics, []error, error) {
+	switch {
+	case phase != "deploy" && phase != "design":
+		return nil, nil, fmt.Errorf("unsupported setup usage phase %q", phase)
+	case taskID == "":
+		return nil, nil, errors.New("setup usage requires a task")
+	}
+	return readUsage(filepath.Join(taskDirectory, "usage", phase), "", phase, func(task string) bool { return task == taskID })
+}
+
+func readUsage(directory, incidentID, phase string, validTask func(string) bool) (*contracts.UsageMetrics, []error, error) {
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil
@@ -82,17 +106,9 @@ func PhaseUsage(repositoryMount, pvcSubPath, incidentID, phase string) (*contrac
 		if err := json.Unmarshal(data, &checkpoint); err != nil {
 			return nil, nil, fmt.Errorf("decode usage checkpoint %s: %w", entry.Name(), err)
 		}
-		suffix, continuation := strings.CutPrefix(checkpoint.TaskID, incidentID+"-continue-")
-		attempt, parseErr := strconv.Atoi(suffix)
-		validTask := checkpoint.TaskID == incidentID || (continuation && parseErr == nil && attempt > 0 && strconv.Itoa(attempt) == suffix)
-		if phase == "reflect" {
-			validTask = strings.HasPrefix(checkpoint.TaskID, "reflection-")
-		} else if phase == "source_repair" {
-			validTask = strings.HasPrefix(checkpoint.TaskID, "closing-cleanup-")
-		}
 		validPhase := checkpoint.Phase == phase ||
 			(phase == "respond" || phase == "investigate") && checkpoint.Phase == "responder"
-		if checkpoint.Version != 1 || checkpoint.IncidentID != incidentID || !validTask || !validPhase || checkpoint.TurnID+".json" != entry.Name() || checkpoint.Complete == nil || len(checkpoint.Usage) == 0 || string(checkpoint.Usage) == "null" {
+		if checkpoint.Version != 1 || checkpoint.IncidentID != incidentID || !validTask(checkpoint.TaskID) || !validPhase || checkpoint.TurnID+".json" != entry.Name() || checkpoint.Complete == nil || len(checkpoint.Usage) == 0 || string(checkpoint.Usage) == "null" {
 			return nil, nil, fmt.Errorf("usage checkpoint %s has invalid incident/task/phase/turn identity", entry.Name())
 		}
 		if string(checkpoint.Usage) == "{}" && !*checkpoint.Complete {

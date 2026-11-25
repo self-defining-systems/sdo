@@ -415,12 +415,11 @@ class CodexSessionBackend:
             prompt = prompt + render_prompt("responder", "run_01", part="reflection.instructions")
         options = session_turn_options(self.provider, worktree, phase="reflection")
         if (session := os.environ.get("SDO_SESSION_DIR")) and (incident := os.environ.get("SDO_INCIDENT_ID")):
-            usage = UsageCheckpoint(
+            usage = UsageCheckpoint.open(
                 Path(session) / "usage" / phase, incident, os.environ.get("SDO_USAGE_TASK_ID", incident), phase
             )
-            usage.publish({}, False)
-            options["on_usage"] = usage.publish
-            options["require_usage_baseline"] = False
+            if usage is not None:
+                options["on_usage"] = usage.publish
         try:
             return run_structured_turn(
                 self.provider,

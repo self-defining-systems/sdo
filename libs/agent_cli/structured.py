@@ -322,7 +322,6 @@ def run_structured_turn(
     environment: Mapping[str, str] | None = None,
     on_session_started: Callable[[str], None] | None = None,
     on_usage: Callable[[dict[str, int | float], bool], None] | None = None,
-    require_usage_baseline: bool = True,
     session_ownership_directory: Path | None = None,
     session_ownership_role: Literal["responder", "reflection"] = "responder",
     session_ownership_worker: WorkerIdentity | None = None,
@@ -341,15 +340,14 @@ def run_structured_turn(
     cli_environment = {**os.environ, **(environment or {})}
     if (
         on_usage is None
-        and (phase := cli_environment.get("SDO_SETUP_USAGE_PHASE")) in {"deploy", "design"}
+        and (phase := cli_environment.get("SDO_SETUP_USAGE_PHASE"))
         and (session := cli_environment.get("SDO_SESSION_DIR"))
         and (task := cli_environment.get("SDO_USAGE_TASK_ID"))
     ):
         from libs.agent_cli.usage_checkpoint import UsageCheckpoint
 
-        usage_checkpoint = UsageCheckpoint(Path(session) / "usage" / phase, "", task, phase)
-        usage_checkpoint.publish({}, False)
-        on_usage = usage_checkpoint.publish
+        if (usage_checkpoint := UsageCheckpoint.open(Path(session) / "usage" / phase, "", task, phase)) is not None:
+            on_usage = usage_checkpoint.publish
     capacity = provider_capacity or ProviderCapacity(environment=cli_environment)
     account_mode = provider == "claude" and (
         bool(capacity.environment.get("SDO_CLAUDE_ACCOUNTS_DIR"))
@@ -444,7 +442,6 @@ def run_structured_turn(
                     environment=attempt_environment,
                     on_session_started=on_session_started,
                     on_usage=checkpoint if provider == "claude" else on_usage,
-                    require_usage_baseline=require_usage_baseline,
                     session_ownership_directory=session_ownership_directory,
                     session_ownership_role=session_ownership_role,
                     session_ownership_worker=session_ownership_worker,
@@ -577,7 +574,6 @@ def _run_structured_turn_once(
     environment: Mapping[str, str] | None = None,
     on_session_started: Callable[[str], None] | None = None,
     on_usage: Callable[[dict[str, int | float], bool], None] | None = None,
-    require_usage_baseline: bool = True,
     session_ownership_directory: Path | None = None,
     session_ownership_role: Literal["responder", "reflection"] = "responder",
     session_ownership_worker: WorkerIdentity | None = None,
@@ -652,12 +648,23 @@ def _run_structured_turn_once(
     claude_bill: ClaudeBill | None = None
     usage_lock = threading.RLock()
     claude_result: dict[str, object] = {}
+    accounting_failures: list[Exception] = []
+
+    @contextmanager
+    def accounting() -> Iterator[None]:
+        """Usage accounting never fails the turn it measures: the first error is logged and usage stays partial."""
+        try:
+            yield
+        except Exception as exc:
+            if not accounting_failures:
+                logger.warning("usage accounting failed, usage is partial: workspace=%s: %s", workspace, exc)
+            accounting_failures.append(exc)
 
     def claude_snapshot() -> ClaudeBill:
         with usage_lock:
-            if claude_home is not None:
+            with accounting():
                 sid = recorder.session_id or resume_session_id
-                if sid:
+                if claude_home is not None and sid:
                     merge_session(claude_ledger, claude_home, sid)
             return claude_ledger.since(claude_before, default_pricing())
 
@@ -668,7 +675,7 @@ def _run_structured_turn_once(
             return
         if isinstance(record, dict):
             record = cast("dict[str, Any]", record)
-            with usage_lock:
+            with accounting(), usage_lock:
                 claude_ledger.observe(record, model=model)
                 if record.get("type") == "result":
                     claude_result.update(record)
@@ -740,7 +747,8 @@ def _run_structured_turn_once(
     def stopped() -> StructuredTurnInterrupted:
         usage = spent_usage()
         if usage and on_usage is not None:
-            on_usage(usage, True)
+            with accounting():
+                on_usage(usage, True)
         return StructuredTurnInterrupted(recorder.session_id or resume_session_id or "", usage)
 
     try:
@@ -807,17 +815,14 @@ def _run_structured_turn_once(
                 and resume_session_id is not None
                 and (rollout_before is None or (rollout_before.requests > 0 and rollout_before.totals is None))
             ):
-                if require_usage_baseline:
-                    raise StructuredTurnError(
-                        "cannot checkpoint resumed usage without a readable cumulative token baseline"
-                    )
+                # Without a baseline this turn's share is unknown: the checkpoint stays incomplete.
+                logger.warning("resumed session has no cumulative token baseline, usage is partial")
                 on_usage = None
                 codex_accounting_available = False
             schema_dir = turn_scope.enter_context(tempfile.TemporaryDirectory(prefix="sdo-structured-turn-"))
             # Codex exposes response accounting in its rollout before its CLI
             # emits a terminal usage event. Poll only in the worker, never Go.
             stop_usage = threading.Event()
-            usage_errors: list[Exception] = []
 
             def sample_usage() -> None:
                 if provider == "claude":
@@ -839,11 +844,9 @@ def _run_structured_turn_once(
                     on_usage(priced_codex_counts(snapshot), False)
 
             def monitor_usage() -> None:
-                try:
+                with accounting():
                     while not stop_usage.wait(0.1):
                         sample_usage()
-                except Exception as exc:
-                    usage_errors.append(exc)
 
             monitor = threading.Thread(target=monitor_usage, name="sdo-usage-checkpoint", daemon=True)
             if on_usage is not None:
@@ -872,7 +875,6 @@ def _run_structured_turn_once(
                     if directory
                     else Path(log).expanduser().with_name("claude-turns.jsonl")
                 )
-                path.parent.mkdir(parents=True, exist_ok=True)
                 record = {
                     "schema": "sdo.claude-usage/v1",
                     "event": event,
@@ -888,8 +890,10 @@ def _run_structured_turn_once(
                     "cache_write_ttl_complete": bill.ttl_complete if bill else None,
                     "reconciliation_evidence": list(bill.evidence) if bill else [],
                 }
-                with path.open("a", encoding="utf-8") as stream:
-                    stream.write(json.dumps(record, sort_keys=True) + "\n")
+                with accounting():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    with path.open("a", encoding="utf-8") as stream:
+                        stream.write(json.dumps(record, sort_keys=True) + "\n")
 
             journal("start")
             turn_finished = False
@@ -910,9 +914,8 @@ def _run_structured_turn_once(
                     watcher.join()
                 if on_usage is not None:
                     monitor.join()
-                    sample_usage()
-                    if usage_errors:
-                        raise StructuredTurnError(f"usage checkpoint failed: {usage_errors[0]}") from usage_errors[0]
+                    with accounting():
+                        sample_usage()
                 if provider == "claude":
                     claude_bill = claude_snapshot()
                     if not claude_bill.requests and claude_result:
@@ -935,7 +938,8 @@ def _run_structured_turn_once(
                                 ),
                             )
                     if claude_bill.requests and on_usage is not None:
-                        on_usage(claude_bill.usage(), turn_finished and claude_bill.usd_complete)
+                        with accounting():
+                            on_usage(claude_bill.usage(), turn_finished and claude_bill.usd_complete)
                     journal("complete" if turn_finished else "error", claude_bill)
             # Read the rollout now: a workspace-write Codex home is deleted
             # when the turn scope closes.
@@ -971,8 +975,7 @@ def _run_structured_turn_once(
         if delta is None or delta.tokens is None:
             # The CLI's whole-session total cannot safely become a turn delta.
             # Keep any observed partial checkpoint rather than billing it twice.
-            if require_usage_baseline:
-                raise StructuredTurnError("resumed cumulative token accounting unavailable after turn")
+            logger.warning("resumed cumulative token accounting unavailable after turn, usage is partial")
             on_usage = None
             codex_accounting_available = False
 
@@ -1023,10 +1026,11 @@ def _run_structured_turn_once(
     # A model can spend tokens and then fail the structured-response contract.
     # Persist its observed accounting before rejecting that response.
     if on_usage is not None:
-        on_usage(
-            priced_codex_counts(turn) if provider == "codex" else turn_usage(turn),
-            turn.usd_complete is not False,
-        )
+        with accounting():
+            on_usage(
+                priced_codex_counts(turn) if provider == "codex" else turn_usage(turn),
+                turn.usd_complete is not False,
+            )
     if not isinstance(structured_output, dict):
         _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
         raise StructuredTurnError(f"{provider} turn returned no structured output")
@@ -1145,9 +1149,12 @@ def _append_turn_usage(
         record["cost_usd"] = None
         record["cost_source"] = "pricing-unavailable"
     log = Path(path).expanduser()
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    except OSError as exc:
+        logger.warning("turn usage not logged, usage is partial: path=%s: %s", log, exc)
 
 
 #: Upper bound on one shell command recorded in the usage log.
