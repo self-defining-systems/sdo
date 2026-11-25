@@ -126,3 +126,11 @@ func TestAnUnscheduledScenarioAndAnOverBudgetPlanAreRed(t *testing.T) {
 		t.Fatalf("%+v", r.Results[0])
 	}
 }
+
+func TestUnspentBudgetWithASlowWorkloadIsRed(t *testing.T) {
+	c := config(&store{items: map[string]string{}}, scenario(true))
+	c.Workloads[0].SampleInterval, c.Workloads[0].RatePerSecond = traffic.Duration(2*time.Minute), 1.0/120
+	if r := Run(context.Background(), c); r.Results[0].Status != Red || !strings.Contains(r.Results[0].Detail, "unspent") {
+		t.Fatalf("%+v", r.Results[0])
+	}
+}

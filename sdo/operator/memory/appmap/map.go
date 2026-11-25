@@ -638,8 +638,8 @@ func (c *checker) coverage() {
 		if c.broken[op.ID] {
 			continue
 		}
-		if !call[op.ID] {
-			c.add(RuleUncoveredOp, fmt.Sprintf("add a `call` probe scenario (workload %s) that exercises operation %s", WorkloadForKind[KindCall], op.ID), "operation %s is in no call probe", op.ID)
+		if !call[op.ID] && !write[op.ID] {
+			c.add(RuleUncoveredOp, fmt.Sprintf("add a `call` probe scenario (workload %s) that exercises operation %s", WorkloadForKind[KindCall], op.ID), "operation %s is in no call or write-read probe", op.ID)
 		}
 		if op.Writes && !write[op.ID] {
 			c.add(RuleUncoveredWrite, fmt.Sprintf("add a `write-read` probe scenario (workload %s) that performs operation %s and reads the data back", WorkloadForKind[KindWriteRead], op.ID), "writing operation %s is in no write-read probe", op.ID)

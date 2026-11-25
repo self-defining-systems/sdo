@@ -88,6 +88,9 @@ const (
 	maxIdentityWait = 5 * time.Minute
 	identityPoll    = 2 * time.Second
 	parallel        = 8
+	// slowInterval is the sample interval above which a workload should be
+	// sampled faster when the budget allows.
+	slowInterval = 30 * time.Second
 )
 
 // Run judges the scenarios the workloads schedule.
@@ -161,7 +164,8 @@ func budget(c Config, report *Report) float64 {
 	for _, s := range c.Catalog {
 		requests[s.ID] = len(s.Steps)
 	}
-	total := 0.0
+	total, longestLoad := 0.0, 0.0
+	var longest traffic.Workload
 	var parts []string
 	for _, w := range c.Workloads {
 		if w.Purpose != traffic.PurposeHealthProbe || len(w.Scenarios) == 0 {
@@ -169,12 +173,22 @@ func budget(c Config, report *Report) float64 {
 		}
 		load := traffic.MeasureProbeLoad([]traffic.Workload{w}, requests).RequestsPerSecond
 		total += load
+		if interval := w.EffectiveSampleInterval(); load > 0 && interval > slowInterval && interval > longest.EffectiveSampleInterval() {
+			longest, longestLoad = w, load
+		}
 		parts = append(parts, fmt.Sprintf("%s %.2f (%d scenarios, %.2f iterations/s)", w.Name, load, len(w.Scenarios), w.SamplingPlan().Rate))
 	}
 	status, detail := Green, fmt.Sprintf("%.2f of %.1f requests/s planned, %.2f left: %s", total, traffic.ProbeRateCap, traffic.ProbeRateCap-total, strings.Join(parts, ", "))
 	if total > traffic.ProbeRateCap {
 		status = Red
 		detail += "; merge steps or scenarios, lower ratePerSecond (unset is 4 iterations/s), or lengthen sampleInterval of the journeys that matter least"
+	}
+	// Unspent budget is slower notice: the slowest workload can take it. One
+	// tenth stays free for confirming samples and cleanup.
+	if left := 0.9*traffic.ProbeRateCap - total; len(c.Only) == 0 && longest.Name != "" && left > 0.1*traffic.ProbeRateCap {
+		status = Red
+		faster := time.Duration(float64(longest.EffectiveSampleInterval()) * longestLoad / (longestLoad + left))
+		detail += fmt.Sprintf("; unspent: sample %s about every %s instead of %s (sampleInterval and ratePerSecond), or run its core journeys from a fast workload, so a broken journey is noticed sooner", longest.Name, max(faster, traffic.MinSampleInterval).Round(5*time.Second), longest.EffectiveSampleInterval())
 	}
 	report.Results = append(report.Results, Result{ItemBudget, "all", status, detail})
 	return total

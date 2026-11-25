@@ -45,11 +45,13 @@ do not write them. Work alone: one author, no subagents, no reviewers.
 `onboarding journeys` prints requests/s planned and left under the cap: look before you add. Set `ratePerSecond` in
 every workload (unset is 4 iterations/s). Give most of the budget to the journeys users do most:
 
-- `probe-call`, `probe-write`, `probe-read-later` hold every scenario of their kind. Give a home workload a long
-  `sampleInterval` (60-120 s) with `minSamples: 1, maxErrorRate: 1, maxTimeoutRate: 1, maxAge: 10m`: SDO confirms a new failure itself
-  with two more samples within 5 s.
-- Add `probe-fast-call` and `probe-fast-write` with the core scenarios again at 10 s, so the page comes within about 20 s. Cover
-  each store and each component a user request crosses from a fast workload; rarer journeys stay in the home workload.
+- `probe-call`, `probe-write`, `probe-read-later` hold every scenario of their kind, once: a write journey needs no
+  `call` twin. A home workload takes a longer `sampleInterval` with
+  `minSamples: 1, maxErrorRate: 1, maxTimeoutRate: 1, maxAge: 10m`: SDO confirms a new failure itself with two more
+  samples within 5 s, so a failure is noticed about one interval after it starts.
+- Add `probe-fast-call` and `probe-fast-write` naming the same core scenario IDs again at 10-15 s, so that every store,
+  worker and protocol is crossed by one of them. Spend the rest on the home workloads' interval: the budget line is
+  red while a slow workload leaves budget unspent.
 - `maxLatency` about three times the slowest healthy run, at least 1 s.
 
 ## Checks
