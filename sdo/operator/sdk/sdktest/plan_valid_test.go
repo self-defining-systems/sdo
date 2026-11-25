@@ -58,14 +58,14 @@ func TestCheckPlansOnIncidentRunsMitigateOnTheCapturedOpenState(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if unverified, err := CheckPlansOnIncident(planMitigator{plan: repairPlan("SET status = 0")}, dir); err != nil || len(unverified) != 0 {
+	if unverified, err := CheckPlansOnIncident(planMitigator{plan: repairPlan("SET status = 0")}, dir, nil); err != nil || len(unverified) != 0 {
 		t.Fatalf("valid plan: %v, %v", unverified, err)
 	}
-	_, err = CheckPlansOnIncident(planMitigator{plan: repairPlan("UPDATE packages")}, dir)
+	_, err = CheckPlansOnIncident(planMitigator{plan: repairPlan("UPDATE packages")}, dir, nil)
 	if err == nil || !strings.Contains(err.Error(), "program.plan-invalid") || !strings.Contains(err.Error(), "open@detect.json") {
 		t.Fatalf("invalid plan: %v", err)
 	}
-	if unverified, err := CheckPlansOnIncident(planMitigator{plan: repairPlan("UPDATE packages")}, t.TempDir()); err != nil || len(unverified) != 0 {
+	if unverified, err := CheckPlansOnIncident(planMitigator{plan: repairPlan("UPDATE packages")}, t.TempDir(), nil); err != nil || len(unverified) != 0 {
 		t.Fatalf("no capture, nothing to check: %v, %v", unverified, err)
 	}
 }
@@ -77,11 +77,11 @@ func TestCheckPlansOnIncidentSaysWhyAPlanWasUnverified(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "open@detect.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	unverified, err := CheckPlansOnIncident(planMitigator{err: errors.New("binding resource missing")}, dir)
+	unverified, err := CheckPlansOnIncident(planMitigator{err: errors.New("binding resource missing")}, dir, nil)
 	if err != nil || len(unverified) != 1 || !strings.Contains(unverified[0], "open@detect.json") || !strings.Contains(unverified[0], "binding resource missing") {
 		t.Fatalf("unverified = %v, %v", unverified, err)
 	}
-	unverified, err = CheckPlansOnIncident(planMitigator{}, dir)
+	unverified, err = CheckPlansOnIncident(planMitigator{}, dir, nil)
 	if err != nil || len(unverified) != 1 || !strings.Contains(unverified[0], "no action") {
 		t.Fatalf("empty plan: %v, %v", unverified, err)
 	}
@@ -108,13 +108,53 @@ func TestSoleEscalateUnderAnInScopeDiagnosisIsANoteNotAFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, reach := range []string{"", program.ReachInScope} {
-		unverified, err := CheckPlansOnIncident(escalatingProgram{planMitigator{plan: escalatePlan()}, reach}, dir)
+		unverified, err := CheckPlansOnIncident(escalatingProgram{planMitigator{plan: escalatePlan()}, reach}, dir, nil)
 		if err != nil || len(unverified) != 1 || !strings.Contains(unverified[0], "EnsureExec") {
 			t.Fatalf("reach %q: %v, %v", reach, unverified, err)
 		}
 	}
-	unverified, err := CheckPlansOnIncident(escalatingProgram{planMitigator{plan: escalatePlan()}, program.ReachOutOfReach}, dir)
+	unverified, err := CheckPlansOnIncident(escalatingProgram{planMitigator{plan: escalatePlan()}, program.ReachOutOfReach}, dir, nil)
 	if err != nil || len(unverified) != 0 {
 		t.Fatalf("out-of-reach escalation needs no note: %v, %v", unverified, err)
+	}
+}
+
+type panickingMitigator struct{ planMitigator }
+
+func (panickingMitigator) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
+	panic("index out of range")
+}
+
+// A Mitigate that panics on the capture is unverified, like one that returns an error there.
+func TestCheckPlansOnIncidentReportsAPanicAsUnverified(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "open@detect.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unverified, err := CheckPlansOnIncident(panickingMitigator{}, dir, nil)
+	if err != nil || len(unverified) != 1 || !strings.Contains(unverified[0], "panicked: index out of range") {
+		t.Fatalf("unverified = %v, %v", unverified, err)
+	}
+}
+
+type mapMitigator struct{ planMitigator }
+
+func (m mapMitigator) Mitigate(_ context.Context, v program.ReadView, _ program.Bindings) (program.Plan, error) {
+	_, err := v.AppMap()
+	return m.plan, err
+}
+
+// The application map is the repository's, so a program that reads it is judged on a capture that did not record it.
+func TestCheckPlansOnIncidentServesTheApplicationMap(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "open@detect.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := mapMitigator{planMitigator{plan: repairPlan("UPDATE packages")}}
+	if unverified, err := CheckPlansOnIncident(m, dir, nil); err != nil || len(unverified) != 1 {
+		t.Fatalf("without a map: %v, %v", unverified, err)
+	}
+	if _, err := CheckPlansOnIncident(m, dir, &program.AppMap{}); err == nil || !strings.Contains(err.Error(), "program.plan-invalid") {
+		t.Fatalf("with the map: %v", err)
 	}
 }

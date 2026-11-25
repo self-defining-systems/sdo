@@ -60,13 +60,15 @@ func CheckPlanValid(m program.Mitigator, c CorpusCase) error
     could have caught. A Mitigate that cannot run on the recorded reads is not a
     failure; planOnState says it was unverified.
 
-func CheckPlansOnIncident(m program.Mitigator, dir string) (unverified []string, err error)
+func CheckPlansOnIncident(m program.Mitigator, dir string, appMap *program.AppMap) (unverified []string, err error)
     CheckPlansOnIncident runs CheckPlanValid on the incident's own captured open
     state: the controller's open@* snapshots in dir, with their recorded reads.
     The closing turn's check has them before Go writes any corpus case,
     so a brand-new program's plan is built and validated on real state.
     A program that needs bindings the capture does not carry cannot run there,
-    which CheckPlanValid treats as unverified.
+    which CheckPlanValid treats as unverified. appMap is the application map the
+    host will serve (nil without one): it is the repository's, so no capture
+    needs to have recorded it.
 
 func CheckRenameInvariance(t testing.TB, p program.Diagnoser, c CorpusCase)
     CheckRenameInvariance requires a diagnosis to survive a consistent rename of
