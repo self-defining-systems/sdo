@@ -138,7 +138,7 @@ func (v *ReplayReadView) Nodes() []corev1.Node {
 }
 
 func (v *ReplayReadView) noteReadFailure(err error) {
-	if err != nil {
+	if v.checkRecoveredReads && err != nil {
 		v.mu.Lock()
 		defer v.mu.Unlock()
 		v.readFailed = true
@@ -151,38 +151,48 @@ func (v *ReplayReadView) hadReadFailure() bool {
 	return v.readFailed
 }
 
+// Additional coverage tracking is advisory and cannot alter the open replay verdict.
+func (v *ReplayReadView) noteRecoveredRead(kind string) {
+	if v.checkRecoveredReads {
+		v.noteRead(kind)
+	}
+}
+
 func (v *ReplayReadView) Pods() []corev1.Pod {
-	v.noteRead("Pod")
+	v.noteRecoveredRead("Pod")
 	return v.Snapshot.Pods()
 }
 
 func (v *ReplayReadView) PodsForService(namespace, name string) []corev1.Pod {
-	v.noteRead("Pod")
-	v.noteRead("Service")
+	v.noteRecoveredRead("Pod")
+	v.noteRecoveredRead("Service")
 	return v.Snapshot.PodsForService(namespace, name)
 }
 
 func (v *ReplayReadView) Services() []corev1.Service {
-	v.noteRead("Service")
+	v.noteRecoveredRead("Service")
 	return v.Snapshot.Services()
 }
 
 func (v *ReplayReadView) Deployments() []appsv1.Deployment {
-	v.noteRead("Deployment")
+	v.noteRecoveredRead("Deployment")
 	return v.Snapshot.Deployments()
 }
 
 func (v *ReplayReadView) StatefulSets() []appsv1.StatefulSet {
-	v.noteRead("StatefulSet")
+	v.noteRecoveredRead("StatefulSet")
 	return v.Snapshot.StatefulSets()
 }
 
 func (v *ReplayReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if !v.checkRecoveredReads {
+		return v.Snapshot.CaptureObjects(refs)
+	}
 	// Snapshot.CaptureObjects returns the whole inventory.
 	for kind := range v.TrimmedObjects {
-		v.noteRead(kind)
+		v.noteRecoveredRead(kind)
 	}
-	v.noteRead("ConfigMap")
+	v.noteRecoveredRead("ConfigMap")
 	objects, err := v.Snapshot.CaptureObjects(refs)
 	v.noteReadFailure(err)
 	for i := range objects {

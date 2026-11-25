@@ -176,6 +176,7 @@ func TestRecoveredDiagnoseRequiresCompleteReads(t *testing.T) {
 		}, false},
 		{"trimmed Pods", func(s *Snapshot) { s.TrimmedObjects = map[string]int{"Pod": 1} }, func(v program.ReadView) { v.Pods() }, false},
 		{"swallowed diff error", func(*Snapshot) {}, func(v program.ReadView) { _, _ = v.DiffAgainstSource(pod) }, false},
+		{"invalid Kubernetes read", func(*Snapshot) {}, func(v program.ReadView) { _, _ = v.KubernetesRead(program.KubernetesRequest{}) }, false},
 		{"correct NoMatch", func(s *Snapshot) { s.PodList = nil }, func(v program.ReadView) { v.Pods() }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -210,6 +211,51 @@ func TestRecoveredDiagnoseRequiresCompleteReads(t *testing.T) {
 			}
 			if !tc.want && got != nil || tc.want && (got == nil || len(got.Objects) != 1 || got.Objects[0] != pod) {
 				t.Fatalf("got %+v, want only captured Pod when match is evaluable: %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOpenReplayKeepsBlockingNoMatchAfterRecordedConfigMapDiff(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"}
+	for _, tc := range []struct {
+		method string
+		diff   func(program.ReadView, sdk.ObjectRef) (program.Diff, error)
+	}{
+		{"DiffAgainstSource", program.ReadView.DiffAgainstSource},
+		{"DiffAgainstBaseline", program.ReadView.DiffAgainstBaseline},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			snapshot := Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{{
+				ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace,
+					Annotations: map[string]string{"sdo.dev/configmap-values-redacted": "true"}},
+			}}}
+			args, err := json.Marshal([]sdk.ObjectRef{ref})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			for name, value := range map[string]any{
+				"open@detect.json": snapshot,
+				"open@detect-recordings.json": []PrimitiveCall{{
+					Method: tc.method, Arguments: args, Result: json.RawMessage("{}"),
+				}},
+			} {
+				raw, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, name), raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			d := ownDiagnoser{spec: program.ProgramSpec{ID: "synthetic"}, diagnose: func(v program.ReadView) (program.Verdict, error) {
+				_, err := tc.diff(v, ref)
+				return program.Verdict{Result: program.NoMatch}, err
+			}}
+			got, err := DiagnoseOnIncident(d, dir)
+			if err != nil || got.Outcome != OwnIncidentFailed {
+				t.Fatalf("open verdict = %+v, %v, want blocking NoMatch", got, err)
 			}
 		})
 	}

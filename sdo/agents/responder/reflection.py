@@ -15,6 +15,7 @@ import re
 import subprocess
 import tempfile
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from agentshim import SessionResumeError
@@ -250,17 +251,25 @@ class SessionReflector:
         )
 
 
-def memory_check_correction(check: ValidationResult, idempotency_key: str) -> RenderedPrompt:
-    details = check.stdout + "\n" + check.stderr
-    feedback = details
+def _reflection_feedback(check: ValidationResult) -> ValidationResult:
+    """Remove check-only observations before rendering or persisting reflection feedback."""
     try:
         report = json.loads(check.stdout)
         gaps = report.get("coverage_gaps", [])
         retained_gaps = [item for item in gaps if item.get("rule") != "playbook.matches-recovered"]
         if len(retained_gaps) != len(gaps):
             report["coverage_gaps"] = retained_gaps
-            details = json.dumps(report) + "\n" + check.stderr
-            feedback = details
+            return replace(check, stdout=json.dumps(report))
+    except (ValueError, AttributeError, TypeError):
+        pass
+    return check
+
+
+def memory_check_correction(check: ValidationResult, idempotency_key: str) -> RenderedPrompt:
+    details = check.stdout + "\n" + check.stderr
+    feedback = details
+    try:
+        report = json.loads(check.stdout)
         diagnostics = report.get("diagnostics", [])
         if diagnostics:
             feedback = "\n".join(
@@ -379,6 +388,7 @@ class CodexSessionBackend:
                 return reply.with_usage(usage)
             result = reply.to_result(worktree, base)
             verdict = self.memory_checker(worktree, result, max(0.0, min(check_limit, deadline - time.monotonic())))
+            verdict = _reflection_feedback(verdict)
             if verdict.timed_out:
                 raise MemoryCheckTimeout(verdict)
             if verdict.exit_code == 0:

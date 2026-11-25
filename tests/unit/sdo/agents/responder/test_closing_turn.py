@@ -235,6 +235,8 @@ def test_a_failing_check_gets_exactly_one_correction_turn(tmp_path: Path, prepar
     correction = expand_context(agent.prompts[1])
     assert "x.rule" in correction
     assert "Pod/app/healthy" not in correction
+    assert "x.rule" in result.error_summary
+    assert "Pod/app/healthy" not in result.error_summary
     details_path = next(
         line.removeprefix("Full check: ") for line in correction.splitlines() if line.startswith("Full check: ")
     )

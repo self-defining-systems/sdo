@@ -156,7 +156,7 @@ func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) (
 			calls = append(calls, capture.PhaseRecordings("fixed")...)
 		}
 	}
-	view := &ReplayReadView{Snapshot: snapshot, Calls: calls}
+	view := &ReplayReadView{Snapshot: snapshot, Calls: calls, checkRecoveredReads: true}
 	verdict := program.RunDiagnose(ctx, d, view, program.Bindings{}, 500*time.Millisecond)
 	if ctx.Err() != nil || view.hadReadFailure() || captureLimits(snapshot, view.KindsRead()) != "" {
 		return nil, program.Unknown
