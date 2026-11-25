@@ -129,10 +129,10 @@ def reflection_output_schema() -> dict[str, object]:
 
 
 def _changes_section(changes: Sequence[str]) -> str:
-    """The recorded-changes section, or nothing when agent.recording is off: the session knows what it did."""
+    """The known changes, including advisory reports when supplied."""
     if not changes:
         return ""
-    return "Your recorded changes:\n" + "\n".join(changes)
+    return "Known changes by target:\n" + "\n".join(changes)
 
 
 #: Slack on top of the memory-check bound for the check's own start-up and the tool's output handling.
@@ -148,7 +148,7 @@ def closing_tool_timeouts() -> dict[str, str]:
 
 
 def closing_prompt(*, incident_id: str, changes: Sequence[str]) -> RenderedPrompt:
-    """The learning turn: about 600 bytes plus the change list Go rendered from the recording, when there is one."""
+    """The learning turn: about 600 bytes plus the change list Go rendered, when there is one."""
     return render_prompt(
         "responder",
         "scriptify",

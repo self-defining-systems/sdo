@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 
@@ -113,7 +114,7 @@ func ClosingChangeLines(changes []ClosingChange) []string {
 	size, left := 0, 0
 	for i, change := range changes {
 		line := fmt.Sprintf("%d. %s", i+1, change.Line)
-		if size+len(line)+1 > closingChangesBudget && !(size == 0) {
+		if size+len(line)+1 > closingChangesBudget {
 			left = len(changes) - i
 			break
 		}
@@ -126,13 +127,58 @@ func ClosingChangeLines(changes []ClosingChange) []string {
 	return lines
 }
 
-// closingChangeLines is the learning turn's change list: the numbered recorded changes, or nothing when the
-// recording is off (the session knows what it did).
+// closingChangeLines groups known writes and advisory reports by their target.
 func (n *NativeIncidentBroker) closingChangeLines(closure IncidentClosure) []string {
-	if !n.Recording {
+	result := closure.Result
+	if result == nil {
 		return nil
 	}
-	return ClosingChangeLines(closingChangesOf(closure))
+	var targets []string
+	groups := map[string][]string{}
+	add := func(target, description string) {
+		target = strings.Join(strings.Fields(target), " ")
+		description = strings.Join(strings.Fields(description), " ")
+		if target == "" || description == "" {
+			return
+		}
+		if _, ok := groups[target]; !ok {
+			targets = append(targets, target)
+		}
+		if !slices.Contains(groups[target], description) {
+			groups[target] = append(groups[target], description)
+		}
+	}
+	for _, write := range result.RepairActions {
+		if !write.Success || apihistory.HelperKind(write.Kind) || write.Kind == apihistory.GapKind {
+			continue
+		}
+		description := write.Summary
+		if description == "" {
+			description = strings.TrimPrefix(write.Kind, apihistory.WriteKindPrefix)
+		}
+		if len(write.Resources) == 0 {
+			add(write.Target, description)
+		}
+		for _, ref := range write.Resources {
+			add(refText(ref), description)
+		}
+	}
+	for _, app := range result.PlanApplications {
+		if app.Result.DryRun || app.RolledBack || app.Result.RolledBack {
+			continue
+		}
+		for _, ref := range touchedObjects(app.Result) {
+			add(refText(objectRefState(ref)), "plan "+strings.Join(app.ProgramIDs, ", "))
+		}
+	}
+	for _, change := range result.AgentChanges {
+		add(change.GetTarget(), "reported: "+change.GetSummary())
+	}
+	var changes []ClosingChange
+	for _, target := range targets {
+		changes = append(changes, ClosingChange{Line: target + ": " + strings.Join(groups[target], "; ")})
+	}
+	return ClosingChangeLines(changes)
 }
 
 // ClosingLearns reports whether the closing turn may turn the fix into a playbook: the closure is a success, with a

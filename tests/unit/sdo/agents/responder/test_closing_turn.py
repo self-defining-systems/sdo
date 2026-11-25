@@ -115,7 +115,7 @@ def test_the_learning_turn_resumes_the_responder_session_and_carries_the_changes
     for line in CHANGES:
         assert line in prompt
     assert "playbook-writing/SKILL.md" in prompt
-    assert "Turn your fix into a playbook so SDO can apply it next time without you." in prompt
+    assert "Write one playbook per independent repair. Each must match and fix only its part." in prompt
     assert "A program for just the mechanical part beats none; leave judgement to the README." in prompt
     assert "Check learned diagnoses and mitigations against recorded evidence before use." in prompt
     assert "Use supported cause classes and plan forms." in prompt
@@ -253,10 +253,10 @@ def test_the_learning_message_is_about_600_bytes_plus_the_change_list() -> None:
 
 
 def test_the_learning_message_omits_the_changes_section_when_nothing_was_recorded() -> None:
-    """agent.recording is off: Go sends no change list, and the session knows what it did."""
+    """Go sends no list when it knows of no changes."""
     prompt = expand_context(closing_prompt(incident_id="0123456789abcdef", changes=[]))
-    assert "recorded changes" not in prompt
+    assert "Known changes by target" not in prompt
     assert "none recorded" not in prompt
     assert "closed as success" in prompt
     with_changes = expand_context(closing_prompt(incident_id="0123456789abcdef", changes=CHANGES))
-    assert "Your recorded changes:\n" + "\n".join(CHANGES) in with_changes
+    assert "Known changes by target:\n" + "\n".join(CHANGES) in with_changes
