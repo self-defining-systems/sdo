@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,7 +26,8 @@ const RuleIDPrefix = "scenario-slo."
 // DefaultHealthMinDuration is how long a health (Class health) traffic
 // detector's failing samples must span, from the first failing sample in the
 // window to the last, before a scenario violation is reported, when its spec
-// leaves Persistence.MinDuration unset. Synthetic-traffic windows are
+// leaves Persistence.MinDuration unset, unless the failure is confirmed first
+// (ConfirmedFailures). Synthetic-traffic windows are
 // re-evaluated on every probe poll (sdo/operator/runtime.DefaultTrafficPollInterval,
 // 500ms), so an evaluation-count-only policy reaches its firing threshold in
 // about 0.5s. A worker node's data plane can stall for about 3s after a
@@ -47,11 +49,11 @@ type sloDetector struct {
 // scenario of a health-probe workload that violates its SLO. It decides
 // purely from the prober's observed samples; missing or unproven observations
 // remain unconfirmed and cannot establish health. A health-class spec that
-// leaves Persistence.MinDuration unset holds each violation until its failing
-// samples span DefaultHealthMinDuration, so judge-authored and
-// lifecycle-generated traffic-health detectors alike require a sustained
-// failure, counted from the first failing sample, before they fire, not just
-// an evaluation count.
+// leaves Persistence.MinDuration unset reports a failure once it is confirmed
+// (ConfirmedFailures: two failing samples and no success between), and any
+// other SLO violation (a partial failure, high latency) once its failing
+// samples span DefaultHealthMinDuration, counted from the first failing
+// sample. A spec that sets MinDuration has only the SLO and its own duration.
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector {
 	d := sloDetector{spec: spec, workload: workload}
 	if spec.Class == sdk.DetectorClassHealth && spec.Persistence.MinDuration <= 0 {
@@ -206,10 +208,23 @@ func (d sloDetector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.
 	for _, observed := range window.Scenarios {
 		descriptors[observed.Scenario.ID] = observed.Scenario
 	}
+	var confirmed map[string]string
+	if d.hold > 0 {
+		windows := map[string]Window{}
+		if set, ok := ctx.(WindowSet); ok {
+			windows = maps.Clone(set.TrafficWindows())
+		}
+		windows[d.workload] = window
+		confirmed = ConfirmedFailures(windows)
+	}
 	findings := make([]sdk.Finding, 0)
 	for _, verdict := range Judge(window) {
-		if verdict.Healthy || verdict.FailureSpan < d.hold {
+		reason := confirmed[d.workload+"/"+verdict.ScenarioID]
+		if reason == "" && (verdict.Healthy || verdict.FailureSpan < d.hold) {
 			continue
+		}
+		if verdict.Healthy {
+			verdict.Healthy, verdict.Violations = false, []string{reason}
 		}
 		findings = append(findings, ScenarioFinding(d.spec, ctx.Namespace(), window.Workload, descriptors[verdict.ScenarioID], verdict))
 	}

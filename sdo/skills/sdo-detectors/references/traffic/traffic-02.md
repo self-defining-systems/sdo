@@ -44,6 +44,15 @@ func CheckProbeLoad(workloads []Workload, catalog Catalog) error
     catalog (one when it is absent). The check is deterministic, so the memory
     check refuses a set no choice of rate could bring under the cap.
 
+func ConfirmedFailures(windows map[string]Window) map[string]string
+    ConfirmedFailures are the scenarios whose failure needs no further samples,
+    as "workload/scenario" to the reason: two failing samples with no success
+    between them, or failing samples of two scenarios that ended within
+    confirmPeerWindow. The application answered both wrongly, or (a timeout or
+    a transport error among them) they cover confirmStallSpan. Only qualified,
+    evaluated health-probe scenarios that are not KnownBroken count. One failing
+    sample never confirms itself, and a partial failure is left to the SLO.
+
 func DefaultLatencyNote(id string) string
     DefaultLatencyNote is the non-blocking memory-check note for a scenario
     DefaultLatencyScenarios returns.
@@ -92,10 +101,11 @@ func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     of a health-probe workload that violates its SLO. It decides purely from
     the prober's observed samples; missing or unproven observations remain
     unconfirmed and cannot establish health. A health-class spec that leaves
-    Persistence.MinDuration unset holds each violation until its failing samples
-    span DefaultHealthMinDuration, so judge-authored and lifecycle-generated
-    traffic-health detectors alike require a sustained failure, counted from the
-    first failing sample, before they fire, not just an evaluation count.
+    Persistence.MinDuration unset reports a failure once it is confirmed
+    (ConfirmedFailures: two failing samples and no success between), and any
+    other SLO violation (a partial failure, high latency) once its failing
+    samples span DefaultHealthMinDuration, counted from the first failing
+    sample. A spec that sets MinDuration has only the SLO and its own duration.
 
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     NewLinkDetector returns a health detector that reports every qualified link
@@ -114,6 +124,10 @@ func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload,
 func ScenarioSLOWorkload(detector sdk.Detector) string
     ScenarioSLOWorkload returns the workload whose scenario SLO violations this
     detector reports, or an empty string for other detectors, including links.
+
+func StartsFailing(observed ScenarioObservations, slo SLO, now time.Time) bool
+    StartsFailing reports whether a qualified scenario's newest usable sample
+    failed right after a success, so it is worth sampling again now.
 
 
 TYPES
@@ -207,24 +221,4 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 
 func (e *Engine) Descriptors() []Descriptor
     Descriptors describe the workload's scenarios in workload order.
-
-func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, result Sample)
-    Iterate runs iteration once and never returns an error: every failure is a
-    sample. A scenario's setup steps run first until each has succeeded once
-    in this engine (or an engine it shares setup with); a retry resumes at the
-    first step that has not succeeded. A failed setup step fails the sample, and
-    setup time is not part of its latency. Cleanup steps of a write-with-cleanup
-    scenario run after any request was sent, even when a step failed; their
-    failures are reported in CleanupError and do not change the outcome.
-
-    A writing scenario's iteration first waits until no other iteration of this
-    engine, or of one it shares setup with, is acting on the same synthetic
-    identity (the same requests, or the same probe user): its read-back must
-    see its own write, not one a concurrent sample made in between. The wait is
-    before the sample starts, so it is not part of the sample's time or latency.
-
-func (e *Engine) IterationOf(scenario string, from uint64) (uint64, bool)
-    IterationOf is the first iteration at or after from that runs scenario:
-    the request the schedule would send for it, so running it now repeats a
-    scheduled request. ok is false for a scenario the workload does not run.
 ```

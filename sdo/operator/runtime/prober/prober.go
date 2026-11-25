@@ -217,6 +217,7 @@ func New(config Config) (*Prober, error) {
 		// make a read-back see another sample's write.
 		state.warmUntil = config.Clock.Now().Add(engine.Workload().WarmupBound())
 		engine.UseWarmup(func() bool { return prober.warming(name) })
+		engine.UseConfirm(func(scenario string) bool { return prober.startsFailing(name, scenario) })
 		prober.probes[name] = state
 	}
 	return prober, nil
@@ -235,6 +236,17 @@ func (p *Prober) warming(name string) bool {
 		return false
 	}
 	return !probeWindowLocked(state, now).Ready()
+}
+
+// startsFailing reports whether the scenario's newest sample began a failure
+// (traffic.StartsFailing).
+func (p *Prober) startsFailing(workload string, scenario string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := p.probes[workload]
+	observed := state.scenarios[scenario]
+	return traffic.StartsFailing(traffic.ScenarioObservations{Samples: observed.samples, Qualified: observed.qualified},
+		state.engine.Workload().ScenarioSLO(scenario), p.config.Clock.Now())
 }
 
 // shareSetup makes engine use the prober's one record of completed setup

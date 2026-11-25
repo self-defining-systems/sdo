@@ -38,6 +38,9 @@ type Sample struct {
 	// failed outright (Outcome error) or hung until the dial timeout
 	// (Outcome timeout).
 	DialFailed bool `json:"dialFailed,omitempty"`
+	// Answered marks a failure the application answered: a complete response
+	// its step's check rejected, not a timeout or a transport error.
+	Answered bool `json:"answered,omitempty"`
 	// IdentityWait is set on an invalid sample whose probe user was still
 	// being provisioned: how long one provisioning run may take. Such a sample
 	// is an environment wait, not a finding about the application.
@@ -232,8 +235,4 @@ type Window struct {
 	LoadError string `json:"loadError,omitempty"`
 }
     Window is what the prober has observed for one workload at ObservedAt.
-
-func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)
-    WindowFrom returns the observations of workload, when the context carries
-    them.
 ```

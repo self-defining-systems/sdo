@@ -82,7 +82,7 @@ func (e *Engine) execStep(ctx context.Context, scenario Scenario, step Step, tar
 			}
 			reason += "; stderr: " + stderr
 		}
-		return stepResult{outcome: OutcomeError, exit: &exit, sent: 1, request: line, err: reason}
+		return stepResult{outcome: OutcomeError, exit: &exit, sent: 1, request: line, err: reason, answered: true}
 	}
 	return stepResult{outcome: OutcomeOK, exit: &exit, sent: 1, request: line}
 }

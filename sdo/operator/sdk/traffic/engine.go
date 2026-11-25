@@ -97,6 +97,9 @@ type Sample struct {
 	// failed outright (Outcome error) or hung until the dial timeout
 	// (Outcome timeout).
 	DialFailed bool `json:"dialFailed,omitempty"`
+	// Answered marks a failure the application answered: a complete response
+	// its step's check rejected, not a timeout or a transport error.
+	Answered bool `json:"answered,omitempty"`
 	// IdentityWait is set on an invalid sample whose probe user was still
 	// being provisioned: how long one provisioning run may take. Such a sample
 	// is an environment wait, not a finding about the application.
@@ -165,6 +168,9 @@ type Engine struct {
 	limits *rateLimits
 	// warming reports whether the probe is warming up (UseWarmup); nil never.
 	warming func() bool
+	// startsFailing says whether a scheduled sample began a failure
+	// (UseConfirm); nil samples nothing again.
+	startsFailing func(scenario string) bool
 	// identities serializes the samples that act on one synthetic identity;
 	// engines that ShareSetup use one record. identityKeys are each writing
 	// scenario's identities (writeIdentity).
@@ -523,6 +529,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 			sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
 			sample.Observed, sample.DialFailed = result.observed, result.dial
 			sample.Defect, sample.ByteCap = result.defect, result.byteCap
+			sample.Answered = result.answered
 			break
 		}
 		if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.MarksExistingRecords() {
@@ -618,6 +625,8 @@ type stepResult struct {
 	// observed is the server's body excerpt or the bare transport cause.
 	observed string
 	dial     bool
+	// answered is set when the step's check rejected a complete answer.
+	answered bool
 	defect   string
 	byteCap  int
 	// pending is set when the step's check answered NotYet.
@@ -809,7 +818,7 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 		if strings.TrimSpace(reason) == "" {
 			reason = fmt.Sprintf("HTTP %d rejected by check", response.StatusCode)
 		}
-		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observedExcerpt(body, response.StatusCode, ""), pending: verdict.Pending}
+		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observedExcerpt(body, response.StatusCode, ""), answered: true, pending: verdict.Pending}
 	}
 	return stepResult{outcome: OutcomeOK, status: response.StatusCode, sent: 1, request: line}
 }
@@ -817,7 +826,8 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 // Run starts iterations at the workload's arrival pattern and rate, from
 // iteration first, until ctx ends or, for bounded workloads, the duration
 // elapses. At most MaxInFlight iterations run at once; an arrival that finds
-// them all busy is skipped. It waits for running iterations and returns the
+// them all busy is skipped. A scheduled sample that begins a failure is
+// confirmed by at most two more (UseConfirm). It waits for running iterations and returns the
 // next iteration number and the number of skipped arrivals.
 func (e *Engine) Run(ctx context.Context, first uint64, emit func(scenario string, sample Sample)) (uint64, int) {
 	var deadline <-chan time.Time
@@ -826,6 +836,9 @@ func (e *Engine) Run(ctx context.Context, first uint64, emit func(scenario strin
 	}
 	gaps := rand.New(rand.NewPCG(e.workload.Seed, math.MaxUint64))
 	slots := make(chan struct{}, MaxInFlight)
+	// Confirming samples draw from their own iteration range, so each stays
+	// replayable and none repeats a scheduled one.
+	confirm := &confirmer{engine: e, slots: slots, emit: emit, active: map[string]bool{}, next: first + 1<<31}
 	var running sync.WaitGroup
 	defer running.Wait()
 	iteration, skipped := first, 0
@@ -835,10 +848,13 @@ func (e *Engine) Run(ctx context.Context, first uint64, emit func(scenario strin
 			running.Add(1)
 			go func(iteration uint64) {
 				defer running.Done()
-				defer func() { <-slots }()
 				scenario, sample := e.Iterate(ctx, iteration)
 				if ctx.Err() == nil || sample.Outcome == OutcomeOK {
 					emit(scenario, sample)
+				}
+				<-slots
+				if sample.failed() && e.startsFailing != nil && e.startsFailing(scenario) && confirm.start(scenario) {
+					confirm.run(ctx, scenario, sample)
 				}
 			}(iteration)
 		default:

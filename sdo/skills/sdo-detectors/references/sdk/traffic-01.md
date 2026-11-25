@@ -56,6 +56,7 @@ func BuildHTTPRequest(ctx context.Context, baseURL string, request Request) (*ht
 func CheckCatalog(ctx context.Context, catalog Catalog) []error
 func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) error
 func CheckProbeLoad(workloads []Workload, catalog Catalog) error
+func ConfirmedFailures(windows map[string]Window) map[string]string
 func DefaultLatencyNote(id string) string
 func DefaultLatencyScenarios(workloads []Workload) []string
 func FailingUserScenarios(ctx sdk.DetectionContext) []string
@@ -67,6 +68,7 @@ func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, ...) sdk.Finding
 func ScenarioSLOWorkload(detector sdk.Detector) string
+func StartsFailing(observed ScenarioObservations, slo SLO, now time.Time) bool
 type Arrival string
     const ArrivalUniform Arrival = "uniform" ...
 type Catalog []Scenario

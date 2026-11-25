@@ -2868,9 +2868,11 @@ func passingTests(snapshot sdk.DetectionContext) []string {
 		return nil
 	}
 	var passing []string
-	for _, window := range set.TrafficWindows() {
+	windows := set.TrafficWindows()
+	confirmed := traffic.ConfirmedFailures(windows)
+	for name, window := range windows {
 		for _, verdict := range traffic.Judge(window) {
-			if verdict.Evaluated && verdict.Healthy {
+			if verdict.Evaluated && verdict.Healthy && confirmed[name+"/"+verdict.ScenarioID] == "" {
 				passing = append(passing, verdict.ScenarioID)
 			}
 		}
