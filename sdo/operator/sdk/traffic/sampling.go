@@ -25,7 +25,7 @@ const (
 	// together should send when the application's own request rate is not
 	// measurable. Meeting the floor for many scenarios can exceed it; the
 	// prober then says so (ProbeLoad) instead of starving a scenario.
-	ProbeRateCap = 3.0
+	ProbeRateCap = 4.0
 )
 
 // EffectiveSampleInterval is how often the workload samples each of its
