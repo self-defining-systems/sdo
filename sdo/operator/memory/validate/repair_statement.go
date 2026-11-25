@@ -196,7 +196,7 @@ func queryLiteralProblems(info *types.Info, fields map[string]ast.Expr) []string
 }
 
 // storeText is what a literal states in constants about one store operation. A scope field or target engine that is
-// not constant may be anything.
+// not a constant, or that the literal leaves out (the program may set it later), may be anything.
 type storeText struct {
 	info      *types.Info
 	target    ast.Expr
@@ -255,11 +255,7 @@ func (t storeText) refusal(name string) error {
 // scopes are the scopes the literal can state: its constants, and for a field that is not one, no value or a plain one.
 func (t storeText) scopes() []storeops.Scope {
 	values := func(field string, unknown ...string) []string {
-		expr, set := t.scope[field]
-		if t.scope != nil && !set {
-			return []string{""}
-		}
-		if value, ok := constantString(t.info, expr); ok {
+		if value, ok := constantString(t.info, t.scope[field]); ok {
 			return []string{value}
 		}
 		return unknown

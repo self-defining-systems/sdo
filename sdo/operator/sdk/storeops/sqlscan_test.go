@@ -2,6 +2,7 @@ package storeops
 
 import (
 	"math/rand"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -37,7 +38,9 @@ func TestScanSQLJudgesTextOutsideQuotes(t *testing.T) {
 		"line break":               {"postgres", "a = 1,\n b = 2", true},
 		"mysql escape":             {"mysql", `a = 'it\'s; -- # fine'`, true},
 		"mysql escape closes":      {"mysql", `a = 'x\\'; DROP TABLE t`, false},
-		"mysql double quote":       {"mysql", `a = "{\"k\": \"#;--\"}"`, true},
+		"mysql double quote":       {"mysql", `a = "{""k"": ""#;--""}"`, true},
+		"mysql ANSI_QUOTES":        {"mysql", `id IN (SELECT 1 AS "\")); DROP TABLE victim; -- ")`, false},
+		"mysql double escape":      {"mysql", `a = "x\\"`, false},
 		"mysql backtick":           {"mysql", "`a;``#` = 1", true},
 		"mysql backtick backslash": {"mysql", "`a\\` = 1", false},
 		"mysql hash":               {"mysql", "a = 1 # x", false},
@@ -76,7 +79,7 @@ func TestAnyEscapedValueIsAccepted(t *testing.T) {
 		value := randomText(r)
 		for engine, literals := range map[string][]string{
 			"postgres": {"'" + double(value) + "'", "E'" + escape(value) + "'", "$sdoq$" + value + "$sdoq$", `'` + double(value) + "'\n'" + double(value) + "'"},
-			"mysql":    {"'" + escape(value) + "'", `"` + strings.ReplaceAll(strings.ReplaceAll(value, `\`, `\\`), `"`, `""`) + `"`},
+			"mysql":    {"'" + escape(value) + "'", `"` + strings.ReplaceAll(strings.ReplaceAll(value, `\`, ""), `"`, `""`) + `"`},
 		} {
 			for _, literal := range literals {
 				e, _ := For(engine)
@@ -161,5 +164,36 @@ func TestRedisWordsQuoteLikeRedisCLI(t *testing.T) {
 func TestJSStringIsJavaScript(t *testing.T) {
 	if got := jsString("\a\U000e0001\""); got != `"\u0007`+"\U000e0001"+`\""` {
 		t.Fatalf("jsString = %q", got)
+	}
+}
+
+// mysqlEnds lists where each quoted part of text ends, "..." read as a string
+// (escapes) or, under ANSI_QUOTES, as an identifier.
+func mysqlEnds(text string, ansi bool) []int {
+	var ends []int
+	for i := 0; i < len(text); i++ {
+		if strings.IndexByte("'\"`", text[i]) < 0 {
+			continue
+		}
+		end := stringEnd(text, i, text[i] == '\'' || text[i] == '"' && !ansi, false)
+		ends = append(ends, end)
+		if end < 0 {
+			break
+		}
+		i = end - 1
+	}
+	return ends
+}
+
+func TestAcceptedMySQLTextReadsTheSameUnderAnsiQuotes(t *testing.T) {
+	r := rand.New(rand.NewSource(3))
+	for range 100000 {
+		text := randomText(r)
+		if _, err := scanSQL("text", text, mysqlDialect); err != nil {
+			continue
+		}
+		if plain, ansi := mysqlEnds(text, false), mysqlEnds(text, true); !slices.Equal(plain, ansi) {
+			t.Fatalf("%q reads %v, under ANSI_QUOTES %v", text, plain, ansi)
+		}
 	}
 }

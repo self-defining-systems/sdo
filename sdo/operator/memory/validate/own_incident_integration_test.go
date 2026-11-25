@@ -87,6 +87,9 @@ func TestANewPlaybookThatMatchesItsOwnIncidentIsRecordedAsAMatch(t *testing.T) {
 // A program whose plan the host would refuse is refused by the compile the broker's subprocess runs, on a capture that
 // did not record the application map: the map is the repository's. The statement is computed, so only the plan says it.
 func TestANewPlaybookWhosePlanTheHostRefusesIsRefused(t *testing.T) {
+	if testing.Short() {
+		t.Skip("nightly: compiles a whole workspace")
+	}
 	root, capture := ownIncidentRoot(t, ownDiagnose("Match"))
 	write(t, root, ".sdo/arch.md", mapInventory+"\n"+mapRegion(mapYAML))
 	write(t, root, ".sdo/playbooks/fresh/mitigate.go", `package fresh

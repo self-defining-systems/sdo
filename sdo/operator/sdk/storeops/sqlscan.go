@@ -10,8 +10,6 @@ type sqlDialect struct {
 	// backslash: a plain string literal reads backslash escapes (mysql). In
 	// postgres only an E'' literal does.
 	backslash bool
-	// doubleString: "..." is a string literal (mysql), not an identifier.
-	doubleString bool
 	// backtick: `...` quotes an identifier, and # starts a comment (mysql).
 	backtick bool
 	// dollar: $tag$...$tag$ quotes a string, E'' reads escapes, and a literal
@@ -21,7 +19,7 @@ type sqlDialect struct {
 
 var (
 	postgresDialect = sqlDialect{dollar: true}
-	mysqlDialect    = sqlDialect{backslash: true, doubleString: true, backtick: true}
+	mysqlDialect    = sqlDialect{backslash: true, backtick: true}
 )
 
 // sqlSpan is the half-open range of one quoted part, its quotes included.
@@ -58,7 +56,12 @@ func scanSQL(what, text string, d sqlDialect) (scannedSQL, error) {
 		case c == '\'':
 			end, quoted = stringEnd(text, i, d.backslash, d.dollar), true
 		case c == '"':
-			end, quoted = stringEnd(text, i, d.backslash && d.doubleString, false), true
+			end, quoted = stringEnd(text, i, false, false), true
+			// mysql reads "..." as a string with escapes, or under ANSI_QUOTES
+			// as an identifier without: a backslash would end it differently.
+			if d.backslash && end > 0 && strings.IndexByte(text[i:end], '\\') >= 0 {
+				return scanned, fmt.Errorf("%s may not hold a backslash in double quotes; use a single-quoted literal", what)
+			}
 		case c == '`' && d.backtick:
 			end, quoted = stringEnd(text, i, false, false), true
 			if end > 0 && strings.IndexByte(text[i:end], '\\') >= 0 {

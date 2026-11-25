@@ -348,7 +348,8 @@ func replayMitigation(m program.Mitigator, view *ReplayReadView, bindings progra
 	defer func() {
 		if value := recover(); value != nil {
 			if value != sdk.ErrReadReplyLimit {
-				panic(value)
+				plan, err = program.Plan{}, fmt.Errorf("Mitigate panicked: %v", value)
+				return
 			}
 			plan, err = program.Plan{}, sdk.ErrReadReplyLimit
 		}

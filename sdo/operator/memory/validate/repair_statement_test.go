@@ -59,6 +59,11 @@ func TestStoreTextInConstantsIsJudgedAsTheEngineWillRunIt(t *testing.T) {
 		"read selector":               {"var q = program.StoreQuery{Scope: storeops.Scope{Collection: table, Selector: \"lower(a) = 'x'\"}, Fields: []string{\"id\"}}", "subquery"},
 		"read field":                  {"var q = program.StoreQuery{Scope: storeops.Scope{Collection: table}, Fields: []string{\"a b\"}}", "a b"},
 		"good read":                   {"var q = &program.StoreQuery{Scope: storeops.Scope{Database: \"d\", Collection: table, Selector: \"a = '\" + value + \"'\"}, Fields: []string{\"id\", table}}", ""},
+		"scope filled later":          {"func f() program.DataScope {\n\ts := program.DataScope{Database: \"app\"}\n\ts.Collection = table\n\treturn s\n}", ""},
+		"database alone in a repair":  {"var a = program.RepairData{Scope: program.DataScope{Database: \"app\"}, Statement: \"a = 1\"}", ""},
+		"selector before its table":   {"var s = program.DataScope{Selector: \"a = 1\"}", ""},
+		"query filled later":          {"func f() program.StoreQuery {\n\tq := program.StoreQuery{Scope: program.DataScope{Database: \"app\"}}\n\tq.Fields = ids\n\treturn q\n}", ""},
+		"empty literals":              {"var a, q, s = program.RepairData{}, program.StoreQuery{Scope: program.DataScope{}}, program.DataScope{}", ""},
 		"computed read":               {"func q(s storeops.Scope, f []string) program.StoreQuery { return program.StoreQuery{Scope: s, Fields: f} }", ""},
 	} {
 		t.Run(name, func(t *testing.T) {

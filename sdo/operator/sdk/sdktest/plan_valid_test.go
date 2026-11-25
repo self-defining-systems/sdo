@@ -119,6 +119,24 @@ func TestSoleEscalateUnderAnInScopeDiagnosisIsANoteNotAFailure(t *testing.T) {
 	}
 }
 
+type panickingMitigator struct{ planMitigator }
+
+func (panickingMitigator) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
+	panic("index out of range")
+}
+
+// A Mitigate that panics on the capture is unverified, like one that returns an error there.
+func TestCheckPlansOnIncidentReportsAPanicAsUnverified(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "open@detect.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unverified, err := CheckPlansOnIncident(panickingMitigator{}, dir, nil)
+	if err != nil || len(unverified) != 1 || !strings.Contains(unverified[0], "panicked: index out of range") {
+		t.Fatalf("unverified = %v, %v", unverified, err)
+	}
+}
+
 type mapMitigator struct{ planMitigator }
 
 func (m mapMitigator) Mitigate(_ context.Context, v program.ReadView, _ program.Bindings) (program.Plan, error) {

@@ -130,7 +130,9 @@ var redisWriteCommands = map[string]redisArity{
 
 // redisWords splits a statement as redis-cli does: at whitespace, except that
 // an argument may be quoted. "..." reads the escapes \n \r \t \b \a \xHH and a
-// backslash before any other byte as that byte; '...' reads only \'.
+// backslash before any other byte as that byte; '...' reads only \'. Unlike
+// redis-cli, a quote inside an unquoted argument is itself, so a JSON member
+// such as {"a":1} needs no quoting.
 func redisWords(statement string) ([]string, error) {
 	var words []string
 	space := func(c byte) bool { return strings.IndexByte(" \t\n\r\v\f", c) >= 0 }
