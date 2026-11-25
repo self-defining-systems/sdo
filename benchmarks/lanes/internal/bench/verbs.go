@@ -570,6 +570,9 @@ func Status(root Root, only string, w io.Writer) error {
 			l.Reason = strings.TrimPrefix(l.Reason+"; "+l.Hold.reason(), "; ")
 		}
 		what := l.Experiment
+		if l.Layout != nil {
+			what += " [" + l.Layout.String() + "]"
+		}
 		if l.Seq != nil {
 			what += fmt.Sprintf(" %s r%d a%d", l.Seq, l.Position, l.Attempt)
 		}

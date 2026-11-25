@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -35,6 +36,8 @@ const (
 	LabelNodeAccess = "node-access"
 	CapReal         = "real"
 	CapVirtual      = "virtual"
+	// LabelLaneNodes is "1" on the lanes of one_node_lanes; other lanes do not have it.
+	LabelLaneNodes = "lane-nodes"
 )
 
 // DefaultVirtualIdleTimeout is how long a free virtual lane is kept: it is remade in seconds, and its nodes bill.
@@ -60,7 +63,35 @@ func (e *HostEKS) validateLanes() []string {
 	if len(e.FullLanes) > 0 && !e.virtual() {
 		return []string{"eks.full_lanes names the full-cluster lanes of a host with lanes: vcluster"}
 	}
+	if len(e.OneNodeLanes) > 0 && !e.virtual() {
+		return []string{"eks.one_node_lanes belongs to a host with lanes: vcluster"}
+	}
 	return nil
+}
+
+// oneNodeProblems are the errors of one_node_lanes of host h: each is a vcluster lane, and only they have the label.
+func (e *HostEKS) oneNodeProblems(h Host) []string {
+	var errs []string
+	for _, lane := range e.OneNodeLanes {
+		switch {
+		case !slices.Contains(h.Clusters, lane):
+			errs = append(errs, fmt.Sprintf("eks.one_node_lanes names %q, which is not in clusters", lane))
+		case slices.Contains(e.FullLanes, lane):
+			errs = append(errs, fmt.Sprintf("eks.one_node_lanes names %q, a full-cluster lane", lane))
+		}
+	}
+	for _, lane := range h.Clusters {
+		v, ok := h.LaneLabels[lane][LabelLaneNodes]
+		if one := e.oneNodeLane(lane); ok && (!one || v != "1") {
+			errs = append(errs, fmt.Sprintf("lane_labels of %s: %s=%q is set by eks.one_node_lanes, not by hand", lane, LabelLaneNodes, v))
+		}
+	}
+	return errs
+}
+
+// oneNodeLane says whether lane of the host is made on one node (eks.one_node_lanes).
+func (e *HostEKS) oneNodeLane(lane string) bool {
+	return e.virtualLane(lane) && slices.Contains(e.OneNodeLanes, lane)
 }
 
 // hostCluster is the name of the host cluster of host (default lanes-host-<host>).
@@ -174,7 +205,11 @@ func eksLabels(e *HostEKS, lane string) map[string]string {
 	if e.virtualLane(lane) {
 		c = CapVirtual
 	}
-	return map[string]string{SharedLabel: "true", LabelKubeSystem: c, LabelNodeAccess: c}
+	labels := map[string]string{SharedLabel: "true", LabelKubeSystem: c, LabelNodeAccess: c}
+	if e.oneNodeLane(lane) {
+		delete(labels, SharedLabel) // taken only by a spec that asks for it
+	}
+	return labels
 }
 
 // SelectorProblems say, for each host of s, why none of its lanes can take a spec whose selector no lane satisfies. A

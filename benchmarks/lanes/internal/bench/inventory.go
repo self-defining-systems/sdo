@@ -272,6 +272,12 @@ func LoadInventory(root string) (Inventory, error) {
 					}
 					h.LaneLabels[c] = eksLabels(h.EKS, c)
 				}
+				if _, ok := h.LaneLabels[c][LabelLaneNodes]; !ok && h.EKS.oneNodeLane(c) {
+					if h.LaneLabels[c] == nil {
+						h.LaneLabels[c] = map[string]string{}
+					}
+					h.LaneLabels[c][LabelLaneNodes] = "1"
+				}
 			}
 			inv.Hosts[name] = h
 		}

@@ -88,6 +88,9 @@ type HostEKS struct {
 	// FullLanes are the lanes of a vcluster host that are clusters of their own (a real kube-system and real nodes), for
 	// the plans that need them (the fault matrices): they are labeled node-access=real and taken by a spec with that selector.
 	FullLanes []string `json:"full_lanes,omitempty"`
+	// OneNodeLanes are the vcluster lanes that run on one node of the type their two-node layout uses, half its vCPUs
+	// and cost (eks_vcluster.go): labeled lane-nodes=1 and taken only by a spec whose selector asks for them.
+	OneNodeLanes []string `json:"one_node_lanes,omitempty"`
 	// LocalKind makes the host cluster a kind cluster on this machine instead of an EKS cluster (lanes: vcluster only): no
 	// AWS account, credentials, eksctl or Karpenter, and no cost. Each lane still is a vcluster with nodes of its own (kind
 	// workers labeled and tainted for it), with the same virtual-lane facts, NetworkPolicy sync and local-path storage, and
@@ -269,6 +272,7 @@ func (e *HostEKS) validate(h Host) []string {
 		}
 	}
 	errs = append(errs, e.validateLanes()...)
+	errs = append(errs, e.oneNodeProblems(h)...)
 	if len(e.Subnets) > 0 && e.VPC == "" {
 		errs = append(errs, "eks.subnets needs eks.vpc")
 	}
@@ -306,6 +310,8 @@ type EksPlan struct {
 	USDPerHour   float64 `json:"usd_per_hour"`
 	// Virtual: the lane is a vcluster of the host cluster (no control plane of its own; eks_vcluster.go).
 	Virtual bool `json:"virtual,omitempty"`
+	// OneNode: the lane is in the host's one_node_lanes.
+	OneNode bool `json:"one_node,omitempty"`
 }
 
 // eksNodeOverheadGiB is what a lane node's nominal memory gives to other than the workload: the kubelet's and the
@@ -321,7 +327,29 @@ func (e *HostEKS) PlanLane(l LaneLimit) (EksPlan, error) { return e.planLane(l, 
 
 // PlanLaneFor is PlanLane for the named lane of a host (a full-cluster lane of a vcluster host has a control plane of its own).
 func (e *HostEKS) PlanLaneFor(lane string, l LaneLimit) (EksPlan, error) {
-	return e.planLane(l, e.virtualLane(lane))
+	return e.planLaneNodes(l, e.virtualLane(lane), e.oneNodeLane(lane))
+}
+
+// planLaneNodes is planLane, on one node of the same type when oneNode: the cores are shared out, the memory is not (a
+// footprint the node cannot hold is refused).
+func (e *HostEKS) planLaneNodes(l LaneLimit, virtual, oneNode bool) (EksPlan, error) {
+	p, err := e.planLane(l, virtual)
+	if err != nil || !oneNode {
+		return p, err
+	}
+	p.OneNode = true
+	if p.Nodes == 1 {
+		return p, nil
+	}
+	mem, _ := ParseSize(l.Memory)
+	fam, _, _ := strings.Cut(p.InstanceType, ".")
+	perNode := p.VCPUs / p.Nodes
+	holds := float64(perNode)*eksFamilies[fam].GiBPerVCPU - eksNodeOverheadGiB
+	if memGiB := float64(mem) / (1 << 30); memGiB > holds {
+		return EksPlan{}, fmt.Errorf("one_node_lanes: one %s holds %.0f GiB of workload, the footprint is %.0f GiB", p.InstanceType, holds, memGiB)
+	}
+	p.USDPerHour, p.VCPUs, p.Nodes = round4(p.USDPerHour/float64(p.Nodes)), perNode, 1
+	return p, nil
 }
 
 func (e *HostEKS) planLane(l LaneLimit, virtual bool) (EksPlan, error) {
@@ -497,6 +525,39 @@ func (m *Manager) eksPlanFor(host, lane string, s Spec) (EksPlan, error) {
 	return m.inv.Hosts[host].EKS.PlanLaneFor(lane, s.LaneLimit())
 }
 
+// eksLanePlan is the cluster lane l has or gets: a lane that exists keeps the layout it was made with (its ledger entry)
+// whatever hosts.yaml says now, a remake in place included; a new one gets the layout hosts.yaml asks for.
+func (m *Manager) eksLanePlan(l *LaneFile, s Spec) (EksPlan, error) {
+	e := m.inv.Hosts[l.Host].EKS
+	if o, ok := m.eksLedger(l.Host).Open[l.Lane]; ok && eksExists(l) {
+		return e.planLaneNodes(s.LaneLimit(), e.virtualLane(l.Lane), o.OneNode)
+	}
+	return e.PlanLaneFor(l.Lane, s.LaneLimit())
+}
+
+// eksLayoutStale says whether lane l exists in another layout than hosts.yaml asks for: its label would lie, so it
+// takes no new build and is deleted when free.
+func (m *Manager) eksLayoutStale(l *LaneFile) bool {
+	h := m.inv.Hosts[l.Host]
+	if !h.IsEks() || !eksExists(l) {
+		return false
+	}
+	o, ok := m.eksLedger(l.Host).Open[l.Lane]
+	return ok && o.OneNode != h.EKS.oneNodeLane(l.Lane)
+}
+
+// eksLayout is what lane l runs on (nil: no EKS cluster).
+func (m *Manager) eksLayout(l *LaneFile) *plan.Layout {
+	if !m.inv.Hosts[l.Host].IsEks() || !eksExists(l) {
+		return nil
+	}
+	o, ok := m.eksLedger(l.Host).Open[l.Lane]
+	if !ok {
+		return nil
+	}
+	return &plan.Layout{Nodes: o.Nodes, InstanceType: o.InstanceType, VCPUs: o.VCPUs, OneNode: o.OneNode}
+}
+
 // eksExists is whether lane l has a cluster, or a build is making it.
 func eksExists(l *LaneFile) bool {
 	return !l.Gone || (l.Step != nil && l.Step.Kind == StepBuild)
@@ -530,6 +591,7 @@ func (m *Manager) eksSettle() {
 				p, err := m.eksPlanFor(name, lf.Lane, spec)
 				if err != nil {
 					p, _ = h.EKS.PlanLaneFor(lf.Lane, DefaultLaneLimit())
+					p.OneNode = h.EKS.oneNodeLane(lf.Lane)
 				}
 				l.Open[lf.Lane] = eksOpen{Since: m.now().UTC(), EksPlan: p}
 				changed = true
@@ -541,6 +603,7 @@ func (m *Manager) eksSettle() {
 				m.logf("eks %s: lane %s deleted; %s x %d for %s cost ~$%.2f (host total ~$%.2f)", name, lf.Lane, o.InstanceType, o.Nodes, m.now().Sub(o.Since).Round(time.Second), usd, l.spend(m.now()))
 				changed = true
 			}
+			lf.Layout = m.eksLayout(lf)
 		}
 		// A lane retired after its cluster was deleted (it left hosts.yaml and its release ended in the same pass) never
 		// reaches the loop above: its entry closes here, or it would count against max_lanes, the quota and the budget
@@ -583,6 +646,9 @@ func (m *Manager) eksIdle(l *LaneFile) bool {
 	h := m.inv.Hosts[l.Host]
 	if !h.IsEks() {
 		return false
+	}
+	if m.eksLayoutStale(l) {
+		return true
 	}
 	free := m.now().Sub(l.Since)
 	if free < h.EKS.Idle() {
@@ -826,11 +892,16 @@ func judgeNodesReady(out string) (pressure []string, err error) {
 // new cluster only when the host's quota and budget hold it.
 func (m *Manager) eksLaneAdmitted(l *LaneFile, s Spec) bool {
 	h := m.inv.Hosts[l.Host]
+	if m.eksLayoutStale(l) {
+		m.eksHeld(l.Host, fmt.Sprintf("lane %s has the layout %s and hosts.yaml asks for another: it is deleted when free", l.Lane, m.eksLayout(l)))
+		return false
+	}
 	if !h.IsEks() || !l.Gone {
 		return true
 	}
-	p, err := h.EKS.PlanLaneFor(l.Lane, s.LaneLimit())
+	p, err := m.eksLanePlan(l, s)
 	if err != nil {
+		m.eksHeld(l.Host, fmt.Sprintf("lane %s: %v", l.Lane, err))
 		return false
 	}
 	if why := m.eksAdmit(l.Host, p); why != "" {

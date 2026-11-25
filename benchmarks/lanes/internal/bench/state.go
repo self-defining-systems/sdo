@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/plan"
 )
 
 // Run statuses (run.json). A run without a run.json is queued (or running on a lane).
@@ -40,6 +42,8 @@ type RunFile struct {
 	// Isolation is what the run was measured under: the lane's cores and memory, whether the host was reserved, and the
 	// OOM kills in the lane's nodes during the run (a run with kills is flagged: its measurement is suspect).
 	Isolation *Isolation `json:"isolation,omitempty"`
+	// Layout is what the lane ran on (EKS lanes).
+	Layout *plan.Layout `json:"layout,omitempty"`
 }
 
 // Version is what `fuzzops version` prints.
@@ -98,8 +102,10 @@ type LaneFile struct {
 	AutoResets int `json:"auto_resets,omitempty"`
 	// Gone: the lane's cluster was deleted (the next build creates it). Recreate: the next build
 	// deletes and creates it (an in-place reset failed or a fault left cluster-scoped residue).
-	Gone     bool `json:"gone,omitempty"`
-	Recreate bool `json:"recreate,omitempty"`
+	Gone bool `json:"gone,omitempty"`
+	// Layout is the cluster the lane has now (EKS lanes; nil: none).
+	Layout   *plan.Layout `json:"layout,omitempty"`
+	Recreate bool         `json:"recreate,omitempty"`
 	// Unplaced: the lane's build waited for cores that were not there and was cancelled so that a free lane that
 	// already holds cores could take its slot. The lane is offered last until a build on it succeeds.
 	Unplaced bool `json:"unplaced,omitempty"`

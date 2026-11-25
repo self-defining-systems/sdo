@@ -281,3 +281,25 @@ func TestTSVFixedColumnsAreStable(t *testing.T) {
 		t.Fatalf("TSV header changed:\n got %q\nwant %q", b.String(), want)
 	}
 }
+
+// An EKS lane's layout (nodes and type) is in the row and, when some row has one, in a column after the fixed ones.
+func TestTheLaneLayoutIsInTheRowAndTheTSV(t *testing.T) {
+	l := newLab(t)
+	e := l.add(retryPlan)
+	l.tick(e)
+	exp := l.fb.expOf("p1/a/r1")
+	l.fb.rundata[exp] = RunData{Run: "r", Layout: &Layout{Nodes: 1, InstanceType: "m6i.2xlarge", VCPUs: 8, OneNode: true}, Grade: []byte(`{"valid": true}`)}
+	l.fb.finish(exp, PhaseDone, "")
+	l.tick(e)
+	rows, _, err := Results(e.Dir, RowFilter{})
+	if err != nil || len(rows) == 0 || rows[0].Layout == nil || *rows[0].Layout != (Layout{Nodes: 1, InstanceType: "m6i.2xlarge", VCPUs: 8, OneNode: true}) {
+		t.Fatalf("rows %+v (%v)", rows, err)
+	}
+	var b bytes.Buffer
+	if err := TSV(&b, rows, nil); err != nil {
+		t.Fatal(err)
+	}
+	if out := b.String(); !strings.Contains(out, "\tended\tlayout\t") || !strings.Contains(out, "\t1 x m6i.2xlarge\t") {
+		t.Fatalf("TSV:\n%s", out)
+	}
+}

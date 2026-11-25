@@ -3,6 +3,7 @@ package plan
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -54,6 +55,23 @@ type Isolation struct {
 	Memory   string `json:"memory,omitempty"`
 }
 
+// Layout is what an EKS lane ran on.
+type Layout struct {
+	Nodes        int    `json:"nodes"`
+	InstanceType string `json:"instance_type"`
+	VCPUs        int    `json:"vcpus"` // all nodes together
+	// OneNode: the host put the lane on one node (eks.one_node_lanes).
+	OneNode bool `json:"one_node,omitempty"`
+}
+
+// String is "2 x m6i.2xlarge" ("" for nil).
+func (l *Layout) String() string {
+	if l == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d x %s", l.Nodes, l.InstanceType)
+}
+
 // RunData is what the backend knows of the newest run of an experiment, for the results row. Identity (Run, the
 // observed revisions, Isolation) is there as soon as the run ended; the grade may take longer (Pending).
 type RunData struct {
@@ -69,6 +87,8 @@ type RunData struct {
 	SubjectObserved  string
 	App              string
 	Isolation        Isolation
+	// Layout is what the lane ran on (nil: not an EKS lane).
+	Layout *Layout
 	// Grade is the workload's grade of the run: opaque JSON, an object with at least a boolean "valid". Nil with
 	// GradeError empty and Pending false: the run was not graded (a failed run).
 	Grade      []byte
