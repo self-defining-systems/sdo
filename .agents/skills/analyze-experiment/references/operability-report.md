@@ -131,5 +131,7 @@ position), `event: "commit"`, `commit_index`, `commit`
 (the push time). `valid` is true for
 every outcome SDO can have, including `held`, `timeout` and `conflict`; it is false only for an infrastructure problem,
 which breaks the rest of the sequence ("sequence broken"). A `conflict` means the series commit did not apply to the
-branch (with `on_conflict: stop` the later commits cannot apply either). Compare `deploy_seconds` with the GitLab release
+branch (with `on_conflict: stop` the later commits cannot apply either). A held release's record has `release_held`; a fault
+row after it is not run (`valid: false`, `invalid_reason` starts with `release_held:`) or, with `on_held: continue`, runs and has
+`comparable: false`: never compare such a row with the same fault on an accepted release. Compare `deploy_seconds` with the GitLab release
 replay's `wall_seconds` above, which is measured the same way from the push.

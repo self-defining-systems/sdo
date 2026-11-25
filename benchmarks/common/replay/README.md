@@ -22,6 +22,7 @@ adapter walks it. Fields:
 | `upstream` | `{repo, base, commits: [sha...]}`: a Git repository, the commit before the first, and the commits in order |
 | `mode` | `diff` (default; needs `base`) or `tree` |
 | `on_conflict` | `stop` (default) or `skip` |
+| `on_held` | `stop` (default): a fault event after a release the subject held is not run and the series ends there. `continue`: it runs, labelled not comparable |
 | `schedule` | optional offsets in seconds from the series start, one per commit, non-decreasing; they time commit events only |
 | `events` | optional list of positions, each `{"commit": <1-based commit index>}` or `{"fault": "<fault id>"}`; every commit exactly once and in order. Absent: one commit event per commit |
 | `faults` | optional short form of `events`, `{"<commit index, 1-based>": "<fault id>"}`: a fault event right after that commit. Not with `events` |
