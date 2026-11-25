@@ -184,13 +184,18 @@ func (c *Controller) beyondStageAlerts(ctx context.Context, now time.Time, snaps
 }
 
 // conditionBeyondStageLocked reports one of the keys firing in this
-// observation's own evaluation; a missing or older one starts no agent.
+// observation's own evaluation, and continuously for a stability window: a
+// transient, a missing or an older observation starts no agent.
 func (c *Controller) conditionBeyondStageLocked(now time.Time, request IncidentRequest, keys []string) bool {
 	if len(keys) == 0 {
 		return false
 	}
 	_, _, firing := c.sampledAlertsLocked(now, request)
-	return slices.ContainsFunc(keys, func(key string) bool { return firing[key] })
+	states := c.tracker.Snapshot()
+	return slices.ContainsFunc(keys, func(key string) bool {
+		state, seen := states[key]
+		return firing[key] && seen && !now.Before(state.FirstSeenAt.Add(c.config.ClosureStabilityWindow))
+	})
 }
 
 func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRequest) []string {

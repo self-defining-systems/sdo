@@ -100,6 +100,10 @@ func (m AppMap) Sources(derived string) []AppComponent {
 // itself, or a Pod or ReplicaSet it controls, followed through the view's
 // controller references.
 func (m AppMap) ComponentOf(view sdk.DetectionContext, ref sdk.ObjectRef) (AppComponent, bool) {
+	// The map names the view's own namespace: a namesake elsewhere is no component.
+	if ref.Namespace != "" && view.Namespace() != "" && ref.Namespace != view.Namespace() {
+		return AppComponent{}, false
+	}
 	workload := WorkloadOf(view, ref)
 	for _, c := range m.Components {
 		if c.Workload == workload {

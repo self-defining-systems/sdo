@@ -7,10 +7,16 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 // storeDown is a Kubernetes condition on StatefulSet store, which no program targets.
@@ -70,16 +76,74 @@ func joinStore(t *testing.T, c *Controller, world *settlingWorld, store *storeDo
 	return findingKey(findings[0])
 }
 
+func stepSeconds(t *testing.T, c *Controller, world *settlingWorld, seconds int) {
+	t.Helper()
+	for range seconds {
+		autoStep(t, c, world.clock, time.Second)
+	}
+}
+
+// seedStore records the store's condition as firing for a minute, and in this
+// observation.
+func seedStore(t *testing.T, c *Controller, world *settlingWorld, store *storeDown) {
+	t.Helper()
+	findings, err := store.Detect(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := world.clock.Now()
+	for i := range findings {
+		findings[i].Fingerprint = FindingFingerprint(findings[i])
+	}
+	if state := c.tracker.states[findingKey(findings[0])]; state != nil {
+		state.FirstSeenAt = now.Add(-time.Minute)
+	} else {
+		c.tracker.Observe(now.Add(-time.Minute), memory.WorkloadControllersDetectorID, findings)
+	}
+	scope := newRecoveryScope(alertKeys(c.currentIncidentRequest))
+	c.rememberRecoverySample(memory.WorkloadControllersDetectorID, now, scope)
+	c.recordEvaluation(memory.WorkloadControllersDetectorID, now, findings, scope)
+}
+
+// A condition older than the write still leaves the settled write its own window.
+func TestAnOldConditionWaitsTheWritesStabilityWindow(t *testing.T) {
+	c, world, store, _ := beyondWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
+	joinStore(t, c, world, store)
+	stepSeconds(t, c, world, 1)
+	seedStore(t, c, world, store)
+	stepSeconds(t, c, world, 3)
+	if autoReport(c).GetHandoffSelected() {
+		t.Fatal("handed off before the settled write had its stability window")
+	}
+	stepSeconds(t, c, world, 1)
+	if !autoReport(c).GetHandoffSelected() {
+		t.Fatal("the window passed without a handoff")
+	}
+}
+
+// A namesake of a mapped workload in another namespace is no component.
+func TestABeyondConditionIsInTheApplicationNamespace(t *testing.T) {
+	m := program.AppMap{Components: []program.AppComponent{{Name: "store", Workload: "StatefulSet/store"}}}
+	view := sdktest.Snapshot{NamespaceName: "app"}
+	if _, ok := m.ComponentOf(view, sdk.ObjectRef{Kind: "StatefulSet", Namespace: "other", Name: "store"}); ok {
+		t.Fatal("a workload of another namespace is a component")
+	}
+	if _, ok := m.ComponentOf(view, sdk.ObjectRef{Kind: "StatefulSet", Namespace: "app", Name: "store"}); !ok {
+		t.Fatal("the application's own workload is no component")
+	}
+}
+
 // A program repaired one part; a condition its write cannot clear starts the
 // agent as soon as the write settled and had its stability window.
 func TestPartialProgramFixHandsOffTheConditionItCannotClear(t *testing.T) {
 	c, world, store, _ := beyondWorld(t, settlingCase{healAfter: 3 * time.Second}, settings.AfterPlaybookAgent)
 	key := joinStore(t, c, world, store)
-	autoStep(t, c, world.clock, 4*time.Second)
+	// First seen at 1 s, so it has fired for the 5 s window at 6 s.
+	stepSeconds(t, c, world, 5)
 	if autoReport(c).GetHandoffSelected() {
-		t.Fatal("handed off before the settled write had its stability window")
+		t.Fatal("handed off before the condition fired for a stability window")
 	}
-	autoStep(t, c, world.clock, time.Second)
+	stepSeconds(t, c, world, 1)
 	report := autoReport(c)
 	if !report.GetHandoffSelected() || !slices.Contains(report.GetHandoffKeys(), key) || report.GetHandoffState() == nil ||
 		report.GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_UNCOVERED {
@@ -95,7 +159,7 @@ func TestPartialProgramFixHandsOffTheConditionItCannotClear(t *testing.T) {
 	c.mu.Lock()
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	c.mu.Unlock()
-	autoStep(t, c, world.clock, 10*time.Second)
+	stepSeconds(t, c, world, 10)
 	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || world.restarts.Load() != 1 {
 		t.Fatalf("dispatch state = %s, %d writes", c.dispatchState, world.restarts.Load())
 	}
@@ -113,10 +177,12 @@ func TestAlertsTheWritesCanStillClearWaitTheBound(t *testing.T) {
 		},
 		"the condition cleared": func(t *testing.T, c *Controller, w *settlingWorld, s *storeDown) {
 			joinStore(t, c, w, s)
+			stepSeconds(t, c, w, 1)
 			s.down.Store(false)
 		},
 		"the condition is not observed": func(t *testing.T, c *Controller, w *settlingWorld, s *storeDown) {
 			joinStore(t, c, w, s)
+			stepSeconds(t, c, w, 1)
 			s.unavailable.Store(true)
 		},
 		"a clue": func(_ *testing.T, _ *Controller, _ *settlingWorld, s *storeDown) { s.down.Store(true) },
@@ -135,13 +201,61 @@ func TestAlertsTheWritesCanStillClearWaitTheBound(t *testing.T) {
 			found, _ := s.Detect(t.Context(), nil)
 			attempt.RemainingFindingFingerprints = append(attempt.RemainingFindingFingerprints, FindingFingerprint(found[0]))
 		},
+		"another written object is unplaced": func(t *testing.T, c *Controller, w *settlingWorld, s *storeDown) {
+			joinStore(t, c, w, s)
+			stepSeconds(t, c, w, 1)
+			attempt := autoReport(c).GetMitigations()[0]
+			attempt.TouchedObjects = append(attempt.TouchedObjects, &contracts.ObjectRef{ApiVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"})
+		},
+		"a script wrote": func(t *testing.T, c *Controller, w *settlingWorld, s *storeDown) {
+			joinStore(t, c, w, s)
+			stepSeconds(t, c, w, 1)
+			plan := autoReport(c).GetMitigations()[0].GetApplyReceipt().GetPlan()
+			plan.Actions = append(plan.Actions, &contracts.Action{Kind: &contracts.Action_RunScript{RunScript: &contracts.RunScript{}}})
+		},
+		"a transient every few seconds": func(t *testing.T, c *Controller, w *settlingWorld, s *storeDown) {
+			joinStore(t, c, w, s)
+			for range 15 {
+				s.down.Store(true)
+				stepSeconds(t, c, w, 2)
+				s.down.Store(false)
+				stepSeconds(t, c, w, 1)
+			}
+		},
+		"a mutation is pending": func(t *testing.T, c *Controller, w *settlingWorld, s *storeDown) {
+			joinStore(t, c, w, s)
+			stepSeconds(t, c, w, 1)
+			gate, err := apihistory.PrepareMutationGate(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			lease, err := gate.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := lease.Finish(true); err != nil {
+				t.Fatal(err)
+			}
+			c.responderLoop.MutationGate = gate
+		},
+		"a StatefulSet restore continues": func(t *testing.T, c *Controller, w *settlingWorld, s *storeDown) {
+			joinStore(t, c, w, s)
+			stepSeconds(t, c, w, 1)
+			c.responderLoop.operationMu.Lock()
+			t.Cleanup(c.responderLoop.operationMu.Unlock)
+		},
+		"the stability extension runs": func(t *testing.T, c *Controller, w *settlingWorld, s *storeDown) {
+			joinStore(t, c, w, s)
+			stepSeconds(t, c, w, 1)
+			autoReport(c).StabilityDeadline = autoReport(c).GetRecoveryDeadline()
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, world, store, _ := beyondWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
 			prepare(t, c, world, store)
 			bound := autoReport(c).GetRecoveryDeadline().AsTime()
-			for world.clock.Now().Before(bound.Add(-10 * time.Second)) {
-				autoStep(t, c, world.clock, 10*time.Second)
+			for world.clock.Now().Before(bound.Add(-time.Second)) {
+				stepSeconds(t, c, world, 1)
 			}
 			if autoReport(c).GetHandoffSelected() || !c.escalatedAt.IsZero() {
 				t.Fatalf("the agent started at %s, bound %s", world.clock.Now(), bound)
@@ -153,7 +267,7 @@ func TestAlertsTheWritesCanStillClearWaitTheBound(t *testing.T) {
 // A program that fixed everything closes alone, however slowly its alerts clear.
 func TestFullProgramFixWithSlowAlertsClosesWithoutTheAgent(t *testing.T) {
 	c, world, _, closed := beyondWorld(t, settlingCase{healAfter: 80 * time.Second}, settings.AfterPlaybookAgent)
-	for i := 0; i < 100 && c.IncidentOpen(); i++ {
+	for i := 0; i < 120 && c.IncidentOpen(); i++ {
 		autoStep(t, c, world.clock, time.Second)
 	}
 	report := deterministicStageReport(closed.Request.PriorStages)
@@ -167,7 +281,7 @@ func TestFullProgramFixWithSlowAlertsClosesWithoutTheAgent(t *testing.T) {
 func TestUnexplainedConditionMidWaitHandsOffAcrossARestart(t *testing.T) {
 	for _, restart := range []bool{false, true} {
 		c, world, store, _ := beyondWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
-		autoStep(t, c, world.clock, 30*time.Second)
+		stepSeconds(t, c, world, 30)
 		if restart {
 			checkpoint, err := c.ExportState()
 			if err != nil {
@@ -186,9 +300,11 @@ func TestUnexplainedConditionMidWaitHandsOffAcrossARestart(t *testing.T) {
 			c = again
 		}
 		key := joinStore(t, c, world, store)
-		// The programs are asked about the new condition first.
-		autoStep(t, c, world.clock, time.Second)
-		autoStep(t, c, world.clock, time.Second)
+		stepSeconds(t, c, world, 3)
+		if autoReport(c).GetHandoffSelected() {
+			t.Fatal("a condition that just joined started the agent")
+		}
+		stepSeconds(t, c, world, 3)
 		if report := autoReport(c); !report.GetHandoffSelected() || !slices.Contains(report.GetHandoffKeys(), key) || world.restarts.Load() != 1 {
 			t.Fatalf("restart=%v: report = %v, %d writes", restart, report, world.restarts.Load())
 		}
@@ -200,9 +316,7 @@ func TestAProgressingRolloutHoldsTheHandoff(t *testing.T) {
 	c, world, store, _ := beyondWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
 	joinStore(t, c, world, store)
 	setUpdatedReplicas(t, world, 0)
-	for range 3 {
-		autoStep(t, c, world.clock, 10*time.Second)
-	}
+	stepSeconds(t, c, world, 30)
 	if autoReport(c).GetHandoffSelected() {
 		t.Fatal("handed off during the stage's own rollout")
 	}
@@ -213,19 +327,50 @@ func TestAProgressingRolloutHoldsTheHandoff(t *testing.T) {
 	}
 }
 
+// A rollout that a write reaches through another object (here the whole
+// namespace) holds the handoff although the write itself settled.
+func TestARelatedRolloutHoldsTheHandoffBeyondTheStage(t *testing.T) {
+	for _, rolling := range []bool{false, true} {
+		c, world, store, _ := beyondWorld(t, settlingCase{healAfter: time.Second}, settings.AfterPlaybookAgent)
+		joinStore(t, c, world, store)
+		stepSeconds(t, c, world, 1)
+		observed := int64(2)
+		if rolling {
+			observed = 1
+		}
+		if _, err := world.client.AppsV1().Deployments("app").Create(t.Context(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "app", Generation: 2}, Status: appsv1.DeploymentStatus{ObservedGeneration: observed}}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		c.currentIncidentResult.RepairActions = append(c.currentIncidentResult.RepairActions, RepairActionReceipt{ActionID: "synthetic", Success: true, CompletedAt: world.clock.Now(), Resources: []sdk.ObjectRef{{Kind: "*", Namespace: "app"}}})
+		stepSeconds(t, c, world, 20)
+		if got := autoReport(c).GetHandoffSelected(); got == rolling {
+			t.Fatalf("rolling=%v: handoff=%v", rolling, got)
+		}
+	}
+}
+
 // A learned pass that is running or queued may still write: it ends first.
 func TestALearnedPassHoldsTheHandoff(t *testing.T) {
 	c, world, store, _ := beyondWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
 	joinStore(t, c, world, store)
 	autoStep(t, c, world.clock, time.Second) // the learned pass the new condition asks for
 	c.midStage.running = true
-	autoStep(t, c, world.clock, 10*time.Second)
+	observed := len(c.history)
+	stepSeconds(t, c, world, 10)
+	if autoReport(c).GetHandoffSelected() || len(c.history) != observed {
+		t.Fatal("handed off, or judged recovery, during a learned pass")
+	}
+	// A pass that starts while an observation runs holds the decision too.
+	seedStore(t, c, world, store)
+	c.mu.Lock()
+	c.automaticRecoveryLocked(world.clock.Now(), c.awaitingAutomaticRecoveryLocked(), false, recoveryCheck{beyondStage: c.currentIncidentRequest.JoinedKeys}, nil)
+	c.mu.Unlock()
 	if autoReport(c).GetHandoffSelected() {
-		t.Fatal("handed off during a learned pass")
+		t.Fatal("handed off during a learned pass that started mid-observation")
 	}
 	c.midStage.running = false
 	c.midStage.pending = false
-	autoStep(t, c, world.clock, time.Second)
+	stepSeconds(t, c, world, 6)
 	if !autoReport(c).GetHandoffSelected() {
 		t.Fatal("the ended pass did not hand off")
 	}
@@ -245,7 +390,9 @@ func TestPoliciesWithoutAnAgentKeepTheirBound(t *testing.T) {
 		}
 		joinStore(t, c, world, store)
 		bound := autoReport(c).GetRecoveryDeadline().AsTime()
-		autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-time.Second)
+		for world.clock.Now().Before(bound.Add(-time.Second)) {
+			stepSeconds(t, c, world, 1)
+		}
 		if autoReport(c).GetHandoffSelected() || !c.escalatedAt.IsZero() {
 			t.Fatalf("%s: ended before its bound", policy)
 		}
