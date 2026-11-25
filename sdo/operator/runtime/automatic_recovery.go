@@ -226,6 +226,8 @@ func (c *Controller) observeStageSettled(now time.Time, snapshot sdk.DetectionCo
 		return
 	}
 	written := check.record.GetSince().AsTime()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if !c.stageSettledAt.IsZero() && !written.After(c.stageSettledAt) {
 		return
 	}
@@ -355,8 +357,11 @@ func (c *Controller) beyondStageAlerts(ctx context.Context, now time.Time, snaps
 		return nil
 	}
 	m, _ := acceptedVerificationMap(ctx, c.gitRead, request)
+	c.mu.Lock()
+	settled := c.stageSettledAt
+	c.mu.Unlock()
 	return append(alertsBeyondStage(snapshot, m.Program(), request, report),
-		userTestsStillFailing(snapshot, request, c.stageSettledAt, c.config.ClosureStabilityWindow)...)
+		userTestsStillFailing(snapshot, request, settled, c.config.ClosureStabilityWindow)...)
 }
 
 // alertBeyondStageLocked reports one of the keys firing in this
