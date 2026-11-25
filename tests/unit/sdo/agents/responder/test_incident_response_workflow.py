@@ -36,6 +36,10 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert metadata["name"] == WORKFLOW
     assert 0 < len(metadata["description"]) <= 200
     assert len(document.encode()) <= SKILL_BYTE_CAPS[WORKFLOW]
+    operating = (destination / "skills" / "sdo-operating" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Recovery covers all users. Probes sample user health." in operating
+    assert "Never change state for probe/test identities." in operating
+    assert "verify with real traffic or a non-SDO request" in operating
     restore_rule = next(line for line in body.splitlines() if line.startswith("- **Restore lost data.**"))
     assert "authoritative copy first" in restore_rule
     assert "before recreating" in restore_rule.lower()
