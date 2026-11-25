@@ -147,16 +147,67 @@ func TestJoinAfterTheSessionReturnedKeepsTheFence(t *testing.T) {
 	}
 }
 
-// Past the response deadline the session is being retired, not resumed.
-func TestJoinAtTheResponseDeadlineDoesNotResumeTheSession(t *testing.T) {
+// A session that is being retired, inside the join window, is not resumed.
+func TestJoinWhileTheSessionIsRetiredDoesNotResumeIt(t *testing.T) {
+	for name, retire := range map[string]func(*Controller){
+		"response deadline passed": func(c *Controller) { c.currentIncidentRequest.ResponseDeadline = c.pendingClosure.VerifiedAt },
+		"stop being retried":       func(c *Controller) { c.earlyStopRetryAt = c.clock().Add(time.Second) },
+		"watch only":               func(c *Controller) { c.config.WatchOnly = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, gate := verifiedRunningSession(t)
+			c := w.controller
+			retire(c)
+			finding := joinedCondition()
+			if !c.joinAlertSet(finding, c.clock()) || !slices.Contains(c.currentIncidentRequest.JoinedKeys, findingKey(finding)) {
+				t.Fatal("the alert did not join")
+			}
+			if c.IncidentOpen() {
+				t.Fatal("a session being retired was resumed")
+			}
+			if _, err := gate.Begin(); err == nil {
+				t.Fatal("a session being retired may write")
+			}
+		})
+	}
+}
+
+// An alert of the set that fires again restarts the proof.
+func TestAMemberThatFiresAgainRestartsTheStabilityProof(t *testing.T) {
 	w, gate := verifiedRunningSession(t)
 	c := w.controller
-	c.joinAlertSet(joinedCondition(), c.finalResultDeadlineLocked())
-	if c.IncidentOpen() {
-		t.Fatal("an expired session was resumed")
+	c.recoverySafetyLost = false
+	if c.closureStableSince.IsZero() {
+		t.Fatal("fixture has no running proof")
+	}
+	c.joinAlertSet(c.currentIncidentRequest.Findings[0], c.clock())
+	requireOpenForWrites(t, w, gate)
+	if !c.closureStableSince.IsZero() || !c.recoverySafetyLost {
+		t.Fatalf("the old proof survived: stable=%s lost=%v", c.closureStableSince, c.recoverySafetyLost)
+	}
+}
+
+// A restart forgets whether the fence stands, never that the responder returned.
+func TestARestartKeepsAReturnedRespondersFence(t *testing.T) {
+	w, gate := verifiedRunningSession(t)
+	c := w.controller
+	id := c.currentIncidentRequest.IncidentID
+	c.handleDispatchCompletion(dispatchCompletion{incidentID: id, result: completedResult(id)}, c.clock())
+	c.joinAlertSet(joinedCondition(), c.clock())
+	c.finishEarlyReport(context.Background(), c.clock())
+	state, err := c.ExportState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RestoreState(state); err != nil {
+		t.Fatal(err)
+	}
+	c.finishEarlyReport(context.Background(), c.clock())
+	if !c.IncidentOpen() || !c.responderDone {
+		t.Fatal("fixture lost the escalated incident")
 	}
 	if _, err := gate.Begin(); err == nil {
-		t.Fatal("an expired session may write")
+		t.Fatal("a restart let a returned responder write")
 	}
 }
 

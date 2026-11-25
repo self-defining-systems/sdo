@@ -31,8 +31,13 @@ func TestChangesShowLongObjectNamesAndHideSecretValues(t *testing.T) {
 	}
 	// A recorded write without a resource is free text.
 	write := IncidentChange{Source: "write", ReaderOrObject: "https://host/" + token}
-	if csv = string(renderChanges([]IncidentChange{write}, detectOnset)); strings.Contains(csv, token) {
-		t.Fatalf("free text leaked:\n%s", csv)
+	evidence, _ = rowEvidence(write, detectOnset)
+	write.At = detectOnset
+	elsewhere := candidateView{in: candidateInput{Onset: detectOnset}, elsewhere: []IncidentChange{write}}.elsewhereLines(true)
+	for _, text := range []string{string(renderChanges([]IncidentChange{write}, detectOnset)), evidence.Text, strings.Join(elsewhere, "\n")} {
+		if strings.Contains(text, token[:20]) || !strings.Contains(text, "[redacted]") {
+			t.Fatalf("free text leaked:\n%s", text)
+		}
 	}
 }
 
@@ -40,6 +45,7 @@ func TestFreeTextKeepsKindNameAndMasksTokens(t *testing.T) {
 	for _, secret := range []string{
 		strings.Repeat("f0", 20), "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", strings.Repeat("Ab1/", 10),
 		"glpat-abcdefghijklmnopqrstuvwxyz012345", "Kind/" + strings.Repeat("aB", 20),
+		"Token/550e8400-e29b-41d4-a716-446655440000", "Session/" + strings.Repeat("0f", 16) + "-a1", "Vault/hvs-caesiabcdefghijklmnop1234567890",
 	} {
 		if got := redactDetectText("value "+secret, 200); strings.Contains(got, secret) {
 			t.Errorf("secret shown: %s", got)

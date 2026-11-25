@@ -652,16 +652,11 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 		if row.Source == "store" {
 			value = func(text string) string { return redactDetectText(text, storeClueValue) }
 		}
-		// A recorded write without a resource names its target in free text.
-		object := clean(row.ReaderOrObject)
-		if row.Source != "write" {
-			object = plainName(row.ReaderOrObject, incidentPageValue)
-		}
 		actor := row.Actor
 		if actor == "" {
 			actor = changeActor(row.Writer)
 		}
-		out = append(out, []string{relative, at, row.Source, plainName(row.Component, incidentPageValue), object, value(row.Key) + namedText(row.Named), value(row.Before), value(row.After), plainName(row.Writer, incidentPageValue), actor, runningCommitCell(row), strconv.FormatBool(row.Noisy), stamp(row.ReadAt), stamp(row.FirstObserved), firstRelative, stamp(row.LastWithout)})
+		out = append(out, []string{relative, at, row.Source, plainName(row.Component, incidentPageValue), changeObject(row, incidentPageValue), value(row.Key) + namedText(row.Named), value(row.Before), value(row.After), plainName(row.Writer, incidentPageValue), actor, runningCommitCell(row), strconv.FormatBool(row.Noisy), stamp(row.ReadAt), stamp(row.FirstObserved), firstRelative, stamp(row.LastWithout)})
 	}
 	return encodeCSV(out)
 }

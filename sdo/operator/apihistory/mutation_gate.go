@@ -24,7 +24,7 @@ type IncidentVerified struct {
 }
 
 func VerificationWarning(at time.Time) *IncidentVerified {
-	return &IncidentVerified{VerifiedAt: at.UTC(), Message: fmt.Sprintf("SDO verified this incident at %s and refuses writes while that holds; you may finish your report. If `sdo detect` shows recovered: no, retry the write", at.UTC().Format(time.RFC3339Nano))}
+	return &IncidentVerified{VerifiedAt: at.UTC(), Message: fmt.Sprintf("write refused while recovered; retry if `sdo detect` shows recovered: no. SDO verified this incident at %s; you may finish your report", at.UTC().Format(time.RFC3339Nano))}
 }
 
 // MutationGate coordinates the controller and the API sidecar through their

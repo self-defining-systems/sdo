@@ -79,8 +79,14 @@ var (
 )
 
 // kubernetesObjectName is Kind/name inside free text: object identity, never a
-// Secret's value, however long the name is.
-var kubernetesObjectName = regexp.MustCompile(`^[A-Z][A-Za-z]{2,}(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*/[a-z0-9]+(?:-[a-z0-9]+)+$`)
+// Secret's value, however long the name is. Only built-in kinds count, so a
+// credential path (Token/<uuid>) stays masked. Custom resources show their
+// names through the typed fields (plainName), never through this.
+var kubernetesObjectName = regexp.MustCompile(`^(?:Pod|Deployment|ReplicaSet|StatefulSet|DaemonSet|Job|CronJob|ReplicationController|` +
+	`Service|Endpoints|EndpointSlice|Ingress|IngressClass|NetworkPolicy|ConfigMap|Secret|ServiceAccount|Namespace|Node|Event|Lease|` +
+	`PersistentVolume|PersistentVolumeClaim|StorageClass|VolumeAttachment|HorizontalPodAutoscaler|PodDisruptionBudget|PriorityClass|` +
+	`ResourceQuota|LimitRange|Role|RoleBinding|ClusterRole|ClusterRoleBinding|CustomResourceDefinition|APIService|` +
+	`MutatingWebhookConfiguration|ValidatingWebhookConfiguration)(?:/[a-z0-9]+(?:-[a-z0-9]+)*)?/[a-z0-9]+(?:-[a-z0-9]+)+$`)
 
 // redactDetectText collapses whitespace, masks credential-shaped text and
 // bounds the result to limit runes. It is for values and free text. A field

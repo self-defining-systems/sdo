@@ -444,8 +444,7 @@ func rowEvidence(row IncidentChange, onset time.Time) (candidateEvidence, bool) 
 	if row.Source == "store" {
 		clean = func(text string) string { return redactDetectText(text, storeClueValue) }
 	}
-	// An object name is not a secret: the token redaction would mask a long one.
-	object := plainName(row.ReaderOrObject, 70)
+	object := changeObject(row, 70)
 	var body string
 	switch row.Source {
 	case "kubernetes":
@@ -500,6 +499,15 @@ func rowEvidence(row IncidentChange, onset time.Time) (candidateEvidence, bool) 
 	}
 	e.Text = body
 	return e, true
+}
+
+// changeObject is a row's object name, shown whatever its length. A recorded
+// write without a resource names its target in free text, so writes are masked.
+func changeObject(row IncidentChange, limit int) string {
+	if row.Source == "write" {
+		return redactDetectText(row.ReaderOrObject, limit)
+	}
+	return plainName(row.ReaderOrObject, limit)
 }
 
 // plainName bounds a Kind/name without credential redaction.
@@ -683,7 +691,7 @@ func (v candidateView) elsewhereLines(detail bool) []string {
 				if row.At.IsZero() || len(newest) == candidateElsewhereRows {
 					break
 				}
-				newest = append(newest, fmt.Sprintf("%s %s %s", relativeOffset(row.At.Sub(v.in.Onset)), plainName(row.Component, 30), plainName(row.ReaderOrObject, 40)))
+				newest = append(newest, fmt.Sprintf("%s %s %s", relativeOffset(row.At.Sub(v.in.Onset)), plainName(row.Component, 30), changeObject(row, 40)))
 			}
 			if len(newest) > 0 {
 				out = append(out, "  newest: "+strings.Join(newest, "; "), "  more: sdo changes")
