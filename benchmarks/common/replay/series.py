@@ -51,6 +51,9 @@ class Series:
     commits: tuple[str, ...]
     mode: Literal["diff", "tree"] = "diff"
     on_conflict: Literal["stop", "skip"] = "stop"
+    #: A fault event after a release the subject held: ``stop`` runs no fault (the series ends there), ``continue`` runs
+    #: it and labels its record as not comparable.
+    on_held: Literal["stop", "continue"] = "stop"
     #: One offset (seconds from the series start) per commit; it times commit events only.
     schedule: tuple[float, ...] = ()
     #: The short form of ``events``: 1-based commit index -> fault id, a fault event right after that commit.
@@ -85,6 +88,8 @@ class Series:
             raise ValueError("events must push the commits in order")
         if self.schedule and len(self.schedule) != len(self.commits):
             raise ValueError("schedule must give one offset (seconds) per commit")
+        if self.on_held not in ("stop", "continue"):
+            raise ValueError(f"on_held must be stop or continue, not {self.on_held!r}")
         if any(t < 0 for t in self.schedule) or list(self.schedule) != sorted(self.schedule):
             raise ValueError("schedule offsets must be non-negative and non-decreasing")
         # ReplayConfig validates commits, schedule, mode and conflict policy; build one now to fail at load time.
@@ -126,7 +131,18 @@ class Series:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Series:
-        known = {"name", "description", "source", "upstream", "mode", "on_conflict", "schedule", "faults", "events"}
+        known = {
+            "name",
+            "description",
+            "source",
+            "upstream",
+            "mode",
+            "on_conflict",
+            "on_held",
+            "schedule",
+            "faults",
+            "events",
+        }
         if extra := sorted(set(raw) - known):
             raise ValueError(f"unknown series field(s): {', '.join(extra)}")
         up = raw.get("upstream") or {}
@@ -141,6 +157,7 @@ class Series:
             commits=tuple(up.get("commits", ())),
             mode=raw.get("mode", "diff"),
             on_conflict=raw.get("on_conflict", "stop"),
+            on_held=raw.get("on_held", "stop"),
             schedule=tuple(raw.get("schedule", ())),
             faults={int(k): v for k, v in raw.get("faults", {}).items()},
             events=tuple(SeriesEvent.from_dict(e) for e in raw.get("events", ())),

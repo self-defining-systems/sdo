@@ -46,6 +46,8 @@ SOURCE_BRANCH_FILE = "source-branch.json"
 #: Written by every series position with the event it runs: the platform's ``run active`` / ``run undo`` after a run
 #: name the series, not the position, and read it to check the fault a fault event injected.
 SERIES_EVENT_FILE = "series-event.json"
+#: The release the series' newest commit event ended held, kept in the lane directory for the positions after it.
+RELEASE_HELD_FILE = "series-release-held.json"
 #: The control-namespace ConfigMaps SDO keeps its one refused branch head and its newest deployed head in
 #: (``sdo/operator/runtime/head_poll.go``).
 HEAD_HOLD_CONFIGMAP = "sdo-head-hold"
@@ -359,10 +361,17 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
     assert ops is not None
     if lane is not None and position == 1 and (problems := lane.start_problems(env, lane_dir)):
         return invalid(stdout, entry, position, "the lane is not at the series start: " + "; ".join(problems))
+    if position == 1:
+        (lane_dir / RELEASE_HELD_FILE).unlink(missing_ok=True)  # an earlier series' or attempt's
     start = wall_start(lane_dir, entry.series.name, ops.now(), first=position == 1)
     total = len(entry.series.events)
     if lane is not None:
         capture.write_series_position(lane_dir, position=position, total=total, started=_iso_epoch(start))
+    if event.kind == "fault" and (held := release_held(lane_dir)) and entry.series.on_held == "stop":
+        # No fault was injected: the safety check after the run has none to undo.
+        (lane_dir / SERIES_EVENT_FILE).write_text(json.dumps({**marker, "fault": ""}) + "\n")
+        stdout.write(json.dumps(held_fault_record(entry, position, event.fault, held), sort_keys=True) + "\n")
+        return 0
     if event.kind == "fault":
         # The fault's own run, as any fault run: no settle-work-only record, so settle waits for SDO to be idle (the
         # incident closed, its closing turn done) within the run cap, and collect then resets the incidents.
@@ -374,6 +383,8 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
             fault_id=event.fault,
             after_commit=entry.series.commits_before(position),
         )
+        if held := release_held(lane_dir):
+            record.update(comparable=False, release_held=held)
         stdout.write(json.dumps(record, sort_keys=True) + "\n")
         return 0
     ahead = start + entry.series.offset(event.commit) - ops.now()
@@ -390,10 +401,47 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
         )
     except ClusterReadTimeout as exc:
         return invalid(stdout, entry, position, f"harness failure: {exc}", harness_failure=True)
+    note_release(lane_dir, record)
     # The record carries the position's own bounded wait for its incident; settle waits only for work in flight.
     (lane_dir / SETTLE_WORK_ONLY_RECORD).write_text(json.dumps({"position": position}) + "\n")
     stdout.write(json.dumps(record, sort_keys=True) + "\n")
     return 0
+
+
+def note_release(lane_dir: Path, record: dict[str, Any]) -> None:
+    """Keep the held release of a commit event's record for the positions after it, until a release is accepted: the
+    record of a held release says so (``release_held``)."""
+    path = lane_dir / RELEASE_HELD_FILE
+    if record.get("outcome") != "held":
+        if record.get("outcome") == "accepted":
+            path.unlink(missing_ok=True)
+        return
+    hold = record.get("hold") or {}
+    record["release_held"] = {"commit_index": record["commit_index"], "reason": hold.get("reason", "")}
+    path.write_text(json.dumps(record["release_held"]) + "\n")
+
+
+def release_held(lane_dir: Path) -> dict[str, Any] | None:
+    """The held release the series is running on (None: its newest release was not held)."""
+    path = lane_dir / RELEASE_HELD_FILE
+    return json.loads(path.read_text()) if path.is_file() else None
+
+
+def held_fault_record(entry: Entry, position: int, fault: str, held: dict[str, Any]) -> dict[str, Any]:
+    """A fault event after a held release, which runs no fault: the cluster holds objects of a release the subject did
+    not accept, so the fault would measure that state. Not valid, so the platform runs no later position."""
+    return {
+        "series": entry.series.name,
+        "index": position,
+        "event": "fault",
+        "fault_id": fault,
+        "after_commit": entry.series.commits_before(position),
+        "valid": False,
+        "comparable": False,
+        "release_held": held,
+        "invalid_reason": f"release_held: commit {held['commit_index']} was held, so the fault was not injected: "
+        f"{held['reason']}",
+    }
 
 
 def invalid(stdout: IO[str], entry: Entry, index: int, reason: str, *, harness_failure: bool = False) -> int:
@@ -479,8 +527,10 @@ def _grade_row(r: dict[str, Any]) -> str:
     if r.get("event") == "fault":
         window = r.get("window")
         window = window if isinstance(window, dict) else {}
+        held = r.get("release_held")
+        label = f" (not comparable: release {held['commit_index']} held)" if held else ""
         cells = [
-            f"fault {r.get('fault_id', '')}",
+            f"fault {r.get('fault_id', '')}{label}",
             *([""] * 5),
             r.get("valid", ""),
             r.get("recovered_in_window", ""),

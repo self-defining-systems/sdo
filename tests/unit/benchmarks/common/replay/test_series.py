@@ -48,6 +48,7 @@ def test_load_reads_a_file_and_names_it_on_error(tmp_path: Path) -> None:
         ({"schedule": [0, 30]}, "one offset"),
         ({"source": ""}, "source"),
         ({"on_conflict": "retry"}, "on_conflict"),
+        ({"on_held": "retry"}, "on_held"),
     ],
 )
 def test_invalid_series_is_refused_at_load(change: dict[str, object], match: str) -> None:

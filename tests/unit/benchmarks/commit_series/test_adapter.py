@@ -435,3 +435,107 @@ def test_the_safety_check_after_a_commit_position_answers_inactive_without_the_w
     (tmp_path / "wrapped-args").unlink(missing_ok=True)
     assert call_safety(tmp_path, "active", "active=true", capsys) == {"active": False}
     assert not (tmp_path / "wrapped-args").exists()
+
+
+def held_then(
+    tmp_path: Path, position: int, spec: dict[str, object] | None = None, fate: str = "held"
+) -> dict[str, object]:
+    """Position 1's release ends ``fate``, then ``position`` runs; its record."""
+    first_env, run_env = series_env(tmp_path, 1), series_env(tmp_path, position)
+    path = fault_series(tmp_path)
+    (tmp_path / "demo.json").write_text(json.dumps({**SPEC, "events": EVENTS, **(spec or {})}))
+    assert path.exists()
+    adapter.run(first_env, io.StringIO(), ops=Lane(fate))  # type: ignore[arg-type]
+    (tmp_path / "wrapped-args").unlink(missing_ok=True)
+    out = io.StringIO()
+    adapter.run(run_env, out, ops=Lane("accepted"))  # type: ignore[arg-type]
+    return json.loads(out.getvalue().splitlines()[-1])
+
+
+def test_a_held_release_is_labelled_on_its_own_record(tmp_path: Path) -> None:
+    first_env = series_env(tmp_path, 1)
+    fault_series(tmp_path)
+    out = io.StringIO()
+    adapter.run(first_env, out, ops=Lane("held"))  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert (record["outcome"], record["release_held"]["commit_index"]) == ("held", 1)
+    assert record["release_held"]["reason"]
+
+
+def test_a_fault_is_not_run_after_a_held_release_and_the_series_stops_there(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The cluster then holds objects of a release SDO did not accept: a fault on it measures that state, not the
+    release. The record is not valid, so the platform runs no later position of the series."""
+    record = held_then(tmp_path, 2)
+    assert (record["event"], record["fault_id"], record["valid"], record["comparable"]) == (
+        "fault",
+        "fault-x",
+        False,
+        False,
+    )
+    assert str(record["invalid_reason"]).startswith("release_held: commit 1")
+    assert record["release_held"]["commit_index"] == 1  # type: ignore[index]
+    assert not (tmp_path / "wrapped-args").exists(), "the fault was injected"
+    assert call_safety(tmp_path, "active", "active=true", capsys) == {"active": False}, "there is no fault to undo"
+
+
+def test_on_held_continue_runs_the_fault_and_labels_it(tmp_path: Path) -> None:
+    record = held_then(tmp_path, 2, {"on_held": "continue"})
+    assert (record["valid"], record["comparable"], record["release_held"]["commit_index"]) == (True, False, 1)  # type: ignore[index]
+    assert record["window"] == FAULT_RECORD["window"]
+
+
+def test_a_later_accepted_release_clears_the_hold(tmp_path: Path) -> None:
+    fault_series(tmp_path, [{"commit": 1}, {"commit": 2}, {"fault": "fault-x"}, {"commit": 3}])
+    events = [{"commit": 1}, {"commit": 2}, {"fault": "fault-x"}, {"commit": 3}]
+    envs = [series_env(tmp_path, p) for p in (1, 2, 3)]
+    fault_series(tmp_path, events)  # series_env rewrote the spec
+    adapter.run(envs[0], io.StringIO(), ops=Lane("held"))  # type: ignore[arg-type]
+    adapter.run(envs[1], io.StringIO(), ops=Lane("accepted"))  # type: ignore[arg-type]
+    out = io.StringIO()
+    adapter.run(envs[2], out, ops=Lane("accepted"))  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert record["valid"] is True
+    assert "release_held" not in record
+
+
+def test_a_new_series_on_the_lane_does_not_see_an_earlier_hold(tmp_path: Path) -> None:
+    """A series starts at position 1: the hold a previous attempt left in the lane directory is not its release."""
+    first_env, second_env = series_env(tmp_path, 1), series_env(tmp_path, 2)
+    fault_series(tmp_path)
+    adapter.run(first_env, io.StringIO(), ops=Lane("held"))  # type: ignore[arg-type]
+    adapter.run(first_env, io.StringIO(), ops=Lane("accepted"))  # type: ignore[arg-type]
+    out = io.StringIO()
+    adapter.run(second_env, out, ops=Lane("accepted"))  # type: ignore[arg-type]
+    assert json.loads(out.getvalue().splitlines()[-1])["valid"] is True
+
+
+def test_grade_says_a_fault_row_after_a_held_release_is_not_comparable(tmp_path: Path) -> None:
+    rows = [
+        {
+            **FAULT_RECORD,
+            "series": "demo",
+            "index": 2,
+            "event": "fault",
+            "fault_id": "fault-x",
+            "after_commit": 1,
+            "comparable": False,
+            "release_held": {"commit_index": 1, "reason": "rollout"},
+        },
+    ]
+    (tmp_path / "runs.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    adapter.grade({"WORKLOAD_RESULTS": str(tmp_path)}, io.StringIO())
+    assert "not comparable: release 1 held" in (tmp_path / "report.md").read_text()
+
+
+def test_a_release_that_was_not_accepted_does_not_clear_an_earlier_hold(tmp_path: Path) -> None:
+    events = [{"commit": 1}, {"commit": 2}, {"fault": "fault-x"}, {"commit": 3}]
+    envs = [series_env(tmp_path, p) for p in (1, 2, 3)]
+    fault_series(tmp_path, events)  # series_env rewrote the spec
+    adapter.run(envs[0], io.StringIO(), ops=Lane("held"))  # type: ignore[arg-type]
+    adapter.run(envs[1], io.StringIO(), ops=Lane("accepted", status="conflict"))  # type: ignore[arg-type]
+    out = io.StringIO()
+    adapter.run(envs[2], out, ops=Lane("accepted"))  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert (record["valid"], record["release_held"]["commit_index"]) == (False, 1)

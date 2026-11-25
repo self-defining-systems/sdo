@@ -67,6 +67,13 @@ the series, not the position, so every position leaves its event in `series-even
 adapter answers that check for the fault the position injected (through the wrapped workload); after a commit event it
 answers inactive. A fault SDO did not fix is therefore undone before the next push.
 
+A fault is never injected after a release the subject **held** (the cluster then holds objects of a release it did not
+accept, so the fault would measure that state). The held commit's record has `release_held` (`commit_index`, `reason`),
+and the next fault event prints a record with `valid: false`, `comparable: false` and `invalid_reason: "release_held:
+..."`, which ends the series at that position. With `"on_held": "continue"` in the spec the fault runs and its record is
+labelled `comparable: false` with the same `release_held`. The next accepted release clears it; one that was not
+accepted (a conflict, a timeout) does not.
+
 The lane platform stores the instances file alone, so name the fault file (and the series spec) by absolute path; a
 position whose fault file is missing or does not list every fault event of the series is refused before anything is
 pushed.
