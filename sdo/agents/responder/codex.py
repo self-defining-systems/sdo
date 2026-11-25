@@ -106,7 +106,7 @@ def execute_incident(
     while True:
         checkpoint_directory = os.environ.get("SDO_RESPONDER_USAGE_DIR", "")
         checkpoint = (
-            UsageCheckpoint(
+            UsageCheckpoint.open(
                 Path(checkpoint_directory),
                 request.incident_id,
                 os.environ.get("SDO_RESPONDER_TASK_ID", request.incident_id),
@@ -115,8 +115,6 @@ def execute_incident(
             if checkpoint_directory
             else None
         )
-        if checkpoint is not None:
-            checkpoint.publish({}, False)
         try:
             completed = run_structured_turn(
                 selected_provider,  # type: ignore[arg-type]

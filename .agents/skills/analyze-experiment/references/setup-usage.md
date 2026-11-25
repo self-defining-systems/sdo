@@ -24,6 +24,9 @@ zero; add the model to the pricing table before claiming a total. A reused
 complete result starts no worker and adds no turn. Old aborted attempts without
 these logs remain unavailable; the change cannot reconstruct their usage.
 
+Setup turns also write `usage/<deploy|design>/<turn_id>.json` in the task directory. Their task is their whole
+identity: `incident_id` is empty. Accounting never fails a turn. A missing checkpoint is unknown usage, and an
+incomplete one is a lower bound; the worker log names the path and phase once.
 
 ## Interrupted responders
 

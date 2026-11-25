@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -165,6 +166,32 @@ def test_judge_authors_final_files_in_writable_session(
         "failure_patterns",
         "detector_ids",
     }
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_design_task_runs_through_the_worker_with_its_production_environment(
+    provider: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The designer runs unstubbed from task file to result, under the accounting environment Go sets for a task."""
+    session = tmp_path / "session"
+    output = {"failure_patterns": ["unavailable"], "detector_ids": ["health-objective"]}
+    agent = ScriptedAgent(lambda _: reply(provider, output, session_id="judge-1"))
+    monkeypatch.setenv("SDO_AGENT_PROVIDER", provider)
+    monkeypatch.setenv("SDO_SETUP_USAGE_PHASE", "design")
+    monkeypatch.setenv("SDO_SESSION_DIR", str(session))
+    monkeypatch.setenv("SDO_USAGE_TASK_ID", "initial-judge-1")
+    monkeypatch.setenv("SDO_TURN_USAGE_LOG", str(session / "setup-usage.jsonl"))
+    monkeypatch.setattr("libs.agent_cli.structured.HostCommandExecutor", lambda: agent.executor)
+    publisher = Publisher()
+    task = judge_task(tmp_path)
+    with fake_codex_login(monkeypatch):
+        result = run_judge_task(task, "result", publisher)
+    assert result.status == "completed"
+    assert publisher.payload is not None
+    [checkpoint] = (session / "usage" / "design").glob("*.json")
+    document = json.loads(checkpoint.read_text())
+    assert (document["incident_id"], document["task_id"], document["phase"]) == ("", "initial-judge-1", "design")
+    assert (session / "setup-usage.jsonl").is_file()
 
 
 def _judge_prompt_text(name: str) -> str:
