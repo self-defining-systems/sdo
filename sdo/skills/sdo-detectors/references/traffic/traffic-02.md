@@ -46,12 +46,11 @@ func CheckProbeLoad(workloads []Workload, catalog Catalog) error
 
 func ConfirmedFailures(windows map[string]Window) map[string]string
     ConfirmedFailures are the scenarios whose failure needs no further samples,
-    as "workload/scenario" to the reason: two failing samples with no success
-    between them, or failing samples of two scenarios that ended within
-    confirmPeerWindow. The application answered both wrongly, or (a timeout or
-    a transport error among them) they cover confirmStallSpan. Only qualified,
-    evaluated health-probe scenarios that are not KnownBroken count. One failing
-    sample never confirms itself, and a partial failure is left to the SLO.
+    as "workload/scenario" to the reason: failing samples with no success
+    between them, or of two user tests ending within confirmPeerWindow,
+    that began at least confirmStallSpan apart. Only qualified, evaluated
+    health-probe scenarios that are not KnownBroken count. One failing sample
+    never confirms itself, and a partial failure is left to the SLO.
 
 func DefaultLatencyNote(id string) string
     DefaultLatencyNote is the non-blocking memory-check note for a scenario
@@ -102,10 +101,10 @@ func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     the prober's observed samples; missing or unproven observations remain
     unconfirmed and cannot establish health. A health-class spec that leaves
     Persistence.MinDuration unset reports a failure once it is confirmed
-    (ConfirmedFailures: two failing samples and no success between), and any
-    other SLO violation (a partial failure, high latency) once its failing
-    samples span DefaultHealthMinDuration, counted from the first failing
-    sample. A spec that sets MinDuration has only the SLO and its own duration.
+    (ConfirmedFailures: it spans 4s with no success between), and any other SLO
+    violation (a partial failure, high latency) once its failing samples span
+    DefaultHealthMinDuration, counted from the first failing sample. A spec that
+    sets MinDuration has only the SLO and its own duration.
 
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     NewLinkDetector returns a health detector that reports every qualified link

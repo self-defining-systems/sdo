@@ -19,6 +19,12 @@ var Watch = sdk.WatchKind{APIVersion: APIVersion, Kind: "SyntheticTraffic"}
 type ScenarioObservations struct {
 	Scenario Descriptor `json:"scenario"`
 	Samples  []Sample   `json:"samples"`
+	// Confirming are the samples taken again after a scheduled one failed,
+	// oldest first. Only ConfirmedFailures reads them: SLO verdicts, recovery
+	// and qualification count scheduled samples alone.
+	Confirming []Sample `json:"confirming,omitempty"`
+	// UserTest reports that the accepted map names the scenario as a user test.
+	UserTest bool `json:"userTest,omitempty"`
 	// Qualified reports whether the scenario has succeeded at least once
 	// since observation began. A scenario that never succeeded is not a
 	// firing health signal: its generator may not match this deployment.

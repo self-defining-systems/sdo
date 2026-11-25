@@ -58,11 +58,13 @@ type TrafficObserver struct {
 	notify    func()
 	interval  time.Duration
 
-	mu      sync.Mutex
-	windows map[string]traffic.Window
-	failure string
-	cancel  context.CancelFunc
-	wait    sync.WaitGroup
+	mu sync.Mutex
+	// userTests returns the scenario IDs of the accepted map's user tests.
+	userTests func() map[string]bool
+	windows   map[string]traffic.Window
+	failure   string
+	cancel    context.CancelFunc
+	wait      sync.WaitGroup
 	// warmup is the cancel of the running warm-up wait; settled is true once
 	// that wait concluded (warm, or its bound passed) since the last
 	// BeginWarmup.
@@ -89,6 +91,37 @@ func (o *TrafficObserver) Reconfigure(workloads []string) {
 	o.workloads = append([]string(nil), workloads...)
 	o.windows = nil
 	o.failure = ""
+}
+
+// UseUserTests marks the scenarios tests names as user tests in Windows.
+func (o *TrafficObserver) UseUserTests(tests func() map[string]bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.userTests = tests
+}
+
+// markUserTests returns windows with the user tests marked. The map is read
+// only while some sample fails, outside the observer's lock.
+func (o *TrafficObserver) markUserTests(windows map[string]traffic.Window) map[string]traffic.Window {
+	o.mu.Lock()
+	userTests := o.userTests
+	o.mu.Unlock()
+	failing := false
+	for _, window := range windows {
+		failing = failing || windowHasRecentFailure(window)
+	}
+	if !failing || userTests == nil {
+		return windows
+	}
+	tests := userTests()
+	for name, window := range windows {
+		window.Scenarios = append([]traffic.ScenarioObservations(nil), window.Scenarios...)
+		for i := range window.Scenarios {
+			window.Scenarios[i].UserTest = tests[window.Scenarios[i].Scenario.ID]
+		}
+		windows[name] = window
+	}
+	return windows
 }
 
 // Poll reads the prober once and reports whether any consumed workload holds
@@ -338,6 +371,10 @@ func (o *TrafficObserver) warm() bool {
 // so the detector reports an error: a health verdict that cannot be observed
 // must not count as clear.
 func (o *TrafficObserver) Windows() map[string]traffic.Window {
+	return o.markUserTests(o.consumed())
+}
+
+func (o *TrafficObserver) consumed() map[string]traffic.Window {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	windows := make(map[string]traffic.Window, len(o.workloads))

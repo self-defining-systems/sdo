@@ -67,9 +67,10 @@ func (e *Engine) ShareSetup(source *Engine)
     step wrote and that was lost afterwards then fails every engine instead of
     being written again. Both engines must run the same catalog.
 
-func (e *Engine) UseConfirm(startsFailing func(scenario string) bool)
+func (e *Engine) UseConfirm(startsFailing func(scenario string) bool, record func(scenario string, sample Sample))
     UseConfirm makes Run sample a scenario again when startsFailing says its
-    scheduled sample began a failure (StartsFailing).
+    scheduled sample began a failure (StartsFailing), and hands those samples to
+    record instead of Run's emit.
 
 func (e *Engine) UseExec(execer Execer)
     UseExec lets scenarios run EXEC steps on ssh targets through execer.

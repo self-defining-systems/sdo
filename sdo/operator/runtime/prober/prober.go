@@ -99,8 +99,11 @@ func ServiceBaseURL(target traffic.Target, namespace string, clusterDomain strin
 }
 
 type scenarioState struct {
-	descriptor  traffic.Descriptor
-	samples     []traffic.Sample
+	descriptor traffic.Descriptor
+	samples    []traffic.Sample
+	// confirming are the samples taken again after a failure
+	// (traffic.ScenarioObservations.Confirming).
+	confirming  []traffic.Sample
 	qualified   bool
 	invalid     int
 	lastInvalid string
@@ -217,7 +220,8 @@ func New(config Config) (*Prober, error) {
 		// make a read-back see another sample's write.
 		state.warmUntil = config.Clock.Now().Add(engine.Workload().WarmupBound())
 		engine.UseWarmup(func() bool { return prober.warming(name) })
-		engine.UseConfirm(func(scenario string) bool { return prober.startsFailing(name, scenario) })
+		engine.UseConfirm(func(scenario string) bool { return prober.startsFailing(name, scenario) },
+			func(scenario string, sample traffic.Sample) { prober.recordConfirming(name, scenario, sample) })
 		prober.probes[name] = state
 	}
 	return prober, nil
@@ -245,7 +249,7 @@ func (p *Prober) startsFailing(workload string, scenario string) bool {
 	defer p.mu.Unlock()
 	state := p.probes[workload]
 	observed := state.scenarios[scenario]
-	return traffic.StartsFailing(traffic.ScenarioObservations{Samples: observed.samples, Qualified: observed.qualified},
+	return traffic.StartsFailing(traffic.ScenarioObservations{Samples: observed.samples, Confirming: observed.confirming, Qualified: observed.qualified},
 		state.engine.Workload().ScenarioSLO(scenario), p.config.Clock.Now())
 }
 
@@ -322,6 +326,17 @@ func (p *Prober) record(workload string, scenario string, sample traffic.Sample)
 	}
 }
 
+// recordConfirming keeps a confirming sample apart from the scheduled ones.
+func (p *Prober) recordConfirming(workload string, scenario string, sample traffic.Sample) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := p.probes[workload].scenarios[scenario]
+	state.confirming = append(state.confirming, sample)
+	if len(state.confirming) > p.config.Capacity {
+		state.confirming = append([]traffic.Sample(nil), state.confirming[len(state.confirming)-p.config.Capacity:]...)
+	}
+}
+
 // Windows returns the current observations of every health-probe workload.
 func (p *Prober) Windows() map[string]traffic.Window {
 	p.mu.Lock()
@@ -344,7 +359,8 @@ func probeWindowLocked(state *probe, now time.Time) traffic.Window {
 		scenario := state.scenarios[id]
 		scenarios = append(scenarios, traffic.ScenarioObservations{
 			Scenario: scenario.descriptor, Samples: append([]traffic.Sample(nil), scenario.samples...),
-			Qualified: scenario.qualified, Invalid: scenario.invalid, LastInvalid: scenario.lastInvalid, Defect: scenario.defect, ByteCap: scenario.byteCap, IdentityWait: scenario.identityWait,
+			Confirming: append([]traffic.Sample(nil), scenario.confirming...),
+			Qualified:  scenario.qualified, Invalid: scenario.invalid, LastInvalid: scenario.lastInvalid, Defect: scenario.defect, ByteCap: scenario.byteCap, IdentityWait: scenario.identityWait,
 		})
 	}
 	return traffic.Window{Workload: state.engine.Workload(), ObservedAt: now, Scenarios: scenarios, Skipped: state.skipped}
@@ -361,7 +377,7 @@ func (p *Prober) Reset() {
 	now := p.config.Clock.Now()
 	for _, state := range p.probes {
 		for _, scenario := range state.scenarios {
-			scenario.samples, scenario.invalid, scenario.lastInvalid, scenario.defect, scenario.byteCap = nil, 0, "", "", 0
+			scenario.samples, scenario.confirming, scenario.invalid, scenario.lastInvalid, scenario.defect, scenario.byteCap = nil, nil, 0, "", "", 0
 		}
 		state.skipped = 0
 		// The forgotten samples are taken again at the floor interval.

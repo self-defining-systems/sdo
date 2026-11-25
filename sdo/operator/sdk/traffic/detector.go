@@ -50,7 +50,7 @@ type sloDetector struct {
 // purely from the prober's observed samples; missing or unproven observations
 // remain unconfirmed and cannot establish health. A health-class spec that
 // leaves Persistence.MinDuration unset reports a failure once it is confirmed
-// (ConfirmedFailures: two failing samples and no success between), and any
+// (ConfirmedFailures: it spans 4s with no success between), and any
 // other SLO violation (a partial failure, high latency) once its failing
 // samples span DefaultHealthMinDuration, counted from the first failing
 // sample. A spec that sets MinDuration has only the SLO and its own duration.

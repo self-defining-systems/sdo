@@ -3,6 +3,7 @@ package traffic
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -13,9 +14,9 @@ const (
 	// is sampled again, so a failure is confirmed by evidence and not by
 	// waiting for healthy samples to leave the SLO window.
 	confirmDelay = time.Second
-	// confirmStallSpan is the observed time that failures without an answer
-	// from the application must cover: a worker node's data plane stalls for
-	// about 3s after some pod-network changes, which fails every request.
+	// confirmStallSpan is how far apart the first and the newest failing
+	// sample must start: a restart answers 5xx, and a worker node's data plane
+	// stalls after some pod-network changes, for about 3s.
 	confirmStallSpan = 4 * time.Second
 	// confirmPeerWindow is how close in time the failures of two scenarios
 	// must end to confirm each other.
@@ -25,11 +26,10 @@ const (
 // failingRun is a scenario's current failure: its newest usable samples, all
 // failing, since a success.
 type failingRun struct {
-	count, answered int
-	// start is when the first of them began and end when the last ended.
-	start, end time.Time
-	// newestAnswered reports whether the application answered the newest one.
-	newestAnswered bool
+	count int
+	// first and last are when the oldest and the newest of them began, and end
+	// is when the last ended.
+	first, last, end time.Time
 }
 
 func (s Sample) end() time.Time { return s.At.Add(s.Latency) }
@@ -41,9 +41,9 @@ func (s Sample) failed() bool { return s.Outcome == OutcomeError || s.Outcome ==
 // newest usable sample succeeded, or when no success precedes the run. Samples
 // are ordered by their start: a request that hangs does not hide a later
 // success, and one that began before the failure does not refute it.
-func currentRun(samples []Sample, maxAge time.Duration, now time.Time) failingRun {
-	ordered := make([]Sample, 0, len(samples))
-	for _, sample := range samples {
+func currentRun(observed ScenarioObservations, maxAge time.Duration, now time.Time) failingRun {
+	ordered := make([]Sample, 0, len(observed.Samples)+len(observed.Confirming))
+	for _, sample := range slices.Concat(observed.Samples, observed.Confirming) {
 		if sample.Outcome != OutcomeInvalid {
 			ordered = append(ordered, sample)
 		}
@@ -59,13 +59,10 @@ func currentRun(samples []Sample, maxAge time.Duration, now time.Time) failingRu
 			continue
 		}
 		if run.count == 0 {
-			run.newestAnswered = sample.Answered
+			run.last = sample.At
 		}
 		run.count++
-		if sample.Answered {
-			run.answered++
-		}
-		run.start = sample.At
+		run.first = sample.At
 		if end := sample.end(); end.After(run.end) {
 			run.end = end
 		}
@@ -76,19 +73,19 @@ func currentRun(samples []Sample, maxAge time.Duration, now time.Time) failingRu
 // StartsFailing reports whether a qualified scenario's newest usable sample
 // failed right after a success, so it is worth sampling again now.
 func StartsFailing(observed ScenarioObservations, slo SLO, now time.Time) bool {
-	return observed.Qualified && currentRun(observed.Samples, slo.MaxAge.Duration(), now).count == 1
+	return observed.Qualified && currentRun(observed, slo.MaxAge.Duration(), now).count == 1
 }
 
 // ConfirmedFailures are the scenarios whose failure needs no further samples,
-// as "workload/scenario" to the reason: two failing samples with no success
-// between them, or failing samples of two scenarios that ended within
-// confirmPeerWindow. The application answered both wrongly, or (a timeout or a
-// transport error among them) they cover confirmStallSpan. Only qualified,
-// evaluated health-probe scenarios that are not KnownBroken count. One failing
-// sample never confirms itself, and a partial failure is left to the SLO.
+// as "workload/scenario" to the reason: failing samples with no success between
+// them, or of two user tests ending within confirmPeerWindow, that began at
+// least confirmStallSpan apart. Only qualified, evaluated health-probe
+// scenarios that are not KnownBroken count. One failing sample never confirms
+// itself, and a partial failure is left to the SLO.
 func ConfirmedFailures(windows map[string]Window) map[string]string {
 	type candidate struct {
 		key, scenario string
+		userTest      bool
 		run           failingRun
 	}
 	var failing []candidate
@@ -102,8 +99,8 @@ func ConfirmedFailures(windows map[string]Window) map[string]string {
 				continue
 			}
 			slo := window.Workload.ScenarioSLO(id)
-			if run := currentRun(observed.Samples, slo.MaxAge.Duration(), window.ObservedAt); run.count > 0 {
-				failing = append(failing, candidate{name + "/" + id, id, run})
+			if run := currentRun(observed, slo.MaxAge.Duration(), window.ObservedAt); run.count > 0 {
+				failing = append(failing, candidate{name + "/" + id, id, observed.UserTest, run})
 			}
 		}
 	}
@@ -111,21 +108,21 @@ func ConfirmedFailures(windows map[string]Window) map[string]string {
 	confirmed := map[string]string{}
 	for i, one := range failing {
 		run := one.run
-		if span := run.end.Sub(run.start); run.count >= 2 && (run.answered >= 2 || span >= confirmStallSpan) {
+		if span := run.last.Sub(run.first); span >= confirmStallSpan {
 			confirmed[one.key] = fmt.Sprintf("%d failing samples in a row over %s", run.count, span.Round(time.Millisecond))
 		}
 		for _, peer := range failing[i+1:] {
-			if peer.scenario == one.scenario || run.end.Sub(peer.run.end).Abs() > confirmPeerWindow {
+			if !one.userTest || !peer.userTest || peer.scenario == one.scenario || run.end.Sub(peer.run.end).Abs() > confirmPeerWindow {
 				continue
 			}
-			start, end := run.start, run.end
-			if peer.run.start.Before(start) {
-				start = peer.run.start
+			first, last := run.first, run.last
+			if peer.run.first.Before(first) {
+				first = peer.run.first
 			}
-			if peer.run.end.After(end) {
-				end = peer.run.end
+			if peer.run.last.After(last) {
+				last = peer.run.last
 			}
-			if !(run.newestAnswered && peer.run.newestAnswered) && end.Sub(start) < confirmStallSpan {
+			if last.Sub(first) < confirmStallSpan {
 				continue
 			}
 			for _, pair := range [][2]candidate{{one, peer}, {peer, one}} {
@@ -139,9 +136,10 @@ func ConfirmedFailures(windows map[string]Window) map[string]string {
 }
 
 // UseConfirm makes Run sample a scenario again when startsFailing says its
-// scheduled sample began a failure (StartsFailing).
-func (e *Engine) UseConfirm(startsFailing func(scenario string) bool) {
-	e.startsFailing = startsFailing
+// scheduled sample began a failure (StartsFailing), and hands those samples to
+// record instead of Run's emit.
+func (e *Engine) UseConfirm(startsFailing func(scenario string) bool, record func(scenario string, sample Sample)) {
+	e.startsFailing, e.confirmed = startsFailing, record
 }
 
 // confirmer runs the confirming samples of one Run: at most two per failure,
@@ -167,20 +165,19 @@ func (c *confirmer) start(scenario string) bool {
 }
 
 // run samples scenario again confirmDelay after its first failing sample
-// ended, and once more at confirmStallSpan when an unanswered failure has not
-// covered it yet. It stops at the first sample that is not a failure.
+// ended, and once more confirmStallSpan after it began unless the failure spans that
+// already. It stops at the first sample that is not a failure.
 func (c *confirmer) run(ctx context.Context, scenario string, first Sample) {
 	defer func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		delete(c.active, scenario)
 	}()
-	failedAt := c.engine.clock.Now()
-	for _, delay := range []time.Duration{confirmDelay, confirmStallSpan} {
+	for _, due := range []time.Time{c.engine.clock.Now().Add(confirmDelay), first.At.Add(confirmStallSpan)} {
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.engine.clock.After(failedAt.Add(delay).Sub(c.engine.clock.Now())):
+		case <-c.engine.clock.After(due.Sub(c.engine.clock.Now())):
 		}
 		select {
 		case <-ctx.Done():
@@ -197,7 +194,7 @@ func (c *confirmer) run(ctx context.Context, scenario string, first Sample) {
 			return
 		}
 		c.emit(scenario, sample)
-		if !sample.failed() || first.Answered && sample.Answered || sample.end().Sub(first.At) >= confirmStallSpan {
+		if !sample.failed() || sample.At.Sub(first.At) >= confirmStallSpan {
 			return
 		}
 	}
