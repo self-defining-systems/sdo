@@ -270,3 +270,12 @@ func TestCluesBoundObjectNames(t *testing.T) {
 		t.Fatalf("named = %q", named)
 	}
 }
+
+// The output budget is in bytes: an awk in a UTF-8 locale counts characters (a
+// byte-based awk hides that, so the command itself is checked).
+func TestPostgresReadBudgetsBytes(t *testing.T) {
+	argv := strings.Join(adapterFor(t, storestate.EnginePostgres).ReadCommand(storestate.Endpoint{Port: 5432}), "\n")
+	if !strings.Contains(argv, "LC_ALL=C awk") || strings.Contains(argv, "${#h}") {
+		t.Fatal("the postgres read does not budget its output in bytes")
+	}
+}
