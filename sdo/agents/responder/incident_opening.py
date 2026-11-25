@@ -125,7 +125,7 @@ def symptom(request: IncidentRequest) -> str:
         return f"Opened on {opened_on(request)}" + (f" at {_hms(opened)} UTC." if opened else ".")
     firsts = [datetime.fromisoformat(meta["first_failure_at"]) for _, meta in tests if meta.get("first_failure_at")]
     since = f" since {_hms(min(firsts))} UTC (first failing sample)" if firsts else ""
-    ordered = sorted(tests)
+    ordered = sorted(tests, key=lambda test: test[0])
     groups: dict[tuple[str, str], list[str]] = {}
     for name, meta in ordered[:_MAX_FAILING]:
         failed = int(meta.get("errors", 0)) + int(meta.get("timeouts", 0))
