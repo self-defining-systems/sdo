@@ -32,7 +32,7 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
     cleanup          its cleanup succeeds
     concurrent       a second prober running it at once does not make it fail
     latency-bound    its maxLatency leaves room over the slowest healthy run
-    altered-answers  (--alter) it fails when an answer is an error, empty, short, changed or from an
+    altered-answers  (--alter) it fails when a read answers empty, short, changed or as in an
                      earlier run; the answers are altered on their way back, nothing is broken
     healthy-run      (--soak, when nothing is red) every probe at its own schedule, no failure
   --only keeps scenarios whose ID contains one of the texts. Exit 0 when nothing is red, 1 when

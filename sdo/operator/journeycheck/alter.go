@@ -12,10 +12,10 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 )
 
-// alterations are the wrong answers given to each request: an error status, no
-// body, the last element missing, the probe's own text changed, and the answer
-// the same request got in an earlier run.
-var alterations = []string{"503", "empty", "drop", "text", "stale"}
+// alterations are the wrong answers given to each read: no body, the last
+// element missing, the probe's own text changed, and the answer the same request
+// got in an earlier run. (That an error status is noticed is an offline rule.)
+var alterations = []string{"empty", "drop", "text", "stale"}
 
 var variable = regexp.MustCompile(`[0-9a-f]{16,}|\d+`)
 
@@ -26,6 +26,7 @@ type alterer struct {
 	client   traffic.Doer
 	marker   string
 	previous map[int][]byte
+	write    map[int]bool
 
 	mu      sync.Mutex
 	step    int
@@ -69,15 +70,16 @@ func (a *alterer) Do(r *http.Request) (*http.Response, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if step < 0 {
+		a.write[at] = r.Method != http.MethodGet && r.Method != http.MethodHead
 		if _, ok := a.previous[at]; !ok {
 			a.previous[at] = body
 		}
 	}
 	if at == step {
-		altered, status := alter(kind, body, a.marker, a.previous[at], response.StatusCode)
-		if !bytes.Equal(altered, body) || status != response.StatusCode {
+		altered := alter(kind, body, a.marker, a.previous[at])
+		if !bytes.Equal(altered, body) {
 			a.applied, a.line = true, r.Method+" "+r.URL.Path
-			body, response.StatusCode, response.Status = altered, status, http.StatusText(status)
+			body = altered
 		}
 	}
 	response.Body, response.ContentLength = io.NopCloser(bytes.NewReader(body)), int64(len(body))
@@ -85,28 +87,26 @@ func (a *alterer) Do(r *http.Request) (*http.Response, error) {
 	return response, nil
 }
 
-func alter(kind string, body []byte, marker string, previous []byte, status int) ([]byte, int) {
+func alter(kind string, body []byte, marker string, previous []byte) []byte {
 	switch kind {
-	case "503":
-		return []byte("altered"), http.StatusServiceUnavailable
 	case "empty":
-		return nil, status
+		return nil
 	case "drop":
 		var list []json.RawMessage
 		if json.Unmarshal(body, &list) == nil && len(list) > 0 {
 			if short, err := json.Marshal(list[:len(list)-1]); err == nil {
-				return short, status
+				return short
 			}
 		}
 	case "text":
 		if marker != "" {
 			changed := marker[:len(marker)-1] + "~"
-			return []byte(strings.ReplaceAll(string(body), marker, changed)), status
+			return []byte(strings.ReplaceAll(string(body), marker, changed))
 		}
 	case "stale":
 		if previous != nil && len(previous) > 0 {
-			return previous, status
+			return previous
 		}
 	}
-	return body, status
+	return body
 }

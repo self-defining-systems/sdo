@@ -87,7 +87,7 @@ type Config struct {
 const (
 	maxIdentityWait = 5 * time.Minute
 	identityPoll    = 2 * time.Second
-	parallel        = 4
+	parallel        = 8
 )
 
 // Run judges the scenarios the workloads schedule.
@@ -310,7 +310,7 @@ func (j *judge) concurrent(ctx context.Context) Result {
 func (j *judge) altered(ctx context.Context, requests int, slowest time.Duration) Result {
 	id := j.scenario.ID
 	bound := min(max(3*slowest, 5*time.Second), j.workload.IterationTimeout.Duration())
-	a := &alterer{client: j.c.Client, marker: j.scenario.Marker, previous: map[int][]byte{}}
+	a := &alterer{client: j.c.Client, marker: j.scenario.Marker, previous: map[int][]byte{}, write: map[int]bool{}}
 	e, err := j.engine(a, j.shared, bound)
 	if err != nil {
 		return Result{ItemAltered, id, Red, err.Error()}
@@ -324,10 +324,14 @@ func (j *judge) altered(ctx context.Context, requests int, slowest time.Duration
 	}
 	tried, caught := 0, 0
 	var blind, missed []string
-	for step := range requests {
+	// Cleanup answers follow the steps and judge nothing.
+	for step := range min(requests, len(j.scenario.Steps)) {
 		stepTried, stepCaught, line := 0, 0, ""
 		var lost []string
 		for _, kind := range alterations {
+			if a.write[step] && kind != "empty" {
+				continue // what a write answers is judged by the read after it
+			}
 			a.start(step, kind)
 			s := j.iterate(ctx, e)
 			if !a.applied || s.Outcome == traffic.OutcomeInvalid || s.Requests <= step {
@@ -345,7 +349,9 @@ func (j *judge) altered(ctx context.Context, requests int, slowest time.Duration
 		content := contains(lost, "stale") || contains(lost, "text")
 		switch {
 		case stepTried > 0 && stepCaught == 0:
-			blind = append(blind, line+" (no wrong answer noticed)")
+			if !a.write[step] {
+				blind = append(blind, line+" (no wrong answer noticed)")
+			}
 		case content:
 			missed = append(missed, fmt.Sprintf("%s (%s)", line, strings.Join(lost, ", ")))
 		}
@@ -354,7 +360,7 @@ func (j *judge) altered(ctx context.Context, requests int, slowest time.Duration
 	if len(missed) > 0 {
 		detail += "; unnoticed wrong content, check it unless a later step reads it back: " + strings.Join(missed, "; ")
 	}
-	if len(blind) > 0 || tried == 0 {
+	if len(blind) > 0 || caught == 0 {
 		return Result{ItemAltered, id, Red, detail + "; checks nothing: " + strings.Join(blind, "; ")}
 	}
 	return Result{ItemAltered, id, Green, detail}
