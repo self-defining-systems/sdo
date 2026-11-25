@@ -1707,7 +1707,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 	}
 	var jobFailed *ResponderJobFailedError
 	var capacityConfiguration *responderCapacityConfigurationError
-	terminal := errors.As(completion.err, &jobFailed) || errors.As(completion.err, &capacityConfiguration)
+	terminal := errors.As(completion.err, &jobFailed) || errors.As(completion.err, &capacityConfiguration) || workerNeverStarted(completion.err)
 	if c.earlyReportPendingLocked() {
 		if completion.err == nil {
 			snapshot := *c.pendingClosure.Result
@@ -1761,6 +1761,17 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.currentIncidentResult = result
 		c.escalateLocked(c.responderCompletedAt)
 		c.resetDispatchRetryLocked()
+	} else if workerNeverStarted(completion.err) {
+		// No worker took a turn: escalate like a task that could not be prepared.
+		if len(completion.result.PlanApplications) > 0 && deterministicStageReport(c.currentIncidentRequest.PriorStages) != nil {
+			c.currentIncidentResult = cloneIncidentResult(&completion.result)
+		}
+		c.escalateDispatchFailureLocked(observedAt, "worker_never_started", completion.err)
+		c.mu.Unlock()
+		if c.OnError != nil {
+			c.OnError(fmt.Errorf("dispatch incident: %w", completion.err))
+		}
+		return
 	} else if terminal {
 		// A failed Job or invalid admission configuration ends the dispatch.
 		// There is no worker result authorizing repair or learning claims.

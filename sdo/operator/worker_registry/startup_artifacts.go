@@ -52,6 +52,8 @@ func ValidateStartupArtifact(name string, data []byte) error {
 		value = new(SessionStartup)
 	case "startup-dispatch.json":
 		value = new(DispatchStartup)
+	case startFailureFile:
+		value = new(StartupFailure)
 	default:
 		return fmt.Errorf("unknown startup timing artifact %q", name)
 	}

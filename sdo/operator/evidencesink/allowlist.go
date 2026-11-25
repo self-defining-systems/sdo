@@ -58,7 +58,7 @@ func Allowed(name string) bool {
 		return base == "startup-worker.json"
 	}
 	if len(parts) == 6 && parts[2] == "startup" && parts[3] == "attempts" {
-		return base == "startup-controller.json" || base == "startup-dispatch.json"
+		return base == "startup-controller.json" || base == "startup-dispatch.json" || base == "startup-failure.json"
 	}
 	if len(parts) == 4 && parts[2] == "startup" {
 		return base == "startup-controller.json" || base == "startup-session.json" || base == "startup-dispatch.json"
@@ -118,7 +118,7 @@ func agentRecordingFile(base string) bool { return base == "events.jsonl" || bas
 // StartupTimingArtifact reports whether base names one of the startup timing documents a reader validates.
 func StartupTimingArtifact(base string) bool {
 	switch base {
-	case "startup-controller.json", "startup-worker.json", "startup-daemon.json", "startup-session.json", "startup-dispatch.json":
+	case "startup-controller.json", "startup-worker.json", "startup-daemon.json", "startup-session.json", "startup-dispatch.json", "startup-failure.json":
 		return true
 	}
 	return false

@@ -66,6 +66,8 @@ func (err *RequestTooLargeError) Error() string {
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
+	// StartWatch supervises the start of an incident responder; nil for every other task.
+	StartWatch     *WorkerStartWatch
 	WarmBinding    *WarmBinding
 	standbyMode    bool
 	standbySubPath string
@@ -324,6 +326,7 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 	defer ticker.Stop()
 	observed := map[string]bool{}
 	var resultSeenAt time.Time
+	starting := e.newStartWatcher(task, jobName, pollClock)
 	for {
 		if e.OnPhase != nil && !observed["pod_ready"] {
 			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
@@ -413,6 +416,17 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 		}
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("get agent result ConfigMap: %w", err)
+		}
+		if starting != nil && apierrors.IsNotFound(err) {
+			pods, listErr := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
+			if listErr == nil {
+				if reason := starting.check(pods.Items); reason != "" {
+					// The worker publishes before it exits, so look once more after its end was seen.
+					if _, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, resultName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+						return nil, &WorkerStalledError{JobName: jobName, Reason: reason}
+					}
+				}
+			}
 		}
 		wake := ticker.C()
 		stopWake := func() {}
