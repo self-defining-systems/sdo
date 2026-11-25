@@ -267,8 +267,10 @@ Go parity tests (the Go tests job runs them), the fast Python ratchets and the
 Python contract tests (the full Python suite contains them), and compiles the
 operator with `go list -export` instead of linking every command.
 
-The responder's two skills (`incident-response`, `sdo-operating`) are each one `SKILL.md` of 1,024
-to 1,792 bytes, checked by `tests/unit/sdo/agents/test_skill_size.py`. `sdo-operating` lists the
+The responder's method (`sdo/agents/responder/prompts/incident_method.md`, at most 1,792 characters,
+checked by `test_incident_response_workflow.py`) leads its first message; every incident reads it, so it
+is not a skill. Its command skill `sdo-operating` is one `SKILL.md` of 1,024 to 1,900 bytes, checked by
+`tests/unit/sdo/agents/test_skill_size.py`. `sdo-operating` lists the
 `sdo` commands by hand, so after changing the command surface update it and keep it under the cap.
 The responder image's cached model-tool
 layer installs `jq` and runs a JSON extraction smoke check during the build.

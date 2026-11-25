@@ -80,6 +80,7 @@
     "idempotency_key": "template_data.responder-turn_01-idempotency_key",
     "prompt": "template_data.responder-turn_01-prompt"
   },
+  "responder/incident_method": {},
   "responder/incident_prompt": {
     "incident_id": "template_data.responder-incident_prompt-incident_id",
     "namespace": "template_data.responder-incident_prompt-namespace",

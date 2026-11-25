@@ -1,8 +1,3 @@
----
-name: incident-response
-description: Incident repair.
----
-
 # Incident response
 
 - **Look at what fails.** Run the failing operation and read its exact response. The alert can be a side effect.
@@ -22,3 +17,4 @@ description: Incident repair.
   Background results are interim. Keep working when it ends. The last result stands.
 - **Record.** `findings` (required even if you give up): what you saw and where, what you ruled out and why, and gaps.
   Omit probable causes. `agent_changes`: what, where, when (RFC 3339), empty if none.
+

@@ -20,7 +20,6 @@ def agent_guidance() -> Literal["go", "shell"]:
 AGENT_SKILLS = MappingProxyType(
     {
         "responder": (
-            "incident-response",
             "sdo-operating",
             "sdo-serving",
             "sdo-observability",
