@@ -211,8 +211,6 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 		// owes its first handoff under the automatic recovery policy.
 		c.escalateLocked(now)
 	}
-	// A new alert reopens a settled automatic stage while repair is ongoing.
-	c.midStage.settled = false
 	return true
 }
 

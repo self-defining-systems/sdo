@@ -1038,7 +1038,7 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 
 // RefreshDiagnose diagnoses the open findings against a fresh snapshot without
 // retaking a capture: the opening captures stay what the incident opened with.
-func (l *ResponderLoop) RefreshDiagnose(ctx context.Context) []ProgramRun {
+func (l *ResponderLoop) RefreshDiagnose(ctx context.Context, findings []sdk.Finding, attempted map[string]bool) ([]ProgramRun, error) {
 	ctx, closeMemory := withMemoryScope(ctx)
 	defer closeMemory()
 	l.operationMu.Lock()
@@ -1046,7 +1046,20 @@ func (l *ResponderLoop) RefreshDiagnose(ctx context.Context) []ProgramRun {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.capturePhase = ""
-	return l.diagnose(ctx, l.findings, true)
+	view, err := l.snapshotView(ctx)
+	if err != nil {
+		return nil, err
+	}
+	registry, deadline := l.Programs, l.deadline()
+	keyed := KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: true, Attempted: attempted, Restore: sourceRestoreCandidates(view, l.Request, findings)}
+	var runs []ProgramRun
+	err = withoutResponderLocks(l, "diagnose", true, func() {
+		runs = SelectKeyedProgramCandidates(ctx, registry, view, findings, deadline, keyed)
+	})
+	l.stampProgramRuns(runs)
+	l.lastDiagnosisView = view
+	l.runs = append(l.runs, runs...)
+	return runs, err
 }
 
 // RediagnosePrograms diagnoses again, against a fresh snapshot and without a
@@ -1273,6 +1286,16 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 	if len(plan.Actions) == 0 {
 		response.Error = "program returned an empty plan"
 		return
+	}
+	if request.stage {
+		for _, action := range plan.Actions {
+			if hasUnencodableAction(historicalActionProto(action)) {
+				err := &NonExecutablePlanError{Cause: fmt.Errorf("cannot encode %T in the automatic plan", action)}
+				l.rememberTerminalPlanError(request.ProgramID, l.programRevision(request.ProgramID), request.Bindings, err)
+				response.Error = err.Error()
+				return
+			}
+		}
 	}
 	preview, err := l.Executor.Apply(ctx, l.Request, plan, true)
 	if err != nil {

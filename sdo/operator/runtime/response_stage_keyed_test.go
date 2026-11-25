@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -147,4 +149,64 @@ func TestStageIgnoresACreditForAnotherSymptom(t *testing.T) {
 	if len(report.Mitigations) != 0 || world.restarts.Load() != 0 {
 		t.Fatalf("applied on a symptom the pair was not credited for: %d writes, %v", world.restarts.Load(), report)
 	}
+}
+
+// An app-wide diagnosis can still match the first suspect after its plan
+// wrote. The attempted Match must still claim the credited program's slot.
+type appWideRestart struct{ componentRestart }
+
+func (appWideRestart) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
+	return program.Verdict{Result: program.Match}, nil
+}
+
+func TestAttemptedCreditedMatchKeepsItsSuspectSlot(t *testing.T) {
+	world, stage, state := keyedStageLoop(t, nil)
+	state.Request.OpeningKeys = findingKeys(state.Request.Findings)
+	loop := stage.NewLoop(state.Request)
+	loop.Request = state.Request
+	loop.Credits = credits("fix", state.Request.OpeningKeys[0], "api", "web")
+	appWide := appWideRestart{componentRestart{id: "fix"}}
+	registry, err := program.NewRegistry([]program.Diagnoser{appWide}, []program.Mitigator{appWide})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.Programs = registry
+	report, err := stage.Run(t.Context(), state)
+	if err != nil || world.restarts.Load() != 1 {
+		t.Fatalf("opening writes=%d, report=%v, err=%v", world.restarts.Load(), report, err)
+	}
+	for range 2 {
+		state = &IncidentState{Request: state.Request, Findings: slices.Clone(state.Request.Findings), Coverage: state.Coverage, PriorStages: []*contracts.StageReport{report}}
+		report, err = RunStageAgain(t.Context(), state, stage)
+		if err != nil || world.restarts.Load() != 1 {
+			t.Fatalf("later pass must leave the second suspect alone: writes=%d, report=%v, err=%v", world.restarts.Load(), report, err)
+		}
+	}
+}
+
+// A repair whose own diagnosis stopped matching still owns its playbook while
+// its write has not settled; only then may the second suspect be repaired.
+func TestUnsettledCreditedRepairKeepsItsSlotAfterItStopsMatching(t *testing.T) {
+	world, stage, state := keyedStageLoop(t, nil)
+	world.stuck.Store(true)
+	state.Request.OpeningKeys = findingKeys(state.Request.Findings)
+	clock := &settlingClock{now: time.Unix(1000, 0).UTC()}
+	loop := stage.NewLoop(state.Request)
+	loop.Request, loop.Now = state.Request, clock.Now
+	loop.Credits = credits("fix", state.Request.OpeningKeys[0], "api", "web")
+	report, err := stage.Run(t.Context(), state)
+	if err != nil || world.restarts.Load() != 1 {
+		t.Fatalf("opening writes=%d, report=%v, err=%v", world.restarts.Load(), report, err)
+	}
+	again := func(want int32) {
+		t.Helper()
+		state = &IncidentState{Request: state.Request, Findings: slices.Clone(state.Request.Findings), Coverage: state.Coverage, PriorStages: []*contracts.StageReport{report}}
+		report, err = RunStageAgain(t.Context(), state, stage)
+		if err != nil || world.restarts.Load() != want {
+			t.Fatalf("writes=%d, want %d: report=%v, err=%v", world.restarts.Load(), want, report, err)
+		}
+	}
+	again(1)
+	_ = clock.advance(t.Context(), DefaultMitigationRolloutTimeout+time.Second)
+	again(2)
 }

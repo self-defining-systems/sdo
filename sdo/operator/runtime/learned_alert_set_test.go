@@ -71,6 +71,7 @@ func TestJoinedAlertIsEvaluatedAgainstLearnedPlaybooks(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	c, passes := churnController(t, now)
 	c.admitActivation(context.Background(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
+	c.resumePendingLearnedPass(t.Context())
 	c.Wait()
 	if len(c.currentIncidentRequest.JoinedKeys) != 1 {
 		t.Fatalf("the symptom did not join the alert set: %v", c.currentIncidentRequest.JoinedKeys)
@@ -82,11 +83,12 @@ func TestJoinedAlertIsEvaluatedAgainstLearnedPlaybooks(t *testing.T) {
 
 // A pass that found nothing to do settles the stage; a symptom that joins
 // later is new evidence, so the stage looks again.
-func TestNewJoinedSymptomReopensASettledStage(t *testing.T) {
+func TestNewJoinedSymptomReopensAfterAnEarlierPass(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	c, passes := churnController(t, now)
-	c.midStage.settled = true
+	c.midStage.passes = 1
 	c.admitActivation(context.Background(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
+	c.resumePendingLearnedPass(t.Context())
 	c.Wait()
 	if passes.Load() != 1 {
 		t.Fatalf("automatic passes = %d, want one: a settled stage ignored a new symptom", passes.Load())
@@ -134,7 +136,7 @@ func TestSymptomJoiningDuringThePipelineIsEvaluatedAfterIt(t *testing.T) {
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	c.responseStagesRunning = true
 	c.admitActivation(context.Background(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
-	c.resumePendingLearnedPass(context.Background())
+	c.resumePendingLearnedPass(t.Context())
 	c.Wait()
 	if passes.Load() != 0 {
 		t.Fatalf("a pass ran while the pipeline was still running: %d", passes.Load())
@@ -152,7 +154,7 @@ func TestSymptomJoiningDuringThePipelineIsEvaluatedAfterIt(t *testing.T) {
 		t.Fatal("handoff selected while the pipeline's joined symptom still needed evaluation")
 	}
 	c.mu.Unlock()
-	c.resumePendingLearnedPass(context.Background())
+	c.resumePendingLearnedPass(t.Context())
 	c.Wait()
 	if passes.Load() != 1 {
 		t.Fatalf("automatic passes = %d, want one after the pipeline ended", passes.Load())
@@ -189,6 +191,7 @@ func TestHandoffWaitsForRunningPassAndPreservesItsReport(t *testing.T) {
 		}
 	}
 	c.admitActivation(t.Context(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
+	c.resumePendingLearnedPass(t.Context())
 	c.Wait()
 	c.mu.Lock()
 	report := deterministicStageReport(c.currentIncidentRequest.PriorStages)
@@ -202,7 +205,8 @@ func TestHandoffWaitsForRunningPassAndPreservesItsReport(t *testing.T) {
 		t.Fatal("drained automatic stage did not select responder handoff")
 	}
 	c.mu.Unlock()
-	c.attachLearnedActivation(t.Context(), routeErrors(t, "route-fix"))
+	c.attachLearnedActivation(routeErrors(t, "route-fix"))
+	c.resumePendingLearnedPass(t.Context())
 	c.Wait()
 	if c.midStage.passes != 1 {
 		t.Fatalf("automatic pass count after handoff = %d, want 1", c.midStage.passes)

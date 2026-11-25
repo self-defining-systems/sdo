@@ -24,7 +24,7 @@ const stagePlanNotExecutable = "plan_not_executable"
 
 func automaticPlanRefused(attempt *contracts.StageMitigation) bool {
 	// Older reports recorded this reason as a skipped binding. Only a terminal
-	// refusal recorded as a failed attempt ends the stage and affects trust.
+	// refusal recorded as a failed attempt ends that binding and affects trust.
 	return attempt.GetResult() == "apply_error" && attempt.GetSkipReason() == stagePlanNotExecutable
 }
 
@@ -118,7 +118,7 @@ func (l *ResponderLoop) restoreTerminalStagePlanErrors() {
 func (*DeterministicResponseStage) Name() string { return "deterministic" }
 
 func (stage *DeterministicResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
-	if prior := deterministicStageReport(state.PriorStages); stagePlanRefused(prior) {
+	if prior := deterministicStageReport(state.PriorStages); prior.GetHandoffSelected() {
 		return proto.Clone(prior).(*contracts.StageReport), nil
 	}
 	report := &contracts.StageReport{Stage: stage.Name(), StartedAt: contractTimestamp(lifecycleio.Now().UTC())}
@@ -197,10 +197,23 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 			}
 		}
-		if stagePlanRefused(report) || progress.Complete && !state.Refresh {
+		if progress.Complete && !state.Refresh {
 			stage.armRecovery(state, loop, report, progress)
 			return report, save(true)
 		}
+	}
+	attempted := map[string]bool{}
+	// A later pass may complete a binding an earlier one only skipped, because
+	// its finding had not activated yet. A skip wrote nothing, so that attempt
+	// is redone in its place; any attempt that wrote is never repeated.
+	retry := map[string]*contracts.StageMitigation{}
+	for _, attempt := range report.Mitigations {
+		key := stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))
+		if state.Refresh && attempt.Result == "skipped" && attempt.SkipReason != stagePlanNotExecutable {
+			retry[key] = attempt
+			continue
+		}
+		attempted[key] = true
 	}
 	// A later pass rebuilds coverage for what is still open, from a fresh
 	// diagnosis. The opening capture is immutable evidence, so it is not retaken.
@@ -209,26 +222,35 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	}
 	if state.Coverage == nil {
 		var runs []ProgramRun
+		var err error
 		if state.Refresh {
 			// A later pass diagnoses live state: the loop's findings are the ones
 			// it last observed, which predate whatever joined the incident since.
+			observed := ToolResponse{}
 			func() {
 				loop.operationMu.Lock()
 				defer loop.operationMu.Unlock()
 				loop.mu.Lock()
 				defer loop.mu.Unlock()
-				observed := ToolResponse{}
 				loop.verify(ctx, nil, &observed, true)
 			}()
-			runs = loop.RefreshDiagnose(ctx)
+			if observed.Error != "" && len(observed.DetectorStates) == 0 {
+				return report, errors.New(observed.Error)
+			}
+			updateStageFindings(state, observed)
+			runs, err = loop.RefreshDiagnose(ctx, state.Findings, attempted)
+			if err != nil {
+				return report, err
+			}
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 		} else {
 			runs = loop.InitialDiagnose(ctx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 		}
-		var err error
-		if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
-			return report, err
+		if !state.Refresh {
+			if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
+				return report, err
+			}
 		}
 		report.Diagnoses = mergeStageDiagnoses(report.Diagnoses, stageDiagnoses(runs))
 		if state.Refresh {
@@ -244,19 +266,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	loop.mu.Lock()
 	defer loop.mu.Unlock()
 	matches := stageCandidates(state)
-	attempted := map[string]bool{}
-	// A later pass may complete a binding an earlier one only skipped, because
-	// its finding had not activated yet. A skip wrote nothing, so that attempt
-	// is redone in its place; any attempt that wrote is never repeated.
-	retry := map[string]*contracts.StageMitigation{}
-	for _, attempt := range report.Mitigations {
-		key := stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))
-		if state.Refresh && attempt.Result == "skipped" && attempt.SkipReason != stagePlanNotExecutable {
-			retry[key] = attempt
-			continue
-		}
-		attempted[key] = true
-	}
 	ineffective := ineffectiveStageTargets(report.Mitigations)
 	// Only diagnoses that wrote nothing receive a second turn, and only after a
 	// turn that wrote or cleared something: an unchanged cluster would give the
@@ -309,6 +318,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
 			if err := skip(stageIneffective); err != nil {
+				return report, err
+			}
+			continue
+		}
+		if loop.Credits.Has(match.PlaybookId) && loop.earlierRepairUnsettled(ctx, report, attempt) {
+			if err := skip(stageAlreadyAttempted); err != nil {
 				return report, err
 			}
 			continue
@@ -396,6 +411,14 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
+		// Once the opening symptoms clear, a later pass can repair only
+		// findings that still belong to the incident's alert set.
+		if state.Refresh && (!state.openingObservedActive || len(newRecoveryScope(openingKeys(&state.Request)).blocking(state.Findings)) == 0) {
+			active := findingFingerprints(newRecoveryScope(alertKeys(&state.Request)).blocking(state.Findings))
+			match.targets = slices.DeleteFunc(slices.Clone(match.targets), func(fp string) bool {
+				return !slices.Contains(active, fp)
+			})
+		}
 		if len(match.targets) == 0 {
 			if err := skip("unexplained_coverage"); err != nil {
 				return report, err
@@ -407,7 +430,10 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if match.PlaybookId != SourceRestoreID && errors.As(escalationErr, &refusal) {
 			loop.rememberTerminalPlanError(attempt.PlaybookId, attempt.ProgramRevision, bindings, refusal)
 			recordRefusal(refusal)
-			break
+			if err := save(false); err != nil {
+				return report, err
+			}
+			continue
 		}
 		if escalates {
 			escalateStageAttempt(state, attempt, match, bindings, before, escalation)
@@ -443,10 +469,10 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 					continue
 				}
 				recordRefusal(terminal)
-				break
+			} else {
+				attempt.Result = "apply_error"
+				attempt.Error = planResponse.Error
 			}
-			attempt.Result = "apply_error"
-			attempt.Error = planResponse.Error
 			if err := save(false); err != nil {
 				return report, err
 			}
@@ -547,6 +573,9 @@ func namedStageMatches(runs []ProgramRun) map[string]bool {
 }
 
 func updateStageFindings(state *IncidentState, response ToolResponse) {
+	if state.Refresh {
+		state.openingObservedActive = len(newRecoveryScope(openingKeys(&state.Request)).blocking(response.Findings)) > 0
+	}
 	// Failed or unconfirmed observations cannot erase the opening findings.
 	if response.Error != "" && len(response.DetectorStates) == 0 {
 		return

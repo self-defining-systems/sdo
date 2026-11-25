@@ -19,7 +19,7 @@ description: Reading and changing an application through SDO's `sdo` command.
 - `sdo menu [NAME]`: list fixes. `sdo mitigate NAME --bind ROLE=Kind/ns/name`: apply one
 - `sdo mitigate ReconcileFromSource --bind ref=Deployment/shop/api`: restore source
 
-Read captured evidence before repeating slow reads. Opening verdicts are historical. Diagnose again or run mitigate with bindings to check live and apply if it matches.
+Read captured evidence before slow reads. Opening verdicts are historical. After handoff, detect shows new matches. Diagnose or mitigate with bindings to check live.
 
 `sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes. Keep a source fix with `git commit`.
 

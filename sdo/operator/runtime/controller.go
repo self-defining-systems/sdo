@@ -1020,7 +1020,7 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	}
 	if !c.opens(finding) {
 		if !c.attachBeforeLaunch([]sdk.Finding{finding}, false) {
-			c.attachLearnedActivation(ctx, finding)
+			c.attachLearnedActivation(finding)
 		}
 		return
 	}
@@ -1032,7 +1032,7 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	if c.joinAlertSet(finding, now) {
 		// The automatic stage can evaluate a learned playbook for the joined
 		// symptom while it owns the repair.
-		c.attachLearnedActivation(ctx, finding)
+		c.attachLearnedActivation(finding)
 		return
 	}
 	if spec.Class == "" {
@@ -1852,6 +1852,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 }
 
 func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Context, now time.Time, snapshot sdk.DetectionContext, observationErr error) bool {
+	defer c.resumePendingLearnedPass(ctx)
 	if c.config.ExternalIncidentsOnly {
 		c.closeExternalIncident(now)
 		return false
