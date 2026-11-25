@@ -2007,6 +2007,9 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		detected, stability := c.incidentDetectedAt, c.config.ClosureStabilityWindow
 		c.mu.Unlock()
 		recovery = c.recoveryCheck(observationCtx, snapshot, *request, result, detected, stability)
+		if safe && (guard == nil || !guard.Pending) && len(source.Rollouts) == 0 && !restorePending {
+			recovery.beyondStage = c.beyondStageAlerts(observationCtx, now, snapshot, *request, recovery)
+		}
 	}
 	if observationCtx.Err() != nil {
 		if ctx.Err() == nil {
