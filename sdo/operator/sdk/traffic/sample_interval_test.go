@@ -26,19 +26,19 @@ func intervalWorkload(t *testing.T, interval string, scenarios int) Workload {
 // the fixed 10 s floor exceeds.
 func TestSampleIntervalKeepsManyScenariosUnderTheProbeLoadBound(t *testing.T) {
 	steps := map[string]int{}
-	for i := 0; i < 18; i++ {
+	for i := 0; i < 22; i++ {
 		steps[fmt.Sprintf("scenario-%02d", i)] = 2
 	}
-	fixed := intervalWorkload(t, "10s", 18)
+	fixed := intervalWorkload(t, "10s", 22)
 	if load := MeasureProbeLoad([]Workload{fixed}, steps); !load.OverCap() {
-		t.Fatalf("18 scenarios at 10 s should exceed the cap, got %+v", load)
+		t.Fatalf("22 scenarios at 10 s should exceed the cap, got %+v", load)
 	}
-	slow := intervalWorkload(t, "30s", 18)
+	slow := intervalWorkload(t, "30s", 22)
 	load := MeasureProbeLoad([]Workload{slow}, steps)
 	if load.OverCap() || len(load.Raised) != 0 {
-		t.Fatalf("18 scenarios at 30 s should fit the cap, got %+v", load)
+		t.Fatalf("22 scenarios at 30 s should fit the cap, got %+v", load)
 	}
-	if want := 2 * 18.0 / 30; load.RequestsPerSecond < want-1e-9 || load.RequestsPerSecond > want+1e-9 {
+	if want := 2 * 22.0 / 30; load.RequestsPerSecond < want-1e-9 || load.RequestsPerSecond > want+1e-9 {
 		t.Fatalf("load %.3f, want %.3f", load.RequestsPerSecond, want)
 	}
 }
@@ -103,19 +103,19 @@ func TestSampleIntervalValidation(t *testing.T) {
 // rate and the way out, instead of leaving the controller to log it.
 func TestCheckProbeLoadRejectsAnOverCapProbeSet(t *testing.T) {
 	var catalog Catalog
-	for i := 0; i < 18; i++ {
+	for i := 0; i < 22; i++ {
 		catalog = append(catalog, Scenario{ID: fmt.Sprintf("scenario-%02d", i), Steps: make([]Step, 2)})
 	}
-	err := CheckProbeLoad([]Workload{intervalWorkload(t, "10s", 18)}, catalog)
+	err := CheckProbeLoad([]Workload{intervalWorkload(t, "10s", 22)}, catalog)
 	if err == nil {
-		t.Fatal("an 18-scenario probe at the 10 s floor was accepted")
+		t.Fatal("a 22-scenario probe at the 10 s floor was accepted")
 	}
-	for _, want := range []string{"3.6 requests/s", "3/s cap", "sampleInterval"} {
+	for _, want := range []string{"4.4 requests/s", "4/s cap", "sampleInterval"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("message %q lacks %q", err, want)
 		}
 	}
-	if err := CheckProbeLoad([]Workload{intervalWorkload(t, "30s", 18)}, catalog); err != nil {
+	if err := CheckProbeLoad([]Workload{intervalWorkload(t, "30s", 22)}, catalog); err != nil {
 		t.Fatalf("a probe set under the cap was rejected: %v", err)
 	}
 }

@@ -37,7 +37,7 @@ only if it has a scenario):
   `no_user_records: <why>` ([Users' own records](references/probes.md#users-own-records)).
 - Clean up what a write creates when a delete route exists (`SideEffectWriteWithCleanup`); else bound its growth.
 - Every scenario is sampled at least every 10 s; keep probe requests under 5% of the app's request rate, else
-  under 3 per second. Signatures and options: [traffic reference](references/traffic.md).
+  under 4 per second. Signatures and options: [traffic reference](references/traffic.md).
 
 ## Prove each probe
 
