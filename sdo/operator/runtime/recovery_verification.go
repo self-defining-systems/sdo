@@ -39,7 +39,9 @@ type recoveryCheck struct {
 	verdict recoveryVerdict
 	reason  string
 	horizon time.Duration
-	// beyondStage are the alerts the automatic stage's writes cannot clear.
+	// observed is whether no mutation is in flight in this observation.
+	observed bool
+	// beyondStage are the alerts the automatic stage's settled writes did not clear.
 	beyondStage []string
 }
 

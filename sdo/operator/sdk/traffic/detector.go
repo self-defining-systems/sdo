@@ -87,12 +87,16 @@ func (d sloDetector) EvaluationWindow(ctx sdk.DetectionContext) time.Duration {
 	}
 	var longest time.Duration
 	for _, scenario := range window.Workload.Scenarios {
-		slo := window.Workload.ScenarioSLO(scenario.ID)
-		arrival := window.Workload.ScenarioArrival(scenario.ID)
-		horizon := max(slo.MaxAge.Duration(), time.Duration(slo.MinSamples)*arrival) + arrival
-		longest = max(longest, horizon)
+		longest = max(longest, window.Workload.ScenarioHorizon(scenario.ID))
 	}
 	return longest
+}
+
+// ScenarioHorizon is how long the scenario's evaluation window needs to hold
+// only samples taken after a given moment.
+func (w Workload) ScenarioHorizon(id string) time.Duration {
+	slo, arrival := w.ScenarioSLO(id), w.ScenarioArrival(id)
+	return max(slo.MaxAge.Duration(), time.Duration(slo.MinSamples)*arrival) + arrival
 }
 
 // Confirmed implements the observation confirmation contract. Every scenario

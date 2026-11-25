@@ -118,6 +118,10 @@ func (w Workload) ScenarioArrival(id string) time.Duration
     ScenarioArrival is the expected time between samples of one scenario under
     the workload's SamplingPlan. Zero when the rate or the scenario is unknown.
 
+func (w Workload) ScenarioHorizon(id string) time.Duration
+    ScenarioHorizon is how long the scenario's evaluation window needs to hold
+    only samples taken after a given moment.
+
 func (w Workload) ScenarioSLO(id string) SLO
     ScenarioSLO is the effective SLO of one scenario of the workload.
 

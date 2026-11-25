@@ -227,6 +227,12 @@ type Controller struct {
 	recoverySafetyLost      bool
 	recoverySamples         map[string]recoverySample
 	closureStableSince      time.Time
+	// When the automatic stage's writes settled and how long after the last one;
+	// until then, whether a rollout was seen unfinished and given up on.
+	stageSettledAt              time.Time
+	stageUnsettled, stageGaveUp bool
+	stageRollout                time.Duration
+
 	closureMutationRevision string
 	earlyLastMutationAt     time.Time
 	cachedVerification      *ToolResponse
@@ -2032,7 +2038,9 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		detected, stability := c.incidentDetectedAt, c.config.ClosureStabilityWindow
 		c.mu.Unlock()
 		recovery = c.recoveryCheck(observationCtx, snapshot, *request, result, detected, stability)
-		if safe && (guard == nil || !guard.Pending) && len(source.Rollouts) == 0 && !restorePending {
+		recovery.observed = safe && (guard == nil || !guard.Pending) && !restorePending
+		c.observeStageSettled(now, snapshot, *request, recovery)
+		if recovery.observed && recovery.record.GetWritesSettled() && len(source.Rollouts) == 0 {
 			recovery.beyondStage = c.beyondStageAlerts(observationCtx, now, snapshot, *request, recovery)
 		}
 	}
