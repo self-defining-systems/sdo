@@ -52,7 +52,7 @@ func (d KubernetesJobDispatcher) DeterministicResponseStage() ResponseStage {
 // Before automatic execution only the incident intent is durable. Freezing a
 // worker task here could overwrite its external payload at the later handoff.
 func (c *Controller) automaticResponsePending(request *IncidentRequest) bool {
-	if request == nil || pageOpened(request) || request.PreparedAgentTask != "" || deterministicStageReport(request.PriorStages).GetHandoffSelected() {
+	if request == nil || c.pageDirect(*request) || request.PreparedAgentTask != "" || deterministicStageReport(request.PriorStages).GetHandoffSelected() {
 		return false
 	}
 	for _, name := range c.codePath.Selection.ResponseStages {
@@ -102,11 +102,11 @@ const (
 // whether automatic execution can still hold the controller's recovery checks.
 func (c *Controller) responseEntry(request IncidentRequest) responseEntry {
 	report := deterministicStageReport(request.PriorStages)
-	if pageOpened(&request) && report == nil ||
+	if c.pageDirect(request) ||
 		len(c.codePath.Selection.ResponseStages) > 0 && c.codePath.Selection.ResponseStages[0] == "agent" {
 		return dispatchDirectResponder
 	}
-	if report.GetHandoffSelected() || report != nil && (request.PreparedAgentTask != "" || pageOpened(&request)) {
+	if report.GetHandoffSelected() || report != nil && (request.PreparedAgentTask != "") {
 		return dispatchStagedHandoff
 	}
 	return runAutomaticStages

@@ -8,8 +8,10 @@ import (
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // A page is a person's or an on-call system's report through the external
@@ -17,7 +19,8 @@ import (
 // is the one opener that is not a detector alert:
 //
 //   - with no incident open it opens one whose alert set starts empty, and the
-//     responder starts directly, including during startup, with the page text;
+//     responder starts with the page text, after at most one automatic attempt
+//     (pageScanBudget) and directly during startup;
 //   - with an incident open it joins it: the request records the page and the
 //     responder is never re-prompted;
 //   - a page that opened an incident requires its responder to return.
@@ -29,6 +32,29 @@ import (
 // the inbox. A page arriving during a closure stays unaccepted and is read
 // again. Watch-only controllers ignore pages.
 
+// A page's automatic attempt reads for at most pageDiagnoseBudget and reaches
+// its write, if any, within pageScanBudget; the responder then starts.
+const (
+	pageDiagnoseBudget = time.Second
+	pageScanBudget     = 2 * time.Second
+)
+
+// pageMatch reports whether a scan answered with one Match and nothing else
+// that could be one: only its own diagnosis ties the playbook to the page.
+func pageMatch(runs []ProgramRun) bool {
+	matches := 0
+	for _, run := range runs {
+		switch run.Verdict.Result {
+		case program.Match:
+			matches++
+		case program.NoMatch:
+		default:
+			return false
+		}
+	}
+	return matches == 1
+}
+
 // pageOpened reports an incident a page opened rather than a detector alert.
 func pageOpened(request *IncidentRequest) bool {
 	return request != nil && request.Page != "" && len(request.OpeningKeys) == 0
@@ -38,6 +64,15 @@ func pageOpened(request *IncidentRequest) bool {
 // external incident or an incident carrying a page.
 func awaitsResponderReturn(request *IncidentRequest) bool {
 	return request != nil && (request.ExternalMessage != "" || request.Page != "")
+}
+
+// pageDirect reports a page the responder starts on without the automatic
+// stage: during startup, when policy rules out the agent the page needs after
+// a playbook, or when its task is already frozen. Caller holds c.mu.
+func (c *Controller) pageDirect(request IncidentRequest) bool {
+	return pageOpened(&request) && deterministicStageReport(request.PriorStages) == nil &&
+		(c.startup.holding(c.clock()) || request.PreparedAgentTask != "" ||
+			c.config.AfterPlaybook != "" && c.config.AfterPlaybook != settings.AfterPlaybookAgent)
 }
 
 // pageText is the page that opened the incident, from either inbox mode.

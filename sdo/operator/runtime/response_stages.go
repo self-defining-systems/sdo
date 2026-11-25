@@ -49,7 +49,9 @@ type IncidentState struct {
 func RunResponseStages(ctx context.Context, state *IncidentState, stages []ResponseStage) error {
 	state.refreshUnexplained()
 	for _, stage := range stages {
-		if len(state.Findings) == 0 {
+		// A page is work even when no finding accompanies it.
+		page := pageOpened(&state.Request)
+		if len(state.Findings) == 0 && !page {
 			break
 		}
 
@@ -78,6 +80,10 @@ func RunResponseStages(ctx context.Context, state *IncidentState, stages []Respo
 			report.Error = err.Error()
 		}
 		state.PriorStages = append(state.PriorStages, report)
+		// A failed attempt that wrote nothing must not hold up the page's responder.
+		if err != nil && page && ctx.Err() == nil && !playbookWrote(report) {
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("response stage %s: %w", stage.Name(), err)
 		}

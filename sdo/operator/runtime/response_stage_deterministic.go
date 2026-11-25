@@ -122,10 +122,18 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		return proto.Clone(prior).(*contracts.StageReport), nil
 	}
 	report := &contracts.StageReport{Stage: stage.Name(), StartedAt: contractTimestamp(lifecycleio.Now().UTC())}
-	// The first responder must read a page that opened the incident. Clues
-	// accompanying the page cannot substitute for its report.
-	if stage.NewLoop == nil || (pageOpened(&state.Request) && len(state.PriorStages) == 0) {
+	page := pageOpened(&state.Request)
+	if stage.NewLoop == nil {
 		return report, nil
+	}
+	// The budget covers everything up to the write. A write that began finishes.
+	applyCtx, diagnoseCtx := ctx, ctx
+	if page {
+		var cancel, cancelDiagnose context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, pageScanBudget)
+		defer cancel()
+		diagnoseCtx, cancelDiagnose = context.WithTimeout(ctx, pageDiagnoseBudget)
+		defer cancelDiagnose()
 	}
 	loop := stage.NewLoop(state.Request)
 	if loop == nil {
@@ -175,7 +183,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		retainAdmissionStageFindings(state, report)
 		report.RemainingFindingFingerprints = findingFingerprints(state.Findings)
 		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete, RecoveryDeadline: progress.RecoveryDeadline}
-		return loop.persistToolState(ctx)
+		return loop.persistToolState(applyCtx)
 	}
 	// A receipt can have reached the mutation journal just before the stage
 	// checkpoint. Recover it by immutable plan identity without repeating it.
@@ -243,6 +251,14 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				return report, err
 			}
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+		} else if page {
+			runs = loop.scanPage(diagnoseCtx)
+			if !pageMatch(runs) {
+				report.Diagnoses = stageDiagnoses(runs)
+				stage.armRecovery(state, loop, report, progress)
+				return report, save(true)
+			}
+			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 		} else {
 			runs = loop.InitialDiagnose(ctx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
@@ -281,7 +297,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			turnEnd, turnFindings, progressed = len(matches), len(state.Findings), false
 		}
 		match := matches[index]
-		if len(state.Findings) == 0 {
+		if len(state.Findings) == 0 && !page {
 			break
 		}
 		if err := ctx.Err(); err != nil {
@@ -376,11 +392,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		before := program.RunDiagnose(ctx, diagnoser, view, bindings, loop.deadline())
+		before := program.RunDiagnose(diagnoseCtx, diagnoser, view, bindings, loop.deadline())
 		// An Unknown verdict is a read that did not answer (a memory host
 		// restart, a cancelled stream), not a diagnosis: ask again before
 		// giving the playbook up, and keep the reason either way.
-		for try := 1; before.Result == program.Unknown && try < stageDiagnoseTries; try++ {
+		for try := 1; !page && before.Result == program.Unknown && try < stageDiagnoseTries; try++ {
 			if err := stage.diagnoseBackoff(ctx); err != nil {
 				return report, err
 			}
@@ -419,7 +435,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				return !slices.Contains(active, fp)
 			})
 		}
-		if len(match.targets) == 0 {
+		if len(match.targets) == 0 && !page {
 			if err := skip("unexplained_coverage"); err != nil {
 				return report, err
 			}
@@ -431,6 +447,13 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			loop.rememberTerminalPlanError(attempt.PlaybookId, attempt.ProgramRevision, bindings, refusal)
 			recordRefusal(refusal)
 			if err := save(false); err != nil {
+				return report, err
+			}
+			continue
+		}
+		// Only the responder may conclude that a page is out of reach.
+		if escalates && page {
+			if err := skip("no_mitigation"); err != nil {
 				return report, err
 			}
 			continue
@@ -484,7 +507,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, save); err != nil {
+		if err := stage.applyMatch(applyCtx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, save); err != nil {
 			return report, err
 		}
 		progressed = true

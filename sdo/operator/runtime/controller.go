@@ -1828,6 +1828,11 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		if completion.automatic != nil && stageEscalatedIn(c.currentIncidentRequest.PriorStages) {
 			c.escalateLocked(observedAt)
 		}
+		if completion.automatic != nil && pageOpened(c.currentIncidentRequest) {
+			if report := c.awaitingAutomaticRecoveryLocked(); report != nil {
+				c.automaticRecoveryLocked(observedAt, report, false, recoveryCheck{}, nil)
+			}
+		}
 		c.resetDispatchRetryLocked()
 	}
 	if c.responderDone {

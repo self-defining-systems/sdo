@@ -1116,6 +1116,29 @@ func (r onlyPrograms) Mitigator(id string) (program.Mitigator, bool) {
 	return r.ProgramRegistry.Mitigator(id)
 }
 
+// scanPage diagnoses every learned playbook whose parameters bind without a
+// finding. It only reads.
+func (l *ResponderLoop) scanPage(ctx context.Context) []ProgramRun {
+	ctx, closeMemory := withMemoryScope(ctx)
+	defer closeMemory()
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.hasLearnedPlaybooks() {
+		return nil
+	}
+	view, err := l.snapshotView(ctx)
+	if err != nil {
+		return nil
+	}
+	runs := SelectKeyedProgramCandidates(ctx, l.Programs, view, nil, l.deadline(), KeyedMatching{Scan: true, Credits: l.Credits})
+	l.stampProgramRuns(runs)
+	l.lastDiagnosisView = view
+	l.runs = append(l.runs, runs...)
+	return runs
+}
+
 // selectCandidates diagnoses the candidates for findings. stage is the
 // automatic stage, which binds a playbook with credited pairs only through
 // them; the responder's own diagnosis also sees the finding-bound ones.
