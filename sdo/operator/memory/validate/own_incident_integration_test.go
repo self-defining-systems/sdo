@@ -88,7 +88,7 @@ func TestANewPlaybookThatMatchesItsOwnIncidentIsRecordedAsAMatch(t *testing.T) {
 // did not record the application map: the map is the repository's. The statement is computed, so only the plan says it.
 func TestANewPlaybookWhosePlanTheHostRefusesIsRefused(t *testing.T) {
 	if testing.Short() {
-		t.Skip("nightly: compiles a whole workspace")
+		t.Skip("compiles a whole workspace (about 8 s); nightly CI runs it without -short")
 	}
 	root, capture := ownIncidentRoot(t, ownDiagnose("Match"))
 	write(t, root, ".sdo/arch.md", mapInventory+"\n"+mapRegion(mapYAML))
