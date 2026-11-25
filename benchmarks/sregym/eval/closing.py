@@ -64,6 +64,9 @@ def offline_tokens_from_evidence(directory: Path, incident_id: str) -> TokenRow 
     logged = logged_reflection_cost(directory, incident_id)
     if logged is None:
         return None
+    if not logged.complete:
+        # The underlying checkpoint retains observed lower bounds. The result table needs a total.
+        return TokenRow()
     usage = logged.usage
     return TokenRow(
         uncached_input=usage.uncached_input_tokens,

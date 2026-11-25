@@ -24,6 +24,11 @@ import (
 // it is left out of the total, the total is marked partial, and the problem is returned beside it. Identity
 // problems (wrong incident, task or turn) still fail.
 func ResponderUsage(repositoryMount, pvcSubPath, incidentID string) (*contracts.UsageMetrics, []error, error) {
+	return PhaseUsage(repositoryMount, pvcSubPath, incidentID, "respond")
+}
+
+// PhaseUsage reads the latest checkpoint for each turn in the requested phase.
+func PhaseUsage(repositoryMount, pvcSubPath, incidentID, phase string) (*contracts.UsageMetrics, []error, error) {
 	if repositoryMount == "" {
 		return nil, nil, nil
 	}
@@ -40,6 +45,13 @@ func ResponderUsage(repositoryMount, pvcSubPath, incidentID string) (*contracts.
 		return nil, nil, err
 	}
 	directory := filepath.Join(repositoryMount, relative, "usage")
+	switch phase {
+	case "respond", "investigate":
+	case "reflect", "source_repair":
+		directory = filepath.Join(directory, phase)
+	default:
+		return nil, nil, fmt.Errorf("unsupported incident usage phase %q", phase)
+	}
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil
@@ -73,8 +85,19 @@ func ResponderUsage(repositoryMount, pvcSubPath, incidentID string) (*contracts.
 		suffix, continuation := strings.CutPrefix(checkpoint.TaskID, incidentID+"-continue-")
 		attempt, parseErr := strconv.Atoi(suffix)
 		validTask := checkpoint.TaskID == incidentID || (continuation && parseErr == nil && attempt > 0 && strconv.Itoa(attempt) == suffix)
-		if checkpoint.Version != 1 || checkpoint.IncidentID != incidentID || !validTask || checkpoint.Phase != "responder" || checkpoint.TurnID+".json" != entry.Name() || checkpoint.Complete == nil || len(checkpoint.Usage) == 0 || string(checkpoint.Usage) == "null" {
+		if phase == "reflect" {
+			validTask = strings.HasPrefix(checkpoint.TaskID, "reflection-")
+		} else if phase == "source_repair" {
+			validTask = strings.HasPrefix(checkpoint.TaskID, "closing-cleanup-")
+		}
+		validPhase := checkpoint.Phase == phase ||
+			(phase == "respond" || phase == "investigate") && checkpoint.Phase == "responder"
+		if checkpoint.Version != 1 || checkpoint.IncidentID != incidentID || !validTask || !validPhase || checkpoint.TurnID+".json" != entry.Name() || checkpoint.Complete == nil || len(checkpoint.Usage) == 0 || string(checkpoint.Usage) == "null" {
 			return nil, nil, fmt.Errorf("usage checkpoint %s has invalid incident/task/phase/turn identity", entry.Name())
+		}
+		if string(checkpoint.Usage) == "{}" && !*checkpoint.Complete {
+			partial = true
+			continue
 		}
 		usage := new(contracts.UsageMetrics)
 		if err := protojson.Unmarshal(checkpoint.Usage, usage); err != nil {

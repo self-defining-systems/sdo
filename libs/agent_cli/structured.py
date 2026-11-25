@@ -233,6 +233,7 @@ class StructuredTurn:
     concurrency_wait_seconds: float = 0.0
     usd_complete: bool | None = None
     cache_write_ttl_complete: bool | None = None
+    accounting_available: bool = True
 
 
 def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
@@ -245,6 +246,8 @@ def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
     alias of ``cache_read_input_tokens`` (cache reads only).
     """
 
+    if not turn.accounting_available:
+        return {}
     tokens = turn.usage.tokens
     usage: dict[str, int | float] = {
         "llm_calls": tokens.turns,
@@ -318,6 +321,7 @@ def run_structured_turn(
     environment: Mapping[str, str] | None = None,
     on_session_started: Callable[[str], None] | None = None,
     on_usage: Callable[[dict[str, int | float], bool], None] | None = None,
+    require_usage_baseline: bool = True,
     session_ownership_directory: Path | None = None,
     session_ownership_role: Literal["responder", "reflection"] = "responder",
     session_ownership_worker: WorkerIdentity | None = None,
@@ -334,6 +338,17 @@ def run_structured_turn(
     if timeout_seconds is not None and timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     cli_environment = {**os.environ, **(environment or {})}
+    if (
+        on_usage is None
+        and (phase := cli_environment.get("SDO_SETUP_USAGE_PHASE")) in {"deploy", "design"}
+        and (session := cli_environment.get("SDO_SESSION_DIR"))
+        and (task := cli_environment.get("SDO_USAGE_TASK_ID"))
+    ):
+        from libs.agent_cli.usage_checkpoint import UsageCheckpoint
+
+        usage_checkpoint = UsageCheckpoint(Path(session) / "usage" / phase, "", task, phase)
+        usage_checkpoint.publish({}, False)
+        on_usage = usage_checkpoint.publish
     capacity = provider_capacity or ProviderCapacity(environment=cli_environment)
     account_mode = provider == "claude" and (
         bool(capacity.environment.get("SDO_CLAUDE_ACCOUNTS_DIR"))
@@ -428,6 +443,7 @@ def run_structured_turn(
                     environment=attempt_environment,
                     on_session_started=on_session_started,
                     on_usage=checkpoint if provider == "claude" else on_usage,
+                    require_usage_baseline=require_usage_baseline,
                     session_ownership_directory=session_ownership_directory,
                     session_ownership_role=session_ownership_role,
                     session_ownership_worker=session_ownership_worker,
@@ -560,6 +576,7 @@ def _run_structured_turn_once(
     environment: Mapping[str, str] | None = None,
     on_session_started: Callable[[str], None] | None = None,
     on_usage: Callable[[dict[str, int | float], bool], None] | None = None,
+    require_usage_baseline: bool = True,
     session_ownership_directory: Path | None = None,
     session_ownership_role: Literal["responder", "reflection"] = "responder",
     session_ownership_worker: WorkerIdentity | None = None,
@@ -657,6 +674,14 @@ def _run_structured_turn_once(
                 if record.get("type") == "assistant" and on_usage is not None:
                     on_usage(claude_snapshot().usage(), False)
 
+    def priced_codex_counts(turn: StructuredTurn) -> dict[str, int | float]:
+        counts = turn_usage(turn)
+        if counts and "total_cost_usd" not in counts and (pricing := price_for("codex", model, default_pricing())):
+            counts["total_cost_usd"] = cost_usd(turn.usage.tokens, pricing)
+        return counts
+
+    codex_accounting_available = True
+
     def spent_usage() -> dict[str, int | float]:
         """Accounting of a stopped turn: its rollout delta, or Claude's incremental reports."""
         if provider != "codex":
@@ -679,13 +704,15 @@ def _run_structured_turn_once(
             if isinstance(dollars, (int, float)) and dollars >= 0 and (fresh_billing or price_matches):
                 observed["total_cost_usd"] = dollars
             return observed
+        if not codex_accounting_available:
+            return {}
         latest = _codex_rollout_totals(codex_home, recorder.session_id or resume_session_id)
         delta = latest.since(rollout_before) if latest is not None else None
         if delta is None or delta.tokens is None or delta.requests == 0:
             return {}
         from agentshim import ProviderUsage
 
-        return turn_usage(
+        return priced_codex_counts(
             StructuredTurn(
                 "", recorder.session_id or "", ProviderUsage(tokens=delta.tokens), model_requests=delta.requests
             )
@@ -777,9 +804,12 @@ def _run_structured_turn_once(
                 and resume_session_id is not None
                 and (rollout_before is None or (rollout_before.requests > 0 and rollout_before.totals is None))
             ):
-                raise StructuredTurnError(
-                    "cannot checkpoint resumed usage without a readable cumulative token baseline"
-                )
+                if require_usage_baseline:
+                    raise StructuredTurnError(
+                        "cannot checkpoint resumed usage without a readable cumulative token baseline"
+                    )
+                on_usage = None
+                codex_accounting_available = False
             schema_dir = turn_scope.enter_context(tempfile.TemporaryDirectory(prefix="sdo-structured-turn-"))
             # Codex exposes response accounting in its rollout before its CLI
             # emits a terminal usage event. Poll only in the worker, never Go.
@@ -803,7 +833,7 @@ def _run_structured_turn_once(
                     snapshot = StructuredTurn(
                         "", recorder.session_id or "", ProviderUsage(tokens=delta.tokens), model_requests=delta.requests
                     )
-                    on_usage(turn_usage(snapshot), False)
+                    on_usage(priced_codex_counts(snapshot), False)
 
             def monitor_usage() -> None:
                 try:
@@ -902,7 +932,7 @@ def _run_structured_turn_once(
                                 ),
                             )
                     if claude_bill.requests and on_usage is not None:
-                        on_usage(claude_bill.usage(), claude_bill.usd_complete)
+                        on_usage(claude_bill.usage(), turn_finished and claude_bill.usd_complete)
                     journal("complete" if turn_finished else "error", claude_bill)
             # Read the rollout now: a workspace-write Codex home is deleted
             # when the turn scope closes.
@@ -938,7 +968,10 @@ def _run_structured_turn_once(
         if delta is None or delta.tokens is None:
             # The CLI's whole-session total cannot safely become a turn delta.
             # Keep any observed partial checkpoint rather than billing it twice.
-            raise StructuredTurnError("resumed cumulative token accounting unavailable after turn")
+            if require_usage_baseline:
+                raise StructuredTurnError("resumed cumulative token accounting unavailable after turn")
+            on_usage = None
+            codex_accounting_available = False
 
     if result.structured_output is None and (failed := provider_failure(result.text)):
         raise failed from None
@@ -982,11 +1015,15 @@ def _run_structured_turn_once(
         skill_directory=skill_directory,
         usd_complete=claude_bill.usd_complete if claude_bill is not None else None,
         cache_write_ttl_complete=claude_bill.ttl_complete if claude_bill is not None else None,
+        accounting_available=codex_accounting_available,
     )
     # A model can spend tokens and then fail the structured-response contract.
     # Persist its observed accounting before rejecting that response.
     if on_usage is not None:
-        on_usage(turn_usage(turn), True)
+        on_usage(
+            priced_codex_counts(turn) if provider == "codex" else turn_usage(turn),
+            turn.usd_complete is not False,
+        )
     if not isinstance(structured_output, dict):
         _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
         raise StructuredTurnError(f"{provider} turn returned no structured output")
@@ -1071,7 +1108,7 @@ def _append_turn_usage(
     """Append one accounting record when ``SDO_TURN_USAGE_LOG`` names a file."""
 
     path = os.environ.get(TURN_USAGE_LOG_ENV, "").strip()
-    if not path:
+    if not path or not turn.accounting_available:
         return
     record = {
         "recorded_at": datetime.now(timezone.utc).isoformat(),

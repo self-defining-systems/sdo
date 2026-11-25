@@ -81,3 +81,37 @@ def test_cli_writes_json_for_old_rows(tmp_path: Path) -> None:
     out = tmp_path / "out.json"
     assert main([str(run), "--json", str(out)]) == 0
     assert json.loads(out.read_text(encoding="utf-8"))[0]["recomputed_output_tokens"] == 340
+
+
+def test_checkpoint_overrides_legacy_log_and_preserves_killed_turn(tmp_path: Path) -> None:
+    _write_log(tmp_path, INCIDENT, [_turn(1000, 100, 10, 0.1)])
+    for export, complete, tokens in (("early", False, 20), ("later", True, 40)):
+        folder = tmp_path / export / "sdo_runtime/sessions" / _digest(INCIDENT) / "usage" / "reflect"
+        folder.mkdir(parents=True)
+        (folder / "one.json").write_text(
+            json.dumps(
+                {
+                    "incident_id": INCIDENT,
+                    "phase": "reflect",
+                    "complete": complete,
+                    "usage": {"input_tokens": tokens, "total_cost_usd": 0.03},
+                }
+            )
+        )
+    folder = tmp_path / "later/sdo_runtime/sessions" / _digest(INCIDENT) / "usage" / "source_repair"
+    folder.mkdir()
+    (folder / "two.json").write_text(
+        json.dumps(
+            {
+                "incident_id": INCIDENT,
+                "phase": "source_repair",
+                "complete": False,
+                "usage": {"input_tokens": 30, "total_cost_usd": 0.02},
+            }
+        )
+    )
+    observed = logged_reflection_cost(tmp_path, INCIDENT)
+    assert observed is not None
+    assert observed.usage.input_tokens == 70
+    assert observed.turns == 2
+    assert observed.cost_usd is None

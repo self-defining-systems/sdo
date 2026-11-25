@@ -52,3 +52,13 @@ preparation or live identity validation, recreates missing saved Jobs and
 preserves Jobs already recreated. `all-bound` alone does not prove a running
 controller. Successful recovery still requires each lane's normal live shared
 repository check and accepted-history ancestry proof.
+
+## Closing turn checkpoints
+
+The closing worker also writes `usage/reflect/<turn_id>.json` for learning
+and validation corrections, and `usage/source_repair/<turn_id>.json` for
+cleanup. These are per-provider-turn snapshots, even when all the turns
+share one provider session. Each snapshot includes elapsed seconds and
+a reason if its accounting is unfinished. Use the latest copy of each
+turn ID across exports. The finished-turn JSONL log covers older runs.
+A worker dispatch with a confirmed model-free result contributes zero.

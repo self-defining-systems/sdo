@@ -8,6 +8,8 @@ import (
 // ResolvedConfigFile is the controller's copy of the operator configuration it runs under.
 const ResolvedConfigFile = "config.yaml"
 
+var turnCheckpointName = regexp.MustCompile(`^[a-f0-9]{32}\.json$`)
+
 var commandReportName = regexp.MustCompile(`^[0-9]{4,}-(apply|mitigate)\.json$`)
 
 // Allowed reports whether one path relative to the runtime evidence root (.sdo-runtime) is run evidence that may
@@ -49,6 +51,9 @@ func Allowed(name string) bool {
 	if len(parts) == 3 {
 		return strings.HasSuffix(base, ".jsonl") || base == "token_usage.json" || base == IncidentIdentityFile || StartupTimingArtifact(base)
 	}
+	if len(parts) == 4 && parts[2] == "usage" || len(parts) == 5 && parts[2] == "usage" && closingUsagePhase(parts[3]) {
+		return turnCheckpointName.MatchString(base)
+	}
 	if len(parts) == 5 && parts[2] == "startup-workers" {
 		return base == "startup-worker.json"
 	}
@@ -86,6 +91,8 @@ func Allowed(name string) bool {
 // request and outcome, the worker's JSONL logs, and the agent CLI's session rollouts.
 func allowedTaskArtifact(parts []string, base string) bool {
 	switch {
+	case len(parts) == 5 && parts[2] == "usage" && setupUsagePhase(parts[3]):
+		return turnCheckpointName.MatchString(base)
 	case len(parts) == 4 && parts[2] == "api-history":
 		return agentRecordingFile(base)
 	case len(parts) == 3:
@@ -119,6 +126,14 @@ func StartupTimingArtifact(base string) bool {
 
 // descend reports whether a runtime directory can hold allowed evidence, so a scan never walks build caches,
 // toolchains or backups, and only the redacted API recording (never its blobs).
+func setupUsagePhase(name string) bool {
+	return name == "deploy" || name == "design"
+}
+
+func closingUsagePhase(name string) bool {
+	return name == "reflect" || name == "source_repair"
+}
+
 func descend(relative string) bool {
 	parts := strings.Split(relative, "/")
 	lower := strings.ToLower(parts[len(parts)-1])
@@ -136,11 +151,16 @@ func descend(relative string) bool {
 				return true
 			case "api-history", "api-history-reflection":
 				return len(parts) == 3
+			case "usage":
+				return len(parts) == 3 || len(parts) == 4 && closingUsagePhase(parts[3])
 			}
 			return false
 		}
 		return true
 	case "tasks":
+		if len(parts) >= 3 && parts[2] == "usage" {
+			return len(parts) == 3 || len(parts) == 4 && setupUsagePhase(parts[3])
+		}
 		return len(parts) < 3 || parts[2] == "codex" || parts[2] == "claude" || (parts[2] == "api-history" && len(parts) == 3)
 	case "usage", "telemetry":
 		return len(parts) == 1

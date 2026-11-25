@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 )
@@ -17,7 +19,7 @@ func (d KubernetesJobDispatcher) ResponderUsage(id string) (*contracts.UsageMetr
 		return total, err
 	}
 	for index := 1; index <= d.Investigators.Count; index++ {
-		usage, problems, err := memory.ResponderUsage(d.RepositoryMountPath, d.RepositoryPVCSubPath, investigatorID(id, index))
+		usage, problems, err := memory.PhaseUsage(d.RepositoryMountPath, d.RepositoryPVCSubPath, investigatorID(id, index), "investigate")
 		d.reportUsageProblems(problems)
 		if err != nil {
 			return nil, fmt.Errorf("investigator %d usage: %w", index, err)
@@ -62,6 +64,12 @@ func (c *Controller) bindClosureUsage(closure *contracts.IncidentClosure) error 
 		return fmt.Errorf("freeze responder usage: %w", err)
 	}
 	if usage == nil {
+		if closure.GetResult().GetResolutionPath() == "deterministic" && closure.GetDispatchedAt() == nil {
+			closure.Result.Usage = &contracts.UsageMetrics{
+				CacheReadInputTokens: proto.Int64(0), CacheWrite_1HInputTokens: proto.Int64(0),
+				UncachedInputTokens: proto.Int64(0), ModelRequests: proto.Int64(0), TotalCostUsd: proto.Float64(0),
+			}
+		}
 		return nil
 	}
 	if closure.Result == nil {

@@ -157,6 +157,8 @@ class Row:
     closing_turn_cost_usd: float | None = None
     closing_turn_input_tokens: int | None = None
     closing_turn_output_tokens: int | None = None
+    incident_tokens: int | None = None
+    reflection_tokens: int | None = None
     incident_count: int | None = None
     open_incident_count: int | None = None
     responder_usage_complete: bool | None = None
@@ -508,6 +510,10 @@ def _set_usage(row: Row, responder: Usage, closing: Usage) -> None:
     row.closing_turn_cost_usd = closing.usd
     row.closing_turn_input_tokens = closing.input_tokens
     row.closing_turn_output_tokens = closing.output_tokens
+    if responder.input_tokens is not None and responder.output_tokens is not None:
+        row.incident_tokens = responder.input_tokens + responder.output_tokens
+    if closing.input_tokens is not None and closing.output_tokens is not None:
+        row.reflection_tokens = closing.input_tokens + closing.output_tokens
 
 
 def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Document]) -> None:
@@ -525,7 +531,7 @@ def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Documen
             if event.get("type") == "result":
                 result = event
         usage = _object(result.get("usage")) | {"total_cost_usd": result.get("total_cost_usd")}
-    _set_usage(row, Usage.read(usage, raw_claude=True), Usage())
+    _set_usage(row, Usage.read(usage, raw_claude=True), Usage(0.0, 0, 0))
     if start is None:
         return
     # LastBadSecond denotes the final bad bucket. Writes starting after that bucket
@@ -649,6 +655,16 @@ def _incident_writes(doc: Document, paths: list[Path]) -> Iterator[Write]:
 
 
 def _closing_usage(timeline: Document, ledger: Document, folder: Path) -> Usage:
+    checkpoints = [
+        _read(path) for phase in ("reflect", "source_repair") for path in (folder / "usage" / phase).glob("*.json")
+    ]
+    if checkpoints:
+        return _total(
+            [
+                Usage.read(_object(checkpoint.get("usage"))) if checkpoint.get("complete") is True else Usage()
+                for checkpoint in checkpoints
+            ]
+        )
     usage = _object(timeline.get("closing_turn_usage"))
     cost = timeline.get("closing_turn_cost_usd")
     if usage:
@@ -675,9 +691,21 @@ def _closing_usage(timeline: Document, ledger: Document, folder: Path) -> Usage:
     if turns:
         total = _total(turns)
         return Usage(_number(cost) if cost is not None else total.usd, total.input_tokens, total.output_tokens)
+    attempts = list(_objects(ledger.get("reflection_results")))
+    if (
+        attempts
+        and all(
+            attempt.get("no_change_reason") in {"cleared_without_action_no_learning", "native_memory_check_no_change"}
+            for attempt in attempts
+        )
+        and not any(event.get("role") == "reflection" for event in _events(folder / "claude-turns.jsonl"))
+    ):
+        return Usage(0.0, 0, 0)
     if cost is not None or timeline.get("closing_turn_dispatch_at"):
         return Usage.read({}, cost)
-    return Usage(0.0, 0, 0)
+    if timeline.get("resolution_path") == "deterministic" or ledger.get("reflection_skipped_reason"):
+        return Usage(0.0, 0, 0)
+    return Usage()
 
 
 def _usage_complete(usage: Usage) -> bool:
@@ -712,6 +740,15 @@ def _responder_usage(
     cost = timeline.get("responder_cost_usd")
     responder = _worker_usage(folder, incident, incident, "responder")
     aggregate = Usage.read(native, cost)
+    if (
+        responder is None
+        and not investigators
+        and not native.get("partial")
+        and not any((aggregate.usd, aggregate.input_tokens, aggregate.output_tokens))
+        and not timeline.get("dispatched_at")
+        and timeline.get("resolution_path") == "deterministic"
+    ):
+        return Usage(0.0, 0, 0), True, []
     sessions = list(investigators)
     if responder is None and (
         native or cost is not None or timeline.get("dispatched_at") or timeline.get("resolution_path") == "responder"

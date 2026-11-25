@@ -63,6 +63,13 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	e.SessionPVCSubPath = path.Join(e.RepositoryPVCSubPath, evidence.relative)
 	e.Environment = cloneEnvironment(e.Environment)
 	e.Environment["SDO_TURN_USAGE_LOG"] = "/sdo/session/setup-usage.jsonl"
+	e.Environment["SDO_USAGE_TASK_ID"] = task.GetTaskId()
+	switch {
+	case task.GetRequest().MessageIs(&contracts.SourceDeploymentRequest{}):
+		e.Environment["SDO_SETUP_USAGE_PHASE"] = "deploy"
+	case task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{}):
+		e.Environment["SDO_SETUP_USAGE_PHASE"] = "design"
+	}
 	result, err := e.execute(ctx, task)
 	evidence.finish(result, err)
 	return result, err

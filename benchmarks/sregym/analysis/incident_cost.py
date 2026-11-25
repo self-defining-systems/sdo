@@ -943,6 +943,8 @@ class LoggedReflectionCost:
     turns: int
     session_ids: tuple[str, ...]
     cost_usd: float | None
+    checkpointed: bool = False
+    complete: bool = True
 
 
 def incident_session_dirname(incident_id: str) -> str:
@@ -953,6 +955,40 @@ def logged_reflection_cost(run_dir: Path, incident_id: str) -> LoggedReflectionC
     """Sum the incident's own reflection usage log under *run_dir*; ``None`` when it was not exported."""
 
     name = f"sdo_runtime/sessions/{incident_session_dirname(incident_id)}/reflection-usage.jsonl"
+    by_turn: dict[tuple[str, str], dict[str, Any]] = {}
+    for session_dir in run_dir.rglob(str(Path(name).parent)):
+        for phase in ("reflect", "source_repair"):
+            for path in (session_dir / "usage" / phase).glob("*.json"):
+                record = json.loads(path.read_text(encoding="utf-8"))
+                if record.get("incident_id") != incident_id or record.get("phase") != phase:
+                    continue
+                key = phase, path.stem
+                prior = by_turn.get(key, {})
+                if (bool(record.get("complete")), record.get("duration_seconds", 0)) >= (
+                    bool(prior.get("complete")),
+                    prior.get("duration_seconds", 0),
+                ):
+                    by_turn[key] = record
+    if by_turn:
+        usage = TokenUsage()
+        cost: float | None = 0.0
+        for record in by_turn.values():
+            counters = record.get("usage")
+            usage = usage + TokenUsage.from_mapping(counters)
+            dollars = (counters or {}).get("total_cost_usd")
+            cost = (
+                cost + dollars
+                if cost is not None and isinstance(dollars, (int, float)) and record.get("complete")
+                else None
+            )
+        return LoggedReflectionCost(
+            usage,
+            len(by_turn),
+            (),
+            None if cost is None else round(cost, 9),
+            checkpointed=True,
+            complete=all(record.get("complete") is True for record in by_turn.values()),
+        )
     # Several exports of one run (stage-end snapshots) hold prefixes of the same append-only log.
     logs = sorted(run_dir.rglob(name), key=lambda path: path.stat().st_size)
     if not logs:
@@ -1002,6 +1038,8 @@ def _reflection_usage(
     and a turn that failed leaves no complete rollout turn.
     """
 
+    if logged is not None and logged.checkpointed:
+        return logged.usage
     ledger = receipt.get("native_ledger")
     decision = ledger.get("reflection_decision") if isinstance(ledger, dict) else None
     native_usage = decision.get("usage") if isinstance(decision, dict) else None

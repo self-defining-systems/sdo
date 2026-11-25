@@ -44,6 +44,7 @@ type RegisteredReflectionWorker struct {
 	// SessionExecutor supplies the narrow per-incident session transport for resume.
 	SessionExecutor   func(incidentID string) (ReflectionTaskExecutor, error)
 	UsageLogPath      func(incidentID string) string
+	ReadUsage         func(incidentID string) (*UsageMetrics, error)
 	CorpusSessionRoot string
 }
 
@@ -280,6 +281,16 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 // withUsage totals every logged turn of the incident: each resumed reflection turn, retry and
 // correction appends one record, and the cost of the logical reflection is all of them.
 func (w RegisteredReflectionWorker) withUsage(decision ReflectionDecision, incidentID string) (ReflectionDecision, error) {
+	if w.ReadUsage != nil {
+		usage, err := w.ReadUsage(incidentID)
+		if err != nil {
+			return ReflectionDecision{}, fmt.Errorf("read reflection checkpoints: %w", err)
+		}
+		if usage != nil {
+			decision.Usage = usage
+			return decision, nil
+		}
+	}
 	if w.UsageLogPath != nil {
 		data, err := os.ReadFile(w.UsageLogPath(incidentID))
 		if err == nil {

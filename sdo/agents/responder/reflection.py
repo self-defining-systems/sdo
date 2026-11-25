@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from agentshim import SessionResumeError
@@ -27,6 +28,7 @@ from libs.agent_cli.structured import (
     StructuredTurnError,
     turn_usage,
 )
+from libs.agent_cli.usage_checkpoint import UsageCheckpoint
 from sdo.agents.context_output import save_context
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
@@ -50,7 +52,6 @@ from sdo.contracts import ReflectionResult, validate
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from pathlib import Path
 
     from agentshim import CommandExecutor
 
@@ -359,6 +360,7 @@ class CodexSessionBackend:
                 raise ReflectionDeadlineExceeded("closing turn budget used; no agent time remains")
             return left
 
+        phase = "reflect" if check else "source_repair"
         turn = self._run(
             worktree=worktree,
             prompt=render_prompt(
@@ -366,6 +368,7 @@ class CodexSessionBackend:
             ),
             session_id=session_id,
             timeout_seconds=agent_remaining(),
+            phase=phase,
         )
         usage: dict[str, int | float] = {}
         for correction in range(MAX_CORRECTION_TURNS + 1):
@@ -379,6 +382,7 @@ class CodexSessionBackend:
                     prompt=branch_correction("reflection"),
                     session_id=turn.session_id,
                     timeout_seconds=agent_remaining(),
+                    phase=phase,
                 )
                 for name, value in turn_usage(turn).items():
                     usage[name] = usage.get(name, 0) + value
@@ -400,14 +404,23 @@ class CodexSessionBackend:
                 prompt=memory_check_correction(verdict, idempotency_key),
                 session_id=turn.session_id,
                 timeout_seconds=agent_remaining(),
+                phase=phase,
             )
         raise AssertionError("unreachable closing turn state")
 
     def _run(
-        self, *, worktree: Path, prompt: RenderedPrompt | str, session_id: str, timeout_seconds: float
+        self, *, worktree: Path, prompt: RenderedPrompt | str, session_id: str, timeout_seconds: float, phase: str
     ) -> StructuredTurn:
         if os.environ.get("SDO_API_HISTORY_DIR"):
             prompt = prompt + render_prompt("responder", "run_01", part="reflection.instructions")
+        options = session_turn_options(self.provider, worktree, phase="reflection")
+        if (session := os.environ.get("SDO_SESSION_DIR")) and (incident := os.environ.get("SDO_INCIDENT_ID")):
+            usage = UsageCheckpoint(
+                Path(session) / "usage" / phase, incident, os.environ.get("SDO_USAGE_TASK_ID", incident), phase
+            )
+            usage.publish({}, False)
+            options["on_usage"] = usage.publish
+            options["require_usage_baseline"] = False
         try:
             return run_structured_turn(
                 self.provider,
@@ -421,7 +434,7 @@ class CodexSessionBackend:
                 executor=self.executor,
                 # The live tool server ends with responder dispatch.
                 environment={**closing_tool_timeouts(), "SDO_TOOLS_DIR": ""},
-                **session_turn_options(self.provider, worktree, phase="reflection"),
+                **options,
             )
         except StructuredTurnError as exc:
             if str(exc) == f"{self.provider} cannot resume session {session_id!r}" or (

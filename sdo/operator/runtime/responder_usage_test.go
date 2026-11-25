@@ -83,3 +83,29 @@ func TestIncidentUsageWithoutInvestigatorsIsTheResponders(t *testing.T) {
 		}
 	}
 }
+
+func TestReflectionUsageKeepsInterruptedTurnOutsideResponderTotals(t *testing.T) {
+	mount := t.TempDir()
+	const incidentID = "incident"
+	writeUsageCheckpoint(t, mount, incidentID, "response", true, 1000, 100, 4)
+	sub, err := memory.IncidentSessionSubPath("", incidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(mount, sub, "usage", "reflect")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	document := []byte(`{"version":1,"incident_id":"incident","task_id":"reflection-task","phase":"reflect","turn_id":"closing","complete":false,"usage":{"input_tokens":120,"output_tokens":10,"total_cost_usd":0.1}}`)
+	if err := os.WriteFile(filepath.Join(dir, "closing.json"), document, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	response, _, err := memory.ResponderUsage(mount, "", incidentID)
+	if err != nil || response.GetInputTokens() != 1000 || response.GetPartial() {
+		t.Fatalf("responder usage = %v, err = %v", response, err)
+	}
+	reflection, _, err := memory.PhaseUsage(mount, "", incidentID, "reflect")
+	if err != nil || reflection.GetInputTokens() != 120 || reflection.GetTotalCostUsd() != 0.1 || !reflection.GetPartial() {
+		t.Fatalf("reflection usage = %v, err = %v", reflection, err)
+	}
+}
