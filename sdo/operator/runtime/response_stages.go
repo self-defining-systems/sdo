@@ -40,7 +40,8 @@ type IncidentState struct {
 	LiveAlertSet func() (joinedKeys []string, joined []sdk.Finding)
 	// afterWrite is set once a playbook of this stage wrote: from then on the
 	// stage observes only the incident's opening alerts.
-	afterWrite bool
+	afterWrite            bool
+	openingObservedActive bool
 }
 
 // RunResponseStages stops when no findings remain. Every attempted stage has a

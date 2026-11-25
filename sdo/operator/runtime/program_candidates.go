@@ -146,7 +146,8 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 	position := map[string]int{}
 	add := func(id string, bindings program.Bindings, fingerprint, source, retrieval string, rank int) {
 		key := stageAttemptKey(id, bindings)
-		if keyed.Attempted[key] {
+		// An attempted credited Match must still outrank later suspects.
+		if keyed.Attempted[key] && source != BindingSourceCredited {
 			return
 		}
 		if seen[key] {

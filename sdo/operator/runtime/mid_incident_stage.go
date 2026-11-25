@@ -213,8 +213,10 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 		c.currentIncidentRequest.PriorStages = state.PriorStages
 		// Receipts, their diagnoses and finding coverage form one snapshot.
 		// Publishing only the report loses the proof required by reflection.
-		c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
-		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
+		if state.Coverage != nil {
+			c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
+			c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
+		}
 		if awaiting != nil && c.awaitingAutomaticRecoveryLocked() != nil {
 			previous := c.currentIncidentResult.Timing
 			if merged, err := responsePipelineResult(state, previous.StartedAt, previous.CompletedAt); err == nil {

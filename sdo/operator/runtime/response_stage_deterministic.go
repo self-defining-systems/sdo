@@ -226,15 +226,18 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if state.Refresh {
 			// A later pass diagnoses live state: the loop's findings are the ones
 			// it last observed, which predate whatever joined the incident since.
+			observed := ToolResponse{}
 			func() {
 				loop.operationMu.Lock()
 				defer loop.operationMu.Unlock()
 				loop.mu.Lock()
 				defer loop.mu.Unlock()
-				observed := ToolResponse{}
 				loop.verify(ctx, nil, &observed, true)
-				updateStageFindings(state, observed)
 			}()
+			if observed.Error != "" && len(observed.DetectorStates) == 0 {
+				return report, errors.New(observed.Error)
+			}
+			updateStageFindings(state, observed)
 			runs, err = loop.RefreshDiagnose(ctx, state.Findings, attempted)
 			if err != nil {
 				return report, err
@@ -315,6 +318,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
 			if err := skip(stageIneffective); err != nil {
+				return report, err
+			}
+			continue
+		}
+		if loop.Credits.Has(match.PlaybookId) && loop.earlierRepairUnsettled(ctx, report, attempt) {
+			if err := skip(stageAlreadyAttempted); err != nil {
 				return report, err
 			}
 			continue
@@ -401,6 +410,14 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				return report, err
 			}
 			continue
+		}
+		// Once the opening symptoms clear, a later pass can repair only
+		// findings that still belong to the incident's alert set.
+		if state.Refresh && (!state.openingObservedActive || len(newRecoveryScope(openingKeys(&state.Request)).blocking(state.Findings)) == 0) {
+			active := findingFingerprints(newRecoveryScope(alertKeys(&state.Request)).blocking(state.Findings))
+			match.targets = slices.DeleteFunc(slices.Clone(match.targets), func(fp string) bool {
+				return !slices.Contains(active, fp)
+			})
 		}
 		if len(match.targets) == 0 {
 			if err := skip("unexplained_coverage"); err != nil {
@@ -556,6 +573,9 @@ func namedStageMatches(runs []ProgramRun) map[string]bool {
 }
 
 func updateStageFindings(state *IncidentState, response ToolResponse) {
+	if state.Refresh {
+		state.openingObservedActive = len(newRecoveryScope(openingKeys(&state.Request)).blocking(response.Findings)) > 0
+	}
 	// Failed or unconfirmed observations cannot erase the opening findings.
 	if response.Error != "" && len(response.DetectorStates) == 0 {
 		return

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -213,12 +215,9 @@ func (p dependentRestart) Mitigate(ctx context.Context, view program.ReadView, b
 }
 
 func TestCompositeAutomaticRepairAfterDependencyClears(t *testing.T) {
-	for _, clearAtDeadline := range []bool{false, true} {
-		name := "before handoff"
-		if clearAtDeadline {
-			name = "at handoff deadline"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, scenario := range []string{"opening worker alert", "joined worker alert", "worker clue", "at handoff deadline", "failed snapshot"} {
+		t.Run(scenario, func(t *testing.T) {
+			clearAtDeadline := scenario == "at handoff deadline"
 			ctx := t.Context()
 			clock := &settlingClock{now: time.Unix(1000, 0).UTC()}
 			world := e2eWorld()
@@ -256,6 +255,15 @@ func TestCompositeAutomaticRepairAfterDependencyClears(t *testing.T) {
 			c.tracker.Observe(clock.Now(), dependency.Spec().ID, dependencyFindings)
 			request := IncidentRequest{IncidentID: "synthetic-composite", Application: "demo", Namespace: "app", SourceCommit: "synthetic", RepairPolicy: "recorded-actions",
 				Findings: alerts, OpeningKeys: findingKeys(alerts), ResponseDeadline: clock.Now().Add(time.Hour)}
+			if scenario == "worker clue" || scenario == "joined worker alert" {
+				for _, finding := range alerts {
+					if finding.PrimaryResource.Name == "api" {
+						request.OpeningKeys = []string{findingKey(finding)}
+					} else if scenario == "joined worker alert" {
+						request.JoinedKeys = []string{findingKey(finding)}
+					}
+				}
+			}
 			executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: world}}
 			loop := NewResponderLoop(request, registry, world, detectors, executor, 5)
 			loop.Now = c.now
@@ -289,8 +297,12 @@ func TestCompositeAutomaticRepairAfterDependencyClears(t *testing.T) {
 			c.currentIncidentRequest = &request
 			c.incidentFindingKeys = findingKeys(alerts)
 			c.incidentDetectedAt, c.incidentDispatchedAt = clock.Now(), clock.Now()
-			c.handleDispatchCompletion(dispatchCompletion{incidentID: request.IncidentID, result: result, priorStages: state.PriorStages}, clock.Now())
+			c.handleDispatchCompletion(dispatchCompletion{incidentID: request.IncidentID, automatic: state, result: result, priorStages: state.PriorStages}, clock.Now())
 
+			priorCoverage := cloneCoverage(c.currentIncidentRequest.PlaybookCoverage)
+			if scenario == "failed snapshot" {
+				loop.Provider = &unavailableHandoffView{}
+			}
 			dependency.on.Store(false)
 			elapsed := time.Second
 			if clearAtDeadline {
@@ -317,8 +329,23 @@ func TestCompositeAutomaticRepairAfterDependencyClears(t *testing.T) {
 				}
 				return
 			}
+			if scenario == "failed snapshot" {
+				if priorCoverage == nil || !proto.Equal(priorCoverage, c.currentIncidentRequest.PlaybookCoverage) || world.restarts.Load() != 1 {
+					t.Fatalf("failed snapshot lost coverage or caused a write: %v", c.currentIncidentRequest.PlaybookCoverage)
+				}
+				return
+			}
+			if scenario == "worker clue" {
+				if world.restarts.Load() != 1 {
+					t.Fatalf("cleared opening alert authorized a write for a clue: %v", autoReport(c).GetMitigations())
+				}
+				return
+			}
 			if world.restarts.Load() != 2 || autoReport(c).GetHandoffSelected() {
 				t.Fatalf("dependency clear should apply worker repair before handoff: writes %d, report %v", world.restarts.Load(), autoReport(c))
+			}
+			if scenario == "joined worker alert" {
+				return
 			}
 			for i := range 2 * maxMidIncidentPasses {
 				dependency.on.Store(i%2 == 0)

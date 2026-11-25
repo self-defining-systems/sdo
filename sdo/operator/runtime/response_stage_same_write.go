@@ -72,6 +72,20 @@ func stageWriteUnsettled(attempt *contracts.StageMitigation) bool {
 	return unsettled && receipt.GetApplied() && !receipt.GetRolledBack()
 }
 
+// earlierRepairUnsettled reports whether the same playbook's write to another
+// suspect has not settled. That repair owns the playbook until then, even when
+// its own diagnosis already stopped matching. The caller holds the loop mutex.
+func (l *ResponderLoop) earlierRepairUnsettled(ctx context.Context, report *contracts.StageReport, attempt *contracts.StageMitigation) bool {
+	live := &liveRollouts{loop: l, ctx: ctx}
+	for _, earlier := range report.GetMitigations() {
+		if earlier != attempt && earlier.GetPlaybookId() == attempt.GetPlaybookId() && stageWriteUnsettled(earlier) &&
+			(live.incomplete(earlier) || recoveryWindowOpen(l.clock(), earlier)) {
+			return true
+		}
+	}
+	return false
+}
+
 // recoveryWindowOpen is the bounded time after a write in which its recovery
 // is still awaited; a write older than that no longer explains a standing fault.
 func recoveryWindowOpen(now time.Time, attempt *contracts.StageMitigation) bool {
