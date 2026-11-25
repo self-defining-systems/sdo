@@ -33,6 +33,7 @@ const (
 	incidentDefaultLead   = 10 * time.Minute
 	incidentChangesCap    = 200
 	incidentInlineValue   = 60
+	storeClueValue        = 256 // a store clue is bounded by words where it is made (storestate.Clue)
 	incidentPageOps       = 24
 	incidentPageWorkloads = 8
 	incidentPageValue     = 120
@@ -46,13 +47,16 @@ type IncidentChange struct {
 	At time.Time
 	// ReadAt is when a source with no change time was read (a store diff): it
 	// is the time the row was observed, never an onset-relative change time.
-	ReadAt         time.Time
-	Source         string // kubernetes, store or app-state
-	Component      string
-	ReaderOrObject string
-	Key            string
-	Before, After  string
-	Writer         string
+	ReadAt time.Time
+	// FirstObserved is the first reading a store change was in and LastWithout
+	// the reading before it: the change happened between the two.
+	FirstObserved, LastWithout time.Time
+	Source                     string // kubernetes, store or app-state
+	Component                  string
+	ReaderOrObject             string
+	Key                        string
+	Before, After              string
+	Writer                     string
 	// Actor is who made the change: agent, sdo, kubernetes, other or
 	// unknown; empty derives it from Writer.
 	Actor string
@@ -67,6 +71,8 @@ type IncidentChange struct {
 	// FirstSeen marks an app-state row for a key the last-healthy read never
 	// held: not seen healthy, which is weaker than changed.
 	FirstSeen bool
+	// Routine marks growth an application makes by itself (storestate.Clue).
+	Routine bool
 }
 
 // AppStateChangeSource is the seam app-state readers plug into: the controller
@@ -596,24 +602,24 @@ func nearestOnsetFirst(rows []IncidentChange, onset time.Time, limit int) []Inci
 }
 
 // storeChangeRows are the store-state changes against each store's promoted
-// baseline. The change itself is untimed: the row carries the time the store
-// was read as ReadAt and no At, so it is never shown as an onset offset.
+// baseline, rarest kind of object first (storestate.StoreChanges.Clues). The
+// store does not time its own changes: a row carries the readings that bracket
+// the change (LastWithout, FirstObserved) and no At.
 func storeChangeRows(stores []storestate.StoreChanges) []IncidentChange {
 	var rows []IncidentChange
 	for _, store := range stores {
 		if store.Error != "" || !store.Baselined {
 			continue
 		}
-		for _, change := range store.Changes {
-			key, before, after := change.Describe()
-			rows = append(rows, IncidentChange{ReadAt: store.ObservedAt, Source: "store", Component: store.Component, ReaderOrObject: store.Pod.Kind + "/" + store.Pod.Name, Key: key, Before: bounded(before), After: bounded(after), Noisy: change.Noisy})
+		for _, clue := range store.Clues() {
+			rows = append(rows, IncidentChange{ReadAt: store.ObservedAt, FirstObserved: clue.FirstObserved, LastWithout: clue.LastWithout, Source: "store", Component: store.Component, ReaderOrObject: store.Pod.Kind + "/" + store.Pod.Name, Key: clue.Key, Before: clue.Before, After: clue.After, Noisy: clue.Noisy, Routine: clue.Routine})
 		}
 	}
 	return rows
 }
 
 func renderChanges(rows []IncidentChange, onset time.Time) []byte {
-	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "actor", "running_commit", "noisy", "read_at_utc"}}
+	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "actor", "running_commit", "noisy", "read_at_utc", "first_observed_utc", "first_observed_rel_s", "last_without_utc"}}
 	clean := func(text string) string { return redactDetectText(text, incidentPageValue) }
 	for _, row := range rows {
 		row = maskCredentialValues(row)
@@ -622,15 +628,25 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 			relative = strconv.FormatInt(int64(row.At.Sub(onset)/time.Second), 10)
 			at = row.At.UTC().Format(time.RFC3339)
 		}
-		readAt := ""
-		if !row.ReadAt.IsZero() {
-			readAt = row.ReadAt.UTC().Format(time.RFC3339)
+		stamp := func(at time.Time) string {
+			if at.IsZero() {
+				return ""
+			}
+			return at.UTC().Format(time.RFC3339)
+		}
+		firstRelative := ""
+		if !row.FirstObserved.IsZero() {
+			firstRelative = strconv.FormatInt(int64(row.FirstObserved.Sub(onset)/time.Second), 10)
+		}
+		value := clean
+		if row.Source == "store" {
+			value = func(text string) string { return redactDetectText(text, storeClueValue) }
 		}
 		actor := row.Actor
 		if actor == "" {
 			actor = changeActor(row.Writer)
 		}
-		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), clean(row.Key), clean(row.Before), clean(row.After), clean(row.Writer), actor, runningCommitCell(row), strconv.FormatBool(row.Noisy), readAt})
+		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), value(row.Key), value(row.Before), value(row.After), clean(row.Writer), actor, runningCommitCell(row), strconv.FormatBool(row.Noisy), stamp(row.ReadAt), stamp(row.FirstObserved), firstRelative, stamp(row.LastWithout)})
 	}
 	return encodeCSV(out)
 }

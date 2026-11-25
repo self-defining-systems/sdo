@@ -349,6 +349,16 @@ type Result struct {
 	Baseline []Reading `json:"baseline,omitempty"`
 	History  []Reading `json:"history,omitempty"`
 	Error    string    `json:"error,omitempty"`
+	// Observed is, by Pod and change, when the controller first read each
+	// change from the baseline (storestate.ObserveChanges).
+	Observed map[string]map[string]Observed `json:"observed,omitempty"`
+}
+
+// Observed brackets when a change happened: after the last reading without it
+// (zero when there was none) and no later than the first reading with it.
+type Observed struct {
+	First       time.Time `json:"first"`
+	LastWithout time.Time `json:"last_without,omitzero"`
 }
 
 // HistoryPerPod bounds the healthy readings Result.History keeps per Pod.
