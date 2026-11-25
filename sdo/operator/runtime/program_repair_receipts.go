@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -20,6 +21,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 		used[receipt.ActionID] = true
 	}
 	for _, application := range applications {
+		started, completed := receiptTimes(application)
 		// failure names why the application's receipts are not successful.
 		// Empty means it took effect and nothing failed: its own verification
 		// passed, or it never ran one because the responder verifies the
@@ -57,7 +59,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 				scoped := scriptRepairResources(report)
 				if report.Status == "applied" && application.Result.Applied && report.Script != nil && report.Script.ScriptDigest == program.ScriptDigest(script.Script) && !application.RolledBack && application.RollbackError == "" {
 					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-script-%d", application.ID, index+1), used)
-					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: verified, FailureReason: failure})
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: started, CompletedAt: completed, Success: verified, FailureReason: failure})
 					for _, ref := range scoped {
 						if !seen[ref] {
 							seen[ref] = true
@@ -67,7 +69,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 				}
 				if report.FailureReason != "" {
 					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-failed-%d", application.ID, index+1), used)
-					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", Resources: scoped, Summary: "script execution failed or outcome unknown", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, FailureReason: report.FailureReason})
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", Target: "script", Resources: scoped, Summary: "script execution failed or outcome unknown", Details: failedScriptDetails(index, application.ID, report), StartedAt: started, CompletedAt: completed, FailureReason: report.FailureReason})
 				}
 				continue
 			}
@@ -102,7 +104,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			}
 			if reason != "" {
 				id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-failed-%d", application.ID, index+1), used)
-				result = append(result, RepairActionReceipt{ActionID: id, Kind: "program-plan", Target: ref.Kind + "/" + ref.Name, Resources: []sdk.ObjectRef{ref}, Summary: "program plan action failed", Details: fmt.Sprintf("controller action %d in %s: %s", index+1, application.ID, reason), StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, FailureReason: reason})
+				result = append(result, RepairActionReceipt{ActionID: id, Kind: "program-plan", Target: ref.Kind + "/" + ref.Name, Resources: []sdk.ObjectRef{ref}, Summary: "program plan action failed", Details: fmt.Sprintf("controller action %d in %s: %s", index+1, application.ID, reason), StartedAt: started, CompletedAt: completed, FailureReason: reason})
 				continue
 			}
 			if applied && application.Result.Applied && !seen[ref] {
@@ -134,12 +136,33 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 		result = append(result, RepairActionReceipt{
 			ActionID: id, Kind: "program-plan", Target: refs[0].Kind + "/" + refs[0].Name, Resources: refs,
 			Summary: summary, Details: details,
-			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
+			StartedAt: started, CompletedAt: completed,
 			Success: verified, FailureReason: failure, Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
 			Owners: preImageOwners(application.Result.PreImages, refs),
 		})
 	}
 	return result
+}
+
+// receiptTimes is the application's interval as a receipt records it. A pending
+// application has not completed, so its receipt ends where it started.
+func receiptTimes(application RecordedPlanApplication) (time.Time, time.Time) {
+	started, completed := application.StartedAt, application.CompletedAt
+	if started.IsZero() {
+		started = completed
+	}
+	if completed.Before(started) {
+		completed = started
+	}
+	return started, completed
+}
+
+func failedScriptDetails(index int, applicationID string, report PlanActionReport) string {
+	details := fmt.Sprintf("controller action %d in %s: %s", index+1, applicationID, report.FailureReason)
+	if report.ExitCode != nil {
+		details += fmt.Sprintf(" (exit %d)", *report.ExitCode)
+	}
+	return details
 }
 
 // sourceResidualOnly reports whether an application's only error is a source

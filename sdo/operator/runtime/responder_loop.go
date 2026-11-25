@@ -660,7 +660,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				if request.Command == "mitigate" {
 					l.refuseSelection(&response, response.FailureReason, response.Error)
 				}
-				response.Receipt = &contracts.RepairActionReceipt{FailureReason: response.FailureReason, ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
+				response.Receipt = l.rejectedReceipt(request.Command, response, started)
 				return response
 			}
 			defer func() {
@@ -674,7 +674,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			if request.Command == "mitigate" {
 				l.refuseSelection(&response, response.FailureReason, response.Error)
 			}
-			response.Receipt = &contracts.RepairActionReceipt{FailureReason: "incident_verified", ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
+			response.Receipt = l.rejectedReceipt(request.Command, response, started)
 			return response
 		}
 	}
@@ -1683,4 +1683,9 @@ func (l *ResponderLoop) hasWrites() bool {
 	}
 	receipts, pending, _, err := l.ExternalReceipts()
 	return err != nil || pending || len(receipts) > 0
+}
+
+// rejectedReceipt records a mutation SDO refused before it reached the cluster.
+func (l *ResponderLoop) rejectedReceipt(command string, response ToolResponse, started time.Time) *contracts.RepairActionReceipt {
+	return &contracts.RepairActionReceipt{ActionId: "sdo-rejected-" + l.sessionID, Kind: command, Target: "incident/" + l.Request.IncidentID, FailureReason: response.FailureReason, Summary: "incident is closed", Details: "refused before any write: " + response.Error, StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
 }

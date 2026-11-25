@@ -3,6 +3,7 @@
 package lifecycleio
 
 import (
+	"buf.build/go/protovalidate"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -46,6 +47,10 @@ func decodeControllerState(payload []byte) (*contracts.ControllerState, error) {
 	document := &contracts.ControllerState{}
 	// Drop retired rollback-only fields at this durable read edge.
 	if err := wire.UnmarshalDurable(payload, document); err != nil {
+		var invalid *protovalidate.ValidationError
+		if errors.As(err, &invalid) {
+			return document, fmt.Errorf("validate controller state: %w", err)
+		}
 		return nil, fmt.Errorf("decode controller state: %w", err)
 	}
 	return document, nil
@@ -96,6 +101,9 @@ func NewConfigMapStateStore(client kubernetes.Interface, namespace string, name 
 	return store
 }
 
+// Load returns the saved state. A state that decodes but breaks its contract is
+// returned together with its validation error, so the controller can repair it;
+// every other reader treats the error as a refusal.
 func (s *ConfigMapStateStore) Load(ctx context.Context) (*contracts.ControllerState, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -111,8 +119,9 @@ func (s *ConfigMapStateStore) Load(ctx context.Context) (*contracts.ControllerSt
 	if !ok {
 		return nil, "", fmt.Errorf("controller state ConfigMap has no %s", StateDataKey)
 	}
-	state, err := decodeControllerState([]byte(payload))
-	if err != nil {
+	state, invalid := decodeControllerState([]byte(payload))
+	if state == nil {
+		err := invalid
 		if strings.Contains(err.Error(), "unknown field") {
 			return nil, "", fmt.Errorf("runtime-state ConfigMap %s/%s predates the ProtoJSON cutover and cannot be read (%w); delete the ConfigMap (kubectl -n %s delete configmap %s) and restart the controller so it recreates its state", s.namespace, s.name, err, s.namespace, s.name)
 		}
@@ -123,10 +132,16 @@ func (s *ConfigMapStateStore) Load(ctx context.Context) (*contracts.ControllerSt
 		return nil, "", fmt.Errorf("invalid controller state revision %q", revision)
 	}
 	if err := s.restoreEvidence(state, configMap.Annotations[StateEvidenceAnnotation]); err != nil {
-		return nil, "", err
+		var validation *protovalidate.ValidationError
+		if !errors.As(err, &validation) {
+			return nil, "", err
+		}
+		invalid = err
+	} else if configMap.Annotations[StateEvidenceAnnotation] != "" {
+		invalid = nil // judged with its evidence restored
 	}
 	s.remember(configMap)
-	return state, revision, nil
+	return state, revision, invalid
 }
 
 // Save durably writes state if it differs from the last durable state and

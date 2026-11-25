@@ -1,8 +1,10 @@
 package lifecycleio
 
 import (
+	"buf.build/go/protovalidate"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -114,7 +116,8 @@ func (s *ConfigMapStateStore) restoreEvidence(state *contracts.ControllerState, 
 		return fmt.Errorf("controller evidence digest mismatch")
 	}
 	evidence := &contracts.ControllerState{}
-	if err := wire.UnmarshalDurable(payload, evidence); err != nil {
+	var invalid *protovalidate.ValidationError
+	if err := wire.UnmarshalDurable(payload, evidence); err != nil && !errors.As(err, &invalid) {
 		return fmt.Errorf("decode controller evidence: %w", err)
 	}
 	// All three are frozen together; restore the full values before validation or

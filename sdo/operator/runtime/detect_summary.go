@@ -860,6 +860,9 @@ func buildDetectSummary(in detectInput) detectSummary {
 		header = append(header, "page: no detector clears a page; Recovered is judged after you return, once the alert set stays clear for the stability window. Return when it is fixed.")
 	}
 	for _, note := range in.Request.PriorStages {
+		if _, dropped, found := strings.Cut(note.GetError(), droppedStateNote); found {
+			header = append(header, "stage: "+droppedStateNote+redactDetectText(dropped, 300))
+		}
 		for _, mitigation := range note.GetMitigations() {
 			if automaticPlanRefused(mitigation) {
 				header = append(header, fmt.Sprintf("stage: by sdo (playbook %s): plan validation refused: %s", mitigation.GetPlaybookId(), redactDetectText(mitigation.GetError(), 200)))

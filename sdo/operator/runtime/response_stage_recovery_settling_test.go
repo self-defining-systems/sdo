@@ -129,6 +129,8 @@ type settlingCase struct {
 	// startup is how long the api workload was observed to take to become
 	// Ready; its restart settles only that long after the write.
 	startup time.Duration
+	// scriptExit, when set, is the exit code every RunScript ends with.
+	scriptExit *int32
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario
@@ -338,6 +340,9 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		}
 	}
 	executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: world}}
+	if tc.scriptExit != nil {
+		executor.Client = exitingScriptClient{TypedPlanClient: TypedPlanClient{Client: world.client, ScriptImage: "synthetic"}, exit: *tc.scriptExit}
+	}
 	loop := NewResponderLoop(request, registry, world, detectors, executor, 5)
 	loop.Now = clock.Now
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {

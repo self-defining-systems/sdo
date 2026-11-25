@@ -39,8 +39,9 @@ const (
 	// OwnerLost ends an incident whose work no longer has a live owner (no
 	// responder execution, no closure begun) past its durable bound.
 	OwnerLost
-	// PersistenceInvalid replaces an uncommitted incident's invalid evidence
-	// with a validated failed closure. An accepted receipt is never replayed.
+	// PersistenceInvalid replaces an uncommitted closure's invalid evidence with
+	// a validated failed closure. It never begins one: an incident without a
+	// pending closure stays open. An accepted receipt is never replayed.
 	PersistenceInvalid
 	// Freeze folds the closure-time recheck's notes into the pending closure
 	// once, before its first broker attempt. The frozen closure is the
@@ -122,7 +123,7 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 	phase := next.GetClosureState()
 	if event.Kind == PersistenceInvalid {
 		if event.Closure == nil || event.Closure.GetStatePersistenceFailure() == nil ||
-			event.Closure.GetRequest().GetIncidentId() == "" || phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED || phase == contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING {
+			event.Closure.GetRequest().GetIncidentId() == "" || pending.GetRequest().GetIncidentId() != event.Closure.GetRequest().GetIncidentId() || phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED || phase == contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING {
 			return next, nil
 		}
 		next.PendingClosure = proto.Clone(event.Closure).(*contracts.IncidentClosure)
