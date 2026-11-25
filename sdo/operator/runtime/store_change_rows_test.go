@@ -101,3 +101,14 @@ func TestStoreChangeRowsReadTheCatalogAndFlagNoise(t *testing.T) {
 		t.Fatalf("sdo changes keeps the noisy row:\n%s", csv)
 	}
 }
+
+// An object's name is schema metadata: a long one is not redacted as a token.
+func TestStoreRowsShowTheObjectNameWhole(t *testing.T) {
+	row := IncidentChange{Source: "store", ReaderOrObject: "Pod/db-0", Key: "+1 index in appdb table group 07 of 16", Named: "index " + strings.Repeat("idx_", 14) + " on public.orders"}
+	evidence, _ := rowEvidence(row, detectOnset)
+	for _, text := range []string{evidence.Text, string(renderChanges([]IncidentChange{row}, detectOnset))} {
+		if !strings.Contains(text, "[written: "+row.Named+"]") {
+			t.Fatalf("text = %q", text)
+		}
+	}
+}

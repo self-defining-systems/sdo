@@ -2,6 +2,7 @@ package storestate_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -140,7 +141,7 @@ func TestCluesAreBoundedAndNeverCutAWord(t *testing.T) {
 	clues := storeClues(changes...)
 	size := 0
 	for _, c := range clues {
-		size += len(c.Key) + len(c.Before) + len(c.After)
+		size += len(c.Key) + len(c.Before) + len(c.After) + len(c.Named)
 		for _, word := range strings.Fields(c.After) {
 			if word != "word" && !strings.HasPrefix(word, "(+") && word != "bytes)" {
 				t.Fatalf("cut inside a word: %q", c.After)
@@ -204,5 +205,77 @@ func TestCluesDateEachChangeOnItsOwn(t *testing.T) {
 	want := map[string]int64{"+1 trigger, +1 constraint in exampledb table group 07 of 16": 12, "+1 index in exampledb table group 07 of 16": -150, "function definitions of exampledb changed in place": 12}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// A list is given without its last line: it is complete.
+func newestClues(t *testing.T, baseline, current []string, changes map[string]string) []storestate.Clue {
+	t.Helper()
+	id := storestate.QueryID(storestate.EnginePostgres, "db")
+	read := func(groups map[string]string, newest []string) podread.Reading {
+		return podread.Reading{Namespace: "app", Pod: "db-0", Stdout: groupedPostgres(groups) + "== newest\n" + strings.Join(append(slices.Clone(newest), "end"), "\n") + "\n"}
+	}
+	before, after := map[string]string{}, map[string]string{}
+	for g, value := range changes {
+		before[g+" a0000000"], after[g+" a0000000"] = "40 i5:aaaa c5:aaaa t5:aaaa n9:aaaa", value
+	}
+	result := podread.Result{Query: podread.Query{ID: id}, Readings: []podread.Reading{read(after, current)}, Baseline: []podread.Reading{read(before, baseline)}}
+	stores := storestate.Changes(snapshotOf(id, result))
+	if len(stores) != 1 || stores[0].Error != "" {
+		t.Fatalf("stores = %+v", stores)
+	}
+	return stores[0].Clues()
+}
+
+// A new trigger is named with its table, in its own table group only; an older
+// object listed because a newer one was dropped, and a kind the group did not
+// change, are not. public.orders hashes to group 15.
+func TestCluesNameTheNewObject(t *testing.T) {
+	old := []string{"exampledb\ttrigger 100\tpublic.other\told_one", "exampledb\tindex 90\tpublic.orders\tidx"}
+	added := append([]string{"exampledb\ttrigger 200\tpublic.orders\tcut", "exampledb\tcolumn 201\tpublic.orders\tc", "exampledb\ttrigger 50\tpublic.orders\treentered", "nonsense"}, old...)
+	clues := newestClues(t, old, added, map[string]string{"15": "40 i5:aaaa c5:aaaa t6:ffff n9:aaaa", "07": "40 i5:aaaa c5:aaaa t6:ffff n9:aaaa"})
+	named := map[string]string{}
+	for _, c := range clues {
+		named[c.Key] = c.Named
+	}
+	if named["+1 trigger in exampledb table group 15 of 16"] != "trigger cut on public.orders" || named["+1 trigger in exampledb table group 07 of 16"] != "" {
+		t.Fatalf("named = %v", named)
+	}
+	if clues := newestClues(t, old, added, map[string]string{"15": "40 i5:aaaa c5:aaaa t6:ffff n10:ffff"}); clues[0].Named != "trigger cut on public.orders, column c on public.orders" {
+		t.Fatalf("names follow the kinds' order: %+v", clues)
+	}
+	// A cut baseline lacks old objects too; an empty complete one lacks none.
+	if clues := newestClues(t, append(slices.Clone(old), "cut\n== ignored"), added, map[string]string{"15": "40 i5:aaaa c5:aaaa t6:ffff n9:aaaa"}); clues[0].Named != "" {
+		t.Fatalf("a cut baseline named %+v", clues)
+	}
+	if clues := newestClues(t, nil, added[:1], map[string]string{"15": "40 i5:aaaa c5:aaaa t6:ffff n9:aaaa"}); clues[0].Named != "trigger cut on public.orders" {
+		t.Fatalf("empty complete baseline: %+v", clues)
+	}
+	// A kind the group does not record names nothing.
+	if clues := newestClues(t, old, added, map[string]string{"15": "40 ffff"}); clues[0].Named != "" {
+		t.Fatalf("unknown kind: %+v", clues)
+	}
+}
+
+// Names are whole or left out and counted, and many stay within the bound; an
+// odd name survives.
+func TestCluesBoundObjectNames(t *testing.T) {
+	old := []string{"exampledb\tindex 90\tpublic.x\tidx"}
+	current := []string{"exampledb\ttrigger 200\tpublic.orders\t\"odd\" näme, (x)", "exampledb\ttrigger 201\tpublic.orders\t" + strings.Repeat("l", 300)}
+	for i := range 40 {
+		current = append(current, fmt.Sprintf("exampledb\ttrigger %d\tpublic.orders\tt_%02d", 300+i, i))
+	}
+	named := newestClues(t, old, current, map[string]string{"15": "40 i5:aaaa c5:aaaa t47:ffff n9:aaaa"})[0].Named
+	if !strings.HasPrefix(named, "trigger \"odd\" näme, (x) on public.orders, trigger t_00 on public.orders") || strings.Contains(named, "ll") || !strings.HasSuffix(named, "with longer names not shown") || len(named) > 240 {
+		t.Fatalf("named = %q", named)
+	}
+}
+
+// The output budget is in bytes: an awk in a UTF-8 locale counts characters (a
+// byte-based awk hides that, so the command itself is checked).
+func TestPostgresReadBudgetsBytes(t *testing.T) {
+	argv := strings.Join(adapterFor(t, storestate.EnginePostgres).ReadCommand(storestate.Endpoint{Port: 5432}), "\n")
+	if !strings.Contains(argv, "LC_ALL=C awk") || strings.Contains(argv, "${#h}") {
+		t.Fatal("the postgres read does not budget its output in bytes")
 	}
 }

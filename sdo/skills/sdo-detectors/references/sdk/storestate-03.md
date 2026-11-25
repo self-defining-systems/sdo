@@ -34,6 +34,16 @@ type LockWait struct {
 func (w LockWait) String() string
     String is a short value-free account of the lock wait.
 
+type NewObject struct {
+	DB    string `json:"db"`
+	Kind  string `json:"kind"`
+	Table string `json:"table,omitempty"`
+	Name  string `json:"name"`
+	XID   uint32 `json:"xid"`
+}
+    NewObject is one schema object by the transaction that last wrote its
+    definition. Table is empty for a function.
+
 type NotRestorableError struct {
 	Key    Key
 	Reason string
