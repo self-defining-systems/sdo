@@ -33,7 +33,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			failure = "rollback_failed"
 		case application.RolledBack:
 			failure = "rolled_back"
-		case application.Error != "" && !residualOnly:
+		case application.Error != "" && !residualOnly && !rolloutPendingOnly(application):
 			failure = "application_error"
 		case application.Result.SettlementRejectionReason != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED:
 			failure = "settlement_rejected"
@@ -167,6 +167,13 @@ func failedScriptDetails(index int, applicationID string, report PlanActionRepor
 		details += fmt.Sprintf(" (exit %d)", *report.ExitCode)
 	}
 	return details
+}
+
+// rolloutPendingOnly reports whether an application's only error is the rollout
+// its write started: pending evidence, not a failed write.
+func rolloutPendingOnly(application RecordedPlanApplication) bool {
+	pending := application.Result.RolloutPending
+	return pending != nil && application.Error == (&RolloutPendingError{Pending: pending}).Error()
 }
 
 // sourceResidualOnly reports whether an application's only error is a source

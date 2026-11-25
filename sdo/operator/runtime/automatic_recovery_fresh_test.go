@@ -362,10 +362,10 @@ func TestAWritesRollouts(t *testing.T) {
 	}
 }
 
-// An early handoff whose agent changed nothing leaves the credit to the
-// program; a reported change before recovery, or a handoff at the deadline,
-// still takes it.
-func TestAnEarlyHandoffWithoutAnAgentWriteKeepsTheCredit(t *testing.T) {
+// A handoff is not a write: early or at the deadline, an agent that changed
+// nothing leaves the credit to the program; a reported change before recovery
+// takes it.
+func TestAHandoffWithoutAnAgentWriteKeepsTheCredit(t *testing.T) {
 	recovered := verifyT0.Add(time.Minute)
 	app := &contracts.PlanApplication{ApplicationId: "a", Applied: true, StartedAt: contractTimestamp(verifyT0), CompletedAt: contractTimestamp(verifyT0)}
 	report := func(exit contracts.RecoveryWait_ExitReason, keys ...string) *contracts.StageReport {
@@ -377,10 +377,12 @@ func TestAnEarlyHandoffWithoutAnAgentWriteKeepsTheCredit(t *testing.T) {
 		changes []*contracts.AgentChange
 		want    string
 	}{
-		"no agent write":  {report(contracts.RecoveryWait_EXIT_REASON_UNCOVERED, "k"), nil, "a"},
-		"an agent write":  {report(contracts.RecoveryWait_EXIT_REASON_UNCOVERED, "k"), change, ""},
-		"a page":          {report(contracts.RecoveryWait_EXIT_REASON_UNCOVERED), nil, ""},
-		"at the deadline": {report(contracts.RecoveryWait_EXIT_REASON_DEADLINE, "k"), nil, ""},
+		"no agent write":            {report(contracts.RecoveryWait_EXIT_REASON_UNCOVERED, "k"), nil, "a"},
+		"an agent write":            {report(contracts.RecoveryWait_EXIT_REASON_UNCOVERED, "k"), change, ""},
+		"a page":                    {report(contracts.RecoveryWait_EXIT_REASON_UNCOVERED), nil, ""},
+		"at the deadline":           {report(contracts.RecoveryWait_EXIT_REASON_DEADLINE, "k"), nil, "a"},
+		"deadline, agent write":     {report(contracts.RecoveryWait_EXIT_REASON_DEADLINE, "k"), change, ""},
+		"deadline, no handoff keys": {report(contracts.RecoveryWait_EXIT_REASON_DEADLINE), nil, ""},
 	} {
 		if got := automaticCreditApplication(tc.report, []*contracts.PlanApplication{app}, tc.changes, recovered); got != tc.want {
 			t.Errorf("%s: credit = %q, want %q", name, got, tc.want)
