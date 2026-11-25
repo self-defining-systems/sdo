@@ -83,10 +83,12 @@ type Record struct {
 
 // Dir is the evidence sink of one run: <root>/<run-id>/ holding layout.json, index.jsonl and the evidence tree.
 // Paths are slash-separated and relative to the run.
-// Directories are world-writable and files world-readable so the runner (a different uid than the controller)
-// can read and clean them up.
+// Directories are 0700 and files 0600, except in a shared sink (a node host path, which the runner reads as another
+// uid): there the runner's own directory above the sink is the access boundary.
 type Dir struct {
-	root string
+	root     string
+	dirMode  os.FileMode
+	fileMode os.FileMode
 }
 
 type layoutDocument struct {
@@ -96,7 +98,7 @@ type layoutDocument struct {
 }
 
 // OpenDir opens or creates the run directory under sinkRoot and records the layout version once.
-func OpenDir(sinkRoot, runID string, now time.Time) (*Dir, error) {
+func OpenDir(sinkRoot, runID string, now time.Time, shared bool) (*Dir, error) {
 	if !filepath.IsAbs(sinkRoot) {
 		return nil, errors.New("evidence sink root must be absolute")
 	}
@@ -110,8 +112,11 @@ func OpenDir(sinkRoot, runID string, now time.Time) (*Dir, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("evidence sink root %s is not a directory", sinkRoot)
 	}
-	dir := &Dir{root: filepath.Join(sinkRoot, runID)}
-	if err := mkdirShared(dir.root); err != nil {
+	dir := &Dir{root: filepath.Join(sinkRoot, runID), dirMode: 0o700, fileMode: 0o600}
+	if shared {
+		dir.dirMode, dir.fileMode = 0o777, 0o644
+	}
+	if err := dir.mkdirRoot(); err != nil {
 		return nil, err
 	}
 	layoutPath := filepath.Join(dir.root, LayoutFile)
@@ -146,11 +151,11 @@ func checkRelative(relative string) error {
 	return nil
 }
 
-func mkdirShared(directory string) error {
-	if err := os.MkdirAll(directory, 0o755); err != nil {
+func (d *Dir) mkdirRoot() error {
+	if err := os.MkdirAll(d.root, d.dirMode); err != nil {
 		return err
 	}
-	return os.Chmod(directory, 0o777)
+	return os.Chmod(d.root, d.dirMode)
 }
 
 func (d *Dir) mkdirs(relativeDir string) error {
@@ -162,10 +167,10 @@ func (d *Dir) mkdirs(relativeDir string) error {
 		current = filepath.Join(current, part)
 		info, err := os.Lstat(current)
 		if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir(current, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+			if err := os.Mkdir(current, d.dirMode); err != nil && !errors.Is(err, os.ErrExist) {
 				return err
 			}
-			if err := os.Chmod(current, 0o777); err != nil {
+			if err := os.Chmod(current, d.dirMode); err != nil {
 				return err
 			}
 			continue
@@ -213,7 +218,7 @@ func (d *Dir) Put(relative string, content io.Reader) (Stored, error) {
 		stored.Changed = false
 		return stored, nil
 	}
-	if err := os.Chmod(temp.Name(), 0o644); err != nil {
+	if err := os.Chmod(temp.Name(), d.fileMode); err != nil {
 		return Stored{}, err
 	}
 	if err := os.Rename(temp.Name(), target); err != nil {
@@ -251,7 +256,7 @@ func (d *Dir) Append(record Record) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(filepath.Join(d.root, IndexFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(filepath.Join(d.root, IndexFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, d.fileMode)
 	if err != nil {
 		return err
 	}

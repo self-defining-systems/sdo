@@ -61,6 +61,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "evidence-archive" {
+		if err := operatorcli.RunEvidenceArchiveProcess(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "evidence-sink" {
 		if err := operatorcli.RunEvidenceSinkProcess(os.Args[1:], os.Stderr); err != nil {
 			fmt.Fprintln(os.Stderr, err)

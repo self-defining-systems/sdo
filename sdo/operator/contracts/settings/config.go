@@ -231,6 +231,13 @@ func Default() Config {
 	}
 }
 
+// credentialEnvironment are the variables model clients read a credential value from. Agents run shells that can print
+// their environment, so none of them may be set there.
+var credentialEnvironment = map[string]bool{
+	"ANTHROPIC_API_KEY": true, "ANTHROPIC_AUTH_TOKEN": true, "CLAUDE_CODE_API_KEY": true, "CLAUDE_CODE_OAUTH_TOKEN": true,
+	"CODEX_API_KEY": true, "OPENAI_API_KEY": true,
+}
+
 // ownedWorkerEnvironment are worker variables another setting or the installer owns; agent.extra_env cannot set them.
 var ownedWorkerEnvironment = map[string]string{
 	"SDO_OBSERVATION_CEILING": "the installer",
@@ -278,6 +285,9 @@ func (c Config) Validate() error {
 		name, content, found := strings.Cut(value, "=")
 		if !found || !workerEnvName.MatchString(name) || strings.ContainsAny(content, "\r\n") {
 			bad("agent.extra_env", "%q is not NAME=VALUE", value)
+		}
+		if credentialEnvironment[name] {
+			bad("agent.extra_env", "%s holds a credential: put it in the credentials Secret, which agents get as a file", name)
 		}
 		if owner, owned := ownedWorkerEnvironment[name]; owned {
 			bad("agent.extra_env", "%s is set by %s", name, owner)

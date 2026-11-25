@@ -533,7 +533,6 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	uid := int64(65532)
 	noEscalation := false
 	readOnlyRoot := true
-	envFrom := []corev1.EnvFromSource{}
 	mounts := []corev1.VolumeMount{
 		{Name: "repository", MountPath: task.GetWorkspace().GetCheckoutPath(), SubPath: proposalSubPath, ReadOnly: e.RepositoryReadOnly},
 		{Name: "scratch", MountPath: "/tmp"},
@@ -573,7 +572,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		}
 	}
 	if e.CredentialsSecret != "" {
-		envFrom = append(envFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: e.CredentialsSecret}}})
+		// A file only: the agent runs shells, so a credential value in its environment is one `env` from a transcript.
 		mounts = append(mounts, corev1.VolumeMount{Name: "credentials", MountPath: "/sdo/credentials", ReadOnly: true})
 		volumes = append(volumes, corev1.Volume{Name: "credentials", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: e.CredentialsSecret}}})
 	}
@@ -649,7 +648,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 					SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}},
 					Containers: []corev1.Container{{
 						Name: "agent", Image: launch.GetImage(), Command: append([]string(nil), launch.GetCommand()...),
-						WorkingDir: task.GetWorkspace().GetCheckoutPath(), EnvFrom: envFrom, Env: env, VolumeMounts: mounts,
+						WorkingDir: task.GetWorkspace().GetCheckoutPath(), Env: env, VolumeMounts: mounts,
 						// The controller reads no logs: a failing worker writes one curated line to /dev/termination-log.
 						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noEscalation, ReadOnlyRootFilesystem: &readOnlyRoot, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 						Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse(WorkerMemoryRequest)}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse(WorkerMemoryLimit)}},

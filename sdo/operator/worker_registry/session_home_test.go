@@ -40,7 +40,7 @@ func TestEveryAgentWithASessionRecordsItsTranscriptOnTheSessionMount(t *testing.
 			}
 			client := fake.NewSimpleClientset()
 			executor := KubernetesExecutor{
-				Client: client, Namespace: "sdo", RepositoryPVC: "repo", SessionPVCSubPath: ".sdo-runtime/sessions/abc",
+				Client: client, Namespace: "sdo", RepositoryPVC: "repo", SessionPVCSubPath: ".sdo-runtime/sessions/abc", CredentialsSecret: "logins",
 				Environment: map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude"},
 			}
 			task := &contracts.AgentTask{TaskId: "task-1", Request: request, Workspace: &contracts.ProposalWorkspace{CheckoutPath: "/work", BaseCommit: "abc"}}
@@ -50,6 +50,15 @@ func TestEveryAgentWithASessionRecordsItsTranscriptOnTheSessionMount(t *testing.
 			job, err := client.BatchV1().Jobs("sdo").Get(context.Background(), "job-1", metav1.GetOptions{})
 			if err != nil {
 				t.Fatal(err)
+			}
+			// The agent runs shells: a credential reaches it as a mounted file, never as environment.
+			agent := job.Spec.Template.Spec.Containers[0]
+			mounted := false
+			for _, mount := range agent.VolumeMounts {
+				mounted = mounted || mount.Name == "credentials" && mount.MountPath == "/sdo/credentials" && mount.ReadOnly
+			}
+			if len(agent.EnvFrom) != 0 || !mounted {
+				t.Errorf("credentials: envFrom %v, mounted file %v", agent.EnvFrom, mounted)
 			}
 			homes := map[string][]string{}
 			for _, variable := range job.Spec.Template.Spec.Containers[0].Env {

@@ -86,7 +86,7 @@ func (f *fixture) ledger(incidentID string, acknowledged bool) {
 
 func (f *fixture) mirror() (*Mirror, *Dir) {
 	f.t.Helper()
-	dir, err := OpenDir(f.sinkRoot, "run-1", f.clock)
+	dir, err := OpenDir(f.sinkRoot, "run-1", f.clock, false)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func TestPlaceRejectsUnsafePaths(t *testing.T) {
 
 func TestOpenDirRejectsInvalidRunID(t *testing.T) {
 	for _, id := range []string{"", "../x", "a/b", ".hidden"} {
-		if _, err := OpenDir(t.TempDir(), id, epoch); err == nil {
+		if _, err := OpenDir(t.TempDir(), id, epoch, false); err == nil {
 			t.Errorf("OpenDir accepted run ID %q", id)
 		}
 	}

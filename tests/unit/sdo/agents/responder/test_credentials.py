@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -39,6 +40,33 @@ def test_prepare_claude_home_copies_credentials_into_writable_home(tmp_path: Pat
     copied = claude_home / ".credentials.json"
     assert copied.read_text(encoding="utf-8") == '{"token":"secret"}'
     assert copied.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("name", ["CODEX_API_KEY", "OPENAI_API_KEY"])
+def test_mounted_api_key_becomes_a_private_codex_login(tmp_path: Path, name: str) -> None:
+    (tmp_path / name).write_text("synthetic-key\n", encoding="utf-8")
+    prepare_codex_home(credentials_root=tmp_path, codex_home=tmp_path / "codex")
+    login = tmp_path / "codex" / "auth.json"
+    assert json.loads(login.read_text(encoding="utf-8"))["OPENAI_API_KEY"] == "synthetic-key"
+    assert login.stat().st_mode & 0o777 == 0o600
+
+
+def test_mounted_claude_token_becomes_a_private_login(tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE_CODE_OAUTH_TOKEN").write_text("synthetic-token\n", encoding="utf-8")
+    prepare_claude_home(credentials_root=tmp_path, claude_home=tmp_path / "claude")
+    login = tmp_path / "claude" / ".credentials.json"
+    assert json.loads(login.read_text(encoding="utf-8"))["claudeAiOauth"]["accessToken"] == "synthetic-token"
+    assert login.stat().st_mode & 0o777 == 0o600
+
+
+def test_mounted_claude_api_key_is_read_through_a_helper(tmp_path: Path) -> None:
+    (tmp_path / "ANTHROPIC_API_KEY").write_text("synthetic-key\n", encoding="utf-8")
+    prepare_claude_home(credentials_root=tmp_path, claude_home=tmp_path / "claude")
+    settings = (tmp_path / "claude" / "settings.json").read_text(encoding="utf-8")
+    key = tmp_path / "claude" / "api_key.credential"
+    assert json.loads(settings) == {"apiKeyHelper": f"cat {key}"}
+    assert key.read_text(encoding="utf-8") == "synthetic-key"
+    assert key.stat().st_mode & 0o777 == 0o600
 
 
 def _skills(root: Path, *names: str) -> Path:

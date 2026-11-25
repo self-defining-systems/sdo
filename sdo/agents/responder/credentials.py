@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shlex
 import shutil
 from pathlib import Path
+
+from libs.agent_cli.claude_accounts import write_claude_login
+from libs.agent_cli.provider_capacity import CLAUDE_API_KEY_FILE
 
 #: The skills shipped with SDO: ``sdo/skills`` in the repository and in the agent image.
 from sdo.agents.code_paths import AGENT_SKILLS as AGENT_SKILLS
@@ -43,12 +48,13 @@ def prepare_codex_home(
         destination_root.mkdir(parents=True, exist_ok=True)
         install_skills(destination_root, skills, skills_root=skills_root)
     source = credentials_root / "auth.json"
-    if not source.is_file():
+    if source.is_file():
+        login = source.read_bytes()
+    elif key := _mounted_value(credentials_root, "CODEX_API_KEY", "OPENAI_API_KEY"):
+        login = json.dumps({"auth_mode": "apikey", "OPENAI_API_KEY": key}).encode()
+    else:
         return
-    destination_root.mkdir(parents=True, exist_ok=True)
-    destination = destination_root / "auth.json"
-    shutil.copyfile(source, destination)
-    destination.chmod(0o600)
+    _write_private(destination_root / "auth.json", login)
 
 
 def prepare_claude_home(
@@ -63,9 +69,29 @@ def prepare_claude_home(
         destination_root.mkdir(parents=True, exist_ok=True)
         install_skills(destination_root, skills, skills_root=skills_root)
     source = credentials_root / ".credentials.json"
-    if not source.is_file():
-        return
-    destination_root.mkdir(parents=True, exist_ok=True)
-    destination = destination_root / ".credentials.json"
-    shutil.copyfile(source, destination)
-    destination.chmod(0o600)
+    if source.is_file():
+        _write_private(destination_root / ".credentials.json", source.read_bytes())
+    elif token := _mounted_value(credentials_root, "CLAUDE_CODE_OAUTH_TOKEN"):
+        write_claude_login(destination_root, token)
+    elif key := _mounted_value(credentials_root, "ANTHROPIC_API_KEY"):
+        copy = destination_root / CLAUDE_API_KEY_FILE
+        _write_private(copy, key.encode())
+        _write_private(
+            destination_root / "settings.json",
+            json.dumps({"apiKeyHelper": f"cat {shlex.quote(str(copy))}"}).encode(),
+        )
+
+
+def _mounted_value(root: Path, *names: str) -> str:
+    """The first non-empty bare credential among the Secret keys *names*."""
+    for name in names:
+        if (path := root / name).is_file() and (value := path.read_text(encoding="utf-8").strip()):
+            return value
+    return ""
+
+
+def _write_private(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
+        stream.write(content)

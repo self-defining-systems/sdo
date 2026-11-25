@@ -1,6 +1,6 @@
 """Claude accounts by mounted reference, with host-wide health and admission.
 
-Credentials live only in the private bundle and the CLI child's environment.
+Credentials live only in the private bundle and the Claude home's private login file, never in an environment.
 Shared state and telemetry contain aliases, opaque registration IDs and reasons.
 The CLI config home is deliberately independent of the selected account.
 """
@@ -284,10 +284,16 @@ class AccountRouter:
                 raise ValueError
         except (OSError, ValueError):
             raise AccountCredentialUnavailable("account credential reference unreadable") from None
+        # The CLI's shell tools inherit its environment, so the token reaches it as its login file. The home must be
+        # named: the default one may hold a person's own login.
+        home = base.get("CLAUDE_CONFIG_DIR", "")
+        if not home:
+            raise CapacityConfigurationError("per_account requires CLAUDE_CONFIG_DIR, a home dedicated to the agent")
+        write_claude_login(Path(home), token)
         # Explicitly blank competing authentication. Claude must use this lease.
         return {
             **base,
-            "CLAUDE_CODE_OAUTH_TOKEN": token,
+            "CLAUDE_CODE_OAUTH_TOKEN": "",
             "ANTHROPIC_API_KEY": "",
             "ANTHROPIC_AUTH_TOKEN": "",
             "CLAUDE_CODE_API_KEY": "",
@@ -347,6 +353,14 @@ def _private_write(path: Path, content: str) -> None:
         os.replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def write_claude_login(home: Path, token: str) -> None:
+    """Make *token* the Claude login of *home*: an access token without refresh, as the CLI reads one from its
+    environment."""
+    home.mkdir(parents=True, exist_ok=True)
+    login = {"accessToken": token, "refreshToken": None, "expiresAt": None, "scopes": ["user:inference"]}
+    _private_write(home / ".credentials.json", json.dumps({"claudeAiOauth": {**login, "subscriptionType": None}}))
 
 
 def _cswap_token(source: Path) -> str | None:

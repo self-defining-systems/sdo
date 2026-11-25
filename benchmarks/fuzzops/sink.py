@@ -639,6 +639,10 @@ class CopyResult:
 def _copy_tree(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dest, symlinks=True, dirs_exist_ok=True)
+    # A shared sink (a node host path) is readable by other users; the saved copy holds transcripts and is not.
+    for path in (dest, *dest.rglob("*")):
+        if not path.is_symlink():
+            path.chmod(0o700 if path.is_dir() else 0o600)
 
 
 def copy_interval(run_dir: Path, dest: Path, start: datetime | None, end: datetime | None) -> CopyResult:
@@ -651,6 +655,7 @@ def copy_interval(run_dir: Path, dest: Path, start: datetime | None, end: dateti
     for record in records:
         by_path.setdefault(record["path"].strip("/"), []).append(record)
     dest.mkdir(parents=True, exist_ok=True)
+    dest.chmod(0o700)
     shutil.copy2(run_dir / LAYOUT_FILE, dest / LAYOUT_FILE)
     copied: set[str] = set()
     incidents = []

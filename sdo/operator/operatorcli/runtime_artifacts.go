@@ -24,13 +24,13 @@ import (
 	"sdo.dev/operator/worker_registry"
 )
 
-const runtimeArtifactsArchiveScript = `cd "$1" 2>/dev/null || exit 0; find usage telemetry sessions setup tasks codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]'); case "$lower_path" in *cache*|*plugin*|*catalog*) continue;; esac; base=${lower_path##*/}; case "$base" in *auth*|*credential*|*token*) [ "$base" = token_usage.json ] || continue;; esac; case "$path" in setup/*/*.jsonl|tasks/*/task.json|tasks/*/request.json|tasks/*/result.json|tasks/*/error.json|tasks/*/*.jsonl|tasks/*/codex/sessions/*/rollout-*.jsonl|tasks/*/claude/projects/*.jsonl|usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/incident.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-apply.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-mitigate.json|sessions/*/startup-controller.json|sessions/*/startup-workers/*/startup-worker.json|sessions/*/startup/attempts/*/startup-controller.json|sessions/*/startup/attempts/*/startup-dispatch.json|sessions/*/startup/attempts/*/startup-failure.json|sessions/*/startup-worker.json|sessions/*/startup-daemon.json|sessions/*/startup-session.json|sessions/*/startup-dispatch.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/checkpoints/*/request.json|sessions/*/checkpoints/*/result.json|sessions/*/checkpoints/*/file_edits.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | { tar -cf - -T -; code=$?; if [ "$code" -eq 1 ] && [ "${2:-}" = live ]; then exit 0; fi; exit "$code"; }`
+const runtimeArtifactsArchiveScript = `cd "$1" 2>/dev/null || exit 0; find usage telemetry sessions setup tasks codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]'); case "$lower_path" in *cache*|*plugin*|*catalog*) continue;; esac; base=${lower_path##*/}; case "$base" in *auth*|*credential*|*token*) [ "$base" = token_usage.json ] || continue;; esac; case "$path" in setup/*/*.jsonl|tasks/*/task.json|tasks/*/request.json|tasks/*/result.json|tasks/*/error.json|tasks/*/*.jsonl|tasks/*/codex/sessions/*/rollout-*.jsonl|tasks/*/claude/projects/*.jsonl|usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/incident.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-apply.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-mitigate.json|sessions/*/startup-controller.json|sessions/*/startup-workers/*/startup-worker.json|sessions/*/startup/attempts/*/startup-controller.json|sessions/*/startup/attempts/*/startup-dispatch.json|sessions/*/startup/attempts/*/startup-failure.json|sessions/*/startup-worker.json|sessions/*/startup-daemon.json|sessions/*/startup-session.json|sessions/*/startup-dispatch.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/checkpoints/*/request.json|sessions/*/checkpoints/*/result.json|sessions/*/checkpoints/*/file_edits.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | sdo-operator evidence-archive ${2:+"$2"}`
 
 // runtimeSnapshotScript seals the whitelisted runtime evidence into one
 // immutable archive: $1 runtime root, $2 snapshot directory, $3 snapshot ID,
 // $4 archive script. Publication is a hard link, so an existing archive is
 // never replaced and a retry reports the archive sealed at the boundary.
-const runtimeSnapshotScript = `set -eu; archive="$2/$3.tar"; mkdir -p "$2"; state=existing; if [ ! -e "$archive" ]; then partial="$2/.$3.$$.partial"; trap 'rm -f "$partial"' EXIT; sh -c "$4" sh "$1" > "$partial"; chmod 0444 "$partial"; if ln "$partial" "$archive" 2>/dev/null; then state=created; fi; fi; size=$(wc -c < "$archive"); set -- $(sha256sum "$archive"); printf '%s %s %s\n' "$state" "$1" "$size"`
+const runtimeSnapshotScript = `set -eu; archive="$2/$3.tar"; mkdir -p "$2"; state=existing; if [ ! -e "$archive" ]; then partial="$2/.$3.$$.partial"; trap 'rm -f "$partial"' EXIT; sh -c "$4" sh "$1" > "$partial"; chmod 0400 "$partial"; if ln "$partial" "$archive" 2>/dev/null; then state=created; fi; fi; size=$(wc -c < "$archive"); set -- $(sha256sum "$archive"); printf '%s %s %s\n' "$state" "$1" "$size"`
 
 const (
 	runtimeSnapshotRoot          = "/workspace/.sdo-runtime-snapshots"
@@ -48,7 +48,7 @@ var (
 )
 
 // RuntimeArtifactsConfig is a read-only export of whitelisted runtime evidence.
-// It contains no agent credentials and does not expose the accepted checkout.
+// Known credential values are redacted in the Pod (RunEvidenceArchive). It contains no agent credentials and does not expose the accepted checkout.
 // Export copies the live cumulative evidence. Snapshot seals it on the
 // repository PVC at an incident boundary; deliver later copies exactly that
 // sealed archive, so evidence never includes a later incident's files.
@@ -195,8 +195,7 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 // copyRuntimeArtifacts streams the sync Pod's evidence archive into destination.
 // Archive only evidence files; extraction applies the same allowlist.
 //
-// A live reader (live true) accepts tar's "file changed as we read it": a running session keeps appending to its
-// rollout, and the archive then holds a prefix of it. A sealed snapshot stays strict.
+// A live reader (live true) accepts a file that disappeared after it was listed. A sealed snapshot stays strict.
 func copyRuntimeArtifacts(ctx context.Context, execute podExecutor, namespace, pod, destination string, live bool) error {
 	streamCtx, stop := context.WithCancel(ctx)
 	defer stop()

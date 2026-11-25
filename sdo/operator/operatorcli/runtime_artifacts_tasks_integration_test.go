@@ -34,6 +34,11 @@ func TestRuntimeArchiveCarriesLifecycleTaskEvidence(t *testing.T) {
 	for _, name := range append(append([]string{}, kept...), dropped...) {
 		writeFixture(t, runtime, task+"/"+name)
 	}
+	bin := t.TempDir()
+	if output, err := exec.Command("go", "build", "-o", filepath.Join(bin, "sdo-operator"), "sdo.dev/operator/cmd/sdo-operator").CombinedOutput(); err != nil {
+		t.Fatalf("build sdo-operator: %v: %s", err, output)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for _, live := range []bool{false, true} {
 		command := archiveCommand(live)
 		command[4] = runtime

@@ -402,7 +402,6 @@ func controllerJob(c Config) *batchv1.Job {
 	pod.Containers = []corev1.Container{{
 		Name: "controller", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: command, Args: args,
-		EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: c.CredentialsSecret}}}},
 		Env: []corev1.EnvVar{
 			{Name: "CODEX_HOME", Value: "/workspace/.sdo-runtime/codex"},
 			{Name: "CLAUDE_CONFIG_DIR", Value: "/workspace/.sdo-runtime/claude"},

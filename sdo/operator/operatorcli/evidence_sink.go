@@ -25,6 +25,9 @@ type EvidenceSinkConfig struct {
 	RuntimeRoot, LedgerRoot, SinkRoot, RunID string
 	Interval                                 time.Duration
 	Once                                     bool
+	// Shared sinks (node host paths) are read by the runner as another uid.
+	Shared          bool
+	CredentialRoots []string
 }
 
 func ParseEvidenceSink(args []string) (EvidenceSinkConfig, error) {
@@ -38,6 +41,7 @@ func ParseEvidenceSink(args []string) (EvidenceSinkConfig, error) {
 	sinkRoot := flags.String("sink-root", install.EvidenceSinkMountPath, "mounted evidence sink")
 	runID := flags.String("run-id", "", "run directory name inside the sink")
 	interval := flags.Duration("interval", 10*time.Second, "time between mirror passes")
+	shared := flags.Bool("shared", false, "the sink is a node host path the runner reads as another uid")
 	once := flags.Bool("once", false, "run one pass and exit")
 	if err := flags.Parse(args[1:]); err != nil {
 		return EvidenceSinkConfig{}, err
@@ -59,7 +63,7 @@ func ParseEvidenceSink(args []string) (EvidenceSinkConfig, error) {
 	if *interval < time.Second {
 		return EvidenceSinkConfig{}, errors.New("evidence-sink interval must be at least one second")
 	}
-	return EvidenceSinkConfig{RuntimeRoot: *runtimeRoot, LedgerRoot: *ledgerRoot, SinkRoot: *sinkRoot, RunID: *runID, Interval: *interval, Once: *once}, nil
+	return EvidenceSinkConfig{RuntimeRoot: *runtimeRoot, LedgerRoot: *ledgerRoot, SinkRoot: *sinkRoot, RunID: *runID, Interval: *interval, Once: *once, Shared: *shared, CredentialRoots: evidencesink.MountedCredentialRoots()}, nil
 }
 
 // EvidenceSinkClock is the mirror loop's time seam.
@@ -86,12 +90,12 @@ func RunEvidenceSink(ctx context.Context, cfg EvidenceSinkConfig, clock Evidence
 			label = "final pass"
 		}
 		if mirror == nil {
-			dir, err := evidencesink.OpenDir(cfg.SinkRoot, cfg.RunID, clock.Now())
+			dir, err := evidencesink.OpenDir(cfg.SinkRoot, cfg.RunID, clock.Now(), cfg.Shared)
 			if err != nil {
 				fmt.Fprintf(log, "evidence-sink %s: open sink: %v\n", label, err)
 				return
 			}
-			mirror = &evidencesink.Mirror{RuntimeRoot: cfg.RuntimeRoot, LedgerRoot: cfg.LedgerRoot, Sink: dir, Now: clock.Now}
+			mirror = &evidencesink.Mirror{RuntimeRoot: cfg.RuntimeRoot, LedgerRoot: cfg.LedgerRoot, CredentialRoots: cfg.CredentialRoots, Sink: dir, Now: clock.Now}
 		}
 		run := mirror.Pass
 		if final {

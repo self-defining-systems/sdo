@@ -71,8 +71,12 @@ type Mirror struct {
 	RuntimeRoot string
 	// LedgerRoot is the absolute native broker ledger directory; empty mirrors no ledgers.
 	LedgerRoot string
-	Sink       *Dir
-	Now        func() time.Time
+	// CredentialRoots are the mounted credential directories whose values are redacted from everything copied.
+	CredentialRoots []string
+	Sink            *Dir
+	Now             func() time.Time
+
+	credentials Credentials
 
 	loaded  bool
 	sources map[string]sourceState // sink path -> last copied source state
@@ -111,6 +115,14 @@ func (m *Mirror) pass(final bool) error {
 		if err := m.load(); err != nil {
 			return err
 		}
+	}
+	known := m.credentials.Len()
+	if err := m.credentials.Load(m.CredentialRoots, m.RuntimeRoot); err != nil {
+		return err
+	}
+	if m.credentials.Len() != known {
+		// Files copied before a login was refreshed are copied again.
+		clear(m.sources)
 	}
 	ledgers, ledgerErr := m.readLedgers()
 	copyErr := m.copyRuntime()
@@ -245,7 +257,7 @@ func (m *Mirror) copyFile(source, target string, state sourceState) error {
 	}
 	defer file.Close()
 	size := min(state.size, MaxFileBytes)
-	stored, err := m.Sink.Put(target, io.LimitReader(file, size))
+	stored, err := m.Sink.Put(target, m.credentials.Reader(io.LimitReader(file, size)))
 	if err != nil {
 		return fmt.Errorf("mirror %s: %w", target, err)
 	}
@@ -255,7 +267,7 @@ func (m *Mirror) copyFile(source, target string, state sourceState) error {
 }
 
 func (m *Mirror) put(target string, data []byte) error {
-	stored, err := m.Sink.Put(target, bytes.NewReader(data))
+	stored, err := m.Sink.Put(target, m.credentials.Reader(bytes.NewReader(data)))
 	if err != nil {
 		return fmt.Errorf("mirror %s: %w", target, err)
 	}

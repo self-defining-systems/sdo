@@ -152,7 +152,9 @@ installer projects the whole Secret read-only at `/sdo/claude-accounts`, without
 `subPath`, into controller, operate and cold/warm worker Pods. Each attempt reopens
 the inventory and credential reference, so updating the Secret refreshes workers
 without restarting a lane. Keep the Claude config/session home unchanged across
-accounts; only the child process OAuth environment changes. Competing API keys,
+accounts (`CLAUDE_CONFIG_DIR` is required and must be dedicated to the agent: each
+attempt replaces its `.credentials.json` with the leased account's token, and no
+token is put in an environment). Competing API keys,
 custom headers and alternate Claude backends are cleared; OAuth uses Anthropic's
 canonical API endpoint.
 

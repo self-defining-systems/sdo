@@ -59,6 +59,12 @@ func ApplyProviderCapacity(pod *corev1.PodSpec, env map[string]string) error {
 				return fmt.Errorf("per-account concurrency must be a positive integer")
 			}
 		}
+		for index := range pod.InitContainers {
+			// The evidence sidecar redacts the account tokens from what it mirrors.
+			if container := &pod.InitContainers[index]; container.Name == "evidence-sink" {
+				container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "claude-accounts", MountPath: "/sdo/claude-accounts", ReadOnly: true})
+			}
+		}
 		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "claude-accounts", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: env["SDO_CLAUDE_ACCOUNTS_SECRET"]}}})
 	} else if env["SDO_CLAUDE_ACCOUNTS_SECRET"] != "" || env["SDO_CLAUDE_ACCOUNTS_DIR"] != "" {
 		return fmt.Errorf("Claude account references require per_account capacity mode")
@@ -113,6 +119,14 @@ func ApplyProviderCapacity(pod *corev1.PodSpec, env map[string]string) error {
 			container.Env = append(kept, corev1.EnvVar{Name: name, Value: value})
 		}
 		if mode == "per_account" {
+			// The leased token is written to the CLI home as its login file, so a Pod without a session has one too.
+			home := false
+			for _, variable := range container.Env {
+				home = home || variable.Name == "CLAUDE_CONFIG_DIR"
+			}
+			if !home {
+				container.Env = append(container.Env, corev1.EnvVar{Name: "CLAUDE_CONFIG_DIR", Value: "/tmp/claude"})
+			}
 			container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "claude-accounts", MountPath: "/sdo/claude-accounts", ReadOnly: true})
 		}
 		if server != "" || mode == "per_host" || mode == "per_account" {
