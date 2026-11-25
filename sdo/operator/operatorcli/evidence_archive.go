@@ -16,15 +16,22 @@ import (
 
 // RunEvidenceArchive writes the files named on paths (one per line, relative to root) to out as a tar with the known
 // credential values redacted. It is the writer stage of the runtime-artifacts archive script, inside the Pod that
-// holds the credentials. live accepts a file that disappeared after it was listed.
-func RunEvidenceArchive(root string, mounted []string, live bool, paths io.Reader, out io.Writer) error {
+// holds the credentials. A transcript the credential set does not cover is left out and listed in
+// evidencesink.GapFile. live accepts a file that disappeared after it was listed.
+func RunEvidenceArchive(root string, required, optional []string, live bool, paths io.Reader, out io.Writer) error {
 	credentials := &evidencesink.Credentials{}
-	if err := credentials.Load(mounted, root); err != nil {
-		return err
-	}
+	credentials.Load(required, optional, root)
+	var gaps []byte
 	archive := tar.NewWriter(out)
 	names := bufio.NewScanner(paths)
 	for names.Scan() {
+		if reason := credentials.Withheld(names.Text()); reason != "" {
+			gaps = append(gaps, evidencesink.GapLine(names.Text(), reason)...)
+			continue
+		}
+		if names.Text() == evidencesink.GapFile {
+			continue
+		}
 		err := archiveRedacted(archive, credentials, root, names.Text())
 		if live && errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -35,6 +42,14 @@ func RunEvidenceArchive(root string, mounted []string, live bool, paths io.Reade
 	}
 	if err := names.Err(); err != nil {
 		return err
+	}
+	if len(gaps) > 0 {
+		if err := archive.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: evidencesink.GapFile, Size: int64(len(gaps)), Mode: 0o600}); err != nil {
+			return err
+		}
+		if _, err := archive.Write(gaps); err != nil {
+			return err
+		}
 	}
 	return archive.Close()
 }
@@ -68,5 +83,5 @@ func RunEvidenceArchiveProcess(args []string) error {
 	if len(args) > 1 || len(args) == 1 && args[0] != "live" {
 		return errors.New("usage: sdo-operator evidence-archive [live]")
 	}
-	return RunEvidenceArchive(".", evidencesink.MountedCredentialRoots(), len(args) == 1, os.Stdin, os.Stdout)
+	return RunEvidenceArchive(".", evidencesink.RequiredCredentialRoots(), evidencesink.OptionalCredentialRoots(), len(args) == 1, os.Stdin, os.Stdout)
 }

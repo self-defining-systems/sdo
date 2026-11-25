@@ -88,7 +88,7 @@ func TestMirrorNeverSavesACredentialValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mirror := &Mirror{RuntimeRoot: runtime, CredentialRoots: []string{mounted, accounts, filepath.Join(base, "absent")}, Sink: sink, Now: now}
+	mirror := &Mirror{RuntimeRoot: runtime, CredentialRoots: []string{mounted}, OptionalCredentialRoots: []string{accounts, filepath.Join(base, "absent")}, Sink: sink, Now: now}
 	if err := mirror.Pass(); err != nil {
 		t.Fatal(err)
 	}
@@ -141,22 +141,67 @@ func TestMirrorNeverSavesACredentialValue(t *testing.T) {
 	}
 }
 
-// Evidence is not copied when a configured credential cannot be read.
-func TestMirrorCopiesNothingWithoutItsCredentials(t *testing.T) {
+// A credential that cannot be read withholds only the transcripts it may be in: a missing mount all of them, one
+// home's broken login that session's. Other evidence is saved, the gap is recorded, and it closes by itself.
+func TestMirrorWithholdsOnlyUncoveredTranscripts(t *testing.T) {
 	base := t.TempDir()
-	runtime, notDirectory := filepath.Join(base, "runtime"), filepath.Join(base, "credentials")
-	writeText(t, filepath.Join(runtime, "usage", "u.jsonl"), "{}\n")
-	writeText(t, notDirectory, "x")
-	sink, err := OpenDir(base, "run", time.Unix(0, 0), false)
+	runtime, mounted := filepath.Join(base, "runtime"), filepath.Join(base, "credentials")
+	one, two := "0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"
+	for _, id := range []string{one, two} {
+		writeText(t, filepath.Join(runtime, "sessions", id, "claude/projects/p/s.jsonl"), `{"type":"message"} `+synthetic["access"])
+	}
+	writeText(t, filepath.Join(runtime, "usage/u.jsonl"), "{}\n")
+	login := filepath.Join(runtime, "sessions", one, "claude/.credentials.json")
+	full := `{"claudeAiOauth":{"accessToken":"` + synthetic["access"] + `"}}`
+	writeText(t, login, full[:len(full)-8]) // half written
+	sinkRoot := filepath.Join(base, "sink")
+	if err := os.Mkdir(sinkRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Unix(0, 0) }
+	sink, err := OpenDir(sinkRoot, "run", now(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mirror := &Mirror{RuntimeRoot: runtime, CredentialRoots: []string{notDirectory}, Sink: sink, Now: func() time.Time { return time.Unix(0, 0) }}
-	if err := mirror.Pass(); err == nil {
-		t.Fatal("unreadable credentials must fail the pass")
+	mirror := &Mirror{RuntimeRoot: runtime, CredentialRoots: []string{mounted}, Sink: sink, Now: now}
+	check := func(stage string, want map[string]bool) {
+		t.Helper()
+		if err := mirror.Pass(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(sink.Root(), "usage/u.jsonl")); err != nil {
+			t.Fatalf("%s: other evidence lost: %v", stage, err)
+		}
+		gaps, _ := os.ReadFile(filepath.Join(sink.Root(), GapFile))
+		for id, saved := range want {
+			_, err := os.Stat(filepath.Join(sink.Root(), "incidents", id, "claude/projects/p/s.jsonl"))
+			if (err == nil) != saved || strings.Contains(string(gaps), id) == saved {
+				t.Errorf("%s: %s saved=%v want %v, gaps %s", stage, id, err == nil, saved, gaps)
+			}
+		}
 	}
-	if _, err := os.Stat(filepath.Join(sink.Root(), "usage")); !os.IsNotExist(err) {
-		t.Fatalf("evidence copied without the credential set: %v", err)
+	check("no mount", map[string]bool{one: false, two: false})
+	if err := os.Mkdir(mounted, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	check("half-written login", map[string]bool{one: false, two: true})
+	writeText(t, login, full)
+	check("complete login", map[string]bool{one: true, two: true})
+	saved, err := os.ReadFile(filepath.Join(sink.Root(), "incidents", one, "claude/projects/p/s.jsonl"))
+	if err != nil || string(saved) != `{"type":"message"} `+Redacted {
+		t.Fatalf("saved transcript %q, %v", saved, err)
+	}
+}
+
+// Client settings kept in the Secret and short values are ordinary text.
+func TestCredentialsLeaveOrdinaryTextAlone(t *testing.T) {
+	mounted := t.TempDir()
+	writeText(t, filepath.Join(mounted, "ANTHROPIC_VERTEX_PROJECT_ID"), "synthetic-project-id")
+	writeText(t, filepath.Join(mounted, "auth.json"), `{"token":"message"}`)
+	credentials := &Credentials{}
+	credentials.Load([]string{mounted}, nil, t.TempDir())
+	if credentials.Len() != 0 {
+		t.Fatalf("%d ordinary values would be redacted", credentials.Len())
 	}
 }
 

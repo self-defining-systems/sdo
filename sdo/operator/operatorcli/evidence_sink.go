@@ -28,6 +28,7 @@ type EvidenceSinkConfig struct {
 	// Shared sinks (node host paths) are read by the runner as another uid.
 	Shared          bool
 	CredentialRoots []string
+	OptionalRoots   []string
 }
 
 func ParseEvidenceSink(args []string) (EvidenceSinkConfig, error) {
@@ -63,7 +64,7 @@ func ParseEvidenceSink(args []string) (EvidenceSinkConfig, error) {
 	if *interval < time.Second {
 		return EvidenceSinkConfig{}, errors.New("evidence-sink interval must be at least one second")
 	}
-	return EvidenceSinkConfig{RuntimeRoot: *runtimeRoot, LedgerRoot: *ledgerRoot, SinkRoot: *sinkRoot, RunID: *runID, Interval: *interval, Once: *once, Shared: *shared, CredentialRoots: evidencesink.MountedCredentialRoots()}, nil
+	return EvidenceSinkConfig{RuntimeRoot: *runtimeRoot, LedgerRoot: *ledgerRoot, SinkRoot: *sinkRoot, RunID: *runID, Interval: *interval, Once: *once, Shared: *shared, CredentialRoots: evidencesink.RequiredCredentialRoots(), OptionalRoots: evidencesink.OptionalCredentialRoots()}, nil
 }
 
 // EvidenceSinkClock is the mirror loop's time seam.
@@ -95,7 +96,7 @@ func RunEvidenceSink(ctx context.Context, cfg EvidenceSinkConfig, clock Evidence
 				fmt.Fprintf(log, "evidence-sink %s: open sink: %v\n", label, err)
 				return
 			}
-			mirror = &evidencesink.Mirror{RuntimeRoot: cfg.RuntimeRoot, LedgerRoot: cfg.LedgerRoot, CredentialRoots: cfg.CredentialRoots, Sink: dir, Now: clock.Now}
+			mirror = &evidencesink.Mirror{RuntimeRoot: cfg.RuntimeRoot, LedgerRoot: cfg.LedgerRoot, CredentialRoots: cfg.CredentialRoots, OptionalCredentialRoots: cfg.OptionalRoots, Sink: dir, Now: clock.Now}
 		}
 		run := mirror.Pass
 		if final {

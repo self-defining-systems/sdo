@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -465,3 +466,26 @@ def test_unclassified_exit_keeps_a_redacted_stderr_tail_in_account_mode(tmp_path
     assert "unexpected failure" in text
     assert "last line" in text
     assert secret not in text
+
+
+def test_another_accounts_turn_waits_instead_of_replacing_a_login_in_use(tmp_path: Path) -> None:
+    env = bundle(tmp_path)
+    router = AccountRouter.from_environment(env)
+    first = router.acquire()
+    router.environment(first, env)
+    second = AccountRouter.from_environment(env).acquire()
+    assert second.alias != first.alias
+    done = threading.Event()
+
+    def switch() -> None:
+        router.environment(second, env)
+        done.set()
+
+    waiting = threading.Thread(target=switch, daemon=True)
+    waiting.start()
+    assert not done.wait(0.2)
+    assert login_token(env) == (tmp_path / "secret" / f"{first.alias}.token").read_text()
+    first.close()
+    assert done.wait(10)
+    assert login_token(env) == (tmp_path / "secret" / f"{second.alias}.token").read_text()
+    second.close()

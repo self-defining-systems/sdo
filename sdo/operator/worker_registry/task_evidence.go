@@ -102,7 +102,7 @@ func (e KubernetesExecutor) prepareTaskEvidence(task *contracts.AgentTask) (task
 // finish records the outcome and drops the provider login the worker copied into its session home. Recording is
 // best effort: a full or unwritable volume must not turn a finished task into a failed one.
 func (t taskEvidence) finish(result *contracts.AgentResult, err error) {
-	for _, home := range []string{"codex/auth.json", "claude/.credentials.json"} {
+	for _, home := range []string{"codex/auth.json", "claude/.credentials.json", "claude/api_key.credential"} {
 		_ = safefs.Remove(t.root, path.Join(t.relative, home))
 	}
 	switch {

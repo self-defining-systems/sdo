@@ -71,10 +71,11 @@ type Mirror struct {
 	RuntimeRoot string
 	// LedgerRoot is the absolute native broker ledger directory; empty mirrors no ledgers.
 	LedgerRoot string
-	// CredentialRoots are the mounted credential directories whose values are redacted from everything copied.
-	CredentialRoots []string
-	Sink            *Dir
-	Now             func() time.Time
+	// CredentialRoots are the mounted credential directories whose values are redacted from everything copied, and
+	// OptionalCredentialRoots those that may be absent.
+	CredentialRoots, OptionalCredentialRoots []string
+	Sink                                     *Dir
+	Now                                      func() time.Time
 
 	credentials Credentials
 
@@ -117,9 +118,7 @@ func (m *Mirror) pass(final bool) error {
 		}
 	}
 	known := m.credentials.Len()
-	if err := m.credentials.Load(m.CredentialRoots, m.RuntimeRoot); err != nil {
-		return err
-	}
+	m.credentials.Load(m.CredentialRoots, m.OptionalCredentialRoots, m.RuntimeRoot)
 	if m.credentials.Len() != known {
 		// Files copied before a login was refreshed are copied again.
 		clear(m.sources)
@@ -200,6 +199,7 @@ func (m *Mirror) copyRuntime() error {
 		return nil
 	}
 	var errs []error
+	var gaps []byte
 	walkErr := filepath.WalkDir(m.RuntimeRoot, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			if name == m.RuntimeRoot {
@@ -229,6 +229,11 @@ func (m *Mirror) copyRuntime() error {
 		if !ok {
 			return nil
 		}
+		if reason := m.credentials.Withheld(relative); reason != "" {
+			// Not recorded as copied: it is copied on the first pass that can read the credential.
+			gaps = append(gaps, GapLine(relative, reason)...)
+			return nil
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return nil
@@ -242,6 +247,10 @@ func (m *Mirror) copyRuntime() error {
 		}
 		return nil
 	})
+	// Written once there is a gap and kept current after, so a closed gap leaves an empty file.
+	if _, recorded := m.stored[GapFile]; recorded || len(gaps) > 0 {
+		errs = append(errs, m.put(GapFile, gaps))
+	}
 	return errors.Join(append(errs, walkErr)...)
 }
 

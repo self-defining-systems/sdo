@@ -20,14 +20,38 @@ const Redacted = "[redacted]"
 
 const (
 	// minSecretBytes keeps short words out of the replacement set.
-	minSecretBytes = 8
+	minSecretBytes = 12
 	// maxCredentialBytes bounds one credential file.
 	maxCredentialBytes = 1 << 20
 	redactChunk        = 256 << 10
 )
 
-// MountedCredentialRoots are the credential Secret mounts of SDO's own Pods.
-func MountedCredentialRoots() []string { return []string{"/sdo/credentials", "/sdo/claude-accounts"} }
+// RequiredCredentialRoots are the credential mounts this Pod must have: the agent credentials Secret and, with pooled
+// accounts, the account Secret.
+func RequiredCredentialRoots() []string { return []string{"/sdo/credentials"} }
+
+// OptionalCredentialRoots are the mounts a Pod has only with pooled accounts.
+func OptionalCredentialRoots() []string { return []string{"/sdo/claude-accounts"} }
+
+// plainSettings are Secret keys that configure the model client and hold no credential.
+var plainSettings = map[string]bool{
+	"ANTHROPIC_BASE_URL": true, "OPENAI_BASE_URL": true, "CLAUDE_CODE_USE_VERTEX": true, "CLOUD_ML_REGION": true,
+	"ANTHROPIC_VERTEX_PROJECT_ID": true, "GOOGLE_APPLICATION_CREDENTIALS": true,
+}
+
+// GapFile lists the transcripts left out because a credential could not be read.
+const GapFile = "telemetry/redaction-gaps.jsonl"
+
+// Transcript reports whether a runtime path records agent output verbatim. It may be saved only with the complete
+// credential set; everything else is saved with the set at hand.
+func Transcript(name string) bool {
+	for _, part := range []string{"/codex/sessions/", "/claude/projects/", "/model_io/", "/investigations/", "/checkpoints/", "/sdo-reports/"} {
+		if strings.Contains("/"+name, part) {
+			return true
+		}
+	}
+	return false
+}
 
 // agentLogins are the login files an agent's CLI home holds. The CLIs refresh them in place, so they can hold values
 // the mounted Secret does not.
@@ -40,57 +64,84 @@ type Credentials struct {
 	patterns [][]byte
 	first    [256][]int // pattern indices by first byte, longest first
 	longest  int
+
+	mountGap string
+	homeGaps map[string]bool // session or task directories whose login could not be read
 }
 
 // Len is the number of known value forms; it changes exactly when the set grows.
 func (c *Credentials) Len() int { return len(c.values) }
 
 // Load adds the values of every file in the mounted credential roots and of the login files in the agent homes below
-// runtimeRoot. A missing root is an unconfigured one; a root or file that cannot be read is an error, so evidence is
-// never written with an incomplete set.
-func (c *Credentials) Load(mounted []string, runtimeRoot string) error {
-	var files []string
-	for _, root := range mounted {
+// runtimeRoot, and records what it could not read: a required root that is missing, any unreadable mounted file, or a
+// home's login that is unreadable or half written. Withheld then reports the transcripts that must not be saved. The
+// files are read again on every call, so a login is complete at the latest one call after it is written.
+func (c *Credentials) Load(required, optional []string, runtimeRoot string) {
+	c.mountGap, c.homeGaps = "", nil
+	for index, root := range append(append([]string(nil), required...), optional...) {
 		entries, err := os.ReadDir(root)
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) && index >= len(required) {
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("read credential directory: %w", err)
+			c.mountGap = "credential mount unreadable"
+			continue
 		}
 		for _, entry := range entries {
 			// Secret volumes keep their data in ..data and link each key to it.
-			if !strings.HasPrefix(entry.Name(), "..") {
-				files = append(files, filepath.Join(root, entry.Name()))
+			if strings.HasPrefix(entry.Name(), "..") || plainSettings[entry.Name()] {
+				continue
 			}
-		}
-	}
-	for _, file := range files {
-		if err := c.loadFile(file, os.O_RDONLY); err != nil {
-			return err
+			if err := c.loadFile(filepath.Join(root, entry.Name()), os.O_RDONLY, false); err != nil {
+				c.mountGap = "credential mount unreadable"
+			}
 		}
 	}
 	for _, home := range []string{"codex", "claude", "sessions/*/codex", "sessions/*/claude", "tasks/*/codex", "tasks/*/claude"} {
 		for _, login := range agentLogins {
-			matches, err := filepath.Glob(filepath.Join(runtimeRoot, filepath.FromSlash(home), login))
-			if err != nil {
-				return err
-			}
+			matches, _ := filepath.Glob(filepath.Join(runtimeRoot, filepath.FromSlash(home), login)) // the pattern is fixed
 			for _, file := range matches {
-				// Agents can write here: never follow a link.
-				if err := c.loadFile(file, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK); err != nil {
-					return err
+				// Agents can write here: never follow a link, never block on a pipe.
+				if err := c.loadFile(file, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, strings.HasSuffix(login, ".json")); err != nil {
+					if relative, err := filepath.Rel(runtimeRoot, filepath.Dir(file)); err == nil {
+						if c.homeGaps == nil {
+							c.homeGaps = map[string]bool{}
+						}
+						// The whole session or task, since its other files quote the same agent.
+						c.homeGaps[filepath.ToSlash(filepath.Dir(relative))] = true
+					}
 				}
 			}
 		}
 	}
 	c.index()
-	return nil
 }
 
-func (c *Credentials) loadFile(name string, flags int) error {
+// Withheld is why the transcript at a runtime path must not be saved now, or "".
+func (c *Credentials) Withheld(name string) string {
+	if !Transcript(name) {
+		return ""
+	}
+	if c.mountGap != "" {
+		return c.mountGap
+	}
+	for home := range c.homeGaps {
+		if home == "." && (strings.HasPrefix(name, "codex/") || strings.HasPrefix(name, "claude/")) || strings.HasPrefix(name, home+"/") {
+			return "agent login unreadable"
+		}
+	}
+	return ""
+}
+
+// GapLine is the GapFile record of one withheld transcript.
+func GapLine(name, reason string) []byte {
+	line, _ := json.Marshal(map[string]string{"path": name, "reason": reason}) // strings always encode
+	return append(line, '\n')
+}
+
+func (c *Credentials) loadFile(name string, flags int, document bool) error {
 	file, err := os.OpenFile(name, flags, 0)
-	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ELOOP) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
@@ -98,12 +149,21 @@ func (c *Credentials) loadFile(name string, flags int) error {
 	}
 	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return err
+	if err != nil {
+		return fmt.Errorf("read credential file: %w", err)
+	}
+	if info.IsDir() && !document {
+		return nil
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxCredentialBytes {
+		return errors.New("credential file is not a bounded regular file")
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxCredentialBytes))
 	if err != nil {
 		return fmt.Errorf("read credential file: %w", err)
+	}
+	if document && !json.Valid(data) {
+		return errors.New("credential file is half written")
 	}
 	c.addDocument(data)
 	return nil

@@ -120,12 +120,15 @@ class AccountHealth:
 class AccountLease:
     account: Account
     handle: IO[str] = field(repr=False)
+    login: IO[str] | None = field(default=None, repr=False)
 
     @property
     def alias(self) -> str:
         return self.account.alias
 
     def close(self) -> None:
+        if self.login is not None:
+            self.login.close()
         self.handle.close()
 
 
@@ -289,7 +292,9 @@ class AccountRouter:
         home = base.get("CLAUDE_CONFIG_DIR", "")
         if not home:
             raise CapacityConfigurationError("per_account requires CLAUDE_CONFIG_DIR, a home dedicated to the agent")
-        write_claude_login(Path(home), token)
+        if lease.login is not None:
+            lease.login.close()
+        lease.login = _hold_login(Path(home), token)
         # Explicitly blank competing authentication. Claude must use this lease.
         return {
             **base,
@@ -353,6 +358,34 @@ def _private_write(path: Path, content: str) -> None:
         os.replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def _hold_login(home: Path, token: str) -> IO[str]:
+    """Make *token* the home's login and keep it until the returned handle closes.
+
+    Turns of one account share the login; a turn of another account waits for them instead of replacing the login
+    under a running CLI.
+    """
+    home.mkdir(parents=True, exist_ok=True)
+    handle = (home / ".account-login.lock").open("a")
+    try:
+        while True:
+            fcntl.flock(handle, fcntl.LOCK_SH)
+            if _login_token(home) == token:
+                return handle
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            if _login_token(home) != token:
+                write_claude_login(home, token)
+    except BaseException:
+        handle.close()
+        raise
+
+
+def _login_token(home: Path) -> str | None:
+    try:
+        return json.loads((home / ".credentials.json").read_text())["claudeAiOauth"]["accessToken"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def write_claude_login(home: Path, token: str) -> None:

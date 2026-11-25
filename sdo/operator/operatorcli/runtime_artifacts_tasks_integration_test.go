@@ -35,8 +35,9 @@ func TestRuntimeArchiveCarriesLifecycleTaskEvidence(t *testing.T) {
 		writeFixture(t, runtime, task+"/"+name)
 	}
 	bin := t.TempDir()
-	if output, err := exec.Command("go", "build", "-o", filepath.Join(bin, "sdo-operator"), "sdo.dev/operator/cmd/sdo-operator").CombinedOutput(); err != nil {
-		t.Fatalf("build sdo-operator: %v: %s", err, output)
+	// The archive writer has its own test; here tar stands in for it, so this covers the script's file selection.
+	if err := os.WriteFile(filepath.Join(bin, "sdo-operator"), []byte("#!/bin/sh\nexec tar -cf - -T -\n"), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for _, live := range []bool{false, true} {
