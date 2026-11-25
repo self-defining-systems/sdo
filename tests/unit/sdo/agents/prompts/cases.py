@@ -192,7 +192,10 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
         prompts["responder_transport"] = responder_prompt(scaled())
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
 
-        changes = ["1. 03:04:05 api-exec Pod/db-1", "2. 03:04:06 api-delete Pod/api-1"]
+        changes = [
+            "1. Deployment/app/web: patch; plan refresh-config; reported: corrected config",
+            "2. cache entries: reported: removed stale entries",
+        ]
         prompts["closing_learning"] = closing_prompt(incident_id="toy-incident", changes=changes)
         prompts["closing_cleanup"] = cleanup_prompt(leftovers=["app/main.go", "app/debug.txt"], turn=1)
         prompts["reflection_memory_check_correction"] = reflection.memory_check_correction(

@@ -3,11 +3,14 @@ package runtime
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/outcome"
+	"sdo.dev/operator/sdk"
 )
 
 func TestClosingChangesRankNonRestoresFirstAndCountWhatIsCut(t *testing.T) {
@@ -86,13 +89,24 @@ func TestClosingLearnsWithTheRecordingOffOnAnySuccessThatIsNotAPlainRestore(t *t
 	}
 }
 
-func TestClosingChangeLinesAreOmittedWithTheRecordingOff(t *testing.T) {
-	closure := IncidentClosure{Result: &IncidentResult{RepairActions: []RepairActionReceipt{{Kind: "kubectl-patch", Target: "Deployment/web", Success: true}}}}
-	if got := (&NativeIncidentBroker{}).closingChangeLines(closure); len(got) != 0 {
-		t.Fatalf("recording off: closing turn change lines = %v, want none", got)
+func TestClosingChangeLinesGroupCompositeWithRecordingOff(t *testing.T) {
+	workload := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "web"}
+	closure := IncidentClosure{Result: &IncidentResult{
+		PlanApplications: []RecordedPlanApplication{{ProgramIDs: []string{"refresh-config"}, Result: PlanApplicationResult{
+			ObjectEffects: []PlanObjectEffect{{Ref: workload, State: "applied"}},
+		}}},
+		RepairActions: []RepairActionReceipt{{Kind: "api-patch", Resources: []sdk.ObjectRef{workload}, Success: true}},
+		AgentChanges: []*contracts.AgentChange{
+			{Target: "Deployment/app/web", Summary: "corrected config"},
+			{Target: "cache entries", Summary: "removed stale entries"},
+		},
+	}}
+	want := []string{
+		"1. Deployment/app/web: patch; plan refresh-config; reported: corrected config",
+		"2. cache entries: reported: removed stale entries",
 	}
-	if got := (&NativeIncidentBroker{Recording: true}).closingChangeLines(closure); len(got) == 0 {
-		t.Fatalf("recording on: closing turn change lines are empty, want the rendered changes")
+	if got := (&NativeIncidentBroker{}).closingChangeLines(closure); !reflect.DeepEqual(got, want) {
+		t.Fatalf("closing change groups = %q, want %q", got, want)
 	}
 }
 
