@@ -4,6 +4,7 @@ package kubeproxy
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -61,6 +62,7 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 // NewRecording is the proxy every agent Job reaches Kubernetes through.
 func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTripper, config Config) http.Handler {
 	recorder, gate := config.Recorder, config.Gate
+	var told atomic.Value
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e := requestEvent(r)
 		var uncertain atomic.Bool
@@ -115,12 +117,20 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 			requestBody = &bodyPrefix{ReadCloser: r.Body}
 			r.Body = requestBody
 		}
+		if gate != nil {
+			if withdrawn, _ := gate.Withdrawn(); withdrawn != "" && (told.Swap(withdrawn) != withdrawn || write) {
+				// kubectl prints it. Reads carry it once: their output is often parsed.
+				w.Header().Add("Warning", fmt.Sprintf("299 - %q", withdrawn))
+			}
+		}
 		if gate != nil && write {
 			lease, err := gate.Begin()
 			if err != nil {
 				warning, _ := gate.Verified()
 				message := "incident mutation rejected"
-				if warning != nil {
+				if withdrawn, _ := gate.Withdrawn(); withdrawn != "" {
+					message, warning = withdrawn+" (retry)", nil
+				} else if warning != nil {
 					message += ": " + warning.Message
 				}
 				w.Header().Set("Content-Type", "application/json")

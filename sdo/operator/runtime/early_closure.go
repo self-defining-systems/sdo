@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,6 +18,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -229,7 +231,47 @@ func (c *Controller) withdrawRecoveryLocked(now time.Time, finding sdk.Finding) 
 	c.publishHeldLocked()
 	c.cacheVerificationLocked(ToolResponse{Command: "verify", Summary: "recovery withdrawn: an alert of the incident fires; writes are accepted again", Findings: []sdk.Finding{finding}})
 	slog.Info("incident_recovery_withdrawn", "incident_id", closure.Request.IncidentID, "finding", findingKey(finding))
+	if c.incidentGate != nil {
+		gate, err := c.incidentGate(closure.Request.IncidentID)
+		if err == nil {
+			err = gate.Withdraw("recovery withdrawn: "+alertName(finding)+" fires; writes are accepted, keep working", findingKey(finding))
+		}
+		if err != nil {
+			slog.Error("recovery_withdrawn_notice_failed", "incident_id", closure.Request.IncidentID, "error", err)
+		}
+	}
 	c.reconcileRecoveryFenceLocked()
+	c.withdrawnNoticeMayStand = true
+}
+
+// alertName is one alert in a line: its user test, or its rule and object.
+func alertName(finding sdk.Finding) string {
+	name, isTest := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix)
+	if !isTest && finding.PrimaryResource.Name != "" {
+		name += " " + finding.PrimaryResource.Kind + "/" + finding.PrimaryResource.Name
+	}
+	return plainName(name, 50)
+}
+
+// clearWithdrawnNoticeLocked ends the notice once its alert cleared: it must
+// never say that a cleared alert fires.
+func (c *Controller) clearWithdrawnNoticeLocked() {
+	if !c.withdrawnNoticeMayStand || !c.incidentOpen || c.currentIncidentRequest == nil || c.incidentGate == nil {
+		return
+	}
+	gate, err := c.incidentGate(c.currentIncidentRequest.IncidentID)
+	if err == nil {
+		_, alert := gate.Withdrawn()
+		if alert != "" && c.tracker.HasActiveKeys([]string{alert}) {
+			return
+		}
+		err = gate.ClearWithdrawn()
+	}
+	if err != nil {
+		slog.Warn("recovery_withdrawn_notice_pending", "incident_id", c.currentIncidentRequest.IncidentID, "error", err)
+		return
+	}
+	c.withdrawnNoticeMayStand = false
 }
 
 // reconcileRecoveryFenceLocked removes a recovery fence that outlived its
@@ -238,6 +280,7 @@ func (c *Controller) withdrawRecoveryLocked(now time.Time, finding sdk.Finding) 
 // cannot leave the session fenced. A finished responder's fence stays until a
 // new dispatch proves it quiescent (reopenWithdrawnRecovery).
 func (c *Controller) reconcileRecoveryFenceLocked() {
+	c.clearWithdrawnNoticeLocked()
 	if !c.recoveryFenceMayStand || !c.incidentOpen || c.responderDone || c.currentIncidentRequest == nil ||
 		c.incidentDispatchedAt.IsZero() || c.incidentGate == nil {
 		return

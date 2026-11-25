@@ -426,3 +426,19 @@ def test_changes_limit_must_be_positive(monkeypatch, capsys):
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("no request for an invalid limit"))
     assert tools_cli.main(["changes", "--limit", "0"]) == 1
     assert "--limit must be at least 1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("full_json", [False, True])
+@pytest.mark.parametrize("command", ["source", "detect", "changes", "investigations", "mitigate", "rollback"])
+def test_a_withdrawn_recovery_is_told_and_a_leftover_fence_is_not(monkeypatch, capsys, tmp_path, command, full_json):
+    (tmp_path / "incident-verified.json").write_text(
+        '{"message": "stale fence", "verified_at": "2026-01-01T00:00:00Z"}'
+    )
+    monkeypatch.setenv("SDO_API_HISTORY_DIR", str(tmp_path))
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    notice = "recovery withdrawn: write-item fires; writes are accepted, keep working"
+    response = {"command": command, "summary": "ok", "text": "view", "recovery_withdrawn": notice}
+    tools_cli._print_response(response, full_json=full_json)
+    out = capsys.readouterr().out
+    assert notice in out
+    assert "stale fence" not in out

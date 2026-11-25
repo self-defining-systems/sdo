@@ -112,7 +112,7 @@ Incident-open `playbook_coverage` is copied from the controller request into out
 
 The responder's first message is `responder.instructions`: one short instruction line (investigate and fix;
 the `sdo` command is available and its skills are named but not required; SDO ends the session on recovery;
-return only to give up; never print a credential), the page (the incident, its opening alerts and onset, the
+until then, return only to give up; never print a credential), the page (the incident, its opening alerts and onset, the
 candidate block), earlier attempts' notes and the result-field line. It holds no finding and no request JSON,
 tells the agent to read no skill and prescribes no first command. The model-facing incident result is only
 `findings` and `agent_changes`; the worker fills `incident_id`, `status` and `timing`. Warm/cold strategy,

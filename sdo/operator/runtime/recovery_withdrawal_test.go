@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -282,5 +283,110 @@ func TestAnAlertAfterTheClosureFrozeDoesNotJoin(t *testing.T) {
 	c.mu.Unlock()
 	if c.joinAlertSet(joinedCondition(), c.clock()) || c.IncidentOpen() {
 		t.Fatal("a frozen closure was withdrawn")
+	}
+}
+
+// Every command answers through the loop, whatever it does: it carries the
+// controller's verdict of now, never the fence file's.
+func TestCommandsTellAWithdrawnRecovery(t *testing.T) {
+	commands := []string{"source", "detect", "changes", "timeline", "map", "menu", "investigations", "mitigate", "rollback"}
+	w, gate := verifiedRunningSession(t)
+	c := w.controller
+	id := c.currentIncidentRequest.IncidentID
+	loop := &ResponderLoop{Request: *cloneIncidentRequest(c.currentIncidentRequest), Provider: c.provider, MutationGate: gate,
+		IncidentStatus: func() *apihistory.IncidentVerified { return c.incidentVerificationWarning(id) }}
+	all := func(check func(string, ToolResponse)) {
+		t.Helper()
+		for _, command := range commands {
+			check(command, loop.Handle(context.Background(), ToolRequest{Command: command}))
+		}
+	}
+	all(func(command string, response ToolResponse) {
+		if response.RecoveryWithdrawn != "" {
+			t.Errorf("%s: withdrawn before it was: %q", command, response.RecoveryWithdrawn)
+		}
+		if command == "investigations" {
+			return
+		}
+		// A test can fail or lack samples before it joins, so the notice never
+		// invites the agent to stop on SDO's verdict alone.
+		if response.IncidentVerified == nil || strings.Contains(response.IncidentVerified.Message, "finish") ||
+			!strings.Contains(response.IncidentVerified.Message, "return unless a test of this incident fails") {
+			t.Errorf("%s: %+v", command, response.IncidentVerified)
+		}
+	})
+	// The gate is busy, so the fence file outlives the withdrawal for a step.
+	observation, err := gate.TryObserve()
+	if err != nil || observation == nil {
+		t.Fatal(err)
+	}
+	c.joinAlertSet(joinedCondition(), c.clock())
+	told := func(command string, response ToolResponse) {
+		if response.IncidentVerified != nil || !strings.Contains(response.RecoveryWithdrawn, "recovery withdrawn: deployment-unready Deployment/other fires") {
+			t.Errorf("%s: verified %v withdrawn %q", command, response.IncidentVerified, response.RecoveryWithdrawn)
+		}
+	}
+	for _, command := range []string{"source", "detect", "changes", "investigations"} {
+		told(command, loop.Handle(context.Background(), ToolRequest{Command: command}))
+	}
+	observation.Close()
+	c.tracker.Restore(map[string]FindingState{findingKey(joinedCondition()): {DetectorID: joinedCondition().DetectorID, Finding: joinedCondition(), Active: true}})
+	c.finishEarlyReport(context.Background(), c.clock())
+	all(told)
+	// A new verification replaces the notice.
+	observation, err = gate.TryObserve()
+	if err != nil || observation == nil {
+		t.Fatal(err)
+	}
+	if err := observation.Fence(c.clock()); err != nil {
+		t.Fatal(err)
+	}
+	observation.Close()
+	if reason, _ := gate.Withdrawn(); reason != "" {
+		t.Fatal("a new verification kept the old notice")
+	}
+}
+
+func TestAWithdrawnAlertIsNamedInOneShortLine(t *testing.T) {
+	for want, finding := range map[string]sdk.Finding{
+		"write-item":         {RuleID: "scenario-slo.write-item", PrimaryResource: sdk.ObjectRef{Kind: "Service", Name: "api"}},
+		"rule-x Service/api": {RuleID: "rule-x", PrimaryResource: sdk.ObjectRef{Kind: "Service", Name: "api"}},
+	} {
+		if got := alertName(finding); got != want {
+			t.Errorf("%q, want %q", got, want)
+		}
+	}
+	if long := alertName(sdk.Finding{RuleID: strings.Repeat("x", 200)}); len([]rune(long)) != 50 {
+		t.Errorf("unbounded name: %q", long)
+	}
+}
+
+// The notice names an alert that fires now: it ends when that alert clears,
+// also across a restart.
+func TestTheWithdrawnNoticeEndsWhenItsAlertClears(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		w, gate := verifiedRunningSession(t)
+		c := w.controller
+		w.refail()
+		w.runUntil(t, 5, nil, c.IncidentOpen)
+		w.runUntil(t, 2, nil, func() bool { return false })
+		if reason, _ := gate.Withdrawn(); !strings.Contains(reason, "request-stall Deployment/api fires") {
+			t.Fatalf("the firing alert is not named: %q", reason)
+		}
+		if restart {
+			state, err := c.ExportState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.withdrawnNoticeMayStand = false
+			if err := c.RestoreState(state); err != nil {
+				t.Fatal(err)
+			}
+			c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+		}
+		w.runUntil(t, 12, nil, func() bool { return false })
+		if reason, _ := gate.Withdrawn(); reason != "" || !c.IncidentOpen() {
+			t.Fatalf("restart %v: a cleared alert is said to fire: %q", restart, reason)
+		}
 	}
 }

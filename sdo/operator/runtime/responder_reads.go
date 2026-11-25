@@ -25,7 +25,7 @@ func concurrentRead(command string) bool {
 func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (response ToolResponse) {
 	if request.Command == "investigations" {
 		// A pure read of the board; it is not a loop call and records nothing.
-		return ToolResponse{Command: request.Command, Text: l.Investigations.Text(), Summary: "investigator reports"}
+		return ToolResponse{Command: request.Command, Text: l.Investigations.Text(), Summary: "investigator reports", RecoveryWithdrawn: l.recoveryWithdrawn()}
 	}
 	if request.Command == "detect" && request.WaitSeconds != 0 {
 		return l.waitDetect(ctx, request)

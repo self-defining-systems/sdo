@@ -203,6 +203,14 @@ def format_mutation_response(
     warning = next(
         (action.get("incident_verified") for action in reversed(actions) if action.get("incident_verified")), None
     )
+    withdrawn = next(
+        (
+            _bounded_text(action["recovery_withdrawn"], 120)
+            for action in reversed(actions)
+            if action.get("recovery_withdrawn")
+        ),
+        "",
+    )
     unapplied = ""
     if len(actions) == 1:
         action = actions[0]
@@ -232,7 +240,7 @@ def format_mutation_response(
         lines[2:] = ["Controller snapshots unavailable; progress unknown (see full report)."]
     schema = command_report_schema()
     tail = [
-        f"incident_verified: {_bounded_text(warning['message'], 120) if warning else 'false'}",
+        withdrawn or f"incident_verified: {_bounded_text(warning['message'], 120) if warning else 'false'}",
         f"Full JSON: {path}",
         "Schema (top-level keys):",
     ]

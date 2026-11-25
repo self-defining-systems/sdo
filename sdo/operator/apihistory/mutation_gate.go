@@ -24,7 +24,7 @@ type IncidentVerified struct {
 }
 
 func VerificationWarning(at time.Time) *IncidentVerified {
-	return &IncidentVerified{VerifiedAt: at.UTC(), Message: fmt.Sprintf("write refused while recovered; retry if `sdo detect` shows recovered: no. SDO verified this incident at %s; you may finish your report", at.UTC().Format(time.RFC3339Nano))}
+	return &IncidentVerified{VerifiedAt: at.UTC(), Message: fmt.Sprintf("write refused while recovered; retry if `sdo detect` shows recovered: no. Recovery judged at %s; return unless a test of this incident fails", at.UTC().Format(time.RFC3339Nano))}
 }
 
 // MutationGate coordinates the controller and the API sidecar through their
@@ -199,6 +199,9 @@ func (o *MutationObservation) Fence(at time.Time) error {
 	if err != nil {
 		return err
 	}
+	if err := o.gate.ClearWithdrawn(); err != nil {
+		return err
+	}
 	temporary := filepath.Join(o.gate.Directory, ".incident-verified-"+apiio.Text())
 	if err := os.WriteFile(temporary, b, 0600); err != nil {
 		return err
@@ -207,8 +210,51 @@ func (o *MutationObservation) Fence(at time.Time) error {
 	return os.Rename(temporary, filepath.Join(o.gate.Directory, "incident-verified.json"))
 }
 
+const withdrawnFile = "recovery-withdrawn"
+
+// Withdraw records why the recovery no longer holds and the alert that says
+// so, until that alert clears or the next fence or seal. It needs no lock: the
+// responder is told even while a busy gate keeps the fence.
+func (g *MutationGate) Withdraw(reason, alert string) error {
+	b, err := json.Marshal(withdrawal{Reason: reason, Alert: alert})
+	if err != nil {
+		return err
+	}
+	temporary := filepath.Join(g.Directory, "."+withdrawnFile+"-"+apiio.Text())
+	if err := os.WriteFile(temporary, b, 0600); err != nil {
+		return err
+	}
+	defer os.Remove(temporary)
+	return os.Rename(temporary, filepath.Join(g.Directory, withdrawnFile))
+}
+
+type withdrawal struct {
+	Reason string `json:"reason"`
+	Alert  string `json:"alert"`
+}
+
+// Withdrawn is why the last recovery was withdrawn and by which alert, or "".
+func (g *MutationGate) Withdrawn() (reason, alert string) {
+	b, _ := os.ReadFile(filepath.Join(g.Directory, withdrawnFile))
+	var recorded withdrawal
+	_ = json.Unmarshal(b, &recorded)
+	return recorded.Reason, recorded.Alert
+}
+
+// ClearWithdrawn ends the notice.
+func (g *MutationGate) ClearWithdrawn() error {
+	err := os.Remove(filepath.Join(g.Directory, withdrawnFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 // Seal prevents further writes after a terminal closure without recording health proof.
 func (o *MutationObservation) Seal() error {
+	if err := o.gate.ClearWithdrawn(); err != nil {
+		return err
+	}
 	return os.WriteFile(filepath.Join(o.gate.Directory, "incident-closed"), nil, 0600)
 }
 

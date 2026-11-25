@@ -17,7 +17,7 @@ description: Incident repair.
 - Prefer the fastest supported operation with the same effects, including cache invalidation.
 - Ensure the process uses the fix. Replace it if not rolled.
 - **Verify recovery.** The operation must keep passing. For paged incidents, return `completed` if verified, else `failed`.
-  If fenced, finish your report. Later alerts can leave it open and escalated.
+  If fenced, return unless a test of this incident fails; then keep working.
   Recovery covers all users. Probes sample user health. Never change state for probe/test identities. If the app serves others, verify with real traffic or a non-SDO request.
   Background results are interim. Keep working when it ends. The last result stands.
 - **Record.** `findings` (required even if you give up): what you saw and where, what you ruled out and why, and gaps.
