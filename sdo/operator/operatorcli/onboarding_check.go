@@ -38,7 +38,7 @@ import (
 const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS --prometheus URL|NS/SERVICE:PORT
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
                                     [--settle 90s] [--json] [--report FILE]
-                                    [--quick] [--full] [--cache-dir DIR] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3] [--quiet-writes 4]
+                                    [--metrics] [--quick] [--full] [--cache-dir DIR] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3] [--quiet-writes 4]
                                     [--break] [--break-bound 60s] [--break-mode auto|scale|network]
                                     [--cluster-network] [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
 
@@ -46,6 +46,7 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          items with quiet-when-healthy observing alongside, then (with --break)
          fails-under-break. Progress lines go to stderr; the report is headed
          by its mode.
+         --metrics runs only the metric items (no detector is built or run).
          --quick is the fast loop (about 2-3 minutes after the detectors build):
          the metric items and a short smoke where every detector judges at
          least once. It never runs --break and its report is never clean (it
@@ -142,8 +143,20 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
 // RunOnboarding runs "sdo-operator onboarding <args>" and returns the exit code.
 func RunOnboarding(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(stdout, OnboardingUsage)
+		fmt.Fprintln(stdout, OnboardingJourneysUsage+"\n\n"+OnboardingUsage)
 		return exitClean
+	}
+	if args[0] == "journeys" {
+		code, err := onboardingJourneys(ctx, args[1:], stdout, stderr)
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(stdout, OnboardingJourneysUsage)
+			return exitClean
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, "sdo-operator onboarding:", err)
+			return exitInfra
+		}
+		return code
 	}
 	if args[0] != "check" {
 		fmt.Fprintf(stderr, "unknown onboarding command %q\n%s\n", args[0], OnboardingUsage)
@@ -295,6 +308,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	quietWindow := flags.Duration("quiet-window", 10*time.Minute, "quiet-when-healthy window; 0 skips the item")
 	full := flags.Bool("full", false, "ignore the session's recorded verdicts and judge every item again (the gate); without it, a break or detector whose inputs are unchanged since a clean run is reused and labelled, and the report is incremental, never clean")
 	cacheDir := flags.String("cache-dir", "", "where the session's recorded verdicts are kept (default: the user cache directory), one file per repository and namespace")
+	metricsOnly := flags.Bool("metrics", false, "only the metric items: no detector is built or run")
 	quick := flags.Bool("quick", false, "fast iteration: the metric items and a short detector smoke; never clean, never breaks")
 	quietEvaluations := flags.Int("quiet-evaluations", onboardcheck.DefaultQuietEvaluations, "judgements each detector must make past its own horizon for the quiet window to end")
 	quietWrites := flags.Int("quiet-writes", defaultQuietWriteRounds, "times per detector pass the quiet window re-runs the memory's write probes, so the lists its read probes use keep growing (0 judges a static dataset)")
@@ -353,6 +367,9 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	}
 	if *quick && *breakItem {
 		return 0, errors.New("--quick never runs --break: the full check is the gate")
+	}
+	if *metricsOnly {
+		*quietWindow, *harmWindow, *quick, *breakItem = 0, 0, true, false
 	}
 	if *quick {
 		*quietWindow = min(*quietWindow, 2*time.Minute)

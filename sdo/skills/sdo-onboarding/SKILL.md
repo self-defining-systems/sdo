@@ -1,82 +1,72 @@
 ---
 name: sdo-onboarding
-description: Onboard an application end to end as SDO's onboarding agent. Covers orchestrating subagents, the goals in a sensible order, the check report and the finish line.
+description: Onboard a deployed application as SDO's onboarding agent. Covers turning the given user journeys into probes, the map, request metrics, the request budget, the checks and the finish line.
 ---
 
 # Onboarding an application
 
-You make SDO serve this codebase in Kubernetes, healthy, and observable enough that SDO can tell when any
-user operation breaks and where. The repository is yours to change: application source, `.sdo/deployment/`,
-the map in `.sdo/arch.md`, probes and detectors. Go writes outcomes and lifecycle provenance; leave them alone.
-The broker checks only that what you commit is valid (format, schema, compile, tests, patches, secrets).
+The application runs; the people who run it listed its user journeys. You write what SDO needs to notice a broken
+journey within seconds: the map (`.sdo/arch.md`), probes (`.sdo/diagnostics/traffic/`) and the health-objective
+playbook. Go adds the generic Kubernetes, endpoint, store and request-metric detectors when memory is published;
+do not write them. Work alone: one author, no subagents, no reviewers.
 
-## You orchestrate
+## Order of work
 
-You own finishing. Keep a to-do list in your scratch directory and update it as you learn.
-Give each concrete task (deploy, instrument one service, write one operation's probe, find the
-entries) to a subagent with a clear finish line. Never accept "done" from the subagent that did
-the work: a different subagent reviews it, and the check report confirms it. Read summaries and
-reports, not raw logs. When a result is wrong, say why and send it back.
+1. **Look once** (a few minutes): manifests, README, Services, the API's own description, the way a user gets an
+   account. Note what each journey calls and what a correct answer is.
+2. **Map**: start from Go's seed, then entries, operations with `journey: <id>` and `correct`, probes
+   ([map](../sdo-operations-map/SKILL.md)). Declare the [probe identity](../sdo-operations-map/references/map.md#probe-identity)
+   when accounts are not self-service: ordinary users, never admin.
+3. **One probe first**, end to end through `onboarding journeys --only`, then the rest in batches of three or four.
+   Copy the shape of the [worked example](references/example.md); read the [traffic reference](../sdo-detectors/references/traffic.md)
+   only for a signature it does not show, and [strict probes](../sdo-detectors/references/probes.md) once.
+4. **Request metrics**: map the request metric the application already exposes (route, method, status). When its
+   route label does not tell operations apart, fix that by configuration or a small middleware in the deployment;
+   time-box it, since probes carry detection ([observability](../sdo-observability/SKILL.md)).
+5. **Check, fix the first red line, repeat.** Commit when a batch is green.
 
-## Goals (a sensible order, not steps)
+## What a good probe is
 
-1. It runs: deploy the commit until it is deployed and healthy ([serving](../sdo-serving/SKILL.md)).
-2. You know what users do: every exposed entry, route, non-HTTP entry and existing record, each written as an
-   operation (background work belongs to the operation that triggers it) with what a correct result is
-   ([map](../sdo-operations-map/SKILL.md)).
-   A separate subagent whose only job is finding missing journeys (from source, tests, docs and API specs, given
-   the current map) reviews the map; fix what it finds or exclude it with a reason.
-3. Every operation is observable: request, error and latency counts by route; traces across
-   services; structured error logs. Reuse first; change code where needed
-   ([observability](../sdo-observability/SKILL.md)).
-4. The map is true: components and edges from traces and code.
-5. Probes cover what traffic can't show: wrong answers, quiet operations, existing records,
-   background work. They must pass when healthy and fail when their operation is broken
-   ([detectors](../sdo-detectors/SKILL.md)).
-6. Fix red items and redeploy. A red item you cannot fix gets a reason in the map.
-   Keep going until the report is clean.
+- A journey is what a user does: write something with a fresh unique name, then read it back exactly through the
+  route a user reads, including the background effect (poll it with `NotYet`). Read journeys check exact content of
+  fixtures Setup made, and one step lists records users already have.
+- Cover each way in (API, other protocols, sign-in) and each store or component on its path, refused access as well
+  as granted access where the journey is about permissions.
+- Several journeys fit in one scenario only when they share data; a scenario has at most 8 steps. Prefer one request
+  that checks more over two.
+- Two probers may run it at once, beside real users: name every object per iteration, look up by id or marker,
+  never assume a list is yours or a fixture is the only one. Writers that contend share one identity per journey.
+- Clean up in the same iteration, in an order the application allows while its background work runs. Data that
+  cannot be deleted stays one fixed object, or is bounded and noted.
+- Keep probe work small: few concurrent heavy writes, small objects, low-cost reads.
 
-## What done means for each journey
+## Budget and cadence
 
-The people running the application give the user journeys SDO must support; they are authoritative. They are in your
-goal under "User journeys:" as the people wrote them (free text, often one journey per line), and goal.md's front
-matter lists the same journeys as `id`/`what`. Cover every one fully: each has at least one operation with
-`journey: <id>` (use the front matter's ids), and each such operation meets the whole checklist below. A journey you
-cannot find in the application is a blocker you report, never one you drop. Still map every route: a route outside
-the given journeys is its own operation (with no `journey` field) or an excluded route with a reason. When the goal
-lists no journeys, find them yourself.
+`onboarding journeys` prints requests/s planned and left under the cap: look before you add. Set `ratePerSecond` in
+every workload (unset is 4 iterations/s). Give most of the budget to the journeys users do most:
 
-Every user journey is instrumented and detected: mapped in the app's own metrics (with the background work it
-triggers), errors and latency per journey, a probe that checks its result end to end, a detector that names it
-when any component on its path breaks, a true component path with metrics, logs and trace pointers. The
-check prints one row per journey; the items are in [the standard](references/journey-standard.md). Instrument in
-application code (middleware, metrics, logging, tracing) or the deployment, whichever gives the items; install and
-configure OpenTelemetry yourself where it helps.
+- `probe-call`, `probe-write`, `probe-read-later` hold every scenario of their kind. Give a home workload a long
+  `sampleInterval` (60-120 s) with `minSamples: 1, maxErrorRate: 1, maxTimeoutRate: 1, maxAge: 10m`: SDO confirms a new failure itself
+  with two more samples within 5 s.
+- Add `probe-fast-call` and `probe-fast-write` with the core scenarios again at 10 s, so the page comes within about 20 s. Cover
+  each store and each component a user request crosses from a fast workload; rarer journeys stay in the home workload.
+- `maxLatency` about three times the slowest healthy run, at least 1 s.
 
-## Environment
+## Checks
 
-- There is one environment: the application's cluster, which has no users. Deploy by applying the repository's
-  `k8s/render.yaml` (`kubectl apply -f`); commit first, because every report is tagged with the commit it checked.
-- Experiments change it. Undo what you break (scale back, delete a policy you added) and check the rollout before
-  you trust a result.
+| Command | When |
+|---|---|
+| `sdo-operator onboarding journeys --repo DIR --namespace NS --only ID` | after each probe (seconds once built) |
+| same with `--alter` | when it passes: an unnoticed wrong answer is a missing check |
+| `sdo-operator memory check` | after each batch; map, coverage, ownership, compile |
+| `sdo-operator onboarding check --metrics --repo DIR --namespace NS --prometheus URL` | once, when metrics are mapped |
+| `... onboarding journeys --alter --soak 5m` | last |
 
-## The loop
-
-1. Commit, then deploy and wait for the rollout.
-2. Try an operation by hand: send its requests, then read its series in Prometheus and its logs. To see which
-   probes and detectors notice a broken component, scale it to zero with `kubectl scale`, watch, and scale back.
-3. `sdo-operator onboarding check --help` lists the flags; run it with `--quick` while iterating (about 3 minutes, never clean) and with `--break` to check breaks. After the first `--break` run, later runs in the session reuse the verdicts of items whose probes, detectors, map entries and deployment did not change (labelled `reused from`; report `mode: incremental`, never clean), so a rerun after a one-probe change takes a few minutes. While fixing red items, loop on `--quick` and incremental `--break`; do not rerun `--full --break` for each fix. `--full --break` ignores the record and is the gate, run once at the end to confirm clean (it takes 10-20 minutes: start it in the background, keep working, and read its report when it finishes). `sdo-operator memory check`
-   validates memory the way the broker does.
-4. Read the report ([check report](references/check-report.md)), fix the red items, commit and check again.
+Reports put red lines first. Write long output to a file and read the red lines; never poll: run a long check in the
+background and write the next probe meanwhile.
 
 ## Finish line
 
-- You are done when one full check (`--full --break`; `--quick` and incremental runs are never clean) reports clean on the committed tree. Run it once, after the loop is green, not as the loop.
-- A red item you cannot fix gets a `reasons` entry in the map (item, subject, one-line reason). A reason never
-  excuses `deployed-healthy` or `quiet-when-healthy`, and the report counts reasons, so use them rarely.
-- Reply with one line: `done`, or `blocked: <why>`.
-
-## Skills
-
-[serving](../sdo-serving/SKILL.md), [observability](../sdo-observability/SKILL.md),
-[operations map](../sdo-operations-map/SKILL.md), [detectors](../sdo-detectors/SKILL.md).
+Every given journey has an operation and a probe, `onboarding journeys --alter --soak 5m` and `memory check` are
+green on the committed tree, and the application is as healthy as you found it. With ten minutes left, stop adding:
+remove what is not green, commit, and say what is uncovered.

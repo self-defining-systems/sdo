@@ -17,7 +17,9 @@ import (
 )
 
 var allowedGeneratorImports = map[string]bool{
-	"bytes": true, "context": true, "encoding/base64": true, "encoding/json": true,
+	"archive/zip": true, "bufio": true, "bytes": true, "compress/gzip": true, "compress/zlib": true, "context": true,
+	"crypto/md5": true, "crypto/sha1": true, "crypto/sha256": true, "encoding/base64": true, "encoding/binary": true,
+	"encoding/hex": true, "encoding/json": true, "encoding/xml": true, "hash/crc32": true, "io": true, "maps": true, "slices": true,
 	"errors": true, "fmt": true, "math": true, "math/rand/v2": true,
 	"net/url": true, "regexp": true, "sort": true, "strconv": true,
 	"strings": true, "time": true, "unicode": true, "unicode/utf8": true,

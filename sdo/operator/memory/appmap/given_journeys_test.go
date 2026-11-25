@@ -25,6 +25,7 @@ func TestJourneysFromTextDerivesOneJourneyPerItem(t *testing.T) {
 		"users sign in, browse projects, push code, and download packages ...": {"users sign in", "browse projects", "push code", "download packages"},
 		"- users sign in\n* browse projects, filter by tag\n3. push code\n\n":  {"users sign in", "browse projects, filter by tag", "push code"},
 		"sign in; browse\npush code":                                           {"sign in; browse", "push code"},
+		"orders (list, open); sign in, sign out; pay.": {"orders (list, open)", "sign in, sign out", "pay"},
 		"sign in; browse; push code":                                           {"sign in", "browse", "push code"},
 		"":                                                                     nil,
 		"  \n\n":                                                               nil,
