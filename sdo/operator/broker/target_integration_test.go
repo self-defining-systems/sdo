@@ -4,6 +4,9 @@ package broker
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"sdo.dev/operator/internal/testutil"
@@ -45,15 +48,29 @@ func TestAHeldHeadIsTheTargetUntilItIsAccepted(t *testing.T) {
 	if err := w.broker.RecordTarget(ctx, head, write); err != nil {
 		t.Fatal(err)
 	}
-	if got := targetOf(t, w.broker); got != (Target{Commit: head, Unaccepted: true, Incomplete: true}) {
+	if got := targetOf(t, w.broker); got != (Target{Commit: head, Unaccepted: true, Incomplete: true, Interrupted: "main", RefusesAll: true}) {
 		t.Fatalf("before the apply finished: %+v", got)
 	}
 	write.Applied = true
 	if err := w.broker.RecordTarget(ctx, head, write); err != nil {
 		t.Fatal(err)
 	}
-	restarted := *w.broker
-	for name, b := range map[string]*Broker{"same": w.broker, "restarted": &restarted} {
+	restarted, err := New(w.accepted, w.broker.workspaceRoot, w.broker.validator, testObservation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, b := range map[string]*Broker{"same": w.broker, "restarted": restarted} {
+		// While another process holds the broker lock, the recorded target is
+		// still the answer, with the error that makes the controller retry.
+		if err := w.broker.locked(func() error {
+			got, err := b.TryTarget(ctx)
+			if err == nil || got != (Target{Commit: head, Unaccepted: true}) {
+				t.Errorf("%s broker, locked: %+v, %v", name, got, err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 		if got := targetOf(t, b); got != (Target{Commit: head, Unaccepted: true}) {
 			t.Fatalf("%s broker: %+v", name, got)
 		}
@@ -122,5 +139,76 @@ func TestARevertOfAHeldHeadIsDeployed(t *testing.T) {
 	}
 	if _, needed, err := w.broker.HeadToDeploy(ctx); err != nil || needed {
 		t.Fatalf("accepted revert is to deploy again: %v %v", needed, err)
+	}
+}
+
+// A branch forced back to the accepted commit while a target is recorded is to
+// deploy: the cluster runs another revision.
+func TestTheAcceptedHeadIsToDeployWhileAnotherRevisionIsTheTarget(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	held := pushApp(t, w, "one\ntwo\nthree by an engineer\n")
+	evidence := advanceEvidenceFor(t, w.accepted, "engineered", true)
+	if err := w.broker.RecordTarget(ctx, held, rendered.TargetWrite{Phase: "main", Applied: true, Pins: rendered.ReceiptPins{EffectiveTree: evidence.EffectiveTree}}); err != nil {
+		t.Fatal(err)
+	}
+	accepted, _, err := w.broker.AcceptedSourceEvidence(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, w.accepted, "reset", "-q", "--hard", accepted.Evidence.AcceptedCommit)
+	if change, needed, err := w.broker.HeadToDeploy(ctx); err != nil || !needed || change.Commit != accepted.Evidence.AcceptedCommit {
+		t.Fatalf("HeadToDeploy = %+v %v %v", change, needed, err)
+	}
+}
+
+// An accepted repair supersedes a target: the record is dropped, so a read
+// without the lock never serves it, and a record left by a crash is ignored
+// and dropped at redelivery. A target recorded after the repair is kept.
+func TestAnAcceptedRepairSupersedesTheTarget(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	tree := strings.Repeat("a", 40)
+	record := func(commit string) {
+		t.Helper()
+		if err := w.broker.RecordTarget(ctx, commit, rendered.TargetWrite{Phase: "main", Applied: true, Pins: rendered.ReceiptPins{EffectiveTree: tree}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidate := stageResponderPatch(t, w, "inc-super")
+	record(strings.Repeat("b", 40))
+	path := filepath.Join(w.broker.workspaceRoot, targetFile)
+	stale, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := w.broker.AcceptDeployed(ctx, candidate, advanceEvidenceFor(t, candidate.Path, "repaired", true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := w.broker.DeploymentTarget(); err != nil || stored != nil {
+		t.Fatalf("superseded target still recorded: %+v %v", stored, err)
+	}
+	if err := os.WriteFile(path, stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := targetOf(t, w.broker); got != (Target{Commit: receipt.Commit}) {
+		t.Fatalf("a superseded record is the target: %+v", got)
+	}
+	redeliver := func() {
+		t.Helper()
+		if deployed, err := w.broker.FinalizeAcceptedDeployment(ctx, "inc-super"); err != nil || !deployed {
+			t.Fatalf("redelivery: %v %v", deployed, err)
+		}
+	}
+	redeliver()
+	if stored, err := w.broker.DeploymentTarget(); err != nil || stored != nil {
+		t.Fatalf("redelivery kept the superseded record: %+v %v", stored, err)
+	}
+	newer := strings.Repeat("c", 40)
+	record(newer)
+	redeliver()
+	if got := targetOf(t, w.broker); got.Commit != newer || !got.Unaccepted {
+		t.Fatalf("redelivery dropped a newer target: %+v", got)
 	}
 }

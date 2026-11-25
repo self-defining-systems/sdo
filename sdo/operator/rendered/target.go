@@ -23,6 +23,8 @@ type DeploymentTarget struct {
 	AcceptedCommit string `json:"accepted_commit"`
 	// Pins are the images applied so far, bound to the target's effective tree.
 	Pins ReceiptPins `json:"pins"`
+	// Phases names every phase of the target with desired state.
+	Phases []string `json:"phases"`
 	// Unreached names the phases no apply started; their objects keep Previous.
 	Unreached []string `json:"unreached,omitempty"`
 	// Interrupted names the phases whose apply started and did not succeed.

@@ -145,7 +145,9 @@ func (c *Controller) readAcceptedDeployment(ctx context.Context) string {
 	if err != nil {
 		c.head.receiptRetryAt = c.clock().Add(DefaultHeadPollInterval)
 		slog.Warn("read the deployment target", "error", err)
-		return ""
+		if target.Commit == "" {
+			return ""
+		}
 	}
 	if c.head.target != target {
 		c.head.target = target
@@ -171,7 +173,14 @@ func (c *Controller) heldTargetLines() []string {
 	if fields := strings.Join(strings.Fields(c.head.heldDetail), " "); fields != "" {
 		reason = " (" + strings.ToValidUTF8(fields[:min(len(fields), 300)], "") + ")"
 	}
-	return []string{fmt.Sprintf("Release %s is %s but not accepted%s; comparisons and restores use it.", target.Commit, applied, reason)}
+	lines := []string{fmt.Sprintf("Release %s is %s but not accepted%s; comparisons and restores use it.", target.Commit, applied, reason)}
+	switch {
+	case target.RefusesAll:
+		lines = append(lines, "Its apply was interrupted: every restore from source is refused.")
+	case target.Interrupted != "":
+		lines = append(lines, "Its apply of phase "+target.Interrupted+" was interrupted: restores of objects in it are refused.")
+	}
+	return lines
 }
 
 func (c *Controller) syncDeploymentReceipt(ctx context.Context) {

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -275,6 +276,26 @@ func TestHeldReleaseIsWhatRepairsRestore(t *testing.T) {
 	if lines := c.heldTargetLines(); len(lines) != 1 || lines[0] != "Release v2 is applied but not accepted (rollout: not ready); comparisons and restores use it." {
 		t.Fatalf("page line = %q", lines)
 	}
+	// A locked broker answers with the recorded target and an error: a running
+	// and a restarted controller use it, and both read again.
+	ledger.err = errors.New("broker locked")
+	for _, controller := range []*Controller{start(), c} {
+		controller.syncDeploymentReceipt(ctx)
+		restores(controller, manifest("broken"), "2")
+		if len(controller.heldTargetLines()) == 0 || controller.head.receiptRetryAt.IsZero() {
+			t.Fatalf("page %q, retry at %s", controller.heldTargetLines(), controller.head.receiptRetryAt)
+		}
+	}
+	ledger.err = nil
+	c.head.target.Incomplete, c.head.target.Interrupted, c.head.target.RefusesAll = true, "default", true
+	if lines := c.heldTargetLines(); len(lines) != 2 || !strings.Contains(lines[1], "every restore from source is refused") {
+		t.Fatalf("page of an interrupted single-phase apply = %q", lines)
+	}
+	c.head.target.RefusesAll = false
+	if lines := c.heldTargetLines(); len(lines) != 2 || !strings.Contains(lines[1], "phase default") {
+		t.Fatalf("page of an interrupted phase = %q", lines)
+	}
+	c.syncDeploymentReceipt(ctx)
 	// The same target moving on (a retry reached more phases) renders anew.
 	invalidations := 0
 	c.invalidateSourceCache = func() { invalidations++ }

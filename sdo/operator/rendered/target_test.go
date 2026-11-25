@@ -47,7 +47,7 @@ func releasesSource(t *testing.T) rendered.Source {
 		return nil, fmt.Errorf("no synthetic object for git %v", args)
 	}
 	c := render.NewCatalog()
-	if err := render.Register(c, "releases", render.RendererFunc[*contracts.RawRenderConfig](func(_ context.Context, fsys render.FS, _ render.Env, _ *contracts.RawRenderConfig) (render.Result, error) {
+	if err := render.Register(c, "releases", render.RendererFunc[*contracts.RawRenderConfig](func(_ context.Context, fsys render.FS, env render.Env, _ *contracts.RawRenderConfig) (render.Result, error) {
 		data, err := fs.ReadFile(fsys, "release")
 		if err != nil {
 			return render.Result{}, err
@@ -63,10 +63,17 @@ func releasesSource(t *testing.T) rendered.Source {
 		workload := func(name string) *unstructured.Unstructured {
 			return object("apps/v1", "Deployment", name, map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "c", "image": name + ":" + release}}}}}})
 		}
+		secret := func(name string) *unstructured.Unstructured {
+			o := object("v1", "Secret", name, map[string]any{"stringData": map[string]any{"release": release}})
+			if env.Secrets == render.SecretsOmit {
+				o.Object = render.SecretIdentity(o.Object)
+			}
+			return o
+		}
 		return render.Result{Phases: []render.Phase{
 			{Name: "config", Objects: []*unstructured.Unstructured{object("v1", "ConfigMap", "settings", map[string]any{"data": map[string]any{"release": release}})}},
 			{Name: "web", Objects: []*unstructured.Unstructured{workload("web")}},
-			{Name: "worker", Objects: []*unstructured.Unstructured{workload("worker"), object("v1", "ConfigMap", "only-"+release, nil)}},
+			{Name: "worker", Objects: []*unstructured.Unstructured{workload("worker"), object("v1", "ConfigMap", "only-"+release, nil), secret("token"), secret("token-" + release)}},
 		}}, nil
 	})); err != nil {
 		t.Fatal(err)
@@ -135,7 +142,7 @@ func TestReadsFollowTheDeploymentTargetPhaseByPhase(t *testing.T) {
 	step(target, "2", "web", true, "worker")
 	check("worker unreached", "2", "2", "1")
 	objects, err := source.AcceptedManifests(context.Background(), v2, "app")
-	if err != nil || !slices.Equal(refs(objects), []string{"ConfigMap/app/settings", "Deployment/app/web", "Deployment/app/worker", "ConfigMap/app/only-1"}) {
+	if err != nil || !slices.Equal(refs(objects), []string{"ConfigMap/app/settings", "Deployment/app/web", "Deployment/app/worker", "ConfigMap/app/only-1", "Secret/app/token", "Secret/app/token-1"}) {
 		t.Fatalf("desired objects = %v, %v; the unreached phase keeps the previous revision's", refs(objects), err)
 	}
 

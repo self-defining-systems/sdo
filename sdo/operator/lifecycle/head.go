@@ -18,7 +18,8 @@ type HeadBroker interface {
 	// HeadToDeploy syncs the branch and names the accepted head when its
 	// effective source differs from the newest recorded deployment.
 	HeadToDeploy(ctx context.Context) (change broker.HeadChange, needed bool, err error)
-	// TryTarget is the revision the cluster was last moved to, accepted or not.
+	// TryTarget is the revision the cluster was last moved to, accepted or not; it
+	// may return a target together with an error (read without the lock).
 	TryTarget(context.Context) (broker.Target, error)
 	RecordTarget(ctx context.Context, commit string, write rendered.TargetWrite) error
 	AcceptedSourceEvidence(ctx context.Context) (accepted broker.AcceptedSource, found bool, err error)

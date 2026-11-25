@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"sdo.dev/operator/rendered"
 )
@@ -23,6 +25,15 @@ type Target struct {
 	Unaccepted bool
 	// Incomplete is true when some of its phases were not applied whole.
 	Incomplete bool
+	// Interrupted names the phases whose objects are refused a restore;
+	// RefusesAll is true when they are all of its phases.
+	Interrupted string
+	RefusesAll  bool
+}
+
+func unacceptedTarget(t *rendered.DeploymentTarget) Target {
+	return Target{Commit: t.Commit, Unaccepted: true, Incomplete: len(t.Unreached)+len(t.Interrupted) > 0,
+		Interrupted: strings.Join(t.Interrupted, ", "), RefusesAll: len(t.Interrupted) > 0 && len(t.Interrupted) == len(t.Phases)}
 }
 
 // DeploymentTarget reads the recorded target without a lock (nil: none).
@@ -55,7 +66,10 @@ func (b *Broker) unacceptedTargetLocked(accepted string) (*rendered.DeploymentTa
 }
 
 // TryTarget reads the target and the deployment ledger without waiting for a
-// publisher holding its lock. The controller retries on lock contention.
+// publisher holding its lock. When that fails it returns, with the error, the
+// recorded target read without the lock: an acceptance drops a target it
+// supersedes, so a recorded one is what the cluster was last moved to. The
+// controller uses it and retries.
 func (b *Broker) TryTarget(ctx context.Context) (out Target, err error) {
 	err = b.tryLocked(func() error {
 		evidence, _, err := b.acceptedEvidenceLocked(ctx)
@@ -65,10 +79,16 @@ func (b *Broker) TryTarget(ctx context.Context) (out Target, err error) {
 		target, err := b.unacceptedTargetLocked(evidence.AcceptedCommit)
 		out = Target{Commit: evidence.AcceptedCommit}
 		if target != nil {
-			out = Target{Commit: target.Commit, Unaccepted: true, Incomplete: len(target.Unreached)+len(target.Interrupted) > 0}
+			out = unacceptedTarget(target)
 		}
 		return err
 	})
+	if err != nil {
+		out = Target{}
+		if target, readErr := b.DeploymentTarget(); readErr == nil && target != nil {
+			out = unacceptedTarget(target)
+		}
+	}
 	return out, err
 }
 
@@ -100,7 +120,11 @@ func (b *Broker) RecordTarget(ctx context.Context, commit string, write rendered
 					previous = &rendered.DeploymentTarget{Commit: evidence.AcceptedCommit}
 				}
 			}
-			target = &rendered.DeploymentTarget{AcceptedCommit: accepted, Previous: previous, Unreached: append([]string{write.Phase}, write.Later...)}
+			phases := write.Later
+			if write.Phase != "" {
+				phases = append([]string{write.Phase}, phases...)
+			}
+			target = &rendered.DeploymentTarget{AcceptedCommit: accepted, Previous: previous, Phases: phases, Unreached: slices.Clone(phases)}
 		}
 		target.Commit = commit
 		target.Advance(write)
@@ -110,6 +134,19 @@ func (b *Broker) RecordTarget(ctx context.Context, commit string, write rendered
 		}
 		return writeDurable(filepath.Join(b.workspaceRoot, targetFile), data)
 	})
+}
+
+// clearSupersededTargetLocked drops a target a later acceptance superseded,
+// and keeps one recorded since.
+func (b *Broker) clearSupersededTargetLocked(ctx context.Context) error {
+	evidence, _, err := b.acceptedEvidenceLocked(ctx)
+	if err != nil {
+		return err
+	}
+	if target, err := b.unacceptedTargetLocked(evidence.AcceptedCommit); err != nil || target != nil {
+		return err
+	}
+	return b.clearTarget()
 }
 
 // clearTarget drops the target once a deployment is accepted.
