@@ -83,7 +83,10 @@ def test_interrupted_codex_checkpoints_before_return_and_differences_resumes(
 
     def run_attempt(attempt: int, added: int, cumulative: int) -> None:
         checkpoint = UsageCheckpoint(
-            tmp_path / "usage", "incident", "incident" if attempt < 2 else "incident-continue-1", "responder"
+            tmp_path / "usage",
+            "incident",
+            "incident" if attempt < 2 else "reflection-task",
+            "responder" if attempt < 2 else "reflect",
         )
         published = threading.Event()
 
@@ -159,7 +162,8 @@ def test_interrupted_codex_checkpoints_before_return_and_differences_resumes(
         cumulative += added
         run_attempt(attempt, added, cumulative)
     documents = [json.loads(path.read_text()) for path in (tmp_path / "usage").glob("*.json")]
-    assert sum(document["usage"]["input_tokens"] for document in documents) == 240
+    assert sum(document["usage"]["input_tokens"] for document in documents if document["phase"] == "responder") == 200
+    assert sum(document["usage"]["input_tokens"] for document in documents if document["phase"] == "reflect") == 40
     assert [document["complete"] for document in documents].count(False) == 2
 
 
@@ -167,7 +171,7 @@ def test_interrupted_claude_retains_incremental_assistant_usage(tmp_path: Path) 
     from agentshim.testing import FakeExecutor
     from agentshim.testing.claude_stream import ClaudeFramePeer
 
-    checkpoint = UsageCheckpoint(tmp_path / "usage", "incident", "incident", "responder")
+    checkpoint = UsageCheckpoint(tmp_path / "usage", "incident", "incident", "reflect")
 
     def assistant(input_tokens: int) -> dict:
         usage = {

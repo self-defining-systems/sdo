@@ -141,6 +141,7 @@ def run_reflection_task(
         "SDO_PHASE": "proposal" if cleanup else "reflection",
         "SDO_BASE_COMMIT": task.workspace.base_commit,
         "SDO_INCIDENT_ID": incident_id,
+        "SDO_USAGE_TASK_ID": task.task_id,
         "SDO_CAPTURED_CORPUS_DIR": os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"),
     }
     if task.HasField("deadline"):

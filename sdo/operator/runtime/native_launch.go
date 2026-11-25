@@ -157,7 +157,9 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		executor.SessionPVCSubPath = subPath
 		executor.CapturedCorpusReadOnly = true
 		// The executor puts the agent CLI homes on the session mount, fresh or resumed, so the transcript is kept.
-		executor.Environment = mergeEnvironment(agentEnvironment, map[string]string{"SDO_TURN_USAGE_LOG": "/sdo/session/reflection-usage.jsonl"})
+		executor.Environment = mergeEnvironment(agentEnvironment, map[string]string{
+			"SDO_TURN_USAGE_LOG": "/sdo/session/reflection-usage.jsonl",
+		})
 
 		if native.Repository == nil || native.Repository.ValidationToolchain == "" {
 			return executor, nil
@@ -193,6 +195,10 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		CorpusSessionRoot: config.GetRepositoryMountPath(),
 		SessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) {
 			return sessionExecutor(incidentID, true)
+		},
+		ReadUsage: func(incidentID string) (*UsageMetrics, error) {
+			usage, _, err := memory.PhaseUsage(config.GetRepositoryMountPath(), config.GetRepositoryPvcSubpath(), incidentID, "reflect")
+			return usage, err
 		},
 		UsageLogPath: func(incidentID string) string {
 			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(incidentID)))[:32]

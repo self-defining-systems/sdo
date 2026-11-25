@@ -7,6 +7,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import monotonic
 from uuid import uuid4
 
 
@@ -18,9 +19,16 @@ class UsageCheckpoint:
     phase: str
     turn_id: str = field(default_factory=lambda: uuid4().hex)
 
+    started: float = field(default_factory=monotonic, init=False)
+
     def __post_init__(self) -> None:
-        if not self.incident_id or not self.task_id or self.phase != "responder":
-            raise ValueError("usage checkpoint requires incident, task and responder phase")
+        if (
+            not self.incident_id
+            or not self.task_id
+            or self.phase
+            not in {"responder", "respond", "investigate", "reflect", "source_repair", "prewarm", "deploy", "design"}
+        ):
+            raise ValueError("usage checkpoint requires incident, task and a recognized phase")
 
     def publish(self, usage: dict[str, int | float], complete: bool) -> None:
         """Replace this turn's cumulative counters; absence means unknown, never zero."""
@@ -32,6 +40,8 @@ class UsageCheckpoint:
             "phase": self.phase,
             "turn_id": self.turn_id,
             "complete": complete,
+            "duration_seconds": monotonic() - self.started,
+            "partial_reason": None if complete else "turn_accounting_unfinished",
             "usage": usage,
         }
         fd, temporary = tempfile.mkstemp(prefix=".usage-", dir=self.directory)

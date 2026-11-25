@@ -110,11 +110,13 @@ def execute_incident(
                 Path(checkpoint_directory),
                 request.incident_id,
                 os.environ.get("SDO_RESPONDER_TASK_ID", request.incident_id),
-                "responder",
+                "respond",
             )
             if checkpoint_directory
             else None
         )
+        if checkpoint is not None:
+            checkpoint.publish({}, False)
         try:
             completed = run_structured_turn(
                 selected_provider,  # type: ignore[arg-type]

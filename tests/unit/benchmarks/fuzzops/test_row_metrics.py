@@ -560,3 +560,40 @@ def test_a_cleanup_write_after_the_recovery_never_wins(tmp_path: Path, arm: str)
         (62, 63, "kubectl delete pod probe", False, 'pod "probe" deleted'),
     ]
     assert arm_row(tmp_path, arm, calls, last_bad=59, ended=90).ttf_s == 45
+
+
+def test_model_free_reflection_dispatch_contributes_zero(tmp_path: Path) -> None:
+    from benchmarks.fuzzops.row_metrics import Usage, _closing_usage
+
+    timeline = {"closing_turn_dispatch_at": at(12)}
+    ledger = {"reflection_results": [{"no_change_reason": "cleared_without_action_no_learning"}]}
+    assert _closing_usage(timeline, ledger, tmp_path) == Usage(0.0, 0, 0)
+    assert _closing_usage(timeline, {}, tmp_path) == Usage()
+
+
+def test_program_only_incident_has_known_zero_in_both_phases(tmp_path: Path) -> None:
+    from benchmarks.fuzzops.row_metrics import Usage, _closing_usage, _responder_usage
+
+    timeline = {"resolution_path": "deterministic"}
+    assert _closing_usage(timeline, {}, tmp_path) == Usage(0.0, 0, 0)
+    assert _responder_usage(timeline, tmp_path, "inc", []) == (Usage(0.0, 0, 0), True, [])
+
+
+def test_reset_worker_usage_comes_from_its_latest_checkpoint(tmp_path: Path) -> None:
+    from benchmarks.fuzzops.row_metrics import Usage, _worker_usage
+
+    put(
+        tmp_path,
+        "usage/turn.json",
+        {
+            "incident_id": "inc",
+            "turn_id": "turn",
+            "phase": "respond",
+            "complete": False,
+            "usage": {"input_tokens": 20, "output_tokens": 6, "total_cost_usd": 0.03},
+        },
+    )
+    worker = _worker_usage(tmp_path, "inc", "inc", "responder")
+    assert worker is not None
+    assert worker.usage == Usage(0.03, 20, 6)
+    assert worker.complete is False

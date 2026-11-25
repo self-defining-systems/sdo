@@ -224,7 +224,7 @@ def test_responder_checkpoint_binds_worker_task_and_phase(tmp_path: Path, monkey
     assert len(documents) == 1
     assert documents[0]["incident_id"] == request.incident_id
     assert documents[0]["task_id"] == task_id
-    assert documents[0]["phase"] == "responder"
+    assert documents[0]["phase"] == "respond"
     assert documents[0]["complete"] is True
     assert documents[0]["usage"]["input_tokens"] == result.usage.input_tokens == 120
 
