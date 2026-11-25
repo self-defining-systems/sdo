@@ -279,7 +279,7 @@ func withStoreChanges(state *StateChanges, view sdk.DetectionContext, now time.T
 				change.Fields = append(change.Fields, StateFieldChange{Field: fmt.Sprintf("(%d more fields)", len(clues)-i)})
 				break
 			}
-			change.Fields = append(change.Fields, StateFieldChange{Field: clue.Key, Before: bounded(clue.Before), After: bounded(clue.After)})
+			change.Fields = append(change.Fields, StateFieldChange{Field: clue.Key + namedText(clue.Named), Before: bounded(clue.Before), After: bounded(clue.After)})
 		}
 		if len(change.Fields) > 0 {
 			added = append(added, change)

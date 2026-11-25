@@ -16,7 +16,10 @@ func (c Change) String() string
 type Clue struct {
 	Kinds              []string
 	Key, Before, After string
-	Noisy              bool
+	// Named are the schema objects the change wrote, each whole ("trigger cut
+	// on public.orders"); empty when routine or not recorded.
+	Named string
+	Noisy bool
 	// Routine is churn an application makes by itself: a new table with its
 	// own columns, indexes and constraints, or a count that moved a little.
 	Routine bool
@@ -132,8 +135,12 @@ type Facts struct {
 	// waiters first; nil when the read could not list them, empty when none
 	// waits. They are never part of Diff.
 	LockWaits []LockWait `json:"lock_waits,omitempty"`
-	Unread    []ItemKind `json:"unread,omitempty"`
-	Error     string     `json:"error,omitempty"`
+	// Newest are the schema objects written last, for naming a change; never
+	// part of Diff. NewestComplete is false when some were cut or unread.
+	Newest         []NewObject `json:"newest,omitempty"`
+	NewestComplete bool        `json:"newest_complete,omitempty"`
+	Unread         []ItemKind  `json:"unread,omitempty"`
+	Error          string      `json:"error,omitempty"`
 }
     Facts is one read of one store instance. Writable, Connections and Memory
     are nil when the read could not establish them. Error marks an unavailable

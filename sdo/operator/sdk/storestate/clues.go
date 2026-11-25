@@ -30,7 +30,10 @@ const (
 type Clue struct {
 	Kinds              []string
 	Key, Before, After string
-	Noisy              bool
+	// Named are the schema objects the change wrote, each whole ("trigger cut
+	// on public.orders"); empty when routine or not recorded.
+	Named string
+	Noisy bool
 	// Routine is churn an application makes by itself: a new table with its
 	// own columns, indexes and constraints, or a count that moved a little.
 	Routine bool
@@ -38,6 +41,7 @@ type Clue struct {
 	// the reading before it; zero when no earlier reading was kept.
 	FirstObserved, LastWithout time.Time
 
+	place     string // "<db> <group>" or "<db>", for naming
 	withTable bool
 	aspects   []string
 }
@@ -97,7 +101,7 @@ func itemClue(engine Engine, c Change, newTables map[string]bool) Clue {
 	}
 	if db, object, ok := strings.Cut(key.Scope, "."); ok && object == "{"+key.Name+"}" {
 		// A count and digest over the whole database (catalogDigestItem).
-		clue.Key = kind + " definitions of " + db
+		clue.Key, clue.place = kind+" definitions of "+db, db
 		b, _, _ := strings.Cut(clue.Before, ":")
 		a, _, _ := strings.Cut(clue.After, ":")
 		if a == b {
@@ -164,7 +168,7 @@ func (s StoreChanges) Clues() []Clue {
 		if seen, ok := s.observed[clue.aspects[0]]; ok {
 			clue.FirstObserved, clue.LastWithout = seen.First, seen.LastWithout
 		}
-		if clue.Routine && !clue.Noisy {
+		if clue.Named = nameObjects(clue, s.written); clue.Routine && !clue.Noisy {
 			routine = append(routine, clue)
 			continue
 		}
@@ -228,7 +232,7 @@ func boundClues(clues, tail []Clue) []Clue {
 	used := 0
 	for _, clue := range clues {
 		clue.Key, clue.Before, clue.After = boundText(clue.Key, maxClueText), boundText(clue.Before, maxClueText), boundText(clue.After, maxClueText)
-		size := len(clue.Key) + len(clue.Before) + len(clue.After)
+		size := len(clue.Key) + len(clue.Named) + len(clue.Before) + len(clue.After)
 		if len(out) == MaxClues-2 || used+size > MaxClueBytes-2*(maxSummaryText) {
 			break
 		}

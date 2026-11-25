@@ -162,8 +162,12 @@ type Facts struct {
 	// waiters first; nil when the read could not list them, empty when none
 	// waits. They are never part of Diff.
 	LockWaits []LockWait `json:"lock_waits,omitempty"`
-	Unread    []ItemKind `json:"unread,omitempty"`
-	Error     string     `json:"error,omitempty"`
+	// Newest are the schema objects written last, for naming a change; never
+	// part of Diff. NewestComplete is false when some were cut or unread.
+	Newest         []NewObject `json:"newest,omitempty"`
+	NewestComplete bool        `json:"newest_complete,omitempty"`
+	Unread         []ItemKind  `json:"unread,omitempty"`
+	Error          string      `json:"error,omitempty"`
 }
 
 // unread reports whether items of kind may be missing from f.

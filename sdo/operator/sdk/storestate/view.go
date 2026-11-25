@@ -59,6 +59,7 @@ type StoreChanges struct {
 	Error   string        `json:"error,omitempty"`
 
 	observed map[string]podread.Observed
+	written  []NewObject
 }
 
 // Changes is the read-only diff of every store whose store-state pod read the
@@ -111,6 +112,7 @@ func storeChanges(view sdk.DetectionContext, adapter Adapter, component string, 
 		if baseline, ok := pick(baselines, reading.Pod); ok {
 			entry.Baselined, entry.BaselineAt = true, baseline.At
 			entry.Changes = Diff(baseline, current)
+			entry.written = writtenSince(baseline, current)
 			markNoisy(entry.Changes, pickHistory(history, reading.Pod))
 			entry.observed = result.Observed[reading.Pod]
 		} else {

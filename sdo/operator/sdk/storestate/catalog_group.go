@@ -135,7 +135,7 @@ func groupClues(db, group string, before, after *Item, observed map[string]podre
 	}
 	var out []Clue
 	for _, seen := range order {
-		var clue Clue
+		clue := Clue{place: db + " " + group}
 		var deltas, was, is []string
 		for _, part := range byTime[seen] {
 			clue.Kinds, deltas = append(clue.Kinds, part.kind), append(deltas, part.delta)

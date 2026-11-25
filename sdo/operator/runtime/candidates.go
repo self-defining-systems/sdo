@@ -463,7 +463,7 @@ func rowEvidence(row IncidentChange, onset time.Time) (candidateEvidence, bool) 
 	default:
 		body = row.Source + " " + object
 		if row.Key != "" {
-			body += " " + clean(row.Key)
+			body += " " + clean(row.Key) + namedText(row.Named)
 		}
 		if row.Before != "" || row.After != "" {
 			body += ": " + orNone(clean(row.Before)) + " → " + orNone(clean(row.After))

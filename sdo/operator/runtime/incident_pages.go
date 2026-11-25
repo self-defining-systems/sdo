@@ -73,6 +73,16 @@ type IncidentChange struct {
 	FirstSeen bool
 	// Routine marks growth an application makes by itself (storestate.Clue).
 	Routine bool
+	// Named are the schema objects a store change wrote. They are schema
+	// metadata, so a long one is not redacted as a token.
+	Named string
+}
+
+func namedText(names string) string {
+	if names == "" {
+		return ""
+	}
+	return " [written: " + names + "]"
 }
 
 // AppStateChangeSource is the seam app-state readers plug into: the controller
@@ -612,7 +622,7 @@ func storeChangeRows(stores []storestate.StoreChanges) []IncidentChange {
 			continue
 		}
 		for _, clue := range store.Clues() {
-			rows = append(rows, IncidentChange{ReadAt: store.ObservedAt, FirstObserved: clue.FirstObserved, LastWithout: clue.LastWithout, Source: "store", Component: store.Component, ReaderOrObject: store.Pod.Kind + "/" + store.Pod.Name, Key: clue.Key, Before: clue.Before, After: clue.After, Noisy: clue.Noisy, Routine: clue.Routine})
+			rows = append(rows, IncidentChange{ReadAt: store.ObservedAt, FirstObserved: clue.FirstObserved, LastWithout: clue.LastWithout, Source: "store", Component: store.Component, ReaderOrObject: store.Pod.Kind + "/" + store.Pod.Name, Key: clue.Key, Named: clue.Named, Before: clue.Before, After: clue.After, Noisy: clue.Noisy, Routine: clue.Routine})
 		}
 	}
 	return rows
@@ -646,7 +656,7 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 		if actor == "" {
 			actor = changeActor(row.Writer)
 		}
-		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), value(row.Key), value(row.Before), value(row.After), clean(row.Writer), actor, runningCommitCell(row), strconv.FormatBool(row.Noisy), stamp(row.ReadAt), stamp(row.FirstObserved), firstRelative, stamp(row.LastWithout)})
+		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), value(row.Key) + namedText(row.Named), value(row.Before), value(row.After), clean(row.Writer), actor, runningCommitCell(row), strconv.FormatBool(row.Noisy), stamp(row.ReadAt), stamp(row.FirstObserved), firstRelative, stamp(row.LastWithout)})
 	}
 	return encodeCSV(out)
 }

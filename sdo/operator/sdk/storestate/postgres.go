@@ -32,7 +32,7 @@ var postgresRowLimits = map[string]int{"dbsettings": 33, "roles": 25, "databases
 // credential prelude found ($U, else postgres), so local trust applies; the
 // password it found ($P) reaches psql through the environment and is never
 // printed. The queries arrive as positional arguments ($5 is the holders
-// query, $6 the lock-waits query, $7 the TCP fallback, $8 the server settings query, $9 the configuration file settings query (dropped when the role may not read it), $10 onwards the catalog
+// query, $6 the lock-waits query, $7 the TCP fallback, $8 the server settings query, $9 the configuration file settings query (dropped when the role may not read it), $10 the awk program that fits the output budget, $11 and $12 the newest-objects query (its own statement, so its failure costs no catalog), $13 onwards the catalog
 // query, split). Holders fall back to the TCP table when the server refuses
 // the session list. The server-wide queries read only system views, which
 // never wait on a table lock; the catalog query sets a short lock_timeout, so
@@ -45,8 +45,14 @@ var postgresRowLimits = map[string]int{"dbsettings": 33, "roles": 25, "databases
 const postgresScript = `U=${U:-postgres};D=${POSTGRES_DB:-${POSTGRESQL_DATABASE:-${PGDATABASE:-$U}}};T=$(printf '\t');export PGPASSWORD="$P" PGCONNECT_TIMEOUT=2
 p(){ psql -X -q -At -F "$T" -p %d -U "$U" -d "$1" -c "$2" 2>&1|tr -d '\r';};q(){ p "$@"|head -n 100;}
 h=$(echo '== server';q "$D" "$1";q "$D" "$8";q "$D" "$9"|grep '^file';echo '== dbsettings';q "$D" "$2";echo '== roles';q "$D" "$3";echo '== databases';q "$D" "$4";echo '== holders';o=$(q "$D" "$5");case "$o" in holder*)printf '%%s\n' "$o";;*)eval "$7";;esac;echo '== lockwaits';q "$D" "$6")
-printf '%%s\n' "$h";c="SET lock_timeout=500;${10}${11}${12}${13}${14}${15}";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";p "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
+printf '%%s\n' "$h";c="SET lock_timeout=500;${13}${14}${15}${16}${17}";w="SET lock_timeout=500;SET statement_timeout=1000;${11}${12}";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";p "$d" "$c";p "$d" "$w"|grep '^newest';done|LC_ALL=C awk -v b=$((3900-$(printf %%s "$h"|wc -c))) "${10}"
 `
+
+// postgresFitAwk cuts the catalogs at the output budget b and prints the newest
+// objects last, rarest kind first and only those that fit, so they never cost a
+// catalog. The section's last line is end, or cut when a row did not fit or a
+// database's query gave no complete answer.
+const postgresFitAwk = `/^== catalog /{s++;d=substr($0,12)}/^newest\tend/{e++;next}/^newest\t/{split($0,f,/[\t ]/);w[++k]=d substr($0,7);t[k]=f[2];next}{n+=length($0)+1;if(n>b){c=1;print "== more";exit}print}END{n+=15;if(c||n>b)exit;print "== newest";m=split("trigger function constraint column index",o," ");for(j=1;j<=m;j++)for(i=1;i<=k;i++)if(t[i]==o[j]){n+=length(w[i])+1;if(n>b)x=1;if(!x)print w[i]}print(x||e<s)?"cut":"end"}`
 
 // postgresScopedSources are the pg_settings.source values of a value set for
 // the session's own database, role or connection rather than for the server.
@@ -139,6 +145,17 @@ const postgresCatalog = `WITH s AS(SELECT c.oid,n.nspname||'.'||c.relname o,c.re
 	` UNION ALL SELECT 1,'grant',r.rolname,'',concat_ws(' ','connect='||has_database_privilege(r.oid,current_database(),'CONNECT'),'select='||CASE count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'SELECT')) WHEN count(t.oid) THEN 'all' ELSE (count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'SELECT')))::text END,'insert='||CASE count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'INSERT')) WHEN count(t.oid) THEN 'all' ELSE (count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'INSERT')))::text END,'update='||CASE count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'UPDATE')) WHEN count(t.oid) THEN 'all' ELSE (count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'UPDATE')))::text END,'delete='||CASE count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'DELETE')) WHEN count(t.oid) THEN 'all' ELSE (count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'DELETE')))::text END)` +
 	` FROM pg_roles r LEFT JOIN pg_class t ON t.relkind IN('r','p') AND t.relnamespace IN(SELECT oid FROM pg_namespace WHERE nspname!~'^(pg_|information_schema)') WHERE r.rolcanlogin AND r.rolname!~'^pg_' GROUP BY r.oid,r.rolname)x ORDER BY p,k,o,m`
 
+// postgresNewest lists, per kind, the three objects whose definition was written
+// last (by its catalog row's transaction, so a replaced one counts): schema
+// names only. One written in its table's own transaction or on a partition came
+// with the table and is left out. Rows are (newest, "<kind> <transaction>",
+// table, name); the script prints them last, and only those that fit.
+const postgresNewest = `WITH s AS(SELECT c.oid,n.nspname||'.'||c.relname o FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN('r','p') AND NOT c.relispartition AND n.nspname!~'^(pg_|information_schema)')` +
+	`SELECT 'newest',k||' '||x,regexp_replace(o,'[[:cntrl:]]','?','g'),regexp_replace(m,'[[:cntrl:]]','?','g') FROM(SELECT *,row_number()OVER(PARTITION BY k ORDER BY age(x),o,m) n FROM(SELECT e.* FROM(` +
+	`SELECT 'trigger' k,s.o,g.tgname::text m,g.xmin x FROM pg_trigger g JOIN s ON s.oid=g.tgrelid WHERE NOT g.tgisinternal AND coalesce(to_jsonb(g)->>'tgparentid','0')='0' UNION ALL SELECT 'constraint',s.o,c.conname,c.xmin FROM pg_constraint c JOIN s ON s.oid=c.conrelid WHERE c.contype IN('c','f','x') AND c.conparentid=0` +
+	` UNION ALL SELECT 'index',s.o,c.relname,i.xmin FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN s ON s.oid=i.indrelid UNION ALL SELECT 'column',s.o,a.attname,a.xmin FROM pg_attribute a JOIN s ON s.oid=a.attrelid WHERE a.attnum>0 AND NOT a.attisdropped)e JOIN s ON s.o=e.o JOIN pg_attribute b ON b.attrelid=s.oid AND b.attnum=-1 AND b.xmin<>e.x` +
+	` UNION ALL SELECT 'function','',n.nspname||'.'||p.proname,p.xmin FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname!~'^(pg_|information_schema)')v)r WHERE n<=3 UNION ALL SELECT 'newest','end','',''`
+
 // postgresCatalogItemBytesSQL bounds a database's itemized catalog in bytes;
 // above it the catalog is read as group digests.
 const (
@@ -151,7 +168,7 @@ func (postgresAdapter) Engine() Engine   { return EnginePostgres }
 func (postgresAdapter) DefaultPort() int { return 5432 }
 
 func (postgresAdapter) ReadCommand(e Endpoint) []string {
-	args := append(append(append([]string{}, postgresQueries...), tcpHoldersSnippet(e.Port), postgresSettingsQuery, postgresFileSettingsQuery), chunk(postgresCatalog, readChunkBytes)...)
+	args := append(append(append([]string{}, postgresQueries...), tcpHoldersSnippet(e.Port), postgresSettingsQuery, postgresFileSettingsQuery, postgresFitAwk), append(chunk(postgresNewest, readChunkBytes), chunk(postgresCatalog, readChunkBytes)...)...)
 	return readCommand([]string{"POSTGRES", "POSTGRESQL", "PG"}, fmt.Sprintf(postgresScript, e.Port, e.Port), args...)
 }
 
@@ -327,6 +344,12 @@ func (postgresAdapter) Parse(stdout string) (Facts, error) {
 	}
 	if f.LockWaits, err = parseLockWaits(lockWaits, present); err != nil {
 		return Facts{}, fmt.Errorf("postgres read: %w", err)
+	}
+	for _, line := range sections["newest"] {
+		if o, ok := parseNewObject(line); ok {
+			f.Newest = append(f.Newest, o)
+		}
+		f.NewestComplete = line == "end"
 	}
 	var blocks []Item
 	malformed := func(section, line string) error {
