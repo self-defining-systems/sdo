@@ -1,6 +1,7 @@
 package apihistory
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,5 +27,13 @@ func TestStoppedScriptDoesNotBlockFence(t *testing.T) {
 	defer observation.Close()
 	if err := observation.Fence(time.Unix(1, 0)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The responder's compact output cuts the message at 120 bytes.
+func TestVerificationWarningLeadsWithTheRetryInstruction(t *testing.T) {
+	message := VerificationWarning(time.Unix(1, 1)).Message
+	if !strings.Contains(message[:110], "retry if `sdo detect` shows recovered: no") {
+		t.Fatal(message)
 	}
 }

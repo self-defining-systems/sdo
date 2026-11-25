@@ -102,7 +102,7 @@ func investigatorSymptomFor(set detectSuspectSet, request IncidentRequest) inves
 	lines := func(tests []failingTest, limit int) string {
 		items := make([]string, len(tests))
 		for i, test := range tests {
-			items[i] = fmt.Sprintf("%s: %s %q at step %s", test.id, test.label, redactDetectText(test.err, 80), orQuestion(redactDetectText(test.step, 30)))
+			items[i] = fmt.Sprintf("%s: %s %q at step %s", test.id, test.label, redactDetectText(test.err, 80), orQuestion(plainName(test.step, 30)))
 		}
 		return cappedList(items, limit)
 	}

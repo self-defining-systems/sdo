@@ -316,3 +316,23 @@ def test_failed_mutation_line_says_why_it_failed(tmp_path, monkeypatch, capsys):
     assert "error: unknown flag: --json" in first
     assert "kubectl scale --help" not in first
     assert len(first) <= 200
+
+
+@pytest.mark.parametrize("full_json", [False, True])
+def test_refused_write_keeps_the_retry_instruction(tmp_path, monkeypatch, capsys, full_json):
+    from sdo.agents.responder import tools_cli
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    # The production text is mutation_gate.go's VerificationWarning.
+    message = (
+        "write refused while recovered; retry if `sdo detect` shows recovered: no. "
+        "SDO verified this incident at 2026-01-01T00:00:00.123456789Z; you may finish your report"
+    )
+    action = {
+        "command": "mitigate",
+        "error": "incident_verified",
+        "failure_reason": "incident_verified",
+        "incident_verified": {"message": message, "verified_at": "2026-01-01T00:00:00Z"},
+    }
+    tools_cli._print_response(action, full_json=full_json)
+    assert "retry if `sdo detect` shows recovered: no" in capsys.readouterr().out

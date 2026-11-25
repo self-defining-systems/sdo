@@ -24,7 +24,7 @@ type IncidentVerified struct {
 }
 
 func VerificationWarning(at time.Time) *IncidentVerified {
-	return &IncidentVerified{VerifiedAt: at.UTC(), Message: fmt.Sprintf("SDO verified this incident at %s; you may finish your report", at.UTC().Format(time.RFC3339Nano))}
+	return &IncidentVerified{VerifiedAt: at.UTC(), Message: fmt.Sprintf("write refused while recovered; retry if `sdo detect` shows recovered: no. SDO verified this incident at %s; you may finish your report", at.UTC().Format(time.RFC3339Nano))}
 }
 
 // MutationGate coordinates the controller and the API sidecar through their
@@ -214,8 +214,9 @@ func (o *MutationObservation) Seal() error {
 
 func (o *MutationObservation) Close() error { return o.file.Close() }
 
-// Reopen withdraws a verification fence after the controller has proved the
-// old responder quiescent and returned an unpublished closure to observation.
+// Reopen withdraws a verification fence after the controller returned an
+// unpublished closure to observation: at once for a running responder, and
+// before a new dispatch once a finished one is proved quiescent.
 // Pending, in-flight or uncertain writes can never be unfenced.
 func (g *MutationGate) Reopen() error {
 	observation, err := g.TryObserve()

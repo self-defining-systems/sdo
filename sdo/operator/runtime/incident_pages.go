@@ -387,10 +387,10 @@ func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request
 	}
 	header := []string{"t_rel_s", "at_utc"}
 	for _, id := range operations {
-		header = append(header, "fail:"+redactDetectText(id, 80))
+		header = append(header, "fail:"+plainName(id, 80))
 	}
 	for _, column := range workloads {
-		name := redactDetectText(column.component, 80)
+		name := plainName(column.component, 80)
 		header = append(header, "ready:"+name, "desired:"+name, "restarts:"+name)
 	}
 	floor := func(d time.Duration) int64 {
@@ -656,7 +656,7 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 		if actor == "" {
 			actor = changeActor(row.Writer)
 		}
-		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), value(row.Key) + namedText(row.Named), value(row.Before), value(row.After), clean(row.Writer), actor, runningCommitCell(row), strconv.FormatBool(row.Noisy), stamp(row.ReadAt), stamp(row.FirstObserved), firstRelative, stamp(row.LastWithout)})
+		out = append(out, []string{relative, at, row.Source, plainName(row.Component, incidentPageValue), changeObject(row, incidentPageValue), value(row.Key) + namedText(row.Named), value(row.Before), value(row.After), plainName(row.Writer, incidentPageValue), actor, runningCommitCell(row), strconv.FormatBool(row.Noisy), stamp(row.ReadAt), stamp(row.FirstObserved), firstRelative, stamp(row.LastWithout)})
 	}
 	return encodeCSV(out)
 }

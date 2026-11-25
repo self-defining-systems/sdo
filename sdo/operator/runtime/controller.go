@@ -208,9 +208,12 @@ type Controller struct {
 	// restarted controller can recover every effect that ran.
 	durable *contracts.ControllerState
 	// checkpoint survives effect gating failures: recovery must retain accepted receipts.
-	checkpoint              *contracts.ControllerState
-	incidentOpen            bool
-	responderDone           bool
+	checkpoint    *contracts.ControllerState
+	incidentOpen  bool
+	responderDone bool
+	// recoveryFenceMayStand: this incident's write fence was published, or a
+	// restart cannot tell.
+	recoveryFenceMayStand   bool
 	responderLoop           *ResponderLoop
 	responderCancel         context.CancelFunc
 	finishedHoldWake        time.Time
@@ -1728,6 +1731,10 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 			c.responderDone = true
 			c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(observedAt), IncidentId: completion.incidentID, DispatchError: completion.err != nil})
 		}
+		if completion.err != nil && !terminal {
+			// No dispatch is left. Recovery withdrawn later rejoins the session.
+			c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
+		}
 		c.mu.Unlock()
 		if completion.err != nil && !terminal {
 			// The verified incident keeps waiting for a final result that this dispatch will not deliver:
@@ -2237,6 +2244,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			c.reportBrokerError("fence incident writes", err)
 			return false
 		}
+		c.recoveryFenceMayStand = c.recoveryFenceMayStand || verified
 	}
 	finalChanges := c.finalStateChangesLocked(now)
 	var healthClearedAt *time.Time
@@ -2642,6 +2650,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	// A subprocess cannot survive a controller restart. Preserve the incident
 	// lock, but treat the old process as finished so detector clears can close it.
 	c.responderDone = state.ResponderDone
+	c.recoveryFenceMayStand = true
 	c.currentIncidentRequest = cloneIncidentRequest(incidentRequestState(state.GetIncidentRequest()))
 	c.currentIncidentResult = nil
 	if state.IncidentResult != nil {

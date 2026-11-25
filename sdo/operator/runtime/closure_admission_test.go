@@ -64,8 +64,13 @@ func TestProvisionalClosureAdmitsNewOpeners(t *testing.T) {
 			if !c.IncidentOpen() || !c.responderDone || c.pendingClosure != nil || !c.recoveryScope().holds(route) {
 				t.Fatalf("expected the same unresolved incident with a completed responder: open=%v done=%v pending=%v held=%v", c.IncidentOpen(), c.responderDone, c.pendingClosure != nil, c.recoveryScope())
 			}
-			if dispatcher.stopCount() != 1 || c.currentIncidentRequest.IncidentID != request.IncidentID {
-				t.Fatalf("responder was not retired exactly once for the original incident: stops=%d", dispatcher.stopCount())
+			// A running session goes on and returns by itself; a returned one is retired.
+			stops := 1
+			if phase == "running" {
+				stops = 0
+			}
+			if dispatcher.stopCount() != stops || c.currentIncidentRequest.IncidentID != request.IncidentID {
+				t.Fatalf("responder was not retired %d times for the original incident: stops=%d", stops, dispatcher.stopCount())
 			}
 		})
 	}
