@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import select
 import subprocess
 import sys
@@ -315,3 +316,31 @@ def test_sdo_objects_beside_the_lane_platform_are_refused_by_name(monkeypatch, c
     monkeypatch.setattr(vanilla, "kubectl", _listing(cluster, workloads))
     with pytest.raises(vanilla.HookError, match=(cluster or workloads).split("/", 1)[1]):
         vanilla.prove_no_sdo({})
+
+
+DEPLOY = Path(__file__).resolve().parents[4] / "benchmarks" / "lanes" / "deploy"
+#: How `kubectl get -o name` names each kind the full-lane script makes.
+LISTED_AS = {
+    "serviceaccount": "serviceaccount",
+    "clusterrolebinding": "clusterrolebinding.rbac.authorization.k8s.io",
+    "configmap": "configmap",
+    "DaemonSet": "daemonset.apps",
+}
+
+
+def full_lane_platform_objects() -> list[str]:
+    """Every object named sdo-* that a full EKS lane's own setup creates and the SDO check lists (Secrets are not)."""
+    script = (DEPLOY / "eks-lane.sh").read_text()
+    made = re.findall(r"create (\w+) (sdo-[a-z0-9-]+)", script)
+    agent = (DEPLOY / "eks" / "node-agent.yaml").read_text()
+    made += re.findall(r"^kind: (\w+)\nmetadata:\n  name: (sdo-[a-z0-9-]+)", agent, re.MULTILINE)
+    return [f"{LISTED_AS[kind]}/{name}" for kind, name in made if kind != "secret"]
+
+
+def test_every_object_the_full_lane_setup_makes_is_known_lane_platform():
+    """A platform object added to or renamed in the lane scripts must not make every full lane refuse the subject."""
+    found = full_lane_platform_objects()
+    assert {"serviceaccount/sdo-lane-admin", "daemonset.apps/sdo-lane-node-agent", "configmap/sdo-lane-prepull"} <= set(
+        found
+    )
+    assert [name for name in found if not vanilla.LANE_PLATFORM.fullmatch(name)] == []
