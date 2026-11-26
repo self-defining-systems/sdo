@@ -375,11 +375,9 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		*quietWindow = min(*quietWindow, 2*time.Minute)
 	}
 	fmt.Fprintln(os.Stderr, startNotice(*quick, *settle, *quietWindow, *breakItem, max(*breakBound, probeDetectionHorizon(*repo)), plannedWaves(m), *reportFile))
-	var given []appmap.GivenJourney
-	if goal, err := os.ReadFile(filepath.Join(*repo, ".sdo", "goal.md")); err == nil {
-		if given, err = appmap.ParseGoalJourneys(goal); err != nil {
-			return 0, err
-		}
+	given, err := goalJourneys(*repo)
+	if err != nil {
+		return 0, err
 	}
 	config := onboardcheck.Config{
 		Map: m, Commit: commit, Journeys: given,

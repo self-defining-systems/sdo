@@ -51,6 +51,33 @@ type Report struct {
 	// PlannedRate and Cap are requests per second of all probes together.
 	PlannedRate float64 `json:"planned_rate"`
 	Cap         float64 `json:"cap"`
+	// Plan says the run only read the schedule: nothing was sent or judged.
+	Plan bool `json:"plan,omitempty"`
+	// Schedules are every scheduled scenario's cost and expected detection,
+	// selected by Only or not.
+	Schedules []Schedule `json:"schedules,omitempty"`
+	// Journeys is the goal's journeys in its order (AddChecklist).
+	Journeys []JourneyItem `json:"journeys,omitempty"`
+	// Unlisted says the checklist found no journeys in the goal.
+	Unlisted bool `json:"unlisted,omitempty"`
+}
+
+// Schedule is how the health probes sample one scenario: what it costs and how
+// soon they notice it failing completely (traffic.Workload.ExpectedDetection
+// of the workload that notices it soonest, with its slowest healthy run when
+// it was judged). Times are seconds.
+type Schedule struct {
+	Scenario  string   `json:"scenario"`
+	Workloads []string `json:"workloads"`
+	// Requests is one iteration's requests; Cost is requests per second over
+	// every workload that schedules it.
+	Requests int     `json:"requests"`
+	Cost     float64 `json:"requests_per_second"`
+	Every    float64 `json:"every_s"`
+	Typical  float64 `json:"typical_s"`
+	Worst    float64 `json:"worst_s"`
+	// KnownBroken says a workload marks it known broken: it notices nothing.
+	KnownBroken bool `json:"known_broken,omitempty"`
 }
 
 // Reds is the number of red results.
@@ -71,7 +98,9 @@ type Config struct {
 	// Only keeps the scenarios whose ID contains one of these; empty keeps all.
 	Only []string
 	// Alter runs the altered-answers item.
-	Alter     bool
+	Alter bool
+	// Plan only reads the schedule: budget and schedules, no request sent.
+	Plan      bool
 	Client    traffic.Doer
 	BaseURL   func(traffic.Target) string
 	Passwords traffic.Passwords
@@ -95,7 +124,7 @@ const (
 
 // Run judges the scenarios the workloads schedule.
 func Run(ctx context.Context, c Config) Report {
-	report := Report{Cap: traffic.ProbeRateCap}
+	report := Report{Cap: traffic.ProbeRateCap, Plan: c.Plan}
 	load := budget(c, &report)
 	report.PlannedRate = load
 	scheduled := map[string]traffic.Workload{}
@@ -110,11 +139,12 @@ func Run(ctx context.Context, c Config) Report {
 		}
 	}
 	results := make([][]Result, len(c.Catalog))
+	slowest := make([]time.Duration, len(c.Catalog))
 	slots := make(chan struct{}, parallel)
 	shared := &sharedSetup{}
 	var running sync.WaitGroup
 	for i, scenario := range c.Catalog {
-		if !selected(scenario.ID, c.Only) {
+		if c.Plan || !selected(scenario.ID, c.Only) {
 			continue
 		}
 		workload, ok := scheduled[scenario.ID]
@@ -129,6 +159,7 @@ func Run(ctx context.Context, c Config) Report {
 			defer func() { <-slots }()
 			j := judge{c: c, scenario: scenario, workload: workload, shared: shared}
 			results[i] = j.run(ctx)
+			slowest[i] = j.slowest
 			if c.Progress != nil {
 				c.Progress(scenario.ID + " judged")
 			}
@@ -137,6 +168,11 @@ func Run(ctx context.Context, c Config) Report {
 	running.Wait()
 	for _, r := range results {
 		report.Results = append(report.Results, r...)
+	}
+	for i, scenario := range c.Catalog {
+		if s, ok := schedule(c.Workloads, scenario, slowest[i]); ok {
+			report.Schedules = append(report.Schedules, s)
+		}
 	}
 	sort.SliceStable(report.Results, func(i, j int) bool {
 		a, b := report.Results[i], report.Results[j]
@@ -207,6 +243,8 @@ type judge struct {
 	workload traffic.Workload
 	shared   *sharedSetup
 	next     uint64
+	// slowest is the slowest of the healthy runs, once they all passed.
+	slowest time.Duration
 }
 
 func (j *judge) engine(client traffic.Doer, shared *sharedSetup, iterationTimeout time.Duration) (*traffic.Engine, error) {
@@ -266,6 +304,7 @@ func (j *judge) run(ctx context.Context) []Result {
 			cleanup = s.CleanupError
 		}
 	}
+	j.slowest = slowest
 	out := []Result{one(ItemPasses, Green, fmt.Sprintf("3 runs passed, slowest %s, %d requests%s", slowest.Round(time.Millisecond), requests, pauses(slow)))}
 	if cleanup != "" {
 		out = append(out, one(ItemCleanup, Red, "cleanup failed, so the probe leaves data behind: "+cleanup))
@@ -275,8 +314,9 @@ func (j *judge) run(ctx context.Context) []Result {
 	if want := max(3*slowest, time.Second); bound < 2*slowest {
 		out = append(out, one(ItemLatency, Red, fmt.Sprintf("maxLatency %s is under twice the slowest healthy run %s and would page on an ordinary slow moment: set it to about %s", bound, slowest.Round(time.Millisecond), want.Round(100*time.Millisecond))))
 	}
-	interval := j.workload.ScenarioArrival(id)
-	out = append(out, one(ItemScheduled, Green, fmt.Sprintf("workload %s samples it every %s, so a full failure is confirmed in about %s", j.workload.Name, interval.Round(time.Second), (interval+slowest+5*time.Second).Round(time.Second))))
+	if s, ok := schedule(j.c.Workloads, j.scenario, slowest); ok {
+		out = append(out, one(ItemScheduled, Green, fmt.Sprintf("sampled every %s by %s; a full failure is noticed in about %s, at worst %s", seconds(s.Every), strings.Join(s.Workloads, ", "), seconds(s.Typical), seconds(s.Worst))))
+	}
 	if j.c.Alter {
 		out = append(out, j.altered(ctx, requests, slowest))
 	}
@@ -405,9 +445,11 @@ func pauses(s traffic.Sample) string {
 	return text
 }
 
-// Text is the report for people and agents: the red lines, then the rest.
+// Text is the report for people and agents: the journey checklist, then the
+// red lines, then the rest.
 func (r Report) Text() string {
 	var b strings.Builder
+	b.WriteString(r.checklistText())
 	for _, status := range []string{Red, Green} {
 		for _, x := range r.Results {
 			if x.Status == status {
@@ -415,6 +457,46 @@ func (r Report) Text() string {
 			}
 		}
 	}
-	fmt.Fprintf(&b, "%d red; %.2f of %.1f requests/s planned\n", r.Reds(), r.PlannedRate, r.Cap)
+	fmt.Fprintf(&b, "%d red", r.Reds())
+	if len(r.Journeys) > 0 {
+		counts := r.JourneyCounts()
+		fmt.Fprintf(&b, ", %d journeys missing or failing, %d of %d passed", counts[JourneyMissingMap]+counts[JourneyMissingProbe]+counts[JourneyFailing], counts[JourneyPassed], len(r.Journeys))
+	}
+	fmt.Fprintf(&b, "; %.2f of %.1f requests/s planned\n", r.PlannedRate, r.Cap)
+	if r.Plan {
+		b.WriteString("plan only: the schedule was read, no request was sent and no probe judged\n")
+	}
 	return b.String()
+}
+
+// schedule is the scenario's Schedule over the health-probe workloads that
+// schedule it; false when none does.
+func schedule(workloads []traffic.Workload, scenario traffic.Scenario, slowest time.Duration) (Schedule, bool) {
+	s := Schedule{Scenario: scenario.ID, Requests: len(scenario.Steps)}
+	var best traffic.DetectionEstimate
+	for _, w := range workloads {
+		if w.Purpose != traffic.PurposeHealthProbe {
+			continue
+		}
+		every := w.ScenarioArrival(scenario.ID)
+		if every <= 0 {
+			continue
+		}
+		s.Workloads = append(s.Workloads, w.Name)
+		s.Cost += float64(s.Requests) / every.Seconds()
+		if e := w.ExpectedDetection(scenario.ID, slowest); best.Typical == 0 || e.Typical < best.Typical {
+			best = e
+		}
+	}
+	if len(s.Workloads) == 0 {
+		return Schedule{}, false
+	}
+	s.KnownBroken = best.Typical == 0
+	s.Every, s.Typical, s.Worst = best.Every.Seconds(), best.Typical.Seconds(), best.Worst.Seconds()
+	return s, true
+}
+
+// seconds renders a time in seconds for the report.
+func seconds(s float64) string {
+	return (time.Duration(s * float64(time.Second))).Round(time.Second).String()
 }

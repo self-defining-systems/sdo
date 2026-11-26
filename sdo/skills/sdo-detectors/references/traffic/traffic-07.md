@@ -101,6 +101,16 @@ func (w Workload) EffectiveSampleInterval() time.Duration
     EffectiveSampleInterval is how often the workload samples each of its
     scenarios at least: its SampleInterval, else MinSampleInterval.
 
+func (w Workload) ExpectedDetection(id string, healthy time.Duration) DetectionEstimate
+    ExpectedDetection estimates how long the workload takes to notice the
+    scenario failing, given the slowest healthy run of it: the wait for
+    the scenario's next scheduled sample (the gaps between its slots in the
+    SamplingPlan; a Poisson gap averages its mean and is capped at four),
+    that sample failing, the confirming samples, and observeDelay. It is zero
+    for a scenario the workload does not schedule, a known-broken one, and any
+    workload that is not a health probe: none of them notices. A partial failure
+    is left to the SLO and takes longer.
+
 func (w Workload) KnownBrokenScenario(id string) *KnownBroken
     KnownBrokenScenario returns the KnownBroken declaration of scenario id,
     or nil when the scenario gates health.

@@ -25,6 +25,8 @@ type Options struct {
 	Alter     bool
 	// Soak runs the whole set at its own schedule this long; 0 skips it.
 	Soak time.Duration
+	// Plan reads the schedule only: no cluster, nothing sent.
+	Plan bool
 }
 
 // Run judges the memory's probes against the application, reached through port
@@ -37,6 +39,9 @@ func Run(ctx context.Context, catalog traffic.Catalog, documents map[string][]by
 	workloads, err := prober.ParseWorkloads(documents)
 	if err != nil {
 		return err
+	}
+	if options.Plan {
+		return json.NewEncoder(out).Encode(journeycheck.Run(ctx, journeycheck.Config{Catalog: catalog, Workloads: workloads, Plan: true}))
 	}
 	client, config, err := core.NewKubernetesClientAndConfig()
 	if err != nil {

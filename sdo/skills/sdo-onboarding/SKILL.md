@@ -10,6 +10,19 @@ journey within seconds: the map (`.sdo/arch.md`), probes (`.sdo/diagnostics/traf
 playbook. Go adds the generic Kubernetes, endpoint, store and request-metric detectors when memory is published;
 do not write them. Work alone: one author, no subagents, no reviewers.
 
+## The journey checklist is your to-do list
+
+`onboarding journeys` starts with one line per journey of `.sdo/goal.md`, in the goal's order. Run it with `--plan`
+first: it needs no cluster and sends nothing. Work top to bottom, fixing the furthest-from-done state first:
+`missing-map` (map an operation with `journey: <id>`), then `missing-probe` (a scheduled probe; a write needs a
+read-back), then `failing`, then `unchecked` (judge it with `--only`). Every journey must reach `passed`. Never drop or
+rename a goal journey. A journey you cannot cover stays on the list, and your final line names it.
+
+Each line says how soon a full failure of the journey is noticed (about / at worst). This is computed from your
+workloads' schedule and SDO's confirmation, not measured. It also names the operation and probe that bound it and what
+sampling that probe at the 10 s floor would cost. Use it to spend the budget: make the earlier and more used journeys
+fast first, and stop when the budget line shows little left.
+
 ## Order of work
 
 1. **Look once** (a few minutes): manifests, README, Services, the API's own description, the way a user gets an
@@ -58,6 +71,7 @@ every workload (unset is 4 iterations/s). Give most of the budget to the journey
 
 | Command | When |
 |---|---|
+| `sdo-operator onboarding journeys --repo DIR --namespace NS --plan` | first, and after each map or workload edit (no cluster) |
 | `sdo-operator onboarding journeys --repo DIR --namespace NS --only ID` | after each probe (seconds once built) |
 | same with `--alter` | when it passes: an unnoticed wrong answer is a missing check |
 | `sdo-operator memory check` | after each batch; map, coverage, ownership, compile |
@@ -69,6 +83,6 @@ background and write the next probe meanwhile.
 
 ## Finish line
 
-Every given journey has an operation and a probe, `onboarding journeys --alter --soak 5m` and `memory check` are
+Every journey on the checklist is `passed`, `onboarding journeys --alter --soak 5m` and `memory check` are
 green on the committed tree, and the application is as healthy as you found it. With ten minutes left, stop adding:
 remove what is not green, commit, and say what is uncovered.

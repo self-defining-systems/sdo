@@ -134,3 +134,32 @@ func TestUnspentBudgetWithASlowWorkloadIsRed(t *testing.T) {
 		t.Fatalf("%+v", r.Results[0])
 	}
 }
+
+// Every scheduled scenario gets its schedule, selected or not: what it costs
+// and how soon a full failure of it is noticed, from the workload that
+// notices it soonest. A plan run sends nothing and judges nothing.
+func TestEveryScheduledScenarioHasItsScheduleAndAPlanSendsNothing(t *testing.T) {
+	s := &store{items: map[string]string{}}
+	c := config(s, scenario(true))
+	c.Workloads[0].SampleInterval, c.Workloads[0].RatePerSecond = traffic.Duration(time.Minute), 1.0/60
+	fast := traffic.Workload{APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "probe-fast-write", Purpose: traffic.PurposeHealthProbe,
+		SampleInterval: traffic.Duration(10 * time.Second), Scenarios: []traffic.WorkloadScenario{{ID: "write-item"}}}.WithDefaults()
+	c.Workloads = append(c.Workloads, fast)
+	c.Only = []string{"nothing-matches"}
+	r := Run(context.Background(), c)
+	if len(r.Schedules) != 1 {
+		t.Fatalf("schedules = %+v", r.Schedules)
+	}
+	got := r.Schedules[0]
+	want := fast.ExpectedDetection("write-item", 0)
+	if got.Scenario != "write-item" || got.Requests != 2 || len(got.Workloads) != 2 || got.Typical != want.Typical.Seconds() || got.Every != 10 {
+		t.Fatalf("schedule = %+v, want the fast workload's %+v", got, want)
+	}
+	if got.Cost < 0.23 || got.Cost > 0.24 {
+		t.Fatalf("cost = %v, want both workloads' requests per second (2/10 + 2/60)", got.Cost)
+	}
+	c.Only, c.Plan = nil, true
+	if r := Run(context.Background(), c); len(s.items) != 0 || s.next != 0 || len(r.Schedules) != 1 || find(r, ItemPasses).Item != "" {
+		t.Fatalf("a plan run sent requests or judged: %d writes, %+v", s.next, r.Results)
+	}
+}
