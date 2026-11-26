@@ -21,6 +21,9 @@ type store struct {
 	next  int
 	// failDelete refuses deletes; constant answers a duplicate name with 409.
 	failDelete, unique bool
+	// deferDelete accepts a delete but only schedules it, the way an
+	// application with delayed deletion does: the item stays, renamed.
+	deferDelete bool
 }
 
 func answer(r *http.Request, status int, body string) *http.Response {
@@ -44,6 +47,12 @@ func (s *store) Do(r *http.Request) (*http.Response, error) {
 		if s.failDelete {
 			return answer(r, 500, "no"), nil
 		}
+		if s.deferDelete {
+			if name, ok := s.items[id]; ok {
+				s.items[id] = name + "-deletion_scheduled"
+			}
+			return answer(r, 202, ""), nil
+		}
 		delete(s.items, id)
 		return answer(r, 204, ""), nil
 	}
@@ -66,7 +75,10 @@ func scenario(readsBack bool) traffic.Scenario {
 			{Name: "create", Endpoint: traffic.POST("/items", nil).WithJSON(`{"name":"{name}"}`, traffic.Params{"name": traffic.Unique("sdoprobe-")}).Status(201).SaveJSON("id", "id").SaveJSON("name", "name")},
 			{Name: "read", Endpoint: read},
 		},
-		Cleanup: []traffic.Step{{Name: "delete", Endpoint: traffic.DELETE("/items/{id}", traffic.Params{"probe": traffic.Const("sdoprobe")}).Status(204)}},
+		Cleanup: []traffic.Step{
+			{Name: "delete", Endpoint: traffic.DELETE("/items/{id}", traffic.Params{"probe": traffic.Const("sdoprobe")}).Status(202, 204)},
+			{Name: "gone", Endpoint: traffic.GET("/items/{id}", traffic.Params{"probe": traffic.Const("sdoprobe")}).Status(404)},
+		},
 	}
 }
 
@@ -161,5 +173,51 @@ func TestEveryScheduledScenarioHasItsScheduleAndAPlanSendsNothing(t *testing.T) 
 	c.Only, c.Plan = nil, true
 	if r := Run(context.Background(), c); len(s.items) != 0 || s.next != 0 || len(r.Schedules) != 1 || find(r, ItemPasses).Item != "" {
 		t.Fatalf("a plan run sent requests or judged: %d writes, %+v", s.next, r.Results)
+	}
+}
+
+// A cleanup that never reads its data back gone cannot tell a delete that
+// only scheduled the removal from one that removed it; one that accepts a
+// refusal (400) counts a delete the application refused as done. Both are red
+// before anything is sent, so the author fixes them in a plan run.
+func TestACleanupThatCannotSeeItsDataStayIsRedInAPlan(t *testing.T) {
+	cases := map[string]func(*traffic.Scenario){
+		"no read-back": func(sc *traffic.Scenario) { sc.Cleanup = sc.Cleanup[:1] },
+		"accepts a refusal": func(sc *traffic.Scenario) {
+			sc.Cleanup = []traffic.Step{{Name: "delete", Endpoint: traffic.DELETE("/items/{id}", traffic.Params{"probe": traffic.Const("sdoprobe")}).Status(202, 400, 404)}}
+		},
+	}
+	wants := map[string]string{"no read-back": "reads the data back gone", "accepts a refusal": "accepts 400"}
+	for name, edit := range cases {
+		sc := scenario(true)
+		edit(&sc)
+		c := config(&store{items: map[string]string{}}, sc)
+		c.Plan = true
+		r := Run(context.Background(), c)
+		got := find(r, ItemCleanup)
+		if got.Status != Red || got.Subject != "write-item" || !r.Red() || !strings.Contains(got.Detail, wants[name]) {
+			t.Fatalf("%s: want a red cleanup item in a plan run, got %+v", name, r.Results)
+		}
+	}
+	// A refusal the read-back then checks is fine: "already gone" may be a 400.
+	verified := scenario(true)
+	verified.Cleanup[0].Endpoint = traffic.DELETE("/items/{id}", traffic.Params{"probe": traffic.Const("sdoprobe")}).Status(202, 204, 400)
+	for _, sc := range []traffic.Scenario{scenario(true), verified} {
+		c := config(&store{items: map[string]string{}}, sc)
+		c.Plan = true
+		if r := Run(context.Background(), c); find(r, ItemCleanup).Status == Red {
+			t.Fatalf("a cleanup that reads the item gone after its last write is fine: %+v", r.Results)
+		}
+	}
+}
+
+// An application that defers deletion answers the delete with success and
+// keeps the object; the cleanup's read-back sees it, so every run reports the
+// data it leaves behind instead of piling it up unseen.
+func TestDeferredDeletionIsSeenByTheCleanupReadBack(t *testing.T) {
+	s := &store{items: map[string]string{}, deferDelete: true}
+	r := Run(context.Background(), config(s, scenario(true)))
+	if got := find(r, ItemCleanup); got.Status != Red || !strings.Contains(got.Detail, "gone") {
+		t.Fatalf("want the read-back step named in a red cleanup, got %+v", r.Results)
 	}
 }

@@ -49,8 +49,13 @@ fast first, and stop when the budget line shows little left.
   that checks more over two.
 - Two probers may run it at once, beside real users: name every object per iteration, look up by id or marker,
   never assume a list is yours or a fixture is the only one. Writers that contend share one identity per journey.
-- Clean up in the same iteration, in an order the application allows while its background work runs. Data that
-  cannot be deleted stays one fixed object, or is bounded and noted.
+- Clean up in the same iteration, in an order the application allows while its background work runs, and end the
+  cleanup with a read that shows the data gone (404, or absent from the list). A delete answered 2xx may only schedule
+  the removal (delayed deletion, trash, soft delete): use the application's remove-for-good path, and accept only
+  success or not-found, never a refusal. Data that cannot be deleted stays one fixed object, or is bounded and noted.
+- Probe data must never change what users see. The read of records users already have lists the way a user first
+  sees them (default order, first page, no filter that hides other people's records) by a member that shows names,
+  so probe records left behind show up there and the healthy run turns red.
 - Keep probe work small: few concurrent heavy writes, small objects, low-cost reads.
 
 ## Budget and cadence
@@ -84,5 +89,6 @@ background and write the next probe meanwhile.
 ## Finish line
 
 Every journey on the checklist is `passed`, `onboarding journeys --alter --soak 5m` and `memory check` are
-green on the committed tree, and the application is as healthy as you found it. With ten minutes left, stop adding:
+green on the committed tree, and the application is as healthy as you found it: after the soak, open the user's own
+first views of the goal's journeys (the default list pages) as an ordinary user and confirm no probe record is there. With ten minutes left, stop adding:
 remove what is not green, commit, and say what is uncovered.

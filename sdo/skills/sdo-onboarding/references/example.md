@@ -72,8 +72,12 @@ func Scenarios() traffic.Catalog {
 				step("read-back", receipt{auth(traffic.GET("/api/orders/{id}", nil)).JSONEquals("ref", "{ref}").JSONEquals("item", "pen")}),
 				step("find", auth(traffic.GET("/api/orders", byRef)).ExactSet("items", "id", "{id}")),
 			},
-			// a cleanup write carries the marker too (here in the query)
-			Cleanup: []traffic.Step{step("delete", auth(traffic.DELETE("/api/orders/{id}", traffic.Params{"probe": traffic.Const(marker)})))},
+			// cleanup requests carry the marker too (here in the query); the last step reads the order gone,
+			// because a delete answered 2xx may only schedule the removal
+			Cleanup: []traffic.Step{
+				step("delete", auth(traffic.DELETE("/api/orders/{id}", traffic.Params{"probe": traffic.Const(marker)}))),
+				step("gone", auth(traffic.GET("/api/orders/{id}", traffic.Params{"probe": traffic.Const(marker)})).Status(404)),
+			},
 			Detects: []traffic.FaultClass{traffic.FaultWrongBody, traffic.FaultSlow},
 		},
 		{
@@ -81,7 +85,8 @@ func Scenarios() traffic.Catalog {
 			DependsOn: path, SideEffect: traffic.SideEffectRead, Marker: marker,
 			Users: []traffic.ProbeUser{reader}, Setup: fixture(reader),
 			Steps: []traffic.Step{
-				step("existing", auth(traffic.GET("/api/orders/public", nil)).ReadsExistingRecords("items", "id", `^\d+$`)),
+				// the list as a user first sees it (default order, first page); members by name, so probe records show
+				step("existing", auth(traffic.GET("/api/orders/public", nil)).ReadsExistingRecords("items", "ref", `^\S+$`)),
 				step("own", auth(traffic.GET("/api/orders", traffic.Params{"ref": traffic.Const("sdoprobe-fixture-" + reader.Name)})).
 					JSONEquals("items.0.item", "pen")),
 			},

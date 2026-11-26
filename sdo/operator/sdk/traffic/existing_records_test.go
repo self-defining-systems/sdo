@@ -92,3 +92,12 @@ func TestExistingRecordsStepsFactsFindKeysTheScenarioWrote(t *testing.T) {
 		t.Fatalf("%+v", facts)
 	}
 }
+
+// The sample counts the probe-marked records a users' list showed, so a run
+// can tell probe data that piles up in what users see from a steady fixture.
+func TestExistingRecordsCountsTheProbeMarkedRecordsUsersSee(t *testing.T) {
+	s := iterateRecords(t, []string{"sdo-probe-a-deletion_scheduled", "sdo-probe-b", "alice"})
+	if s.Outcome != OutcomeOK || s.ExistingMarked != 2 {
+		t.Fatalf("existingMarked=%d, want 2: %+v", s.ExistingMarked, s)
+	}
+}

@@ -26,15 +26,38 @@ func Soaked(windows map[string]traffic.Window) []Result {
 				}
 			}
 			r := Result{ItemSoak, name + "/" + id, Green, fmt.Sprintf("%d samples, none failed", len(o.Samples))}
+			first, last, listed := markedSpan(o.Samples)
 			switch {
 			case failed > 0:
 				r.Status, r.Detail = Red, fmt.Sprintf("%d of %d samples failed while healthy: %s", failed, len(o.Samples), worst)
 			case !o.Qualified:
 				r.Status, r.Detail = Red, strings.TrimSpace("never qualified: too few usable samples in the run "+o.LastInvalid)
+			case listed && last-first > maxMarkedGrowth:
+				r.Status, r.Detail = Red, fmt.Sprintf("probe-marked records in the list users read rose from %d to %d over the run: the probes leave data behind (a delete the application only scheduled?) and it crowds users' records; make cleanup remove it for good and read it back gone", first, last)
 			}
 			out = append(out, r)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Subject < out[j].Subject })
 	return out
+}
+
+// maxMarkedGrowth is how many more probe-marked records a users' list may show
+// at the end of a healthy run than at its start: the objects of iterations
+// still in flight from two probers.
+const maxMarkedGrowth = 2
+
+// markedSpan is the probe-marked record count of the first and the last
+// sample that read a users' list, in time order.
+func markedSpan(samples []traffic.Sample) (first, last int, listed bool) {
+	for _, s := range samples {
+		if s.Outcome != traffic.OutcomeOK || s.ExistingRecords == "" {
+			continue
+		}
+		if !listed {
+			first, listed = s.ExistingMarked, true
+		}
+		last = s.ExistingMarked
+	}
+	return first, last, listed
 }

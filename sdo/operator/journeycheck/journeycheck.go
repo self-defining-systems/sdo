@@ -144,12 +144,18 @@ func Run(ctx context.Context, c Config) Report {
 	shared := &sharedSetup{}
 	var running sync.WaitGroup
 	for i, scenario := range c.Catalog {
-		if c.Plan || !selected(scenario.ID, c.Only) {
+		if !selected(scenario.ID, c.Only) {
+			continue
+		}
+		if gap, ok := cleanupResult(scenario); ok {
+			results[i] = append(results[i], gap)
+		}
+		if c.Plan {
 			continue
 		}
 		workload, ok := scheduled[scenario.ID]
 		if !ok {
-			results[i] = []Result{{ItemScheduled, scenario.ID, Red, "no health-probe workload schedules it, so SDO never runs it: add it to a workload or remove it"}}
+			results[i] = append(results[i], Result{ItemScheduled, scenario.ID, Red, "no health-probe workload schedules it, so SDO never runs it: add it to a workload or remove it"})
 			continue
 		}
 		running.Add(1)
@@ -158,7 +164,7 @@ func Run(ctx context.Context, c Config) Report {
 			slots <- struct{}{}
 			defer func() { <-slots }()
 			j := judge{c: c, scenario: scenario, workload: workload, shared: shared}
-			results[i] = j.run(ctx)
+			results[i] = append(results[i], j.run(ctx)...)
 			slowest[i] = j.slowest
 			if c.Progress != nil {
 				c.Progress(scenario.ID + " judged")
