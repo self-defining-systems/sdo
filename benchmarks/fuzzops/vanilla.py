@@ -31,11 +31,11 @@ IDENTITY = "vanilla-agent"
 MODULE = "benchmarks.fuzzops.vanilla"
 VERTEX_ENV = ("CLAUDE_CODE_USE_VERTEX", "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID")
 ONSET_EVIDENCE = "onset-probes.jsonl"
-#: What every full EKS lane carries before a subject runs (benchmarks/lanes/deploy/eks-lane.sh): the lane admin
-#: identity and the node agent DaemonSet with its pods. They belong to the lane, not to SDO.
+#: What a full EKS lane carries in kube-system (benchmarks/lanes/deploy/eks-lane.sh): the lane admin identity, the node
+#: agent DaemonSet with its pods, and the node agent's pre-pull list. They belong to the lane, not to SDO.
 LANE_PLATFORM = re.compile(
     r"(serviceaccount|clusterrolebinding\.rbac\.authorization\.k8s\.io)/sdo-lane-admin"
-    r"|daemonset\.apps/sdo-lane-node-agent|pod/sdo-lane-node-agent-[a-z0-9]{5}"
+    r"|daemonset\.apps/sdo-lane-node-agent|pod/sdo-lane-node-agent-[a-z0-9]{5}|configmap/sdo-lane-prepull"
 )
 LANE_VERBS = ("prepare", "idle", "snapshot", "reset", "swap", "teardown")
 EVIDENCE_FILES = (

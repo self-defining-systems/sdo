@@ -281,7 +281,8 @@ def test_every_auth_secret_is_redacted_from_kept_logs(tmp_path, auth, secrets):
 #: What a full EKS lane carries before any subject runs (benchmarks/lanes/deploy/eks-lane.sh).
 LANE_PLATFORM_NAMES = (
     "clusterrolebinding.rbac.authorization.k8s.io/sdo-lane-admin",
-    "daemonset.apps/sdo-lane-node-agent\npod/sdo-lane-node-agent-6rxmh\nserviceaccount/sdo-lane-admin",
+    "daemonset.apps/sdo-lane-node-agent\npod/sdo-lane-node-agent-6rxmh\nserviceaccount/sdo-lane-admin\n"
+    "configmap/sdo-lane-prepull",
 )
 
 
@@ -307,6 +308,7 @@ def test_full_eks_lane_platform_objects_are_not_sdo(monkeypatch):
         ("", "deployment.apps/sdo-controller"),
         ("", "pod/sdo-lane-node-agent-6rxmh-extra"),
         ("", "serviceaccount/sdo-lane-admin-shadow"),
+        ("", "configmap/sdo-lane-prepull-extra"),
     ],
 )
 def test_sdo_objects_beside_the_lane_platform_are_refused_by_name(monkeypatch, cluster, workloads):
