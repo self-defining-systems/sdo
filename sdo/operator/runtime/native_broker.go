@@ -31,6 +31,7 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/shellpath"
 )
 
@@ -865,6 +866,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			}
 		}
 		if capture != "" && n.Replay != "off" {
+			origins = n.newPlaybookOrigins(ctx, capture, effect.IncidentID, logicalReflectionDecision(decision), origins)
 			recordNewPlaybookCases(ctx, workspace, capture, effect.IncidentID, outcomeCaseContext(effect.Outcome), origins)
 		}
 		// Keep Go-owned negative evidence even if the agent deleted or relabeled it.
@@ -888,6 +890,38 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			return nil, err
 		}
 	}
+}
+
+// newPlaybookOrigins adds, for each new playbook, the capture its Diagnose
+// matched when the incident holds later captures: its first case must be that
+// state, not the opening one it may not match. The shared check reports the
+// capture; it reuses the agent's own check of the same bytes when it can.
+func (n NativeIncidentBroker) newPlaybookOrigins(ctx context.Context, capture, incidentID string, decision *contracts.ReflectionDecision, origins map[string]string) map[string]string {
+	late := slices.ContainsFunc(sdktest.LateCapturePhases(), func(phase string) bool {
+		_, err := os.Stat(filepath.Join(capture, phase+".json"))
+		return err == nil
+	})
+	if !late || n.Repository == nil {
+		return origins
+	}
+	report, err := n.Repository.CheckReflection(validate.WithCaptureSource(ctx, capture, incidentID), incidentID, decision)
+	if err != nil {
+		slog.Warn("corpus_case_capture_unknown", "incident", incidentID, "reason", err.Error())
+		return origins
+	}
+	merged := maps.Clone(origins)
+	if merged == nil {
+		merged = map[string]string{}
+	}
+	for _, gap := range report.GetCoverageGaps() {
+		name, ok := validate.OwnIncidentMatchCapture(gap.GetRule(), gap.GetMessage())
+		id, inPlaybooks := strings.CutPrefix(gap.GetPath(), layout.PlaybooksDir+"/")
+		if !ok || !inPlaybooks || !sdktest.IsOpenCapturePhase(name) {
+			continue
+		}
+		merged[memory.CapturedInstanceKey(id, program.Bindings{})] = strings.TrimPrefix(strings.TrimSuffix(name, ".json"), "open@")
+	}
+	return merged
 }
 
 // recordNewPlaybookCases writes the first corpus case of every playbook the

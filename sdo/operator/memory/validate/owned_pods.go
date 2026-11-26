@@ -34,7 +34,7 @@ func DropReplacedOwnedPods(outcome *contracts.OutcomeRecord, capture string) {
 		return
 	}
 	var opens []sdktest.Snapshot
-	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+	for _, phase := range sdktest.OpenCapturePhases() {
 		var s sdktest.Snapshot
 		raw, err := os.ReadFile(filepath.Join(capture, phase+".json"))
 		if err == nil && json.Unmarshal(raw, &s) == nil && !s.ObservedAt().IsZero() && !s.ObservedAt().After(fixed.ObservedAt()) {
@@ -111,7 +111,7 @@ func ObservedRepairOwners(outcome *contracts.OutcomeRecord, capture string) {
 		return
 	}
 	var opens []sdktest.Snapshot
-	for _, phase := range []string{"open@pre-apply", "open@settle", "open@detect"} {
+	for _, phase := range slices.Backward(sdktest.OpenCapturePhases()) {
 		var s sdktest.Snapshot
 		raw, err := os.ReadFile(filepath.Join(capture, phase+".json"))
 		if err == nil && json.Unmarshal(raw, &s) == nil && !s.ObservedAt().IsZero() {

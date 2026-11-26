@@ -344,6 +344,8 @@ type Controller struct {
 	// closure; tests use it to make that work slow or fail.
 	closureEvidence func(context.Context, closureEvidenceInput) (closureEvidence, error)
 	closurePrep     *closurePreparation
+	// late is the open incident's later captures (captureLate).
+	late            lateCaptureState
 	closurePrepared chan struct{}
 	OnClosureFailed func(ClosureFailure)
 	CanAct          func() bool
@@ -968,6 +970,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 	}
 
+	c.captureLate(ctx, now, snapshot)
 	c.timePhase("close_incident", func() {
 		if observationCtx.Err() != nil && ctx.Err() == nil {
 			c.loseAutomaticObservation(now)

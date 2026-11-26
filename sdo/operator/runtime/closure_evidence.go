@@ -65,6 +65,7 @@ func (c *Controller) captureClosureEvidence(ctx context.Context, in closureEvide
 	if root == "" {
 		return nil
 	}
+	c.awaitLateCapture(ctx)
 	start := c.clock()
 	if err := memory.CaptureIncidentSnapshot(root, in.IncidentID, "fixed", in.Snapshot, c.config.Namespace, findingCaptureRefs(in.Findings)...); err != nil {
 		return fmt.Errorf("capture verified snapshot: %w", err)

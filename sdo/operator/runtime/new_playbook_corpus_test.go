@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/sdk/program"
 )
 
 func writeSynthetic(t *testing.T, root, name, content string) {
@@ -94,5 +95,27 @@ func TestACaseThatCannotBeRecordedIsLoggedWithItsReason(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("log lacks %q:\n%s", want, text)
 		}
+	}
+}
+
+// A new playbook that matched only a later capture gets its first case from that
+// capture: the opening state may not hold its cause.
+func TestANewPlaybookCaseUsesTheCaptureItMatched(t *testing.T) {
+	worktree := t.TempDir()
+	writeSynthetic(t, worktree, ".sdo/playbooks/fresh/diagnose.go", syntheticRoleLess)
+	capture := syntheticCapture(t, true)
+	writeSynthetic(t, capture, "open@late-1.json", `{"namespace":"late"}`)
+	writeSynthetic(t, capture, "open@late-1-recordings.json", "[]")
+	origins := map[string]string{memory.CapturedInstanceKey("fresh", program.Bindings{}): "late-1"}
+
+	recordFirstCases(worktree, []string{"fresh"}, capture, "incident-1", memory.CaseContext{}, origins)
+
+	labels, err := filepath.Glob(filepath.Join(worktree, ".sdo", "corpus", "*", "labels.json"))
+	if err != nil || len(labels) != 1 {
+		t.Fatalf("cases = %v, %v", labels, err)
+	}
+	data, _ := os.ReadFile(labels[0])
+	if !strings.Contains(string(data), `"open_at": "late-1"`) {
+		t.Fatalf("labels = %s, want the later capture", data)
 	}
 }

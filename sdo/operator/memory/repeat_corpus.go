@@ -181,7 +181,7 @@ func CapturedInstanceKey(id string, bindings program.Bindings) string {
 }
 func capturedInstancePhase(id string, bindings program.Bindings, origins []map[string]string) string {
 	if len(origins) > 0 {
-		if phase := origins[0][CapturedInstanceKey(id, bindings)]; phase == "pre-apply" {
+		if phase := origins[0][CapturedInstanceKey(id, bindings)]; phase != "detect" && sdktest.IsOpenCapturePhase("open@"+phase) {
 			return phase
 		}
 	}

@@ -22,7 +22,7 @@ func CaptureRepairReceipts(root, incidentID string, outcome *contracts.OutcomeRe
 	if err != nil {
 		return err
 	}
-	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+	for _, phase := range sdktest.OpenCapturePhases() {
 		if _, err := os.Stat(filepath.Join(dir, phase+"-recordings.json")); os.IsNotExist(err) {
 			continue
 		} else if err != nil {

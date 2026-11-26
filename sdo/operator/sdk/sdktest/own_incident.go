@@ -49,11 +49,14 @@ type RecoveredMatch struct {
 
 // DiagnoseOnIncident runs d's Diagnose on the incident's captured open state:
 // the controller's open@* snapshots in dir with their recorded reads, through
-// the same RunDiagnose and read semantics the live stage uses. A learned
+// the same RunDiagnose and read semantics the live stage uses. Later captures
+// (open@late-N, taken when a new finding appeared before recovery) hold causes
+// the opening capture never saw. A learned
 // playbook declares no object role, so it runs with no bindings; one that
 // declares roles is unverified, because production binds them from findings the
-// capture does not carry. A Match on any capture is a Match. Without one, a
-// NoMatch on any capture is a failure; everything else is unverified.
+// capture does not carry. A Match on any capture is a Match. Without one, a later
+// capture that cannot decide makes it unverified; else a NoMatch on any capture
+// is a failure, and everything else is unverified.
 func DiagnoseOnIncident(d program.Diagnoser, dir string) (OwnIncidentResult, error) {
 	spec := d.Spec()
 	result := OwnIncidentResult{ProgramID: spec.ID, Outcome: OwnIncidentUnverified}
@@ -63,15 +66,13 @@ func DiagnoseOnIncident(d program.Diagnoser, dir string) (OwnIncidentResult, err
 			roles = append(roles, param.Name)
 		}
 	}
-	paths, err := filepath.Glob(filepath.Join(dir, "open@*.json"))
-	if err != nil {
-		return result, err
-	}
-	sort.Strings(paths)
 	var captures []string
-	for _, path := range paths {
-		if !strings.HasSuffix(path, "-recordings.json") {
+	for _, phase := range OpenCapturePhases() {
+		path := filepath.Join(dir, phase+".json")
+		if _, err := os.Stat(path); err == nil {
 			captures = append(captures, path)
+		} else if !os.IsNotExist(err) {
+			return result, err
 		}
 	}
 	if len(captures) == 0 {
@@ -83,7 +84,9 @@ func DiagnoseOnIncident(d program.Diagnoser, dir string) (OwnIncidentResult, err
 		result.Reason = fmt.Sprintf("declares object roles (%s); production binds them from findings the capture does not carry", strings.Join(roles, ", "))
 		return result, nil
 	}
-	var failed, unverified *OwnIncidentResult
+	// A later capture exists because something changed after the opening one:
+	// when it cannot decide, the incident cannot say the playbook is wrong.
+	var failed, unverified, lateUnverified *OwnIncidentResult
 	for _, path := range captures {
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -114,23 +117,44 @@ func DiagnoseOnIncident(d program.Diagnoser, dir string) (OwnIncidentResult, err
 				// What a capture withholds, a live read sees: the NoMatch may be the capture, not the playbook.
 				here.Outcome, here.Reason = OwnIncidentUnverified, "Diagnose returned NoMatch, but the capture "+limit+": "+evidenceSummary(verdict)
 			}
-			if failed == nil {
+			if here.Outcome == OwnIncidentUnverified && IsLateCapture(here.Capture) {
+				if lateUnverified == nil {
+					lateUnverified = &here
+				}
+			} else if failed == nil {
 				failed = &here
 			}
 		default:
 			here.Outcome, here.Reason = OwnIncidentUnverified, fmt.Sprintf("Diagnose returned %s: %s", verdict.Result, evidenceSummary(verdict))
-			if unverified == nil {
+			if IsLateCapture(here.Capture) {
+				if lateUnverified == nil {
+					lateUnverified = &here
+				}
+			} else if unverified == nil {
 				unverified = &here
 			}
 		}
 	}
 	switch {
+	case lateUnverified != nil:
+		return *lateUnverified, nil
 	case failed != nil:
 		return *failed, nil
 	case unverified != nil:
 		return *unverified, nil
 	}
 	return result, nil
+}
+
+// LateMatchRefused says why a Match is no proof, "" when it is one. A Match only
+// on a later capture, taken while the agent was already repairing, must also not
+// match the recovered state: otherwise it may match the repair's own residue.
+func (r OwnIncidentResult) LateMatchRefused() string {
+	if r.Outcome != OwnIncidentMatch || !IsLateCapture(r.Capture) || r.Recovered == nil {
+		return ""
+	}
+	return "Diagnose matches only the later capture " + r.Capture + " and also the recovered state, so it does not tell the fault from its repair. " +
+		"Narrow Diagnose to the fault's own condition, or keep the playbook README-only"
 }
 
 // DiagnoseOnRecovered replays fixed-boundary observations. Unknown means not evaluated.
@@ -149,8 +173,8 @@ func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) (
 		return nil, program.Unknown
 	}
 	var calls []PrimitiveCall
-	for _, phase := range []string{"detect", "settle", "pre-apply"} {
-		raw, err := os.ReadFile(filepath.Join(dir, "open@"+phase+"-recordings.json"))
+	for _, phase := range OpenCapturePhases() {
+		raw, err := os.ReadFile(filepath.Join(dir, phase+"-recordings.json"))
 		var capture CorpusCase
 		if err == nil && json.Unmarshal(raw, &capture.Recordings) == nil {
 			calls = append(calls, capture.PhaseRecordings("fixed")...)

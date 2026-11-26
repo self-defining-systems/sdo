@@ -260,3 +260,53 @@ func TestOpenReplayKeepsBlockingNoMatchAfterRecordedConfigMapDiff(t *testing.T) 
 		})
 	}
 }
+
+// A cause that appears after the incident opened is absent from the opening capture. A program for it is proved on the
+// later capture; one that also matches the recovered state proves nothing there.
+func TestDiagnoseOnIncidentReadsLaterCaptures(t *testing.T) {
+	blocked := func(view program.ReadView) (program.Verdict, error) {
+		if len(view.Services()) == 0 {
+			return program.Verdict{Result: program.NoMatch}, nil
+		}
+		return program.Verdict{Result: program.Match}, nil
+	}
+	write := func(t *testing.T, dir, name string, snapshot Snapshot) {
+		t.Helper()
+		raw, err := json.Marshal(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	later := Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Namespace: "app", Name: "cause"}}}}
+	dir := ownCapture(t, "[]")
+	d := ownDiagnoser{spec: program.ProgramSpec{ID: "p"}, diagnose: blocked}
+	if got, err := DiagnoseOnIncident(d, dir); err != nil || got.Outcome != OwnIncidentFailed {
+		t.Fatalf("opening capture alone: %+v, %v", got, err)
+	}
+	write(t, dir, "open@late-1.json", later)
+	got, err := DiagnoseOnIncident(d, dir)
+	if err != nil || got.Outcome != OwnIncidentMatch || got.Capture != "open@late-1.json" {
+		t.Fatalf("later capture: %+v, %v", got, err)
+	}
+	got.Recovered = &RecoveredMatch{Objects: []sdk.ObjectRef{{Kind: "Service", Namespace: "app", Name: "cause"}}}
+	if reason := got.LateMatchRefused(); !strings.Contains(reason, "recovered") {
+		t.Fatalf("a late-only match that also matches recovered must be refused, got %q", reason)
+	}
+	got.Capture = "open@detect.json"
+	if reason := got.LateMatchRefused(); reason != "" {
+		t.Fatalf("an opening match keeps its note: %q", reason)
+	}
+	// The cause is past the opening branch, but the later capture lacks a read: it cannot say.
+	unread := ownDiagnoser{spec: program.ProgramSpec{ID: "p"}, diagnose: func(view program.ReadView) (program.Verdict, error) {
+		if len(view.Services()) == 0 {
+			return program.Verdict{Result: program.NoMatch}, nil
+		}
+		return program.Verdict{}, errors.New("object not captured")
+	}}
+	if got, err := DiagnoseOnIncident(unread, dir); err != nil || got.Outcome != OwnIncidentUnverified {
+		t.Fatalf("undecided later capture: %+v, %v", got, err)
+	}
+}

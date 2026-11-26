@@ -50,6 +50,18 @@ func ownIncidentNote(result sdktest.OwnIncidentResult) Diagnostic {
 	return Diagnostic{Rule: RuleOwnIncidentReplay, Path: layout.PlaybookDir(result.ProgramID), Message: message}
 }
 
+// OwnIncidentMatchCapture is the capture file a new playbook's Diagnose matched,
+// read from its own-incident note (ownIncidentNote); ok is false for any other
+// diagnostic.
+func OwnIncidentMatchCapture(rule, message string) (capture string, ok bool) {
+	rest, match := strings.CutPrefix(message, string(sdktest.OwnIncidentMatch)+": ")
+	open := strings.LastIndex(rest, "(")
+	if rule != RuleOwnIncidentReplay || !match || open < 0 || !strings.HasSuffix(rest, ")") {
+		return "", false
+	}
+	return rest[open+1 : len(rest)-1], true
+}
+
 func recoveredMatchNote(result sdktest.OwnIncidentResult) (Diagnostic, bool) {
 	if result.Recovered == nil {
 		return Diagnostic{}, false

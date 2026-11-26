@@ -240,12 +240,12 @@ A clean peer rebase reruns validation on the merged accepted head with the exist
 
 ## Own-incident replay of a new playbook
 
-For every playbook the closing turn introduced (no program source at the base), the shared check runs its `Diagnose` on the incident's own `open@*` capture and reports one verdict per playbook as a `playbook.own-incident-replay` entry whose path is `.sdo/playbooks/<id>` and whose message starts with the outcome:
+For every playbook the closing turn introduced (no program source at the base), the shared check runs its `Diagnose` on the incident's own `open@*` captures (opening ones first, then `open@late-N`) and reports one verdict per playbook as a `playbook.own-incident-replay` entry whose path is `.sdo/playbooks/<id>` and whose message starts with the outcome:
 
 - `match: ...`: Diagnose recognised the fault it was written for. Non-blocking note.
 - `unverified: ...`: the capture cannot say (an unrecorded read, a read the capture holds an error for, declared object roles, no capture, or a `NoMatch` on a capture that redacts ConfigMap values or dropped objects over its budget: the live read sees what the capture withholds). Non-blocking note carrying the reason. An always-unverified playbook is the signal to look at: it has never been shown to recognise anything.
-- A blocking diagnostic with the same rule: Diagnose returned `NoMatch` on its own incident with every read answered (a definite failure). The broker refuses the commit; the correction turn gets the text and the entry is in `reflection_rejections`.
+- A blocking diagnostic with the same rule: Diagnose returned `NoMatch` on its own incident with every read answered (a definite failure), or it matched only an `open@late-N` capture and also matches `fixed.json`. A later capture that cannot decide makes the verdict `unverified`. The broker refuses the commit; the correction turn gets the text and the entry is in `reflection_rejections`.
 
-Notes are in the agent's `memory check --json` `coverage_gaps`, `memory test <id>` (first line `diagnose on incident: ...`), the accepted commit's `SDO-Coverage-Gap:` trailers and the ledger's `reflection_coverage_gaps`. No protobuf field changes. The first corpus case of such a playbook is written from the same capture (`corpus_case_not_recorded` in the controller log says why one is missing).
+Notes are in the agent's `memory check --json` `coverage_gaps`, `memory test <id>` (first line `diagnose on incident: ...`), the accepted commit's `SDO-Coverage-Gap:` trailers and the ledger's `reflection_coverage_gaps`. No protobuf field changes. The first corpus case of such a playbook is written from the capture its Diagnose matched (provenance `open_at: late-N` for a later one) (`corpus_case_not_recorded` in the controller log says why one is missing).
 
 `playbook.matches-recovered` appears only in check output. Diagnose returned Match on the verified fixed snapshot with sufficient recorded reads. The note lists captured objects named in the verdict. Missing notes can mean NoMatch, unavailable evidence, or an exhausted replay budget.

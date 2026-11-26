@@ -1,3 +1,13 @@
+# Later open captures
+
+While an incident is open, not recovering, and an alert of its set still fails, the
+controller keeps the step's own observation as `open@late-N.json` (N 1-5, with
+`open@late-N-recordings.json` holding its source comparisons) when a timeline entry
+first activated after the previous capture. The first waits for incident age 15 s,
+each next one for twice the age of the one before. A restart continues the numbering
+from the files present. The `fixed` capture waits for one in flight. Fixed-boundary
+reads are asked once per distinct read and shared across phases.
+
 # First-mutation evidence boundary
 
 Controller-owned responder loops preserve `open@pre-apply.json` immediately

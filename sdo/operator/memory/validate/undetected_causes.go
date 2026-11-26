@@ -76,7 +76,7 @@ func CaptureUndetectedCauses(outcome *contracts.OutcomeRecord, capture string) [
 		return nil
 	}
 	var opens []sdktest.Snapshot
-	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+	for _, phase := range sdktest.OpenCapturePhases() {
 		var s sdktest.Snapshot
 		raw, err := os.ReadFile(filepath.Join(capture, phase+".json"))
 		if err == nil && json.Unmarshal(raw, &s) == nil && !s.ObservedAt().IsZero() {
