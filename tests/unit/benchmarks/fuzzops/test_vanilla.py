@@ -276,3 +276,40 @@ def test_every_auth_secret_is_redacted_from_kept_logs(tmp_path, auth, secrets):
     assert found == secrets
     vanilla.copy_log(log, kept, found)
     assert not [secret for secret in secrets if secret in kept.read_text()]
+
+
+#: What a full EKS lane carries before any subject runs (benchmarks/lanes/deploy/eks-lane.sh).
+LANE_PLATFORM_NAMES = (
+    "clusterrolebinding.rbac.authorization.k8s.io/sdo-lane-admin",
+    "daemonset.apps/sdo-lane-node-agent\npod/sdo-lane-node-agent-6rxmh\nserviceaccount/sdo-lane-admin",
+)
+
+
+def _listing(extra_cluster: str = "", extra_workloads: str = ""):
+    def kube(env, config, *args, stdin=None):
+        base_cluster, base_workloads = LANE_PLATFORM_NAMES
+        if "-A" in args:
+            return "\n".join(x for x in ("pod/gitlab-webservice-0", base_workloads, extra_workloads) if x)
+        return "\n".join(x for x in ("namespace/fg1", base_cluster, extra_cluster) if x)
+
+    return kube
+
+
+def test_full_eks_lane_platform_objects_are_not_sdo(monkeypatch):
+    monkeypatch.setattr(vanilla, "kubectl", _listing())
+    assert vanilla.prove_no_sdo({})["result"] == "SDO absent"
+
+
+@pytest.mark.parametrize(
+    ("cluster", "workloads"),
+    [
+        ("namespace/sdo-system", ""),
+        ("", "deployment.apps/sdo-controller"),
+        ("", "pod/sdo-lane-node-agent-6rxmh-extra"),
+        ("", "serviceaccount/sdo-lane-admin-shadow"),
+    ],
+)
+def test_sdo_objects_beside_the_lane_platform_are_refused_by_name(monkeypatch, cluster, workloads):
+    monkeypatch.setattr(vanilla, "kubectl", _listing(cluster, workloads))
+    with pytest.raises(vanilla.HookError, match=(cluster or workloads).split("/", 1)[1]):
+        vanilla.prove_no_sdo({})

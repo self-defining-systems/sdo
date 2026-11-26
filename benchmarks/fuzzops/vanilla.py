@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,12 @@ IDENTITY = "vanilla-agent"
 MODULE = "benchmarks.fuzzops.vanilla"
 VERTEX_ENV = ("CLAUDE_CODE_USE_VERTEX", "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID")
 ONSET_EVIDENCE = "onset-probes.jsonl"
+#: What every full EKS lane carries before a subject runs (benchmarks/lanes/deploy/eks-lane.sh): the lane admin
+#: identity and the node agent DaemonSet with its pods. They belong to the lane, not to SDO.
+LANE_PLATFORM = re.compile(
+    r"(serviceaccount|clusterrolebinding\.rbac\.authorization\.k8s\.io)/sdo-lane-admin"
+    r"|daemonset\.apps/sdo-lane-node-agent|pod/sdo-lane-node-agent-[a-z0-9]{5}"
+)
 LANE_VERBS = ("prepare", "idle", "snapshot", "reset", "swap", "teardown")
 EVIDENCE_FILES = (
     "start.json",
@@ -97,8 +104,10 @@ def kubectl(env: Mapping[str, str], config: Path | None, *args: str, stdin: str 
 def prove_no_sdo(env: Mapping[str, str]) -> dict[str, str]:
     cluster = kubectl(env, None, "get", "ns,clusterroles,clusterrolebindings,crd", "-o", "name")
     workloads = kubectl(env, None, "get", "deploy,sts,ds,pod,job,cronjob,cm,sa,role,rolebinding", "-A", "-o", "name")
-    if any("sdo" in name.lower() for name in (cluster + "\n" + workloads).splitlines()):
-        raise HookError("SDO objects found on the vanilla lane")
+    names = (cluster + "\n" + workloads).splitlines()
+    found = [name for name in names if "sdo" in name.lower() and not LANE_PLATFORM.fullmatch(name)]
+    if found:
+        raise HookError(f"SDO objects found on the vanilla lane: {', '.join(found[:5])}")
     return {"checked_at": timestamp(time.time()), "result": "SDO absent"}
 
 
