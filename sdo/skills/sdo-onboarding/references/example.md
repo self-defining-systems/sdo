@@ -30,6 +30,8 @@ procedures:
 ```
 
 The procedure reads one password line from stdin and ensures an ordinary user without resetting a matching password.
+For an API token, set `returns_token: true` and return one token line on stdout. Return a valid token for the same user
+across restarts. Use `traffic.ProbeUser{Name: "sdoprobe-buyer", Token: "token"}` and omit the login step.
 
 ## `.sdo/diagnostics/traffic/generators/generators.go`
 

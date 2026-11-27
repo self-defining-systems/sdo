@@ -28,7 +28,8 @@ fast first, and stop when the budget line shows little left.
 1. **Look once** (a few minutes): manifests, README, Services, the API's own description, the way a user gets an
    account. Note what each journey calls and what a correct answer is.
 2. **Map**: start from Go's seed, then entries, operations with `journey: <id>` and `correct`, probes
-   using the example. Provision ordinary probe users through `probe_identity` when accounts need admin approval.
+   using the example. Use `probe_identity` for ordinary accounts that require admin approval. For a token API,
+   use the example's provisioned-token option.
 3. **One probe first**, end to end through `onboarding journeys --only`, then the rest in batches of three or four.
    Start with the [worked example](references/example.md). Open the [map](../sdo-operations-map/references/map.md)
    or [traffic](../sdo-detectors/references/traffic.md) reference only for a missing field or signature.
@@ -69,7 +70,7 @@ every workload (unset is 4 iterations/s). Give most of the budget to the journey
 - Add `probe-fast-call` and `probe-fast-write` naming the same core scenario IDs again at 10-15 s, so that every store,
   worker and protocol is crossed by one of them. Spend the rest on the home workloads' interval: the budget line is
   red while a slow workload leaves budget unspent.
-- `maxLatency` about three times the slowest healthy run, at least 1 s.
+- Set `maxLatency` to about three times the slowest healthy run, at least 1 s. A run over budget starts confirmation.
 
 ## Checks
 
