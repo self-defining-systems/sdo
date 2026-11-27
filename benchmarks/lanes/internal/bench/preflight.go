@@ -741,12 +741,15 @@ func compareImages(byHost map[string]map[string]string) []hostVerdict {
 
 // ---- 8 pack identity --------------------------------------------------------------------------------------------
 
-// packScript prints the pack directory as committed at rev and as it is on disk (blob id and path per file).
+// packScript prints the pack directory as committed at rev and as it is on disk (blob id and path per file). A
+// symlink is a file of the pack as git stores it: a blob of its target path, not of the file it points to.
 func packScript(fuzzopsDir, rev, app string) string {
 	return fmt.Sprintf(`cd %[1]s || exit 3; `+
 		`git rev-parse --verify -q %[2]s'^{commit}' >/dev/null || { echo NOCOMMIT; exit 0; }; `+
 		`echo "HEAD $(git rev-parse HEAD)"; echo COMMITTED; git ls-tree -r %[2]s -- %[3]s | awk '{print $3, $4}'; `+
-		`echo WORKING; find %[3]s -type f -not -path '*/.git/*' | sort | while IFS= read -r f; do echo "$(git hash-object -- "$f") $f"; done`,
+		`echo WORKING; find %[3]s \( -type f -o -type l \) -not -path '*/.git/*' | sort | while IFS= read -r f; do `+
+		`if [ -L "$f" ]; then h=$(printf %%s "$(readlink -- "$f")" | git hash-object --stdin); else h=$(git hash-object -- "$f"); fi; `+
+		`echo "$h $f"; done`,
 		shellQuote(fuzzopsDir), shellQuote(rev), shellQuote(app))
 }
 
