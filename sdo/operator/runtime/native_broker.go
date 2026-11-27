@@ -31,6 +31,7 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/shellpath"
 )
 
@@ -865,7 +866,11 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			}
 		}
 		if capture != "" && n.Replay != "off" {
-			recordNewPlaybookCases(ctx, workspace, capture, effect.IncidentID, outcomeCaseContext(effect.Outcome), origins)
+			ownIncident := func(ctx context.Context) ([]*contracts.MemoryDiagnostic, error) {
+				report, err := n.Repository.CheckReflection(validate.WithCaptureSource(ctx, capture, effect.IncidentID), effect.IncidentID, logicalReflectionDecision(decision))
+				return report.GetCoverageGaps(), err
+			}
+			recordNewPlaybookCases(ctx, workspace, capture, effect.IncidentID, outcomeCaseContext(effect.Outcome), origins, ownIncident)
 		}
 		// Keep Go-owned negative evidence even if the agent deleted or relabeled it.
 		if capture != "" && len(negative) > 0 {
@@ -896,13 +901,45 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 // (the kind a closing turn writes) have bindings Go knows; one that declares
 // parameters gets none rather than a wrong case. A case that cannot be
 // recorded is logged with its reason, never dropped silently.
-func recordNewPlaybookCases(ctx context.Context, workspace IncidentWorkspace, capture, incidentID string, caseContext memory.CaseContext, origins map[string]string) {
+//
+// When alerts joined the incident, a playbook may be for a fault that started
+// later and shows only in the capture its alert joined in. Its case then comes
+// from the capture its own-incident replay matched, which the shared check
+// reports (normally the attestation of the session's own memory check); a
+// playbook without a match keeps the opening capture.
+func recordNewPlaybookCases(ctx context.Context, workspace IncidentWorkspace, capture, incidentID string, caseContext memory.CaseContext, origins map[string]string, ownIncident func(context.Context) ([]*contracts.MemoryDiagnostic, error)) {
 	fresh, err := memory.NewPlaybooks(ctx, workspace.Worktree, workspace.BaseCommit)
 	if err != nil {
 		slog.Warn("corpus_case_not_recorded", "incident", incidentID, "reason", "cannot tell which playbooks are new: "+err.Error())
 		return
 	}
+	if len(fresh) > 0 && ownIncident != nil && len(sdktest.JoinCapturePhases(capture)) > 0 {
+		notes, err := ownIncident(ctx)
+		if err != nil {
+			slog.Warn("corpus_case_capture_unknown", "incident", incidentID, "reason", "own-incident replay unavailable, cases use the opening capture: "+err.Error())
+		}
+		origins = maps.Clone(origins)
+		if origins == nil {
+			origins = map[string]string{}
+		}
+		addOwnIncidentOrigins(origins, fresh, notes)
+	}
 	recordFirstCases(workspace.Worktree, fresh, capture, incidentID, caseContext, origins)
+}
+
+// addOwnIncidentOrigins sets each new playbook's case capture to the one its
+// own-incident replay matched in, unless an origin is already known.
+func addOwnIncidentOrigins(origins map[string]string, ids []string, notes []*contracts.MemoryDiagnostic) {
+	for _, note := range notes {
+		id, phase, ok := validate.OwnIncidentMatchCapture(note.GetRule(), note.GetPath(), note.GetMessage())
+		if !ok || !slices.Contains(ids, id) {
+			continue
+		}
+		key := memory.CapturedInstanceKey(id, program.Bindings{})
+		if _, known := origins[key]; !known {
+			origins[key] = phase
+		}
+	}
 }
 
 // recordFirstCases writes one case per named role-less playbook.

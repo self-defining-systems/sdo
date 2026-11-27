@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"slices"
 	"sort"
@@ -196,6 +197,7 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	}
 	request.JoinedKeys = append(request.JoinedKeys, key)
 	sort.Strings(request.JoinedKeys)
+	c.joinCapturesDue = append(c.joinCapturesDue, key)
 	finding.Fingerprint = FindingFingerprint(finding)
 	request.Findings = append(request.Findings, finding)
 	sortFindings(request.Findings)
@@ -214,6 +216,68 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 		c.escalateLocked(now)
 	}
 	return true
+}
+
+// captureJoinedAlerts stores the open state alerts joined the incident in, from
+// the observation they activated in. A fault that starts while the incident is
+// open is absent from the opening captures; without this one the closing turn's
+// own-incident check rejects a playbook written for it. A join capture can
+// follow SDO's or the agent's writes, so it also records whether a known write
+// preceded it. Evidence only, never a gate: a failure is reported and the
+// incident goes on.
+func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
+	c.mu.Lock()
+	due, request, result, loop := c.joinCapturesDue, c.currentIncidentRequest, c.currentIncidentResult, c.responderLoop
+	c.joinCapturesDue = nil
+	var id, namespace string
+	var refs []sdk.ObjectRef
+	var stageWrote bool
+	joined := 0
+	if request != nil {
+		id, namespace, refs, joined = request.IncidentID, request.Namespace, findingCaptureRefs(request.Findings), len(request.JoinedKeys)
+		stageWrote = playbookApplied(request.PriorStages)
+	}
+	var resultPlans, resultActions bool
+	if result != nil {
+		resultPlans, resultActions = len(result.PlanApplications) > 0, slices.ContainsFunc(result.RepairActions, func(r RepairActionReceipt) bool { return r.Success })
+	}
+	c.mu.Unlock()
+	if len(due) == 0 || id == "" || c.config.CorpusSessionRoot == "" || snapshot == nil {
+		return
+	}
+	// One capture per pass holds every alert that joined in it.
+	if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, id, memory.JoinedCapturePhase(joined), snapshot, namespace, refs...); err != nil && c.OnError != nil {
+		c.OnError(fmt.Errorf("capture joined alert open state: %w", err))
+		return
+	}
+	joinContext := memory.JoinCaptureContext{JoinedKeys: due}
+	if stageWrote {
+		joinContext.WriteSources = append(joinContext.WriteSources, "automatic_stage")
+	}
+	responderPlans, recorded := resultPlans, false
+	if loop != nil {
+		loop.locked(func() {
+			responderPlans = responderPlans || len(loop.applicationsLog) > 0
+			if loop.ExternalReceipts != nil {
+				joinContext.Recording = true
+				receipts, _, _, err := loop.ExternalReceipts()
+				recorded = recorded || err == nil && len(receipts) > 0
+			}
+		})
+	}
+	if responderPlans {
+		joinContext.WriteSources = append(joinContext.WriteSources, "responder_plan")
+	}
+	if recorded {
+		joinContext.WriteSources = append(joinContext.WriteSources, "agent_recording")
+	}
+	if resultActions {
+		joinContext.WriteSources = append(joinContext.WriteSources, "repair_action")
+	}
+	joinContext.KnownWritesBefore = len(joinContext.WriteSources) > 0
+	if err := memory.CaptureJoinContext(c.config.CorpusSessionRoot, id, joined, joinContext); err != nil && c.OnError != nil {
+		c.OnError(fmt.Errorf("record joined alert capture context: %w", err))
+	}
 }
 
 // userTests reads the accepted map once per source commit.

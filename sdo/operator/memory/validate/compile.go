@@ -36,18 +36,43 @@ var healthyBaselineViolation = regexp.MustCompile(`(?m)detector\.healthy-baselin
 // playbook ID and the reason Diagnose did not match its own incident.
 var ownIncidentViolation = regexp.MustCompile(`(?m)playbook\.own-incident-replay\[([a-z0-9][a-z0-9-]*)\]: (.+?)\s*$`)
 
-// ownIncidentNote is a new playbook's own-incident verdict as a note the check
+// OwnIncidentNote is a new playbook's own-incident verdict as a note the check
 // reports and the broker records (trailer and ledger): "match", "unverified" or,
 // for a replay that did not fail the check, nothing else.
-func ownIncidentNote(result sdktest.OwnIncidentResult) Diagnostic {
+func OwnIncidentNote(result sdktest.OwnIncidentResult) Diagnostic {
 	message := string(result.Outcome)
 	switch {
 	case result.Outcome == sdktest.OwnIncidentMatch:
-		message += ": Diagnose matches the incident it was written for (" + result.Capture + ")"
+		message += ownIncidentMatchText + result.Capture + ")"
 	case result.Reason != "":
 		message += ": " + result.Reason
 	}
 	return Diagnostic{Rule: RuleOwnIncidentReplay, Path: layout.PlaybookDir(result.ProgramID), Message: message}
+}
+
+const ownIncidentMatchText = ": Diagnose matches the incident it was written for ("
+
+// OwnIncidentMatchCapture reads an OwnIncidentNote back: the playbook whose
+// Diagnose matched its own incident and the capture phase it matched in
+// ("detect", "join-1", ...). ok is false for any other diagnostic.
+func OwnIncidentMatchCapture(rule, path, message string) (programID, phase string, ok bool) {
+	if rule != RuleOwnIncidentReplay {
+		return "", "", false
+	}
+	programID, ok = strings.CutPrefix(path, layout.PlaybooksDir+"/")
+	if !ok || programID == "" || strings.Contains(programID, "/") {
+		return "", "", false
+	}
+	capture, ok := strings.CutPrefix(message, string(sdktest.OwnIncidentMatch)+ownIncidentMatchText)
+	if !ok {
+		return "", "", false
+	}
+	capture, ok = strings.CutSuffix(capture, ".json)")
+	if !ok {
+		return "", "", false
+	}
+	phase, ok = strings.CutPrefix(capture, "open@")
+	return programID, phase, ok && phase != ""
 }
 
 func recoveredMatchNote(result sdktest.OwnIncidentResult) (Diagnostic, bool) {
@@ -133,7 +158,7 @@ func (s *run) compile(ctx context.Context) error {
 			s.req.noteGaps(Diagnostic{Rule: RuleOwnIncidentReplay, Path: layout.PlaybooksDir, Message: "unverified: " + verdictErr.Error()})
 		}
 		for _, verdict := range verdicts {
-			s.req.noteGaps(ownIncidentNote(verdict))
+			s.req.noteGaps(OwnIncidentNote(verdict))
 			if note, ok := recoveredMatchNote(verdict); ok {
 				s.req.noteGaps(note)
 			}

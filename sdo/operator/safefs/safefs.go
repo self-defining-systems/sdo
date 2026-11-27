@@ -107,6 +107,16 @@ func MkdirAll(root, rel string, perm fs.FileMode) error {
 // WriteFile atomically replaces the regular file rel below root with data.
 // Parent directories are created. The result has exactly mode's permissions.
 func WriteFile(root, rel string, data []byte, mode fs.FileMode) error {
+	return publish(root, rel, data, mode, false)
+}
+
+// CreateFile is WriteFile for write-once files: it syncs data and links it into
+// place, and an existing regular file keeps its content.
+func CreateFile(root, rel string, data []byte, mode fs.FileMode) error {
+	return publish(root, rel, data, mode, true)
+}
+
+func publish(root, rel string, data []byte, mode fs.FileMode, once bool) error {
 	rel, err := clean(rel)
 	if err != nil {
 		return err
@@ -155,8 +165,21 @@ func WriteFile(root, rel string, data []byte, mode fs.FileMode) error {
 		_ = f.Close()
 		return err
 	}
+	if once {
+		if err := f.Sync(); err != nil {
+			_ = f.Close()
+			return err
+		}
+	}
 	if err := f.Close(); err != nil {
 		return err
+	}
+	if once {
+		// The deferred cleanup removes the temporary name.
+		if err := r.Link(tmp, rel); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		return nil
 	}
 	if err := r.Rename(tmp, rel); err != nil {
 		return err

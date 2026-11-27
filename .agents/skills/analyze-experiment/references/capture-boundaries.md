@@ -23,6 +23,28 @@ snapshot and protected capture write per incident, plus the existing tool
 request/response round trip for a typed plan application. Existing `responder_tool_timing`
 `capture_ms` and `total_ms` include this work.
 
+## Alert-join captures
+
+When alerts join an open incident's alert set, the controller stores the state
+of the observation they joined in as `open@join-<n>.json` (with
+`open@join-<n>-recordings.json`), once per pass; `<n>` is the number of joined
+keys after that pass, so numbers can skip. A fault that started after the
+incident opened shows only there. Each has `join-<n>-context.json`:
+`joined_keys` (the alerts of that pass), `known_writes_before`, `write_sources`
+(`automatic_stage`, `responder_plan`, `agent_recording`, `repair_action`) and
+`recording`. Unlike the opening captures, a join capture can follow SDO's or the
+agent's writes; `known_writes_before: false` means none known, not none made
+(with `agent.recording` off the agent's direct writes are invisible). A
+Diagnose that matches a join capture taken after writes may be matching state a
+write made. Nothing gates on this; read it when a learned playbook misfires.
+
+Every reader of open captures includes join captures: the own-incident replay
+and incident-plan test (all `open@*`), the match-key origin of a playbook that
+ran (`detect`, `pre-apply`, then joins), fixed-boundary re-reads and repair
+receipts. A new playbook's first corpus case comes from the capture its
+own-incident replay matched (`open_at: join-<n>` for a later fault), else the
+opening capture.
+
 Phase timing attributes slow calls. `responder_tool_timing` and the controller's
 `observation_lock_held` warning (a hold of 1 s or more; `holder` names the pass) carry a
 `phase_ms` group and `unattributed_ms`, always on. Each phase is charged only its own time

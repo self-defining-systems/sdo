@@ -149,7 +149,7 @@ func DiagnoseOnRecovered(ctx context.Context, d program.Diagnoser, dir string) (
 		return nil, program.Unknown
 	}
 	var calls []PrimitiveCall
-	for _, phase := range []string{"detect", "settle", "pre-apply"} {
+	for _, phase := range append([]string{"detect", "settle", "pre-apply"}, JoinCapturePhases(dir)...) {
 		raw, err := os.ReadFile(filepath.Join(dir, "open@"+phase+"-recordings.json"))
 		var capture CorpusCase
 		if err == nil && json.Unmarshal(raw, &capture.Recordings) == nil {

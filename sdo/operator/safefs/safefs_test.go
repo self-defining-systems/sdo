@@ -122,3 +122,29 @@ func TestMkdirAllRefusesLink(t *testing.T) {
 		t.Fatal("created outside")
 	}
 }
+
+func TestCreateFileKeepsTheFirstContentAndRefusesLinks(t *testing.T) {
+	root, outside := setup(t)
+	for _, data := range []string{"first", "second"} {
+		if err := safefs.CreateFile(root, "a/f.json", []byte(data), 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, _ := os.ReadFile(filepath.Join(root, "a/f.json"))
+	info, _ := os.Stat(filepath.Join(root, "a/f.json"))
+	if string(data) != "first" || info.Mode().Perm() != 0o444 {
+		t.Fatalf("got %q %v", data, info.Mode())
+	}
+	if entries, _ := os.ReadDir(filepath.Join(root, "a")); len(entries) != 1 {
+		t.Fatalf("temporary file left behind: %v", entries)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := safefs.CreateFile(root, "linked/new", []byte("x"), 0o444); !errors.Is(err, safefs.ErrSymlink) {
+		t.Fatalf("want ErrSymlink, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new")); err == nil {
+		t.Fatal("created a file outside the root")
+	}
+}

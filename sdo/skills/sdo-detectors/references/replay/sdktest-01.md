@@ -102,6 +102,17 @@ func HealthyBaselineViolations(detector sdk.Detector, snapshots []Snapshot) []st
     An error cannot prove quietness and is also a violation. Resolved findings
     are ignored.
 
+func IsJoinCapturePhase(phase string) bool
+    IsJoinCapturePhase reports whether phase (without the "open@" prefix) names
+    an alert-join capture.
+
+func JoinCapturePhase(n int) string
+    JoinCapturePhase is the phase of the nth alert-join capture.
+
+func JoinCapturePhases(dir string) []string
+    JoinCapturePhases lists the alert-join captures in an incident capture
+    directory, in the order they were taken.
+
 func ProjectCapturedObject(raw []byte) ([]byte, error)
     ProjectCapturedObject preserves arbitrary Kubernetes fields, including
     object identity (metadata.uid), while stripping credential payloads,
@@ -169,6 +180,28 @@ type CorpusProvenance struct {
 	FixedSHA256 string `json:"fixed_sha256"`
 }
 
+type JoinCaptureContext struct {
+	// JoinedKeys are the alerts that joined the incident in this pass.
+	JoinedKeys []string `json:"joined_keys"`
+	// KnownWritesBefore is true when a write Go knows of preceded the
+	// capture. False means none known, not none made: with the agent recording
+	// off, the agent's direct Kubernetes writes are invisible.
+	KnownWritesBefore bool `json:"known_writes_before"`
+	// WriteSources name where the known writes came from: "automatic_stage"
+	// (the deterministic stage's plan applications), "responder_plan" (plans
+	// the responder applied through SDO), "agent_recording" (the agent's
+	// recorded Kubernetes writes) and "repair_action" (a successful repair
+	// receipt in the responder's reported result).
+	WriteSources []string `json:"write_sources,omitempty"`
+	// Recording is whether the agent's recorded Kubernetes writes were
+	// readable for this capture (the recording on and a responder running).
+	Recording bool `json:"recording"`
+}
+    JoinCaptureContext is what Go knew when it took an alert-join capture
+    (open@join-n). Unlike the opening captures, a join capture can follow SDO's
+    or the agent's writes, so a Diagnose that matches it may be matching state a
+    write made rather than the fault. It is evidence for readers, never a gate.
+
 type MitigationReplayResult struct {
 	ProgramID string                 `json:"program_id"`
 	CaseID    string                 `json:"case_id,omitempty"`
@@ -185,36 +218,4 @@ func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (Mi
     publication.
 
 type MitigationReplayStatus string
-
-const (
-	MitigationReplayPassed                    MitigationReplayStatus = "replayed"
-	MitigationReplayObservedTransition        MitigationReplayStatus = "observed-transition"
-	MitigationReplaySkippedUnreplayableEffect MitigationReplayStatus = "skipped_unreplayable_effect"
-)
-type OwnIncidentOutcome string
-    OwnIncidentOutcome is what running a new playbook's Diagnose on the incident
-    it was written for says about it. There are exactly three: it recognises its
-    fault, it provably does not, or the capture cannot say.
-
-const (
-	// OwnIncidentMatch: Diagnose returned Match on the captured open state.
-	OwnIncidentMatch OwnIncidentOutcome = "match"
-	// OwnIncidentFailed is a definite failure: Diagnose read everything it
-	// asked for and returned NoMatch, so it cannot recognise the fault it was
-	// written for. The only outcome that may block publication.
-	OwnIncidentFailed OwnIncidentOutcome = "failed"
-	// OwnIncidentUnverified: the capture cannot decide. A read it lacks or
-	// holds an error for, a binding it cannot supply, or no capture at all.
-	OwnIncidentUnverified OwnIncidentOutcome = "unverified"
-)
-type OwnIncidentResult struct {
-	ProgramID string             `json:"program_id"`
-	Outcome   OwnIncidentOutcome `json:"outcome"`
-	Capture   string             `json:"capture,omitempty"`
-	Reason    string             `json:"reason,omitempty"`
-	Recovered *RecoveredMatch    `json:"recovered_match,omitempty"`
-}
-    OwnIncidentResult is one playbook's own-incident replay verdict. Capture
-    names the open@* snapshot the outcome comes from; Reason says why a failed
-    or unverified outcome is one.
 ```
