@@ -8,8 +8,44 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 )
 
-// ItemSoak is the short run of the whole probe set at its own schedule.
+// ItemSoak is the healthy run of a scenario at its scheduled cadence.
 const ItemSoak = "healthy-run"
+
+// SoakWorkloads keeps the scenarios that passed this run's one-shot checks.
+// Drop their peers' share of the rate so a retry does not drive the selected
+// probes at the full workload's rate.
+func SoakWorkloads(workloads []traffic.Workload, report Report) []traffic.Workload {
+	var out []traffic.Workload
+	for _, w := range workloads {
+		if w.Purpose != traffic.PurposeHealthProbe {
+			continue
+		}
+		var scenarios []traffic.WorkloadScenario
+		keep := map[string]bool{}
+		for _, scenario := range w.Scenarios {
+			if scenario.KnownBroken == nil && report.judged(scenario.ID) && report.redOf(scenario.ID) == "" {
+				scenarios = append(scenarios, scenario)
+				keep[scenario.ID] = true
+			}
+		}
+		if len(scenarios) == 0 {
+			continue
+		}
+		if len(scenarios) != len(w.Scenarios) {
+			plan := w.WithDefaults().SamplingPlan()
+			slots := 0
+			for _, id := range plan.Schedule {
+				if keep[id] {
+					slots++
+				}
+			}
+			w.RatePerSecond = plan.Rate * float64(slots) / float64(len(plan.Schedule))
+			w.Scenarios = scenarios
+		}
+		out = append(out, w)
+	}
+	return out
+}
 
 // Soaked judges the windows a prober recorded over a healthy run: a scenario
 // with a failed sample, or that never qualified, is red.

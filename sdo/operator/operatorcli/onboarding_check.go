@@ -47,6 +47,8 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          fails-under-break. Progress lines go to stderr; the report is headed
          by its mode.
          --metrics runs only the metric items (no detector is built or run).
+         Confirm that each exposed request counter with route support separates
+         the mapped user operations before finishing onboarding.
          --quick is the fast loop (about 2-3 minutes after the detectors build):
          the metric items and a short smoke where every detector judges at
          least once. It never runs --break and its report is never clean (it

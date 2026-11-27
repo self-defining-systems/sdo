@@ -3,6 +3,34 @@
 A small order service: `web` (port 80, Deployment), `orders-db` (StatefulSet, postgres), `worker` (no Service). Users
 sign in with a password and place orders; a worker writes the receipt. Accounts are made by an admin CLI.
 
+## Application map
+
+In the seeded map, keep the component and edge entries. Add the operation and its probe, using the goal's journey ID.
+This fragment maps the create operation; map the read operations the probe exercises too.
+
+```yaml
+operations:
+  - id: place-order
+    journey: place-and-track-order
+    correct: The order and its receipt can be read back with the submitted values.
+    writes: true
+    entry: {service: web, port: 80, method: POST, path: /api/orders}
+    path: [web, orders-db, worker]
+probes:
+  - {scenario: write-order, kind: write-read, operations: [place-order]}
+procedures:
+  - id: probe-user
+    component: web
+    container: app
+    command: [order-admin, users, ensure, "--name={{username}}", --password-stdin]
+    params: [{name: username, type: string, required: true}]
+    effect: data
+    probe_identity: true
+    source: docs/admin.md
+```
+
+The procedure reads one password line from stdin and ensures an ordinary user without resetting a matching password.
+
 ## `.sdo/diagnostics/traffic/generators/generators.go`
 
 ```go

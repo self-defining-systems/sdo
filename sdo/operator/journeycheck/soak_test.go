@@ -32,3 +32,25 @@ func TestBoundedProbeRecordsInAUsersListAreGreen(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestSoakKeepsPassingScenariosWhenAnotherIsRedOrUnselected(t *testing.T) {
+	w := traffic.Workload{
+		Name: "probe", Purpose: traffic.PurposeHealthProbe, RatePerSecond: 0.3,
+		Scenarios: []traffic.WorkloadScenario{{ID: "ready"}, {ID: "broken"}, {ID: "unchecked"}},
+	}.WithDefaults()
+	report := Report{Results: []Result{
+		{Item: ItemPasses, Subject: "ready", Status: Green},
+		{Item: ItemPasses, Subject: "broken", Status: Green},
+		{Item: ItemAltered, Subject: "broken", Status: Red},
+	}}
+	got := SoakWorkloads([]traffic.Workload{w}, report)
+	if len(got) != 1 || len(got[0].Scenarios) != 1 || got[0].Scenarios[0].ID != "ready" {
+		t.Fatalf("soak scheduled %v, want only the passing scenario", got)
+	}
+	if got[0].ScenarioArrival("ready") != w.ScenarioArrival("ready") {
+		t.Fatalf("scoped soak changed cadence from %s to %s", w.ScenarioArrival("ready"), got[0].ScenarioArrival("ready"))
+	}
+	if len(w.Scenarios) != 3 {
+		t.Fatal("soak changed the original schedule")
+	}
+}

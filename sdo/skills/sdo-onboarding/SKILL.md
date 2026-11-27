@@ -28,14 +28,12 @@ fast first, and stop when the budget line shows little left.
 1. **Look once** (a few minutes): manifests, README, Services, the API's own description, the way a user gets an
    account. Note what each journey calls and what a correct answer is.
 2. **Map**: start from Go's seed, then entries, operations with `journey: <id>` and `correct`, probes
-   ([map](../sdo-operations-map/SKILL.md)). Declare the [probe identity](../sdo-operations-map/references/map.md#probe-identity)
-   when accounts are not self-service: ordinary users, never admin.
+   using the example. Provision ordinary probe users through `probe_identity` when accounts need admin approval.
 3. **One probe first**, end to end through `onboarding journeys --only`, then the rest in batches of three or four.
-   Copy the shape of the [worked example](references/example.md); read the [traffic reference](../sdo-detectors/references/traffic.md)
-   only for a signature it does not show, and [strict probes](../sdo-detectors/references/probes.md) once.
-4. **Request metrics**: map the request metric the application already exposes (route, method, status). When its
-   route label does not tell operations apart, fix that by configuration or a small middleware in the deployment;
-   time-box it, since probes carry detection ([observability](../sdo-observability/SKILL.md)).
+   Start with the [worked example](references/example.md). Open the [map](../sdo-operations-map/references/map.md)
+   or [traffic](../sdo-detectors/references/traffic.md) reference only for a missing field or signature.
+4. **Request metrics**: enable and map a request counter by route, method and status wherever the app can expose
+   one. Verify in `onboarding check --metrics` that the mapped series distinguish the operations.
 5. **Check, fix the first red line, repeat.** Commit when a batch is green.
 
 ## What a good probe is
@@ -43,6 +41,7 @@ fast first, and stop when the budget line shows little left.
 - A journey is what a user does: write something with a fresh unique name, then read it back exactly through the
   route a user reads, including the background effect (poll it with `NotYet`). Read journeys check exact content of
   fixtures Setup made, and one step lists records users already have.
+- Write values the size and shape users write, where users write them.
 - Cover each way in (API, other protocols, sign-in) and each store or component on its path, refused access as well
   as granted access where the journey is about permissions.
 - Several journeys fit in one scenario only when they share data; a scenario has at most 8 steps. Prefer one request
@@ -81,14 +80,16 @@ every workload (unset is 4 iterations/s). Give most of the budget to the journey
 | same with `--alter` | when it passes: an unnoticed wrong answer is a missing check |
 | `sdo-operator memory check` | after each batch; map, coverage, ownership, compile |
 | `sdo-operator onboarding check --metrics --repo DIR --namespace NS --prometheus URL` | once, when metrics are mapped |
-| `... onboarding journeys --alter --soak 5m` | last |
+| `... onboarding journeys --alter --soak 5m` | initial scheduled run |
+| same with `--only ID` | after fixing a scenario or a dependency it uses |
 
 Reports put red lines first. Write long output to a file and read the red lines; never poll: run a long check in the
 background and write the next probe meanwhile.
 
 ## Finish line
 
-Every journey on the checklist is `passed`, `onboarding journeys --alter --soak 5m` and `memory check` are
-green on the committed tree, and the application is as healthy as you found it: after the soak, open the user's own
-first views of the goal's journeys (the default list pages) as an ordinary user and confirm no probe record is there. With ten minutes left, stop adding:
+Every journey has passed, every current scenario has a green healthy-run line, and `memory check` is green
+on the committed tree. Re-soak only scenarios affected by a fix. The metrics check must confirm per-route counters
+where the app can expose them. Record the reason for any unavailable route metric. Open the default user list pages
+as an ordinary user and confirm no probe record is there. With ten minutes left, stop adding:
 remove what is not green, commit, and say what is uncovered.
