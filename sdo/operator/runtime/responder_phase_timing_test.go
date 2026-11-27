@@ -57,7 +57,7 @@ func TestSourceComparisonIsTimedSeparately(t *testing.T) {
 	loop.CorpusSessionRoot = t.TempDir()
 	loop.trace = newPhaseTrace(clock.Now)
 	ctx := withPhaseTrace(context.Background(), loop.trace)
-	loop.recordSourceComparisons(ctx, "open@pre-apply", sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "web"})
+	loop.recordSourceComparisons(ctx, "open@pre-apply", nil, sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "web"})
 	got := loop.trace.durations()
 	if got["source_comparison_snapshot"] != time.Second || got["fake_layer"] != 2*time.Second {
 		t.Fatalf("durations = %v, want source_comparison_snapshot 1s and fake_layer 2s", got)
