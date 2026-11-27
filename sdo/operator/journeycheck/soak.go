@@ -17,6 +17,9 @@ const ItemSoak = "healthy-run"
 // Drop their peers' share of the rate so a retry does not drive the selected
 // probes at the full workload's rate.
 func SoakWorkloads(workloads []traffic.Workload, report Report) []traffic.Workload {
+	if report.PlannedRate > report.Cap {
+		return nil
+	}
 	var out []traffic.Workload
 	for _, w := range workloads {
 		if w.Purpose != traffic.PurposeHealthProbe {

@@ -56,7 +56,7 @@ func Run(ctx context.Context, catalog traffic.Catalog, documents map[string][]by
 	if options.Soak > 0 {
 		workloads := journeycheck.SoakWorkloads(workloads, report)
 		if len(workloads) == 0 {
-			say("healthy run skipped: no selected scenario passed its checks")
+			say("healthy run skipped: no passing selected scenarios or the schedule exceeds its budget")
 		} else {
 			say(fmt.Sprintf("running passing scenarios for %s", options.Soak))
 			soakCtx, stop := context.WithTimeout(ctx, options.Soak)

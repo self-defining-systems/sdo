@@ -81,3 +81,11 @@ func TestSoakReportsSlowAndLeakingScenariosIndependently(t *testing.T) {
 		}
 	}
 }
+
+func TestSoakDoesNotRunAnOverBudgetSchedule(t *testing.T) {
+	w := traffic.Workload{Purpose: traffic.PurposeHealthProbe, Scenarios: []traffic.WorkloadScenario{{ID: "ready"}}}
+	report := Report{PlannedRate: 4, Cap: 3, Results: []Result{{Item: ItemPasses, Subject: "ready", Status: Green}}}
+	if got := SoakWorkloads([]traffic.Workload{w}, report); len(got) != 0 {
+		t.Fatalf("an over-budget schedule should not soak: %v", got)
+	}
+}
