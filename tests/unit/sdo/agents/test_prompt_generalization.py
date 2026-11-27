@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 from functools import lru_cache
 from pathlib import Path
 
 import pytest
 import yaml
+
+from scripts.check_app_names import tracked_files
+
+CI_WHOLE_TREE = True
 
 ROOT = Path(__file__).resolve().parents[4]
 # These identities also name general concepts used by the SDK and agent guidance.
@@ -51,19 +56,17 @@ def _denied_terms(root: Path) -> set[str]:
         for path in seeds.iterdir()
         if path.is_dir() and path.name != "overlays"
     )
-    # Concrete app manifests and seed manifests; do not parse vendored Helm templates.
+    # The parent index owns the manifests and seed sources. Gitlinks stay opaque
+    # even when their working directories contain Helm templates.
+    app_files = [Path(name) for name in tracked_files(root, ("apps",))]
+    seed_files = [Path(name) for name in tracked_files(root, (str(seeds.relative_to(root)),))]
     sources = sorted(
-        {
-            path
-            for extension in ("yaml", "yml")
-            for pattern in (
-                f"**/kubernetes/**/*.{extension}",
-                f"**/infrastructure/**/*.{extension}",
-                f"**/seed/**/*.{extension}",
-            )
-            for path in apps.glob(pattern)
-        }
-        | {path for extension in ("yaml", "yml") for path in seeds.rglob(f"*.{extension}")}
+        root / path
+        for path in [
+            *(path for path in app_files if {"kubernetes", "infrastructure", "seed"}.intersection(path.parts[1:-1])),
+            *seed_files,
+        ]
+        if path.suffix in {".yaml", ".yml"} and (root / path).is_file()
     )
     assert sources, "No evaluation manifests found"
     for path in sources:
@@ -85,8 +88,10 @@ def _denied_terms(root: Path) -> set[str]:
                         terms.add(name)
                     pending.extend(value.values())
     # Handwritten app seeds declare their required workload identities in Go maps.
-    for path in seeds.rglob("*.go"):
-        source = path.read_text()
+    for path in seed_files:
+        if path.suffix != ".go" or not (root / path).is_file():
+            continue
+        source = (root / path).read_text()
         for body in re.findall(
             r"required(?:Deployments|Services)\s*=\s*map\[string\]struct\{\}\{(.*?)\n\}", source, re.DOTALL
         ):
@@ -162,8 +167,15 @@ def test_sweep_catches_new_files(tmp_path: Path, relative: str) -> None:
     assert _violations(tmp_path, {"injectedfaultclass"}) == [f"{relative}: injectedfaultclass"]
 
 
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(root), *args], check=True)
+
+
 def test_denylist_tracks_new_repository_metadata(tmp_path: Path) -> None:
-    apps = tmp_path / "apps"
+    root = tmp_path / "checkout"
+    root.mkdir()
+    _git(root, "init", "-q")
+    apps = root / "apps"
     manifests = apps / "synthetic_app/kubernetes"
     manifests.mkdir(parents=True)
     (apps / "README.md").write_text("[nestedApp](./suite/nestedApp)")
@@ -171,16 +183,29 @@ def test_denylist_tracks_new_repository_metadata(tmp_path: Path) -> None:
         "kind: Deployment\nmetadata: {name: synthetic-worker, namespace: synthetic-ns}\n"
         "---\nkind: Service\nmetadata: {name: synthetic-api}\n"
     )
-    seeds = tmp_path / "benchmarks/sregym/experiments/assurance/seeds/seed_app_handwritten"
+    seeds = root / "benchmarks/sregym/experiments/assurance/seeds/seed_app_handwritten"
     seeds.mkdir(parents=True)
     (seeds / "provenance.yaml").write_text("active_topology: [{kind: Service, name: seed-api}]\n")
     (seeds / "detector.go").write_text('var requiredDeployments = map[string]struct{}{\n"seed-worker": {},\n}\n')
-    catalog = tmp_path / "benchmarks/sregym/faults/probe_catalog.py"
+    catalog = root / "benchmarks/sregym/faults/probe_catalog.py"
     catalog.parent.mkdir(parents=True)
     catalog.write_text(
         'CLASS_KINDS = {"SyntheticFault": "synthetic_fault"}\nCLASS_KINDS.update({"AddedFault": "added_fault"})\n'
     )
-    denied = _denied_terms(tmp_path)
+    _git(root, "add", ".")
+
+    upstream = tmp_path / "upstream"
+    template = upstream / "kubernetes/chart/templates/deployment.yaml"
+    template.parent.mkdir(parents=True)
+    template.write_text("{{- if .Values.enabled }}\nkind: Deployment\n{{- end }}\n")
+    _git(upstream, "init", "-q")
+    _git(upstream, "add", ".")
+    _git(upstream, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "-qm", "fixture")
+    _git(root, "-c", "protocol.file.allow=always", "submodule", "add", str(upstream), "apps/vendor")
+
+    (manifests / "scratch.yaml").write_text("kind: Service\nmetadata: {name: local-only-api}\n")
+    denied = _denied_terms(root)
+    assert "local-only-api" not in denied
     assert {
         "synthetic app",
         "nested app",

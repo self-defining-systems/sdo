@@ -86,6 +86,7 @@ fallback when a field is left unset.
 		name, value, constant string
 	}{
 		{"probe health minimum duration", traffic.DefaultHealthMinDuration.String(), "traffic.DefaultHealthMinDuration"},
+		{"probe detection target", traffic.DefaultDetectionTarget.String(), "traffic.DefaultDetectionTarget"},
 		{"probe SLO window (samples)", fmt.Sprint(traffic.DefaultWindow), "traffic.DefaultWindow"},
 		{"probe SLO minimum samples", fmt.Sprint(traffic.DefaultMinSamples), "traffic.DefaultMinSamples"},
 		{"probe SLO maximum sample age", traffic.DefaultMaxAge.String(), "traffic.DefaultMaxAge"},

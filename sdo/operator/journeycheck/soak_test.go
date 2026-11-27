@@ -89,3 +89,36 @@ func TestSoakDoesNotRunAnOverBudgetSchedule(t *testing.T) {
 		t.Fatalf("an over-budget schedule should not soak: %v", got)
 	}
 }
+
+func soakWindow(samples map[string][]traffic.Outcome) map[string]traffic.Window {
+	window := traffic.Window{Workload: traffic.Workload{}.WithDefaults()}
+	for id, outcomes := range samples {
+		o := traffic.ScenarioObservations{Scenario: traffic.Descriptor{ID: id}}
+		for _, outcome := range outcomes {
+			o.Samples = append(o.Samples, traffic.Sample{Outcome: outcome})
+			o.Qualified = o.Qualified || outcome == traffic.OutcomeOK
+		}
+		window.Scenarios = append(window.Scenarios, o)
+	}
+	return map[string]traffic.Window{"probe": window}
+}
+
+// The healthy run may stop early once every scenario is decided: red already,
+// or SoakGreens samples in a row with none failed. One undecided scenario
+// keeps it running.
+func TestSoakSettlesWhenEveryScenarioIsRedOrHasEnoughGreens(t *testing.T) {
+	ok, failed := traffic.OutcomeOK, traffic.OutcomeError
+	greens := make([]traffic.Outcome, SoakGreens)
+	for i := range greens {
+		greens[i] = ok
+	}
+	if !SoakSettled(soakWindow(map[string][]traffic.Outcome{"steady": greens, "flaky": {ok, failed}})) {
+		t.Fatal("a red and a long-green scenario are both decided")
+	}
+	if SoakSettled(soakWindow(map[string][]traffic.Outcome{"steady": greens, "young": greens[:SoakGreens-1]})) {
+		t.Fatal("a scenario with too few samples is not decided")
+	}
+	if SoakSettled(map[string]traffic.Window{}) {
+		t.Fatal("an empty run has decided nothing")
+	}
+}

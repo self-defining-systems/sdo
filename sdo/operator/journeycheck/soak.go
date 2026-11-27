@@ -111,3 +111,25 @@ func markedSpan(samples []traffic.Sample) (first, last int, listed bool) {
 	}
 	return first, last, listed
 }
+
+// SoakGreens is how many samples in a row with none failed decide a scenario
+// green, so the healthy run can stop before its time is up.
+const SoakGreens = 10
+
+// SoakSettled reports whether every scenario of the healthy run so far is
+// decided: red (Soaked), or green with at least SoakGreens samples.
+func SoakSettled(windows map[string]traffic.Window) bool {
+	samples := map[string]int{}
+	for name, window := range windows {
+		for _, o := range window.Scenarios {
+			samples[name+"/"+o.Scenario.ID] = len(o.Samples)
+		}
+	}
+	results := Soaked(windows)
+	for _, r := range results {
+		if r.Status != Red && samples[r.Subject] < SoakGreens {
+			return false
+		}
+	}
+	return len(results) > 0
+}

@@ -5,11 +5,49 @@ import (
 	"time"
 )
 
+// DefaultDetectionTarget matches the original probe confirmation budget:
+// three samples at the 10-second sampling floor.
+const DefaultDetectionTarget = time.Duration(DefaultMinSamples) * MinSampleInterval
+
 // observeDelay is what follows a confirmed failure before it opens an
 // incident: the controller reads the prober every 500 ms, the health detector
 // fires on its second evaluation (Firing 2, one per read while a sample
 // fails), and the opener batches findings for 500 ms.
 const observeDelay = 1500 * time.Millisecond
+
+// intervalForDetection budgets the worst scheduling gap after reserving
+// confirmation and observation time, using the same timeout terms as
+// ExpectedDetection with no measured healthy run. The bounds take precedence
+// over the target when it cannot be met by cadence alone.
+func (w Workload) intervalForDetection(target time.Duration) time.Duration {
+	timeout := w.Timeout.Duration()
+	if timeout == 0 {
+		timeout = DefaultTimeout
+	}
+	budget := target - confirmationDelay(timeout) - observeDelay
+	if w.Arrival == ArrivalPoisson {
+		budget /= 4 // the scheduler caps Poisson gaps at four mean intervals
+	}
+	ceiling := MaxSampleInterval
+	if w.SLO.MaxAge == 0 {
+		// WithDefaults reserves one more interval for the sample in flight.
+		samples := mergeSLO(defaultSLO(), w.SLO).MinSamples
+		if samples > 0 && samples <= 100 {
+			ceiling = min(ceiling, (10*time.Minute)/time.Duration(samples+1))
+		}
+	}
+	for _, scenario := range w.Scenarios {
+		slo := w.ScenarioSLO(scenario.ID)
+		age := w.SLO.MaxAge.Duration()
+		if scenario.SLO != nil && scenario.SLO.MaxAge != 0 {
+			age = scenario.SLO.MaxAge.Duration()
+		}
+		if age > 0 && slo.MinSamples > 0 {
+			ceiling = min(ceiling, age/time.Duration(slo.MinSamples))
+		}
+	}
+	return max(MinSampleInterval, min(budget, ceiling))
+}
 
 // DetectionEstimate is how long a health probe takes to notice a scenario
 // whose every request starts failing, through the fast confirmation path

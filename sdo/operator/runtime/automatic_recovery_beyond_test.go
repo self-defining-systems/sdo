@@ -65,15 +65,28 @@ func beyondWorld(t *testing.T, tc settlingCase, policy string) (*Controller, *se
 	return c, world, store, closed
 }
 
-// joinStore makes the store's condition an alert of the open incident.
+// joinStore makes the store's condition an opening alert of the open
+// incident. A Kubernetes condition never joins an alert set later, so it is
+// one the incident opened on.
 func joinStore(t *testing.T, c *Controller, world *settlingWorld, store *storeDown) string {
 	t.Helper()
 	store.down.Store(true)
 	findings, err := store.Detect(t.Context(), nil)
-	if err != nil || !c.joinAlertSet(findings[0], world.clock.Now()) {
-		t.Fatalf("the condition did not join the alert set: %v", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return findingKey(findings[0])
+	finding := findings[0]
+	finding.Fingerprint = FindingFingerprint(finding)
+	key := findingKey(finding)
+	c.mu.Lock()
+	request := c.currentIncidentRequest
+	request.OpeningKeys = append(openingKeys(request), key)
+	slices.Sort(request.OpeningKeys)
+	request.Findings = append(request.Findings, finding)
+	sortFindings(request.Findings)
+	c.closureStableSince = time.Time{}
+	c.mu.Unlock()
+	return key
 }
 
 func stepSeconds(t *testing.T, c *Controller, world *settlingWorld, seconds int) {
