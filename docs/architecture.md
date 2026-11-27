@@ -369,22 +369,24 @@ because its SLO window can still hold samples from before the fix. An opening Ku
 finding is inactive with a clear streak of the stability window. A complete proof is still held while a user test of the
 alert set's Services has no verdict (`unevaluatedHoldLocked`): at most the test's `maxAge` or `minSamples` arrivals from the start of the
 stability window, capped by the verification timeout, the response deadline, the automatic stage's deadline and the returned responder's grace.
-The alert set is `opening_keys` plus `joined_keys`. New user tests, traffic errors and held Kubernetes conditions
-join after firing persistence activates them, within `AlertJoinWindow` (5 minutes) of detection while recovery is
-provisional. A join resets the recovery proof. If an alert joins, or an alert of the set fires again, after SDO verified and before publication while the
+The alert set is `opening_keys` plus `joined_keys`. New user tests and traffic errors join after firing persistence
+activates them, within `AlertJoinWindow` (5 minutes) of detection, while the responder has not returned or the
+automatic stage owns the repair. Kubernetes conditions never join. A join resets the recovery proof. If an alert joins, or an alert of the set fires again, after SDO verified and before publication while the
 responder still runs, the controller returns the incident to open in the same step and removes the write fence, with no re-prompt; a later step
 retries the removal when the gate was busy or the controller restarted. A responder past its response deadline retires instead.
-If an alert joins after an automatic-only recovery, the incident resumes the automatic recovery policy
-and can hand off to its first responder at the original bound. If an alert joins after the responder returns,
-the same incident stays open and escalated until recovery.
-SDO dispatches the responder once and withholds learning credit on the escalated close. An applied learned
+After the responder returned, or after an automatic-only recovery, nothing works the incident, so a new opener does
+not join: the incident closes on its own alert set (and learns when it succeeded), and the opener waits in the batcher
+and opens the next incident. An escalated incident with an opener waiting closes escalated, and every alert of it that
+still fails goes to the batcher with that opener, so the next incident opens on all of them. The next incident opens
+only after the previous closure and its queued reflection (closing and cleanup turns, source publication and deploy)
+finished (`priorIncidentWorkLocked`), so two incidents never write at once.
+SDO dispatches the responder once and withholds learning credit on an escalated close. An applied learned
 playbook still receives a failure against its revision. Later episodes wait in the batcher for the next incident. A joined alert (or a clue) that a learned playbook can bind reopens the automatic stage for one more bounded pass
 (`maxMidIncidentPasses`; a symptom arriving while the first pipeline or a pass runs queues one more pass, and a pass diagnoses live detector findings, not the loop's last observation), so a playbook is judged against the fault's own symptom even when routine churn opened the incident. The verification grace
 after the responder returns never escalates an incident whose alerts are clear while the stability window is still running. Credit and symptom matching keep `opening_keys`. Clues never hold it. The controller asks it before
 closing and before marking the responder verified; the broker asks it again at freeze (a user test that has not
-passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVATION_INCOMPLETE`). That confirmation checks the alert set and samples eligible opener detectors before freezing the broker command.
-Errors from detectors outside the alert set leave the recovery proof intact. An observed opener awaiting activation
-can defer the freeze within the join window. The broker publishes an immutable Git outcome before acknowledging
+passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVATION_INCOMPLETE`). That confirmation reads only the alert set's owners before freezing the broker command. It runs after the
+responder returned, so an opener outside the set opens the next incident and never holds the freeze. The broker publishes an immutable Git outcome before acknowledging
 the receipt. Once the command freezes, new episodes wait in the batcher. The handoff-to-acknowledgment window
 is accepted (median under one second, maximum 61 seconds across 74 closures). Extending admission through
 acknowledgment would require two-phase broker publication. A missing required sample resets the stability proof. The controller starts the window after fresh confirmed clearance and settlement of known writes. The closure and outcome carry `RecoveryVerification` with `since`, `writes_settled`, per-write settlement, `opening_keys` and `stable_since`.
@@ -679,7 +681,7 @@ The controller batches persistent findings into an incident request. The request
 The controller holds at most one open incident per application, and this is deliberate. Recovery is judged on application health (every health detector clear, or without any, the incident's own findings), and a responder's own repair can break another component, so the controller cannot safely decide that a later finding belongs to someone else. While an incident is open:
 
 - A finding with the same key as one in the request replaces it. Before the responder launches, a new opener joins the request and its opening alerts, and a new clue joins the request only (`attachBeforeLaunch`).
-- An opener inside the alert join window joins the open incident. Later openers wait in the batcher. Before handoff, a clue a learned playbook can bind can ask the automatic stage for another pass. The responder reads other clues live.
+- A user test or failing user traffic inside the alert join window joins the open incident while the responder has not returned or the automatic stage owns the repair. Kubernetes conditions and every other opener wait in the batcher for the next incident. Before handoff, a clue a learned playbook can bind can ask the automatic stage for another pass. The responder reads other clues live.
 - Closure waits for the opening and joined alerts to clear and stay clear.
 
 The overlap is made visible, never hidden. A finding that first activated after the responder launched is `after_dispatch` in the firing stream and the closure's `detector_timeline`, even when it joined the incident. `sdo verify` lists it in `new_since_dispatch[]`, and its summary tells the responder the finding may be a separate fault to report as its own cause. The `incident_closed` lifecycle event lists those findings in `after_dispatch_finding_keys`. A harness that injects faults back to back should wait for the previous incident to close (the persistent SREGym mode waits for acknowledgment); a non-empty `after_dispatch_finding_keys` marks an incident another fault overlapped.

@@ -13,7 +13,9 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-func TestProvisionalClosureAdmitsNewOpeners(t *testing.T) {
+// A closure verified while its responder runs admits a new opener; once the
+// responder returned the opener waits for the next incident.
+func TestProvisionalClosureAdmitsNewOpenersOnlyWhileTheResponderRuns(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	for _, phase := range []string{"running", "returned", "report retired"} {
 		t.Run(phase, func(t *testing.T) {
@@ -45,52 +47,53 @@ func TestProvisionalClosureAdmitsNewOpeners(t *testing.T) {
 			route.DetectorID = memory.RequestMetricsDetectorID
 			key := FindingStateKey(route.DetectorID, FindingFingerprint(route))
 			at := now.Add(9 * time.Second)
+			if phase != "running" {
+				// The responder returned: the route opens the next incident.
+				if c.joinAlertSet(route, at) || c.IncidentOpen() || c.pendingClosure == nil || len(c.pendingClosure.Request.JoinedKeys) != 0 {
+					t.Fatalf("a route after the responder returned joined: open=%v pending=%+v", c.IncidentOpen(), c.pendingClosure)
+				}
+				return
+			}
 			if !c.joinAlertSet(route, at) {
 				t.Fatal("a new route firing before closure publication was not admitted")
 			}
 			if !slices.Contains(*c.heldKeys.Load(), key) || !c.closureStableSince.IsZero() {
 				t.Fatalf("joining must hold the route and reset the proof: held=%v stable=%s", *c.heldKeys.Load(), c.closureStableSince)
 			}
-			if phase == "running" {
-				if c.incidentVerificationWarning(request.IncidentID) != nil {
-					t.Fatal("the old recovery proof still marked the incident verified")
-				}
-				if dispatcher.stopCount() != 0 {
-					t.Fatal("joining interrupted the responder's report")
-				}
-				finish(at)
+			if c.incidentVerificationWarning(request.IncidentID) != nil {
+				t.Fatal("the old recovery proof still marked the incident verified")
 			}
+			if dispatcher.stopCount() != 0 {
+				t.Fatal("joining interrupted the responder's report")
+			}
+			finish(at)
 			c.finishEarlyReport(context.Background(), at.Add(time.Second))
 			if !c.IncidentOpen() || !c.responderDone || c.pendingClosure != nil || !c.recoveryScope().holds(route) {
 				t.Fatalf("expected the same unresolved incident with a completed responder: open=%v done=%v pending=%v held=%v", c.IncidentOpen(), c.responderDone, c.pendingClosure != nil, c.recoveryScope())
 			}
-			// A running session goes on and returns by itself; a returned one is retired.
-			stops := 1
-			if phase == "running" {
-				stops = 0
-			}
-			if dispatcher.stopCount() != stops || c.currentIncidentRequest.IncidentID != request.IncidentID {
-				t.Fatalf("responder was not retired %d times for the original incident: stops=%d", stops, dispatcher.stopCount())
+			// A running session goes on and returns by itself.
+			if dispatcher.stopCount() != 0 || c.currentIncidentRequest.IncidentID != request.IncidentID {
+				t.Fatalf("a running responder was retired for the original incident: stops=%d", dispatcher.stopCount())
 			}
 		})
 	}
 }
 
-// The route has not run in the scheduled loop when the closure effect starts.
-// It must still be read before a verified outcome can reach the broker.
-func TestClosurePublicationChecksOpenersOutsideTheInitialProof(t *testing.T) {
-	t.Run("persisted opener joins after responder returned", func(t *testing.T) { testClosureAdmission(t, "persistent") })
-	t.Run("persisted opener hands off after playbook-only close", func(t *testing.T) { testClosureAdmission(t, "stage-only") })
-	t.Run("single blip clears", func(t *testing.T) { testClosureAdmission(t, "blip") })
-	t.Run("non-member observer fails", func(t *testing.T) { testClosureAdmission(t, "unavailable") })
-	t.Run("known broken probes are excluded", func(t *testing.T) { testClosureAdmission(t, "known-broken") })
+// The closure effect runs after the responder returned, so a new opener
+// outside the alert set opens the next incident: publication reads only the
+// alert set's owners and freezes the verified closure on its own set, without
+// sampling any other detector.
+func TestClosurePublicationReadsOnlyTheAlertSet(t *testing.T) {
+	t.Run("agent close", func(t *testing.T) { testClosurePublication(t, "persistent") })
+	t.Run("playbook-only close", func(t *testing.T) { testClosurePublication(t, "stage-only") })
+	t.Run("non-member observer fails", func(t *testing.T) { testClosurePublication(t, "unavailable") })
 }
 
 type countedClosureProbe struct{ *sequenceDetector }
 
 func (countedClosureProbe) ScenarioSLOWorkload() string { return "known-broken" }
 
-func testClosureAdmission(t *testing.T, scenario string) {
+func testClosurePublication(t *testing.T, scenario string) {
 	t.Helper()
 	now := time.Unix(1000, 0).UTC()
 	condition := userTestFinding("original")
@@ -105,9 +108,6 @@ func testClosureAdmission(t *testing.T, scenario string) {
 	probeTest.errors[0] = errors.New("probe unavailable")
 	if scenario == "unavailable" {
 		metrics.errors[0] = errors.New("Prometheus unavailable")
-	}
-	if scenario == "known-broken" {
-		metrics.samples = [][]sdk.Finding{nil}
 	}
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	c := openersController(t, dispatcher, probe, metrics, countedClosureProbe{probeTest})
@@ -162,88 +162,11 @@ func testClosureAdmission(t *testing.T, scenario string) {
 		}
 	}
 	execute()
-	if scenario == "known-broken" || scenario == "unavailable" {
-		if probeTest.calls != 0 {
-			t.Error("known-broken-only probe was sampled")
-		}
-		requireFrozen()
-		return
+	if metrics.calls != 0 || probeTest.calls != 0 {
+		t.Fatalf("publication sampled detectors outside the alert set: metrics=%d probe=%d", metrics.calls, probeTest.calls)
 	}
-	if c.pendingClosure == nil || c.pendingClosure.Frozen || c.IncidentOpen() || len(c.pendingClosure.Request.JoinedKeys) != 0 {
-		t.Fatalf("a single raw finding must wait for persistence: open=%v, closure=%+v", c.IncidentOpen(), c.pendingClosure)
-	}
-	if scenario == "blip" {
-		metrics.samples = append(metrics.samples, nil)
-	}
-	c.now = func() time.Time { return now.Add(time.Second) }
-	execute()
-	if scenario == "blip" {
-		requireFrozen()
-		return
-	}
-	key := findingKey(route)
-	if !c.IncidentOpen() || c.pendingClosure != nil || !slices.Contains(c.currentIncidentRequest.JoinedKeys, key) {
-		t.Fatalf("closure should return to observation with the new route: open=%v pending=%v request=%+v", c.IncidentOpen(), c.pendingClosure != nil, c.currentIncidentRequest)
-	}
-	if got := c.broker.(*riskBroker).closures(); len(got) != 0 {
-		t.Fatalf("broker received a contradicted closure: %+v", got)
-	}
-	if scenario == "stage-only" {
-		c.now = func() time.Time { return now.Add(2 * time.Second) }
-		step(t, c, now.Unix()+2)
-		effect, ok := c.PendingDispatchEffect()
-		if !ok {
-			t.Fatalf("missing first responder handoff after provisional recovery: escalated=%s", c.escalatedAt)
-		}
-		if err := c.ExecuteDispatchEffect(t.Context(), effect); err != nil {
-			t.Fatal(err)
-		}
-		c.Wait()
-		if got := dispatcher.callCount(); got != 1 {
-			t.Fatalf("responder dispatched %d times, want 1", got)
-		}
-		dispatched := <-dispatcher.requests
-		if dispatched.IncidentID != request.IncidentID || !slices.Equal(findingKeys(dispatched.Findings), []string{key}) {
-			t.Fatalf("handoff should contain only the residual alert for the same incident: %+v", dispatched)
-		}
-		if _, another := c.PendingDispatchEffect(); another {
-			t.Fatal("selected handoff remained pending after dispatch")
-		}
-		return
-	}
-	if _, ok := c.PendingDispatchEffect(); ok {
-		t.Fatal("a new alert requested another responder")
-	}
-	if _, ok := c.PendingClosureEffect(); ok {
-		t.Fatal("a new alert left the old proof publishable")
-	}
-
-	saved, err := c.ExportState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	restarted := openersController(t, &recordingDispatcher{}, probe, metrics)
-	if err := restarted.RestoreState(saved); err != nil {
-		t.Fatal(err)
-	}
-	if !restarted.IncidentOpen() || !restarted.responderDone || restarted.escalatedAt.IsZero() || !slices.Contains(*restarted.heldKeys.Load(), key) {
-		t.Fatalf("joined alert or responder result lost on restart: open=%v done=%v held=%v", restarted.IncidentOpen(), restarted.responderDone, *restarted.heldKeys.Load())
-	}
-
-	step(t, c, now.Unix()+2)
-	if !c.IncidentOpen() || c.pendingClosure != nil {
-		t.Fatal("the incident closed while the admitted route still failed")
-	}
-	metrics.samples = [][]sdk.Finding{nil}
-	step(t, c, now.Unix()+3)
-	step(t, c, now.Unix()+4)
-	if !c.IncidentOpen() || c.pendingClosure != nil {
-		t.Fatal("the incident reused its stability proof from before the route joined")
-	}
-	for second := int64(5); second <= 15 && c.pendingClosure == nil; second++ {
-		step(t, c, now.Unix()+second)
-	}
-	if c.pendingClosure == nil || !slices.Contains(c.pendingClosure.Request.JoinedKeys, key) || c.pendingClosure.EscalatedAt.IsZero() {
-		t.Fatal("a fresh continuous clear window did not produce an escalated closure covering the route")
+	requireFrozen()
+	if c.IncidentOpen() {
+		t.Fatal("publication reopened the incident")
 	}
 }

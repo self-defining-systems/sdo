@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -12,7 +11,6 @@ import (
 
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
-	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/requestmetrics"
 	"sdo.dev/operator/sdk/traffic"
@@ -25,7 +23,6 @@ type openers struct {
 	loaded    bool
 	commit    string
 	userTests map[string]bool
-	workloads map[string]appmap.Workload
 }
 
 // opens reports whether a finding is an alert that opens an incident:
@@ -124,48 +121,21 @@ func (c *Controller) verificationOpeners(detectors []sdk.Detector, catalog []app
 	return result
 }
 
-// closureOpeners uses the accepted workload files even when a probe is down.
-func (c *Controller) closureOpeners(ctx context.Context, detectors []sdk.Detector) map[string]bool {
-	tests := c.userTests()
-	c.openers.mu.Lock()
-	var catalog []appmap.Workload
-	if c.gitRead != nil && tests != nil {
-		c.mu.Lock()
-		repository := c.config.RepositoryWorktree
-		c.mu.Unlock()
-		for _, detector := range detectors {
-			name := traffic.ScenarioSLOWorkload(detector)
-			if name == "" {
-				continue
-			}
-			workload, loaded := c.openers.workloads[name]
-			if !loaded {
-				file := name + ".yaml"
-				content, err := c.gitRead(ctx, repository, "show", c.openers.commit+":"+path.Join(layout.TrafficWorkloadsDir, file))
-				if err == nil {
-					workload, _ = memory.MapWorkload(file, content)
-				}
-				if ctx.Err() == nil {
-					c.openers.workloads[name] = workload
-				}
-			}
-			if workload.Name != "" {
-				catalog = append(catalog, workload)
-			}
-		}
-	}
-	c.openers.mu.Unlock()
-	return c.verificationOpeners(detectors, catalog)
-}
-
 // AlertJoinWindow bounds when a new opener belongs to the same incident.
 // After the window an independent fault can open the next incident.
 const AlertJoinWindow = 5 * time.Minute
 
-// joinAlertSet admits an opener within the join window, including while the
-// outcome is provisional. Joining never dispatches or re-prompts a responder.
+// joinAlertSet admits a user test or failing user traffic into the alert set
+// while something still works the incident: the agent before it returns (the
+// early-report path included) or the automatic stage while it owns the
+// repair, within the join window. Kubernetes conditions never join. After the
+// responder returned, a new opener is a symptom nobody works on: it waits in
+// the batcher and opens the next incident once this one closes. An opener
+// already in the set refreshes it and withdraws recovery. Joining never
+// dispatches or re-prompts a responder.
 func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
-	if !c.opens(finding) {
+	role := c.openingRole(finding, nil)
+	if role == noOpener {
 		return false
 	}
 	c.mu.Lock()
@@ -183,14 +153,15 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 		c.withdrawRecoveryLocked(now, finding)
 		return true
 	}
-	if now.Sub(detected) > AlertJoinWindow {
+	if role == conditionOpener || now.Sub(detected) > AlertJoinWindow {
 		return false
 	}
-	if pending && !c.earlyReportPendingLocked() {
-		if err := c.reobserveClosureLocked(now, request); err != nil {
-			return false
-		}
-		request = c.currentIncidentRequest
+	// Before the responder returns it sees the joiner in sdo detect; the
+	// automatic stage evaluates it while it owns the repair.
+	early := c.earlyReportPendingLocked()
+	running := !c.responderDone && (c.incidentOpen || early)
+	if !running && c.awaitingAutomaticRecoveryLocked() == nil {
+		return false
 	}
 	if len(request.OpeningKeys) == 0 && request.Page == "" {
 		request.OpeningKeys = openingKeys(request)
@@ -207,13 +178,9 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	c.publishHeldLocked()
 	c.closureStableSince = time.Time{}
 	c.recoverySafetyLost = true
-	if c.earlyReportPendingLocked() {
+	if early {
 		c.cacheVerificationLocked(ToolResponse{Command: "verify", Summary: "recovery proof invalidated by a joined alert", Findings: []sdk.Finding{finding}})
 		c.withdrawRecoveryLocked(now, finding)
-	} else if c.responderDone && c.awaitingAutomaticRecoveryLocked() == nil {
-		// A finished responder is retired. A stage-only outcome still
-		// owes its first handoff under the automatic recovery policy.
-		c.escalateLocked(now)
 	}
 	return true
 }
@@ -280,6 +247,25 @@ func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
 	}
 }
 
+// nextIncidentWaitingLocked reports a confirmed opener in the batcher: a
+// symptom no one works on that opens the next incident once this one closes.
+// Caller holds c.mu.
+func (c *Controller) nextIncidentWaitingLocked(now time.Time) bool {
+	return c.batcher.Ready(now)
+}
+
+// handOverStillFailingLocked queues every alert of a closing escalated
+// incident that still fails, so the next incident opens on all of them with
+// the waiting opener. Caller holds c.mu.
+func (c *Controller) handOverStillFailingLocked(request IncidentRequest, now time.Time) {
+	states := c.tracker.Snapshot()
+	for _, key := range alertKeys(&request) {
+		if state, ok := states[key]; ok && state.Active {
+			c.batcher.AddAt(state.Finding, now)
+		}
+	}
+}
+
 // userTests reads the accepted map once per source commit.
 func (c *Controller) userTests() map[string]bool {
 	c.openers.mu.Lock()
@@ -301,7 +287,6 @@ func (c *Controller) userTests() map[string]bool {
 		}
 	}
 	c.openers.loaded, c.openers.commit, c.openers.userTests = true, commit, tests
-	c.openers.workloads = make(map[string]appmap.Workload)
 	return tests
 }
 
