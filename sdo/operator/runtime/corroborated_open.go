@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
 
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
@@ -22,9 +25,11 @@ import (
 //
 // Corroborated means: an active finding of an installed learned detector that
 // names a learned playbook, on a component of the test's operation path in
-// the accepted map, first seen before the test's first failing sample, with
-// no rollout or new revision of that component since (a rollout's own restart
-// answers are what the hold is for). Anything else keeps the hold. A failure
+// the accepted map, first seen before the test's first failing sample and no
+// earlier than AlertJoinWindow before it (a finding active through a healthy
+// period explains nothing new), with no new Pod or ReplicaSet and no
+// container termination of any component on that path since (restart answers
+// anywhere on the path are what the hold is for). Anything else keeps the hold. A failure
 // reported early stays reported while it keeps failing, so it never flaps
 // back under the hold. The opener is still the failing user test: the startup
 // period, the batcher and the join window apply as for any opener.
@@ -80,7 +85,9 @@ func (c *Controller) learnedPlaybookFindings(states map[string]FindingState) []F
 		}
 		out = append(out, state)
 	}
-	slices.SortFunc(out, func(a, b FindingState) int { return a.FirstSeenAt.Compare(b.FirstSeenAt) })
+	slices.SortFunc(out, func(a, b FindingState) int {
+		return cmp.Or(a.FirstSeenAt.Compare(b.FirstSeenAt), cmp.Compare(a.DetectorID, b.DetectorID))
+	})
 	return out
 }
 
@@ -107,14 +114,21 @@ func corroboration(view sdk.DetectionContext, m appmap.Map, pm program.AppMap, s
 			operations = append(operations, probe.Operations...)
 		}
 	}
-	components, ok := operationComponents(m, pm, operations)
+	names, ok := operationComponents(m, pm, operations)
 	if !ok {
 		return ""
 	}
+	var path []program.AppComponent
+	for _, name := range names {
+		if component, ok := pm.Component(name); ok && !slices.ContainsFunc(path, func(c program.AppComponent) bool { return c.Name == name }) {
+			path = append(path, component)
+		}
+	}
 	for _, state := range findings {
 		component, ok := pm.ComponentOf(view, state.Finding.PrimaryResource)
-		if !ok || !slices.Contains(components, component.Name) || !state.FirstSeenAt.Before(firstFailure) ||
-			rolledOutSince(view, component, state.FirstSeenAt) {
+		if !ok || !slices.Contains(names, component.Name) || !state.FirstSeenAt.Before(firstFailure) ||
+			state.FirstSeenAt.Before(firstFailure.Add(-AlertJoinWindow)) ||
+			restartedSince(view, path, state.FirstSeenAt) {
 			continue
 		}
 		return fmt.Sprintf("failing hard while learned detector %s reports component %s on its path (since %s)",
@@ -123,22 +137,34 @@ func corroboration(view sdk.DetectionContext, m appmap.Map, pm program.AppMap, s
 	return ""
 }
 
-// rolledOutSince reports a Pod or ReplicaSet of the component's workload
-// created at or after since. Creation times have one-second resolution, so a
-// creation in the same second counts as after.
-func rolledOutSince(view sdk.DetectionContext, component program.AppComponent, since time.Time) bool {
+// restartedSince reports a Pod or ReplicaSet of a path component's workload
+// created at or after since, or a container of such a Pod last terminated at
+// or after since (an in-Pod restart: a liveness or OOM kill makes no new Pod).
+// Kubernetes timestamps have one-second resolution, so the same second counts
+// as after.
+func restartedSince(view sdk.DetectionContext, path []program.AppComponent, since time.Time) bool {
 	floor := since.Truncate(time.Second)
+	onPath := func(kind, namespace, name string) bool {
+		workload := program.WorkloadOf(view, sdk.ObjectRef{Kind: kind, Namespace: namespace, Name: name})
+		return slices.ContainsFunc(path, func(c program.AppComponent) bool { return c.Workload == workload })
+	}
 	for _, pod := range view.Pods() {
-		if !pod.CreationTimestamp.Time.Before(floor) &&
-			program.WorkloadOf(view, sdk.ObjectRef{Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name}) == component.Workload {
+		if (!pod.CreationTimestamp.Time.Before(floor) || containerTerminatedSince(pod.Status.ContainerStatuses, floor)) &&
+			onPath("Pod", pod.Namespace, pod.Name) {
 			return true
 		}
 	}
 	for _, replicaSet := range view.ReplicaSets() {
-		if !replicaSet.CreationTimestamp.Time.Before(floor) &&
-			program.WorkloadOf(view, sdk.ObjectRef{Kind: "ReplicaSet", Namespace: replicaSet.Namespace, Name: replicaSet.Name}) == component.Workload {
+		if !replicaSet.CreationTimestamp.Time.Before(floor) && onPath("ReplicaSet", replicaSet.Namespace, replicaSet.Name) {
 			return true
 		}
 	}
 	return false
+}
+
+func containerTerminatedSince(statuses []corev1.ContainerStatus, floor time.Time) bool {
+	return slices.ContainsFunc(statuses, func(status corev1.ContainerStatus) bool {
+		terminated := status.LastTerminationState.Terminated
+		return terminated != nil && !terminated.FinishedAt.Time.Before(floor)
+	})
 }

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -33,27 +34,36 @@ const corroboratedArch = "# Manifest inventory\n\n- Service/app/front (source: k
 // corroboratedWorld is the simulated application: user tests sampled every
 // half second, each failing from its failAt offset with outcome; a learned
 // detector whose finding on component learnedOn appears from learnedAt; and
-// Pods of db, the newest created at dbPodAt.
+// one Pod per component, created at podAt (default an hour before) and with
+// its container last terminated at restartAt (default never).
 type corroboratedWorld struct {
 	t0        time.Time
 	now       time.Time
+	start     time.Duration // the first controller step; zero: -10s
 	failAt    map[string]time.Duration
 	outcome   traffic.Outcome
 	learnedOn string
-	learnedAt time.Duration // negative: never
-	dbPodAt   time.Duration // a db Pod created at this offset; zero: an hour before
+	learnedAt time.Duration // neverLearned: never
+	podAt     map[string]time.Duration
+	restartAt map[string]time.Duration
 }
 
 func (w *corroboratedWorld) Snapshot(context.Context) (sdk.DetectionContext, error) {
 	controller := true
-	pod := func(name, owner, kind string, created time.Time) corev1.Pod {
+	pod := func(name, owner, kind string) corev1.Pod {
+		created := w.t0.Add(-time.Hour)
+		if at, ok := w.podAt[owner]; ok {
+			created = w.t0.Add(at)
+		}
+		status := corev1.ContainerStatus{Name: owner, Ready: true}
+		if at, ok := w.restartAt[owner]; ok && !w.now.Before(w.t0.Add(at)) {
+			status.RestartCount = 1
+			status.LastTerminationState.Terminated = &corev1.ContainerStateTerminated{ExitCode: 137, Reason: "OOMKilled",
+				StartedAt: metav1.NewTime(created), FinishedAt: metav1.NewTime(w.t0.Add(at))}
+		}
 		return corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app", CreationTimestamp: metav1.NewTime(created),
-			OwnerReferences: []metav1.OwnerReference{{Kind: kind, Name: owner, Controller: &controller}}}}
-	}
-	old := w.t0.Add(-time.Hour)
-	dbCreated := old
-	if w.dbPodAt != 0 {
-		dbCreated = w.t0.Add(w.dbPodAt)
+			OwnerReferences: []metav1.OwnerReference{{Kind: kind, Name: owner, Controller: &controller}}},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{status}}}
 	}
 	workload := traffic.Workload{Name: "probe-call", Purpose: traffic.PurposeHealthProbe, RatePerSecond: 2,
 		Scenarios: []traffic.WorkloadScenario{{ID: "browse-items", Weight: 1}, {ID: "list-cache", Weight: 1}}}
@@ -75,10 +85,13 @@ func (w *corroboratedWorld) Snapshot(context.Context) (sdk.DetectionContext, err
 			Scenario: traffic.Descriptor{ID: scenario, Target: traffic.Target{Service: "front", Port: 80}}})
 	}
 	return sdktest.Snapshot{NamespaceName: "app",
-		PodList: []corev1.Pod{pod("front-1", "front", "Deployment", old), pod("db-0", "db", "StatefulSet", dbCreated), pod("cache-1", "cache", "Deployment", old)},
+		PodList: []corev1.Pod{pod("front-1", "front", "Deployment"), pod("api-1", "api", "Deployment"), pod("db-0", "db", "StatefulSet"), pod("cache-1", "cache", "Deployment")},
 		Traffic: map[string]traffic.Window{"probe-call": window},
 	}, nil
 }
+
+// neverLearned is a learnedAt for a world whose learned detector never reports.
+const neverLearned = time.Duration(math.MinInt64)
 
 // learnedDetector reports the world's learned finding, a store flag that a
 // learned playbook restores.
@@ -92,7 +105,7 @@ func (d learnedDetector) Spec() sdk.DetectorSpec {
 
 func (d learnedDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	w := d.world
-	if w.learnedAt < 0 || w.now.Before(w.t0.Add(w.learnedAt)) {
+	if w.learnedAt == neverLearned || w.now.Before(w.t0.Add(w.learnedAt)) {
 		return nil, nil
 	}
 	kind := map[string]string{"db": "StatefulSet", "cache": "Deployment"}[w.learnedOn]
@@ -108,7 +121,7 @@ func corroboratedController(t *testing.T, w *corroboratedWorld, startup time.Dur
 	cfg.StartupBound = startup
 	probe := traffic.NewDetector(sdk.DetectorSpec{ID: "traffic-probe-call", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Interval: 500 * time.Millisecond,
 		Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2}, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond}, OriginatingCommit: "seed"}, "probe-call")
-	c, err := NewController(cfg, []sdk.Detector{probe, learnedDetector{w}}, w, &recordingDispatcher{requests: make(chan IncidentRequest, 4)}, w.t0.Add(-30*time.Second))
+	c, err := NewController(cfg, []sdk.Detector{probe, learnedDetector{w}}, w, &recordingDispatcher{requests: make(chan IncidentRequest, 4)}, w.t0.Add(w.startAt()-20*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +129,19 @@ func corroboratedController(t *testing.T, w *corroboratedWorld, startup time.Dur
 	return c
 }
 
-// runUntil steps the controller every half second from t0-10s to t0+limit and
-// returns the offset at which done first held, or false.
+func (w *corroboratedWorld) startAt() time.Duration {
+	if w.start == 0 {
+		return -10 * time.Second
+	}
+	return w.start
+}
+
+// runUntil steps the controller every half second from the world's start
+// (t0-10s by default) to t0+limit and returns the offset at which done first
+// held, or false.
 func runUntil(t *testing.T, c *Controller, w *corroboratedWorld, limit time.Duration, done func() bool) (time.Duration, bool) {
 	t.Helper()
-	for at := w.t0.Add(-10 * time.Second); !at.After(w.t0.Add(limit)); at = at.Add(500 * time.Millisecond) {
+	for at := w.t0.Add(w.startAt()); !at.After(w.t0.Add(limit)); at = at.Add(500 * time.Millisecond) {
 		w.now = at
 		c.now = func() time.Time { return at }
 		if err := c.Step(context.Background(), at, nil); err != nil {
@@ -166,11 +187,22 @@ func TestCorroboratedUserTestOpensAtItsFirstHardFailure(t *testing.T) {
 // opens only once it spans 4 s.
 func TestUncorroboratedUserTestsKeepTheHold(t *testing.T) {
 	for name, change := range map[string]func(*corroboratedWorld){
-		"no learned finding":                 func(w *corroboratedWorld) { w.learnedAt = -1 },
+		"no learned finding":                 func(w *corroboratedWorld) { w.learnedAt = neverLearned },
 		"learned finding after the failure":  func(w *corroboratedWorld) { w.learnedAt = 6 * time.Second },
 		"learned finding off the test path":  func(w *corroboratedWorld) { w.learnedOn = "cache" },
-		"db rolled out since the finding":    func(w *corroboratedWorld) { w.dbPodAt = 3 * time.Second },
-		"db rolled out in the finding's sec": func(w *corroboratedWorld) { w.dbPodAt = 2 * time.Second },
+		"db rolled out since the finding":    func(w *corroboratedWorld) { w.podAt = map[string]time.Duration{"db": 3 * time.Second} },
+		"db rolled out in the finding's sec": func(w *corroboratedWorld) { w.podAt = map[string]time.Duration{"db": 2 * time.Second} },
+		// The hold is for restart answers anywhere on the test's path, not
+		// only on the component the learned finding names.
+		"api rolled out since the finding": func(w *corroboratedWorld) { w.podAt = map[string]time.Duration{"api": 3 * time.Second} },
+		// In-Pod restarts (a liveness kill, an OOM kill) make no new Pod.
+		"db container restarted since the finding":  func(w *corroboratedWorld) { w.restartAt = map[string]time.Duration{"db": 3 * time.Second} },
+		"api container restarted since the finding": func(w *corroboratedWorld) { w.restartAt = map[string]time.Duration{"api": 4 * time.Second} },
+		// A finding active since long before the failure (through a healthy
+		// period) does not corroborate it.
+		"learned finding older than the join window": func(w *corroboratedWorld) {
+			w.learnedAt, w.start = -AlertJoinWindow-10*time.Second, -AlertJoinWindow-11*time.Second
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCorroboratedWorld()
@@ -179,6 +211,29 @@ func TestUncorroboratedUserTestsKeepTheHold(t *testing.T) {
 			at, ok := openedAt(t, c, w, 20*time.Second)
 			if !ok || at < 9*time.Second {
 				t.Fatalf("opened = %v at %s, want the 4 s hold (≥ +9s)", ok, at)
+			}
+		})
+	}
+}
+
+// A component off the test's path rolling out or restarting does not undo
+// corroboration, and a container that restarted before the finding appeared
+// is no restart since it.
+func TestCorroborationIgnoresRestartsOffPathOrBeforeTheFinding(t *testing.T) {
+	for name, change := range map[string]func(*corroboratedWorld){
+		"cache rolled out":            func(w *corroboratedWorld) { w.podAt = map[string]time.Duration{"cache": 3 * time.Second} },
+		"cache container restarted":   func(w *corroboratedWorld) { w.restartAt = map[string]time.Duration{"cache": 3 * time.Second} },
+		"db restarted before finding": func(w *corroboratedWorld) { w.restartAt = map[string]time.Duration{"db": time.Second} },
+		"finding inside join window": func(w *corroboratedWorld) {
+			w.learnedAt, w.start = -AlertJoinWindow+10*time.Second, -AlertJoinWindow+9*time.Second
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCorroboratedWorld()
+			change(w)
+			c := corroboratedController(t, w, 0)
+			if at, ok := openedAt(t, c, w, 20*time.Second); !ok || at > 6*time.Second {
+				t.Fatalf("opened = %v at %s, want right after the first failing sample (+5s)", ok, at)
 			}
 		})
 	}
@@ -224,5 +279,39 @@ func TestCorroboratedOpenerWaitsForTheStartupPeriod(t *testing.T) {
 	c := corroboratedController(t, w, 2*time.Minute)
 	if at, ok := openedAt(t, c, w, 20*time.Second); ok {
 		t.Fatalf("opened at %s inside the startup period", at)
+	}
+}
+
+// renamedLearned is the world's learned detector under another ID.
+type renamedLearned struct {
+	learnedDetector
+	id string
+}
+
+func (d renamedLearned) Spec() sdk.DetectorSpec {
+	spec := d.learnedDetector.Spec()
+	spec.ID = d.id
+	return spec
+}
+
+// Learned findings first seen at the same instant come in detector order, so
+// the corroboration reason names the same detector every time.
+func TestLearnedPlaybookFindingsOrderIsDeterministic(t *testing.T) {
+	w := newCorroboratedWorld()
+	c := corroboratedController(t, w, 0)
+	seen := w.t0
+	states := map[string]FindingState{}
+	for _, id := range []string{"learned-c", "learned-a", "learned-b", "learned-d"} {
+		c.detectors[id] = renamedLearned{learnedDetector{w}, id}
+		states[id] = FindingState{DetectorID: id, Active: true, FirstSeenAt: seen, Finding: sdk.Finding{DetectorID: id, Status: sdk.FindingActive}}
+	}
+	for range 50 {
+		var got []string
+		for _, state := range c.learnedPlaybookFindings(states) {
+			got = append(got, state.DetectorID)
+		}
+		if !slices.Equal(got, []string{"learned-a", "learned-b", "learned-c", "learned-d"}) {
+			t.Fatalf("order %v, want by first seen, then detector ID", got)
+		}
 	}
 }
