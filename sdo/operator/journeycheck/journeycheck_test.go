@@ -235,6 +235,30 @@ func TestOnlyExactScenarioIDDoesNotAlsoJudgeLongerIDs(t *testing.T) {
 	}
 }
 
+// An idempotent write writes one fixed object every time, so it needs no
+// cleanup. One that names its object with Unique creates a new one every
+// iteration, which nothing removes: red before anything is sent. A random
+// value on a fixed object (OneOf) piles nothing up.
+func TestAnIdempotentWriteThatNamesANewObjectEachTimeIsRedInAPlan(t *testing.T) {
+	idempotent := func(params traffic.Params) traffic.Scenario {
+		sc := scenario(true)
+		sc.SideEffect, sc.Cleanup = traffic.SideEffectIdempotentWrite, nil
+		sc.Steps = []traffic.Step{{Name: "put", Endpoint: traffic.PUT("/settings", nil).WithJSON(`{"name":"{name}"}`, params).Status(200)}}
+		return sc
+	}
+	plan := func(sc traffic.Scenario) Result {
+		c := config(&store{items: map[string]string{}}, sc)
+		c.Plan = true
+		return find(Run(context.Background(), c), ItemCleanup)
+	}
+	if got := plan(idempotent(traffic.Params{"name": traffic.Unique("sdoprobe-")})); got.Status != Red || !strings.Contains(got.Detail, "new object") {
+		t.Fatalf("want a red pile-up item, got %+v", got)
+	}
+	if got := plan(idempotent(traffic.Params{"name": traffic.OneOf("a", "b", "c")})); got.Status == Red {
+		t.Fatalf("a fixed object with a random value piles nothing up: %+v", got)
+	}
+}
+
 func TestSinglePassRunsAndCleansUpOneIteration(t *testing.T) {
 	for _, failCleanup := range []bool{false, true} {
 		s := &store{items: map[string]string{}, failDelete: failCleanup}
