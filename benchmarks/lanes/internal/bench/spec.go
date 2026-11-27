@@ -79,6 +79,13 @@ type Spec struct {
 	// Hold builds the experiment's lanes (app, operator, build check) and keeps them ready, running nothing: a warm
 	// pool another experiment takes with Claim. Remove the experiment to release them.
 	Hold bool `json:"hold,omitempty"`
+	// ResetInPlace keeps a lane's subject from one experiment to the next instead of preparing it again: once a build
+	// of this experiment passed its check the hooks' snapshot takes the golden copy (as on a pool lane), the release
+	// returns the lane to it by the hooks' reset, and the next build of any experiment with the same profile (app,
+	// namespace, workload checkout, hooks, baseline, settings; a seed may differ) takes the lane by swap, with no
+	// teardown, bare-app gate or prepare. A build of another profile tears the subject down as before. Unlike a pool,
+	// the reset keeps no ledger: the swap's build check confirms fresh writes, as a rebuilt lane's does. Live.
+	ResetInPlace bool `json:"reset_in_place,omitempty"`
 	// Claim names a Hold experiment whose ready lane this experiment takes instead of building: the lane's operator
 	// gets this experiment's sources by the hooks' swap. It must match the pool in app, namespace, fuzzops, hooks,
 	// baseline and operator settings (the revision may differ). With no such lane the sequence waits for one (see
@@ -228,6 +235,8 @@ func (s Spec) Validate() error {
 		bad("operator.revision %q: the pinned hooks revision (7-40 hex digits)", o.Revision)
 	case o.Builtin != "" && (o.Revision != "" || o.Baseline != "" || len(o.Settings) > 0):
 		bad("operator: a builtin operator takes no revision, baseline or settings")
+	case s.ResetInPlace && o.Hooks == "":
+		bad("reset_in_place needs hooks (snapshot, reset and swap)")
 	}
 	if s.Namespace == "" {
 		bad("namespace is required")

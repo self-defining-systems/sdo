@@ -1922,6 +1922,34 @@ def test_check_input_judges_the_memory_check_like_the_platform_used_to(
     assert "baseline.json says" in wrong["detail"]
 
 
+def test_check_input_says_when_every_install_of_a_baseline_runs_the_health_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    root = _baseline_dir(tmp_path)
+    baseline = Baseline.load(root)
+    monkeypatch.setattr(hooks, "_input_problem", lambda kind, path, namespace: "")
+    monkeypatch.setattr(hooks, "_memory_migrate", lambda path, b: (b.commit, 0, []))
+    answer = _check_input(capsys, monkeypatch, "baseline", root)
+    assert answer["ok"] is True
+    assert "no health judgment" in answer["detail"]
+    # a seed is imported into a running lane: no install, no judge
+    assert "no health judgment" not in _check_input(capsys, monkeypatch, "seed", root)["detail"]
+    # the same memory with a validated initial judgment on top
+    repo = tmp_path / "judged-repo"
+    _git(tmp_path, "clone", "-q", "-b", baseline.branch, str(root / baseline.bundle), str(repo))
+    (repo / "judge.md").write_text("judged\n")
+    _git(repo, "add", "-A")
+    trailers = "SDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed"
+    _git(repo, "commit", "-q", "-m", f"validated initial\n\n{trailers}")
+    _git(repo, "bundle", "create", str(root / baseline.bundle), baseline.branch)
+    head = _git(repo, "rev-parse", "HEAD")
+    monkeypatch.setattr(hooks, "_memory_migrate", lambda path, b: (head, 0, []))
+    monkeypatch.setattr(
+        hooks, "_load_input_baseline", lambda path: hooks.InputBaseline("ns1", head, baseline.branch, baseline.bundle)
+    )
+    assert "no health judgment" not in _check_input(capsys, monkeypatch, "baseline", root)["detail"]
+
+
 def test_memory_diagnostics_skip_validator_progress_lines() -> None:
     """A memory with learned Go code prints INFO stage progress before its diagnostics (LB19); real output of a learned
     bundle (shared with the lanes fallback test), run through the platform's CHECK prefix."""

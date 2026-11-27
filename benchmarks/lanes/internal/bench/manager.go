@@ -904,7 +904,8 @@ func (m *Manager) preparedFor(l *LaneFile, x *Experiment) *Prepared {
 	if o := s.Operator; o.Hooks != "" {
 		p.Hooks, p.HooksPath, p.Command = o.Hooks, m.inv.HooksPath(o.Hooks, o.Revision, l.Host), m.inv.HookCommand[o.Hooks]
 	}
-	if s.Hold {
+	if s.Hold || s.ResetInPlace {
+		// the golden copy the build takes is this experiment's: later swaps and resets keep the lane its
 		p.Pool = x.Name
 	}
 	return p
@@ -1121,6 +1122,7 @@ func (m *Manager) assignExp(ctx context.Context, n string, reachable map[string]
 		st.ReuseApp = reusableApp(s, st, q.Fault)
 		st.Swap = swap
 		st.Hold = s.Hold
+		st.ResetInPlace = s.ResetInPlace
 		if swap && pool != "" {
 			st.New.Pool = pool // a swap keeps the lane its pool's
 		}

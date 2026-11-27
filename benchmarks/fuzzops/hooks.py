@@ -296,6 +296,11 @@ def write_baseline(root: Path, baseline: Baseline) -> Baseline:
     return written
 
 
+#: ``git`` for a repository this process removes. Git 2.47+ detaches the ``maintenance run --auto`` that a fetch or
+#: commit starts, and it keeps writing into ``.git/objects`` while the directory is being removed.
+SCRATCH_GIT = ("git", "-c", "maintenance.auto=false", "-c", "gc.auto=0")
+
+
 def bundle_problem(bundle: Path, branch: str, commit: str) -> str:
     """Why the bundle does not hold ``branch`` at ``commit`` ("" when it does)."""
     if not bundle.is_file():
@@ -315,6 +320,24 @@ def bundle_problem(bundle: Path, branch: str, commit: str) -> str:
     if at != commit:
         return f"bundle {bundle.name} has {branch} at {at[:12]}, baseline.json says {commit[:12]}"
     return ""
+
+
+#: The trailers of a validated initial health judgment (``memory.AcceptedHealthRevision`` looks for them).
+JUDGE_TRAILERS = ("SDO-Actor: health_judge", "SDO-Phase: initial", "SDO-Validation: passed")
+
+
+def health_judged(bundle: Path, branch: str) -> bool:
+    """Whether the bundle's ``branch`` holds a validated initial health judgment on its first-parent line. Without one
+    every install of it runs the health judge, an agent turn of minutes, before the controller finishes starting."""
+    grep = [arg for trailer in JUDGE_TRAILERS for arg in ("--grep", f"^{trailer}$")]
+    with tempfile.TemporaryDirectory() as tmp:
+        _run([*SCRATCH_GIT, "init", "-q", tmp], "git init")
+        _run([*SCRATCH_GIT, "-C", tmp, "fetch", "-q", str(bundle), f"refs/heads/{branch}"], "git fetch bundle")
+        found = _run(
+            ["git", "-C", tmp, "log", "--first-parent", "-1", "--format=%H", "--all-match", *grep, "FETCH_HEAD"],
+            "git log",
+        )
+    return bool(found.stdout.strip())
 
 
 def baseline_problem(baseline: Baseline, namespace: str) -> str:
@@ -2810,6 +2833,7 @@ class InputBaseline(NamedTuple):
     namespace: str
     commit: str
     branch: str
+    bundle: str = "memory.bundle"
 
 
 #: Diagnostics of ``memory migrate`` that are no failure at add time: no cluster is known yet, and the controller binds
@@ -2826,9 +2850,17 @@ def memory_diagnostics(output: str) -> list[str]:
     return [line for line in output.splitlines() if line.strip() and not LOG_PROGRESS.match(line)]
 
 
+def _unjudged(bundle: Path, branch: str) -> bool:
+    """Whether the bundle provably holds no health judgment (an unreadable one says nothing: no note)."""
+    try:
+        return not health_judged(bundle, branch)
+    except HookError:
+        return False
+
+
 def _load_input_baseline(path: Path) -> InputBaseline:
     baseline = Baseline.load(path)
-    return InputBaseline(baseline.namespace, baseline.commit, baseline.branch)
+    return InputBaseline(baseline.namespace, baseline.commit, baseline.branch, baseline.bundle)
 
 
 def _input_problem(kind: str, path: Path, namespace: str) -> str:
@@ -2907,6 +2939,11 @@ def check_input(env: Mapping[str, str], out: Callable[[str], None] = _print) -> 
         out(json.dumps({"ok": False, "detail": detail}))
         return 0
     suffix = f" ({len(diagnostics)} allowed diagnostics)" if diagnostics and status else ""
+    if kind == "baseline" and _unjudged(path / baseline.bundle, baseline.branch):
+        suffix += (
+            "; no health judgment: every install runs the health judge (minutes), "
+            "write a judged baseline after one install (python -m benchmarks.fuzzops.judged)"
+        )
     out(json.dumps({"ok": True, "detail": f"bundle head matches baseline.json; memory check clean{suffix}"}))
     return 0
 
@@ -2947,8 +2984,8 @@ def rebranch_bundle(raw: Path, out: Path, branch: str, work: Path, expected: str
     refs = [line.partition(" ")[2].strip() for line in listed if line.strip()]
     if len(refs) != 1:
         raise HookError(f"the archived bundle has {len(refs)} heads ({', '.join(refs)}), expected one")
-    _run(["git", "init", "-q", str(work)], "git init")
-    _run(["git", "-C", str(work), "fetch", "-q", str(raw), f"{refs[0]}:refs/heads/{branch}"], "git fetch bundle")
+    _run([*SCRATCH_GIT, "init", "-q", str(work)], "git init")
+    _run([*SCRATCH_GIT, "-C", str(work), "fetch", "-q", str(raw), f"{refs[0]}:refs/heads/{branch}"], "git fetch bundle")
     commit = _run(["git", "-C", str(work), "rev-parse", f"refs/heads/{branch}"], "git rev-parse").stdout.strip()
     if expected and commit != expected:
         raise HookError(f"the bundled head {commit[:12]} is not the controller's HEAD {expected[:12]}")
