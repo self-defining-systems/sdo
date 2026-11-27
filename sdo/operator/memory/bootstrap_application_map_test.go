@@ -94,3 +94,44 @@ probes:
 		t.Fatalf("a fully covered map owes only the existing-records probe, up front:\n%s", brief)
 	}
 }
+
+// A worker that shares the users' queue but that no user path reaches is
+// named in the brief even when it has a (metrics) Service, and the brief says
+// to observe its effect rather than to draw an edge toward it.
+func TestDesignerBriefNamesWorkersWithAServiceToo(t *testing.T) {
+	checkout := t.TempDir()
+	if err := memory.WriteArchitecture(checkout, "shop", "c1", "# Manifest inventory\n\n- Deployment/shop/web (source: web.yaml)\n"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(checkout, layout.ArchitectureFile)
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	region := appmap.BeginMarker + "\n```yaml\n" + `version: 1
+components:
+  - {name: web, workload: Deployment/web, services: [web], holds_data: false}
+  - {name: worker, workload: Deployment/worker, services: [worker-metrics], holds_data: false}
+  - {name: queue, workload: StatefulSet/queue, services: [queue], holds_data: false, data: {engine: redis, role: authoritative}}
+edges:
+  - {from: web, to: queue, evidence: [manifest], source: ConfigMap/web key queue}
+  - {from: worker, to: queue, evidence: [manifest], source: ConfigMap/worker key queue}
+operations:
+  - id: place-order
+    writes: true
+    entry: {service: web, port: 80, method: POST, path: /orders}
+    path: [web, queue]
+probes:
+  - {scenario: place-order, kind: write-read, operations: [place-order]}
+` + "```\n" + appmap.EndMarker + "\n"
+	if err := os.WriteFile(path, append(first, []byte("\n"+region)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	brief := memory.CoverageObligations(checkout)
+	if !strings.Contains(brief, "worker") || !strings.Contains(brief, "traffic.Eventually") || strings.Contains(brief, "map the edge") {
+		t.Fatalf("brief does not name the worker and how to observe it:\n%s", brief)
+	}
+	if strings.Contains(brief, "these components: queue") || strings.Contains(brief, ", queue") {
+		t.Fatalf("a store is not a worker:\n%s", brief)
+	}
+}

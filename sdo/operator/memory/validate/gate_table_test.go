@@ -983,6 +983,7 @@ var gateRuleCoverage = map[string]string{
 	RuleMapRecordsUnread:      "covered by the appmap package's coverage_rules_test.go and the builder's generated scenario test",
 	RuleMapNoUserRecords:      "covered by the appmap package's coverage_rules_test.go",
 	RuleMapReaders:            "covered by application_map_test.go (TestMapReadersNote)",
+	RuleMapEffectUnobserved:   "covered by the appmap package's effect_test.go and the builder's generated scenario test",
 	RuleMapOutsideRegion:      "covered by application_map_test.go",
 	RuleMapRegionOwner:        "covered by application_map_test.go",
 	RuleDetectorNone:          "never emitted: memory without detectors is valid (good row above)",

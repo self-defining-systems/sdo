@@ -29,6 +29,10 @@ const (
 	RuleUnprobedShare  = "map.unprobed-share"
 	RuleRecordsUnread  = "map.records-unread"
 	RuleNoUserRecords  = "map.no-user-records"
+	// RuleEffectUnobserved: a probe lists background work (an internal
+	// operation) but no step of its scenario waits for the work's effect, or
+	// it performs no user action that hands the work off.
+	RuleEffectUnobserved = "map.effect-unobserved"
 )
 
 // Probe kinds, and the health-probe workload that runs each.
@@ -690,6 +694,9 @@ type Scenario struct {
 	// ExistingRecords are the steps marked as reading records the probe did
 	// not create.
 	ExistingRecords []ExistingRecordsStep
+	// WaitsForEffect is true when a step waits for an asynchronous effect
+	// (traffic.Eventually).
+	WaitsForEffect bool
 }
 
 // ExistingRecordsStep is the compiled fact about one marked step.
@@ -772,8 +779,51 @@ func (m Map) CheckScenarios(scenarios []Scenario) []Finding {
 	}
 	c.checkProbeUsers(scenarios)
 	c.recordsRule(byID)
+	c.effectRule(byID)
 	sort.SliceStable(c.findings, func(i, j int) bool { return c.findings[i].Rule < c.findings[j].Rule })
 	return c.findings
+}
+
+// effectRule holds every operation that sets off background work (one with
+// triggers, or an internal operation) to a probe that observes the work:
+// background work changes what users see only after the request that started
+// it returned, so a synchronous read-back passes while the worker is stopped
+// or backed up. Some gated probe that lists the operation must wait for the
+// effect in a traffic.Eventually step, and must perform a user operation (one
+// that is not internal): an internal operation enters at no user entry, so
+// only the user action that hands the work off makes the probe a user test
+// that opens incidents.
+func (c *checker) effectRule(byID map[string]Scenario) {
+	for _, op := range c.m.Operations {
+		internal := c.m.Internal(op)
+		if (!internal && len(op.Triggers) == 0) || c.broken[op.ID] {
+			continue
+		}
+		var listed []string
+		observed := false
+		for _, p := range c.m.Probes {
+			s, ok := byID[p.Scenario]
+			if !ok || s.KnownBroken || !slicesContains(p.Operations, op.ID) {
+				continue
+			}
+			listed = append(listed, p.Scenario)
+			user := !internal
+			for _, id := range p.Operations {
+				if other, ok := c.ops[id]; ok && !c.m.Internal(other) {
+					user = true
+				}
+			}
+			observed = observed || (s.WaitsForEffect && user)
+		}
+		if observed || len(listed) == 0 {
+			continue // an operation in no probe is map.uncovered-operation
+		}
+		work := strings.Join(op.Triggers, ", ")
+		if internal {
+			work = "its own"
+		}
+		c.add(RuleEffectUnobserved, "in a probe that performs the user operation handing the work off, read the work's effect (a status that moves on, a result that becomes readable) in a step wrapped in traffic.Eventually, so the probe fails when the work stops or falls behind", "operation %s sets off background work (%s), but no probe that lists it (%s) performs a user operation and waits for the work's effect, so a stopped or backed-up worker passes", op.ID, work, strings.Join(listed, ", "))
+	}
 }
 
 // recordsRule requires, for a map with a data component, at least one gated

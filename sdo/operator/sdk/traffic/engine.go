@@ -114,6 +114,20 @@ type Sample struct {
 	// it took and for how long, whether it passed or ran out of time.
 	Convergence  []Convergence `json:"convergence,omitempty"`
 	CleanupError string        `json:"cleanupError,omitempty"`
+	// Done is when the sample's steps finished (cleanup excluded): when its
+	// outcome was observed. See ObservedAt.
+	Done time.Time `json:"done,omitempty"`
+}
+
+// ObservedAt is when the sample's outcome was known: Done, or, for a sample
+// recorded without it, its start plus its latency. Freshness (maxAge) is
+// judged from it, so a step that waited for an effect until near the
+// iteration deadline still counts; ordering, onsets and "since" rules keep At.
+func (sample Sample) ObservedAt() time.Time {
+	if !sample.Done.IsZero() {
+		return sample.Done
+	}
+	return sample.At.Add(sample.Latency)
 }
 
 // Convergence is how a step that answered NotYet went in a sample.
@@ -556,6 +570,7 @@ func (e *Engine) IterateWithTrace(ctx context.Context, iteration uint64, trace f
 	}
 	// Waiting for a NotYet step to pass is in Convergence, not in latency.
 	sample.Latency = max(e.since(started)-waited, time.Nanosecond)
+	sample.Done = e.clock.Now().UTC()
 	if scenario.SideEffect == SideEffectWriteWithCleanup && sample.Requests > 0 {
 		cleanupCtx, cancelCleanup := e.withTimeout(context.WithoutCancel(ctx), e.workload.IterationTimeout.Duration())
 		defer cancelCleanup()
@@ -753,12 +768,15 @@ func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step St
 			break
 		}
 		remaining := deadline.Sub(e.clock.Now())
-		if remaining <= 0 || ctx.Err() != nil {
+		// Send again only when a whole request still fits before the
+		// deadline, so running out of time is the step's last answer, never
+		// a request cut off by the iteration timeout.
+		if remaining <= pendingPause+e.workload.Timeout.Duration() || ctx.Err() != nil {
 			break
 		}
 		select {
 		case <-ctx.Done():
-		case <-e.clock.After(min(remaining, pendingPause)):
+		case <-e.clock.After(pendingPause):
 		}
 		if ctx.Err() != nil || !e.clock.Now().Before(deadline) {
 			break

@@ -114,6 +114,32 @@ func (e *Engine) UseWarmup(warming func() bool)
 func (e *Engine) Workload() Workload
     Workload returns the engine's workload with defaults applied.
 
+type EventualEndpoint struct {
+	Endpoint Endpoint
+}
+    EventualEndpoint is a read step that waits for the effect of an earlier
+    write, made by work the application does after it answered (a background
+    job, a queue consumer, a scheduled task). See Eventually.
+
+func Eventually(endpoint Endpoint) *EventualEndpoint
+    Eventually wraps the read that observes a write's asynchronous effect (a
+    status that moves on, a result that becomes readable). While the read gets
+    an answer below 500 that its check rejects (a wrong body, a 404 while the
+    result does not exist yet), the check answers NotYet and the engine sends
+    it again until it passes or the iteration deadline nears, which fails the
+    step with the last reason: the effect did not arrive in time. A 5xx, a 429,
+    a transport error or a timeout fails at once. Only a GET or HEAD may be
+    wrapped. The time until the effect appeared is the sample's Convergence;
+    the workload's iterationTimeout is the deadline.
+
+func (e *EventualEndpoint) Build(ctx context.Context, rng *rand.Rand, state State) (Request, error)
+    Build builds the wrapped read and refuses anything but GET or HEAD, since a
+    repeated write could duplicate user-visible data.
+
+func (e *EventualEndpoint) Check(response Response, state State) Verdict
+    Check passes what the wrapped check passes and answers NotYet for a rejected
+    answer below 500 other than 429.
+
 type Exec struct {
 	// Address is host:port of the target Service.
 	Address string
@@ -188,47 +214,4 @@ const (
 	// FaultSlow: the target does not answer within the request timeout.
 	FaultSlow FaultClass = "slow"
 )
-type HTTPEndpoint struct {
-	Method       string
-	Path         string
-	Query        Params
-	Form         Params
-	JSON         string
-	JSONParams   Params
-	Headers      map[string]string
-	ExpectStatus []int
-	ExpectBody   []string
-	Saves        map[string]string
-
-	// Has unexported fields.
-}
-    HTTPEndpoint is the SDK's declarative Endpoint: a method and path, generated
-    query and form parameters or a JSON body, and response expectations. Build
-    it with GET, POST, PUT, or DELETE and refine it with the chainable methods.
-    Path segments written {key} are filled from State.
-
-func DELETE(path string, query Params) *HTTPEndpoint
-    DELETE sends generated query parameters.
-
-func GET(path string, query Params) *HTTPEndpoint
-    GET is a read endpoint with generated query parameters.
-
-func POST(path string, query Params) *HTTPEndpoint
-    POST sends generated query parameters; add a form body with WithForm.
-
-func PUT(path string, query Params) *HTTPEndpoint
-    PUT sends generated query parameters; add a form body with WithForm.
-
-func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Request, error)
-    Build implements Endpoint.
-
-func (e *HTTPEndpoint) Check(response Response, state State) Verdict
-    Check implements Endpoint.
-
-func (e *HTTPEndpoint) ChecksContent() bool
-    ChecksContent reports whether the endpoint checks anything beyond the
-    status: body text, saved JSON fields or cookies, or exact JSON content.
-
-func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint
-    Contains requires the response body to contain text.
 ```

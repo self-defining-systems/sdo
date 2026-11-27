@@ -15,6 +15,7 @@ description: Incident repair.
 - **Test each change.** Predict its fix, recheck after it takes effect. Unchanged failure counts against the hypothesis.
 - **Restore lost data.** Restore from its authoritative copy first. Before recreating, search all app and deployment backups or copies: configuration, jobs, object stores, replicas. Never seed substitute data to pass health checks.
 - Prefer the fastest supported operation with the same effects, including cache invalidation.
+- **Late background work**: drain the queue (workers, bulk work, poison jobs); never edit app code; escalate if nothing drains.
 - Ensure the process uses the fix. Replace it if not rolled.
 - **Verify recovery.** The operation must keep passing. For paged incidents, return `completed` if verified, else `failed`.
   If fenced, return unless a test of this incident fails; then keep working.

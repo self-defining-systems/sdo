@@ -80,6 +80,7 @@ The broker runs the same check on every commit.
 Open only the topic needed for the current edit.
 
 - [app-state](references/app-state.md)
+- [async-effects](references/async-effects.md)
 - [cause-specific](references/cause-specific.md)
 - [generic-objects](references/generic-objects.md)
 - [pod-reads](references/pod-reads.md)

@@ -110,8 +110,9 @@ import (
 // TestApplicationMapMatchesScenarios records, as findings the memory check
 // classifies, where the probes' compiled scenarios disagree with the map: side
 // effect against probe kind, DependsOn against the probe's path, the
-// read-later setup that creates the data it reads, status-only checks, and
-// probe users the map's probe-identity procedure cannot provision.
+// read-later setup that creates the data it reads, status-only checks, probes
+// of background work that do not wait for its effect, and probe users the
+// map's probe-identity procedure cannot provision.
 func TestApplicationMapMatchesScenarios(t *testing.T) {
     m, err := appmap.Parse(ApplicationMapYAML)
     if err != nil { t.Fatal(err) }
@@ -129,7 +130,7 @@ func TestApplicationMapMatchesScenarios(t *testing.T) {
         }
         broken := false
         for _, id := range KnownBrokenScenarios { broken = broken || id == s.ID }
-        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup), StatusOnly: s.StatusOnly(), Users: users, NeedsProbeToken: needsToken, KnownBroken: broken, ExistingRecords: existing})
+        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup), StatusOnly: s.StatusOnly(), Users: users, NeedsProbeToken: needsToken, KnownBroken: broken, ExistingRecords: existing, WaitsForEffect: s.WaitsForEffect()})
     }
     findings := m.CheckScenarios(scenarios)
     if findings == nil { findings = []appmap.Finding{} }
