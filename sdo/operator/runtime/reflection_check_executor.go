@@ -94,11 +94,12 @@ func reflectionCheckHandler(repository *broker.Broker, live func() LivePlaybookC
 			return response
 		}
 		if check := liveCheck(live); check != nil && len(report.GetDiagnostics()) == 0 {
-			diagnostics, err := check(bounded, incidentID, report.GetRoot(), report.GetBase())
+			live, err := check(bounded, incidentID, report.GetRoot(), report.GetBase())
 			if err != nil {
 				slog.Warn("reflection_live_check_unavailable", "incident_id", incidentID, "error", err)
 			}
-			report.Diagnostics = append(report.Diagnostics, diagnostics...)
+			report.Diagnostics = append(report.Diagnostics, live.Blocking...)
+			report.CoverageGaps = append(report.CoverageGaps, live.Notes...)
 		}
 		response.MemoryCheckReport, err = protojson.Marshal(report)
 		if err != nil {

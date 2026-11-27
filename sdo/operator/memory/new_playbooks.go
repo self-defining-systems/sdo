@@ -52,3 +52,33 @@ func hasProgramSource(dir string) bool {
 	files, _ := os.ReadDir(dir)
 	return slices.ContainsFunc(files, func(file os.DirEntry) bool { return !file.IsDir() && isProgramFile(file.Name()) })
 }
+
+// ChangedPlaybooks names the playbooks whose program source (a non-test .go
+// file) differs from base in root: the new ones and the ones edited since,
+// committed or not. A README or test edit changes no program. Without Git
+// history it returns an error.
+func ChangedPlaybooks(ctx context.Context, root, base string) ([]string, error) {
+	dir := layout.PlaybooksDir + "/"
+	changed := map[string]bool{}
+	for _, args := range [][]string{{"diff", "--name-only", base, "--", dir}, {"ls-files", "--others", "--exclude-standard", "--", dir}} {
+		listing, stderr, err := memoryio.GitWithDiagnostics(ctx, root, args...)
+		if err != nil {
+			return nil, fmt.Errorf("list changed playbooks at %s: %w: %s", base, err, strings.TrimSpace(stderr))
+		}
+		for _, name := range strings.Split(string(listing), "\n") {
+			rest, ok := strings.CutPrefix(name, dir)
+			id, file, nested := strings.Cut(rest, "/")
+			if ok && nested && !strings.Contains(file, "/") && isProgramFile(file) && layout.ValidPlaybookID(id) {
+				changed[id] = true
+			}
+		}
+	}
+	var ids []string
+	for id := range changed {
+		if hasProgramSource(filepath.Join(root, layout.PlaybookDir(id))) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
+}

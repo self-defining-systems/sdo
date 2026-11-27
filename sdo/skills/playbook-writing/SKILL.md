@@ -30,6 +30,6 @@ Check against recorded evidence:
 1. `sdo-operator memory check`
 2. `sdo-operator memory test <id>`
 
-Run both in the foreground. At the closing turn, memory check also runs a new playbook's read-only checks on the recovered cluster; a check must exit 0 when the state holds and 1 when it needs the change, and any other exit fails it.
+Run both in the foreground. At the closing turn, memory check also runs a new or edited playbook's read-only checks on the recovered cluster, bound as in this incident; a check must exit 0 when the state holds and 1 when it needs the change, and any other exit fails it. A check that could not run is only a note.
 
 Reply in one line: what it does, or why none is warranted.
