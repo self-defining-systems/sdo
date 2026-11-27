@@ -395,8 +395,8 @@ func TestDeclaredQueriesAreRangeAndInstant(t *testing.T) {
 			ranged++
 		}
 	}
-	if ranged != 1 {
-		t.Fatalf("want one range query, got %d", ranged)
+	if ranged != 2 {
+		t.Fatalf("want the recent window and the baseline history as range queries, got %d", ranged)
 	}
 }
 
