@@ -706,7 +706,10 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
         outcome_path = next(iter(sorted(outcomes_dir.glob(f"{d.name}*.json"))), None) if outcomes_dir.is_dir() else None
         outcome: dict[str, Any] = {}
         if outcome_path is None:
-            problems.append(Problem(f"outcome {label}", "missing", "no outcome document in memory/.sdo/outcomes"))
+            if not sink.frozen_memory(ledger):
+                problems.append(Problem(f"outcome {label}", "missing", "no outcome document in memory/.sdo/outcomes"))
+            elif not sink.has_outcome(ledger):  # frozen memory commits nothing: the ledger holds the only copy
+                problems.append(Problem(f"outcome {label}", "missing", "no outcome document in the frozen ledger"))
         else:
             it = add(f"outcome {label}", str(outcome_path.relative_to(run)))
             outcome = _check_json(it, run, problems) or {}
@@ -716,7 +719,7 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
         tl.stub = declared_stub(d)
         ev.stub = ev.stub or tl.stub
         ev.timelines.append(tl)
-        ran = sink.agents_ran(ledger) if ledger else False
+        ran = sink.agents_ran(ledger, d)
         for field_name in ("detected_at", "closure_start_at", "closed_at"):
             if getattr(tl, field_name) is None:
                 problems.append(Problem(f"timeline {label}", "incomplete", f"no {field_name}"))
