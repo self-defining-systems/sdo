@@ -63,6 +63,8 @@ type Step struct {
 	// Hold (build): the lane is a pool lane: once its build check passed the hooks' snapshot is taken, so a
 	// release can return it to this state by reset instead of tearing the operator down.
 	Hold bool `json:"hold,omitempty"`
+	// ResetInPlace (build): take the golden copy as for Hold (the spec's reset_in_place), without keeping the ledger.
+	ResetInPlace bool `json:"reset_in_place,omitempty"`
 
 	ReadyFor     Seconds `json:"ready_for,omitempty"`
 	ReadyTimeout Seconds `json:"ready_timeout,omitempty"`
@@ -1787,7 +1789,7 @@ func (r *stepRunner) resetLane(ctx context.Context, p *Prepared) bool {
 // It returns false, with the build failed, when the app differs from a fresh deploy: such a lane is never handed on
 // as ready (a ready lane without a golden copy cannot be claimed, and one with a contaminated copy must not be).
 func (r *stepRunner) snapshotLane(ctx context.Context, p *Prepared) bool {
-	if !r.s.Hold || p.Hooks == "" || p.Golden {
+	if !(r.s.Hold || r.s.ResetInPlace) || p.Hooks == "" || p.Golden {
 		return true
 	}
 	// The golden copy is what every later claim returns to: take it only of an app that is the fresh deploy's.
@@ -1814,7 +1816,10 @@ func (r *stepRunner) snapshotLane(ctx context.Context, p *Prepared) bool {
 		}
 	}
 	r.interval("snapshot", start, true, "golden copy taken")
-	if err := copyFile(filepath.Join(r.s.LaneDir, ledgerFile), filepath.Join(r.s.LaneDir, ledgerGolden), 0o644); err != nil {
+	// A pool's claimants start from its build check's writes, which the app's golden copy restores with the stores it
+	// declares. A lane reset in place between experiments keeps none: the reset leaves no ledger, so the next swap
+	// runs the full build check and each row verifies writes confirmed on its own lane state, as a rebuilt lane does.
+	if err := copyFile(filepath.Join(r.s.LaneDir, ledgerFile), filepath.Join(r.s.LaneDir, ledgerGolden), 0o644); err != nil || !r.s.Hold {
 		_ = os.Remove(filepath.Join(r.s.LaneDir, ledgerGolden))
 	}
 	p.Golden = true

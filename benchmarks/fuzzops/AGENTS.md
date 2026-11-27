@@ -137,6 +137,13 @@ archives a running lane's accepted memory (the controller's application reposito
 detached, as branch `B`, checked against the HEAD read separately) and its live render
 as a new format-2 baseline. Never commit baseline data into this repository.
 
+An install whose memory has no validated initial `health_judge` commit for its application inputs (a curated
+baseline) runs the health judge, an agent turn of minutes, before the controller finishes starting, on every row.
+`python -m benchmarks.fuzzops.judged --baseline B --from C --out DIR` writes `B` at the judge commit one install of it
+made, read from memory collected after that install (`C`: a run's `learned-baseline`): same render, namespace,
+objective and config. It refuses memory whose commits since `B` are not install-time publications (`health_judge` or
+`upkeep`, memory files only). Installs of the judged baseline run no judge.
+
 ## Fresh install (to make a baseline)
 
 Experiments run through fuzzops-bench and the hooks above. A fresh install (deployment plan, detection
