@@ -353,6 +353,13 @@ func workloadObjects(view sdk.DetectionContext, workload sdk.ObjectRef) []sdk.Ob
 		if volume.Secret != nil {
 			add("v1", "Secret", volume.Secret.SecretName)
 		}
+		if volume.Projected != nil {
+			for _, source := range volume.Projected.Sources {
+				if source.ConfigMap != nil {
+					add("v1", "ConfigMap", source.ConfigMap.Name)
+				}
+			}
+		}
 	}
 	for _, container := range append(append([]corev1.Container{}, template.Spec.InitContainers...), template.Spec.Containers...) {
 		for _, from := range container.EnvFrom {
