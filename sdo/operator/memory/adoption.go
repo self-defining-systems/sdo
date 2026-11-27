@@ -39,31 +39,32 @@ func AdoptionCommit(ctx context.Context, repository, revision string) (string, e
 }
 
 // AdoptedBuild permits compilation without corpus/replay acceptance only while
-// the entire accepted executable memory is identical to the adopted base.
+// the accepted detector and program source is identical to the adopted base.
 func AdoptedBuild(ctx context.Context, repository, revision string) (bool, error) {
 	adoption, err := AdoptionCommit(ctx, repository, revision)
 	if err != nil || adoption == "" {
 		return false, err
 	}
-	dirty, err := memoryio.Git(ctx, repository, false, nil, "status", "--porcelain", "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir, layout.CorpusDir)
+	paths := append([]string{layout.CorpusDir}, authoredCodePaths...)
+	dirty, err := memoryio.Git(ctx, repository, false, nil, append([]string{"status", "--porcelain", "--"}, paths...)...)
 	if err != nil {
 		return false, err
 	}
 	if len(dirty) != 0 {
 		return false, nil
 	}
-	others, err := memoryio.Git(ctx, repository, false, nil, "ls-files", "--others", "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir, layout.CorpusDir)
+	others, err := memoryio.Git(ctx, repository, false, nil, append([]string{"ls-files", "--others", "--"}, paths...)...)
 	if err != nil {
 		return false, err
 	}
 	if len(others) != 0 {
 		return false, nil
 	}
-	before, err := ControllerFingerprint(ctx, repository, adoption)
+	before, err := memoryFingerprint(ctx, repository, adoption, authoredCodePaths)
 	if err != nil {
 		return false, err
 	}
-	after, err := ControllerFingerprint(ctx, repository, revision)
+	after, err := memoryFingerprint(ctx, repository, revision, authoredCodePaths)
 	if err != nil {
 		return false, err
 	}

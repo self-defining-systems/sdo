@@ -86,3 +86,19 @@ func TestAcceptedDiagnosticsBindsTheGoalUsedByProbeDefaults(t *testing.T) {
 		t.Error("a goal-only change must invalidate the accepted probe build")
 	}
 }
+
+func TestHumanGoalDoesNotEndAdoptedCodeBuildPolicy(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	acceptedGit(t, root, "init", "-q")
+	acceptedGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm",
+		"adopt supplied memory\n\nSDO-Origin: adopted-existing\nSDO-Validation: skipped\nSDO-Actor: human")
+	if err := WriteGoal(root, "example", "Detection target: 30s", nil); err != nil {
+		t.Fatal(err)
+	}
+	acceptedGit(t, root, "add", "--", layout.GoalFile)
+	acceptedGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "supply goal")
+	if adopted, err := AdoptedBuild(ctx, root, "HEAD"); !adopted || err != nil {
+		t.Fatalf("adopted code with a new human goal: %v, %v", adopted, err)
+	}
+}

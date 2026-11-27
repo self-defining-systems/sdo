@@ -23,8 +23,10 @@ type DiagnosticsProjection struct {
 
 var ErrDiagnosticsNotBootstrapped = errors.New("diagnostics have not been bootstrapped")
 
+var authoredCodePaths = []string{layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir}
+
 // The human goal supplies the default cadence compiled into probe workloads.
-var compiledMemoryPaths = []string{layout.GoalFile, layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir}
+var compiledMemoryPaths = append([]string{layout.GoalFile}, authoredCodePaths...)
 
 func AcceptedDiagnostics(ctx context.Context, repository string) (DiagnosticsProjection, error) {
 	directory, err := CandidateDiagnostics(repository)
@@ -61,10 +63,14 @@ func AcceptedDiagnostics(ctx context.Context, repository string) (DiagnosticsPro
 // ControllerFingerprint identifies the accepted memory compiled into a
 // controller build, including the goal that sets its probe cadence.
 func ControllerFingerprint(ctx context.Context, repository, revision string) (string, error) {
+	return memoryFingerprint(ctx, repository, revision, compiledMemoryPaths)
+}
+
+func memoryFingerprint(ctx context.Context, repository, revision string, paths []string) (string, error) {
 	if revision == "" {
 		return "", errors.New("controller revision is required")
 	}
-	output, err := memoryio.Git(ctx, repository, true, nil, append([]string{"ls-tree", "-z", revision, "--"}, compiledMemoryPaths...)...)
+	output, err := memoryio.Git(ctx, repository, true, nil, append([]string{"ls-tree", "-z", revision, "--"}, paths...)...)
 	if err != nil {
 		return "", fmt.Errorf("read accepted controller source trees: %w: %s", err, strings.TrimSpace(string(output)))
 	}
