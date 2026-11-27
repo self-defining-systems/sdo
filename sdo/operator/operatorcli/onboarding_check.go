@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +34,7 @@ import (
 )
 
 // OnboardingUsage documents "sdo-operator onboarding".
-const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS --prometheus URL|NS/SERVICE:PORT
+const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS [--prometheus URL|NS/SERVICE:PORT] [--control-namespace NS]
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
                                     [--settle 90s] [--json] [--report FILE]
                                     [--quick] [--full] [--cache-dir DIR] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3] [--quiet-writes 4]
@@ -137,7 +136,8 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          SDO sent to it, and that every route value that moved is declared.
          Refuses a repository with uncommitted changes; the report is headed by
          the HEAD commit. --prometheus is a URL, or NS/SERVICE:PORT reached
-         through the API server. Background-work operations are not driven.
+         through the API server; without it the check applies SDO's own
+         Prometheus into --control-namespace (default --namespace) and uses it. Background-work operations are not driven.
          Exit 0 when nothing is red, 1 when an item is red, 2 for usage or
          infrastructure errors.`
 
@@ -287,7 +287,8 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	flags.SetOutput(io.Discard)
 	repo := flags.String("repo", "", "application repository (git root) holding .sdo/arch.md")
 	namespace := flags.String("namespace", "", "application namespace")
-	promTarget := flags.String("prometheus", "", "Prometheus URL, or NS/SERVICE:PORT through the API server")
+	promTarget := flags.String("prometheus", "", "Prometheus URL, or NS/SERVICE:PORT through the API server (default: SDO's own Prometheus, applied into --control-namespace)")
+	controlNamespace := flags.String("control-namespace", "", "operator namespace where SDO's own Prometheus runs when --prometheus is not given (default: --namespace, as the installer)")
 	kubeconfig := flags.String("kubeconfig", "", "kubeconfig file")
 	kubeContext := flags.String("context", "", "kubeconfig context")
 	requests := flags.Int("requests", 5, "requests sent to each operation")
@@ -312,8 +313,11 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	if err := flags.Parse(args); err != nil {
 		return 0, err
 	}
-	if flags.NArg() != 0 || *namespace == "" || *promTarget == "" || !filepath.IsAbs(*repo) {
-		return 0, errors.New("check requires --repo (absolute path), --namespace and --prometheus")
+	if flags.NArg() != 0 || *namespace == "" || !filepath.IsAbs(*repo) {
+		return 0, errors.New("check requires --repo (absolute path) and --namespace")
+	}
+	if *controlNamespace == "" {
+		*controlNamespace = *namespace
 	}
 	commit, err := processio.AcceptedHead(ctx, *repo)
 	if err != nil {
@@ -335,15 +339,13 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	if err != nil {
 		return 0, err
 	}
-	base := *promTarget
-	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
-		ns, rest, ok := strings.Cut(base, "/")
-		name, port, ok2 := strings.Cut(rest, ":")
-		number, convErr := strconv.Atoi(port)
-		if !ok || !ok2 || convErr != nil {
-			return 0, fmt.Errorf("--prometheus %q is neither a URL nor NS/SERVICE:PORT", base)
-		}
-		base = cluster.ServiceURL(ns, name, number, "")
+	target, err := resolvePrometheus(ctx, cluster.Kube(), *promTarget, *namespace, *controlNamespace, processio.Wait, os.Stderr)
+	if err != nil {
+		return 0, err
+	}
+	base := target.URL
+	if base == "" {
+		base = cluster.ServiceURL(target.Namespace, target.Service, target.Port, "")
 	}
 	exposed, err := cluster.ExposedServices(ctx, *namespace)
 	if err != nil {
