@@ -13,6 +13,8 @@ import yaml
 
 from scripts.check_app_names import tracked_files
 
+CI_WHOLE_TREE = True
+
 ROOT = Path(__file__).resolve().parents[4]
 # These identities also name general concepts used by the SDK and agent guidance.
 GENERIC_TERMS = {
