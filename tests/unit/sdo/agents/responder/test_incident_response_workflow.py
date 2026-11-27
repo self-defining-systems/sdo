@@ -155,3 +155,12 @@ def test_a_result_submitted_while_background_work_runs_is_told_to_be_interim() -
     assert "interim" in text
     assert "keep working" in text
     assert "the last result stands" in text
+
+
+def test_the_responder_is_told_that_several_faults_can_be_active_at_once() -> None:
+    """One fix that clears the opening alert does not end a multi-fault incident: every finding needs a cause."""
+
+    text = _responder_instructions()
+
+    assert "faults can coexist" in text
+    assert "explain every finding" in text

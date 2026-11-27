@@ -5,10 +5,10 @@ description: Incident repair.
 
 # Incident response
 
-- **Look at what fails.** Run the failing operation and read its exact response. The alert can be a side effect.
+- **Look at what fails.** Run the failing operation; read its exact response. The alert can be a side effect.
 - **Follow the change.** Look for changes on or upstream of the failing path near onset, or a latent trigger.
   Direct writes can leave `updated_at` old: still suspect the row.
-  Check all unexplained findings there.
+  Faults can coexist: explain every finding.
   Passing proves liveness only.
   See stage writes in `sdo detect`. Own repairs after handoff. Test auth on Secret drift.
 - **Hold a rival.** Check what best distinguishes the top two explanations.
