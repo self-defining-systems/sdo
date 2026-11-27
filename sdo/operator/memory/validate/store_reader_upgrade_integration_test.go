@@ -76,7 +76,7 @@ originatingCommit: initial
 // after Go prepares it: Go adds no second reader of that store.
 func TestDesignerStoreReaderMemoryStartsAfterUpgrade(t *testing.T) {
 	if testing.Short() {
-		t.Skip("real go toolchain")
+		t.Skip("nightly CI runs it without -short: it loads real detectors; the PR gate keeps TestPrepareHealthLeavesADesignerReadStoreToItsReader")
 	}
 	root := compileTree(t)
 	write(t, root, ".sdo/arch.md", upgradeStoreMap)
