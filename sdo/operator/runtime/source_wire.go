@@ -85,6 +85,65 @@ func normalizeWireValue(accepted, observed any, typ reflect.Type) {
 	}
 }
 
+// dropSourceWireOmitted deletes, in place, every omitempty field of a built-in
+// kind whose value the API server omits on read (a zero or false scalar, an
+// empty list or map), giving one object the form a read returns. Pointer
+// fields keep an explicit zero and a null stays (a zero timestamp is written
+// as null): the server keeps both.
+func dropSourceWireOmitted(object map[string]any, gvk schema.GroupVersionKind) {
+	typed, err := scheme.Scheme.New(gvk)
+	if err != nil {
+		return
+	}
+	dropWireOmitted(object, reflect.TypeOf(typed))
+}
+
+func dropWireOmitted(value any, typ reflect.Type) {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	switch typ.Kind() {
+	case reflect.Struct:
+		fields, _ := value.(map[string]any)
+		if fields == nil {
+			return
+		}
+		for i := range typ.NumField() {
+			field := typ.Field(i)
+			name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+			if !field.IsExported() || name == "-" {
+				continue
+			}
+			if name == "" && field.Anonymous {
+				dropWireOmitted(fields, field.Type)
+				continue
+			}
+			if name == "" {
+				name = field.Name
+			}
+			child, present := fields[name]
+			if !present {
+				continue
+			}
+			if child != nil && slices.Contains(strings.Split(options, ","), "omitempty") && wireOmitted(child, field.Type) {
+				delete(fields, name)
+				continue
+			}
+			dropWireOmitted(child, field.Type)
+		}
+	case reflect.Map:
+		fields, _ := value.(map[string]any)
+		for _, child := range fields {
+			dropWireOmitted(child, typ.Elem())
+		}
+	case reflect.Slice, reflect.Array:
+		items, _ := value.([]any)
+		for _, child := range items {
+			dropWireOmitted(child, typ.Elem())
+		}
+	}
+}
+
 func wireOmitted(value any, typ reflect.Type) bool {
 	if value == nil {
 		return true
