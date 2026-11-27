@@ -239,7 +239,9 @@ type Controller struct {
 	// until then, whether a rollout was seen unfinished and given up on.
 	stageSettledAt              time.Time
 	stageUnsettled, stageGaveUp bool
-	stageRollout                time.Duration
+	// stageWritesReady is whether the stage's writes were settled and their rollouts Ready at the last observation.
+	stageWritesReady bool
+	stageRollout     time.Duration
 
 	closureMutationRevision string
 	earlyLastMutationAt     time.Time
@@ -2082,6 +2084,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		c.observeStageSettled(now, snapshot, *request, recovery)
 		if recovery.observed && recovery.record.GetWritesSettled() && len(source.Rollouts) == 0 {
 			recovery.beyondStage = c.beyondStageAlerts(observationCtx, now, snapshot, *request, recovery)
+			recovery.uncoveredCauses = c.uncoveredStageCauses(observationCtx, snapshot, *request)
 		}
 	}
 	if observationCtx.Err() != nil {

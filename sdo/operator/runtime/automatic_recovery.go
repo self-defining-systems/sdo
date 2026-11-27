@@ -57,8 +57,9 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
 		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
 	// Nor do the writes have anything left to do for an alert they did not clear.
+	// Nor for a cause its settled writes provably did not address.
 	beyond := canDispatch && report.StabilityDeadline == nil && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) &&
-		c.alertBeyondStageLocked(now, *request, check.beyondStage)
+		(c.alertBeyondStageLocked(now, *request, check.beyondStage) || len(check.uncoveredCauses) > 0)
 	if !failed && !gaveUp && !beyond && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
@@ -242,6 +243,7 @@ func (c *Controller) observeStageSettled(now time.Time, snapshot sdk.DetectionCo
 	ready, lastReady, gaveUp := observeStageRollouts(snapshot, report, conditions)
 	c.stageSettledAt, c.stageGaveUp = time.Time{}, gaveUp
 	unsettled := !ready || !check.record.GetWritesSettled()
+	c.stageWritesReady = !unsettled
 	c.stageUnsettled = c.stageUnsettled || unsettled
 	if settled := laterObservationTime(written, lastReady); !unsettled && !now.Before(settled.Add(c.config.ClosureStabilityWindow)) {
 		c.stageSettledAt, c.stageRollout, c.stageUnsettled = settled, settled.Sub(written), false
@@ -289,6 +291,79 @@ func memberFailing(window traffic.Window, scenario string) bool {
 	return false
 }
 
+// stageWrites are the map components the stage's applied writes reached and
+// the finding fingerprints its applied programs targeted. Nothing is written
+// when a script wrote (its writes are not all known) or a write reached no
+// component the map places.
+func stageWrites(view sdk.DetectionContext, pm program.AppMap, report *contracts.StageReport) (written, targeted map[string]bool) {
+	written, targeted = map[string]bool{}, map[string]bool{}
+	for _, attempt := range report.GetMitigations() {
+		receipt := attempt.GetApplyReceipt()
+		if !stageReceiptWrote(receipt) {
+			continue
+		}
+		// A script's writes are not all known, nor is the reach of a write to
+		// an object the map does not place.
+		if len(attempt.GetTouchedObjects()) == 0 || slices.ContainsFunc(receipt.GetPlan().GetActions(), func(a *contracts.Action) bool { return a.GetRunScript() != nil }) {
+			return nil, nil
+		}
+		for _, ref := range attempt.GetTouchedObjects() {
+			components := writtenComponents(view, pm, objectRefState(ref))
+			if len(components) == 0 {
+				return nil, nil
+			}
+			for _, name := range components {
+				written[name] = true
+			}
+		}
+		for _, fp := range append(slices.Clone(attempt.GetClearedFindingFingerprints()), attempt.GetRemainingFindingFingerprints()...) {
+			targeted[fp] = true
+		}
+	}
+	return written, targeted
+}
+
+// writtenComponents are the map components a write to ref reaches: the
+// component whose workload controls it, the components a Service fronts, or
+// the components whose pod template consumes a ConfigMap, Secret, claim or
+// service account. None when the map places it nowhere.
+func writtenComponents(view sdk.DetectionContext, pm program.AppMap, ref sdk.ObjectRef) []string {
+	if component, ok := pm.ComponentOf(view, ref); ok {
+		return []string{component.Name}
+	}
+	if ref.Namespace != "" && view.Namespace() != "" && ref.Namespace != view.Namespace() {
+		return nil
+	}
+	var names []string
+	if ref.Kind == "Service" {
+		for _, component := range pm.Components {
+			if slices.Contains(component.Services, ref.Name) {
+				names = append(names, component.Name)
+			}
+		}
+		return names
+	}
+	templates := map[string]corev1.PodTemplateSpec{}
+	for _, d := range view.Deployments() {
+		templates["Deployment/"+d.Name] = d.Spec.Template
+	}
+	for _, s := range view.StatefulSets() {
+		templates["StatefulSet/"+s.Name] = s.Spec.Template
+	}
+	for _, d := range view.DaemonSets() {
+		templates["DaemonSet/"+d.Name] = d.Spec.Template
+	}
+	for _, component := range pm.Components {
+		template, ok := templates[component.Workload]
+		if ok && slices.ContainsFunc(sdk.PodTemplateReferences(template), func(r sdk.PodTemplateReference) bool {
+			return r.Kind == ref.Kind && r.Name == ref.Name
+		}) {
+			names = append(names, component.Name)
+		}
+	}
+	return names
+}
+
 // alertsBeyondStage are the alert set's alerts that the settled writes of the
 // automatic stage cannot clear: no applied program targeted the alert, and no
 // component it reports on depends, over the accepted map, on a component the
@@ -300,28 +375,7 @@ func memberFailing(window traffic.Window, scenario string) bool {
 // established there is none, and the stage waits its bound.
 func alertsBeyondStage(view sdk.DetectionContext, m appmap.Map, request IncidentRequest, report *contracts.StageReport) []string {
 	pm := m.Program()
-	written, targeted := map[string]bool{}, map[string]bool{}
-	for _, attempt := range report.GetMitigations() {
-		receipt := attempt.GetApplyReceipt()
-		if !stageReceiptWrote(receipt) {
-			continue
-		}
-		// A script's writes are not all known, nor is the reach of a write to
-		// an object the map does not place.
-		if len(attempt.GetTouchedObjects()) == 0 || slices.ContainsFunc(receipt.GetPlan().GetActions(), func(a *contracts.Action) bool { return a.GetRunScript() != nil }) {
-			return nil
-		}
-		for _, ref := range attempt.GetTouchedObjects() {
-			component, ok := pm.ComponentOf(view, objectRefState(ref))
-			if !ok {
-				return nil
-			}
-			written[component.Name] = true
-		}
-		for _, fp := range append(slices.Clone(attempt.GetClearedFindingFingerprints()), attempt.GetRemainingFindingFingerprints()...) {
-			targeted[fp] = true
-		}
-	}
+	written, targeted := stageWrites(view, pm, report)
 	if len(written) == 0 {
 		return nil
 	}
@@ -330,7 +384,7 @@ func alertsBeyondStage(view sdk.DetectionContext, m appmap.Map, request Incident
 		if targeted[FindingFingerprint(finding)] {
 			continue
 		}
-		components, ok := alertComponents(view, m, pm, request, finding)
+		components, ok := alertComponents(view, m, pm, request, finding, true)
 		if ok && !slices.ContainsFunc(components, func(name string) bool { return dependsOnAny(pm, name, written) }) {
 			beyond = append(beyond, findingKey(finding))
 		}
@@ -339,9 +393,10 @@ func alertsBeyondStage(view sdk.DetectionContext, m appmap.Map, request Incident
 }
 
 // alertComponents are the map components an alert reports on, or false when
-// the map does not tell: a Kubernetes condition's object, a failing user
-// test's operations, a request-error alert's operation.
-func alertComponents(view sdk.DetectionContext, m appmap.Map, pm program.AppMap, request IncidentRequest, finding sdk.Finding) ([]string, bool) {
+// the map does not tell: a Kubernetes condition's object, a user test's
+// operations (failing now when failing is set), a request-error alert's
+// operation.
+func alertComponents(view sdk.DetectionContext, m appmap.Map, pm program.AppMap, request IncidentRequest, finding sdk.Finding, failing bool) ([]string, bool) {
 	if slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID) {
 		component, ok := pm.ComponentOf(view, finding.PrimaryResource)
 		return []string{component.Name}, ok
@@ -349,7 +404,7 @@ func alertComponents(view sdk.DetectionContext, m appmap.Map, pm program.AppMap,
 	var operations []string
 	if workload, scenario, ok := openingUserTest(request, findingKey(finding)); ok {
 		window, observed := traffic.WindowFrom(view, workload)
-		if !observed || !newestSampleFailed(window, scenario) {
+		if failing && (!observed || !newestSampleFailed(window, scenario)) {
 			return nil, false
 		}
 		for _, probe := range m.Probes {
@@ -410,6 +465,57 @@ func operationComponents(m appmap.Map, pm program.AppMap, ids []string) ([]strin
 		}
 	}
 	return components, len(components) > 0
+}
+
+// causesBeyondStage are the incident's active non-alert findings (store
+// state, drift, a learned detector's finding) that the stage provably did not
+// address: no applied program targeted them, their component is on an alert's
+// path, and it neither is nor depends on a component the stage wrote. Each is
+// positive evidence of a cause the stage's writes cannot clear, so waiting for
+// a stability window or a user test's window gains nothing. Unknown writes or
+// a component the map does not place give none.
+func causesBeyondStage(view sdk.DetectionContext, m appmap.Map, request IncidentRequest, report *contracts.StageReport, active func(key string) bool) []string {
+	pm := m.Program()
+	written, targeted := stageWrites(view, pm, report)
+	if len(written) == 0 {
+		return nil
+	}
+	alerts := alertKeys(&request)
+	onPath := map[string]bool{}
+	for _, finding := range newRecoveryScope(alerts).blocking(request.Findings) {
+		components, _ := alertComponents(view, m, pm, request, finding, false)
+		for _, name := range components {
+			onPath[name] = true
+		}
+	}
+	var uncovered []string
+	for _, finding := range request.Findings {
+		key := findingKey(finding)
+		if slices.Contains(alerts, key) || slices.Contains(uncovered, key) || targeted[FindingFingerprint(finding)] || !active(key) {
+			continue
+		}
+		component, ok := pm.ComponentOf(view, finding.PrimaryResource)
+		if ok && onPath[component.Name] && !dependsOnAny(pm, component.Name, written) {
+			uncovered = append(uncovered, key)
+		}
+	}
+	return uncovered
+}
+
+// uncoveredStageCauses are causesBeyondStage once the stage's writes settled
+// (applied, rolled out and Ready), with no stability window: the writes
+// cannot clear them, however long they are given.
+func (c *Controller) uncoveredStageCauses(ctx context.Context, snapshot sdk.DetectionContext, request IncidentRequest) []string {
+	report := deterministicStageReport(request.PriorStages)
+	c.mu.Lock()
+	ready := c.stageWritesReady || !c.stageSettledAt.IsZero()
+	c.mu.Unlock()
+	if !playbookWrote(report) || !ready {
+		return nil
+	}
+	m, _ := acceptedVerificationMap(ctx, c.gitRead, request)
+	states := c.tracker.Snapshot()
+	return causesBeyondStage(snapshot, m, request, report, func(key string) bool { return states[key].Active })
 }
 
 // newestSampleFailed reports a qualified scenario whose newest usable sample
