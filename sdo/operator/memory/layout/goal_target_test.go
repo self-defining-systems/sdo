@@ -13,7 +13,7 @@ func TestReadGoalDetectionTarget(t *testing.T) {
 		want    time.Duration
 		invalid bool
 	}{
-		{body: "Stay healthy."},
+		{body: "Stay healthy.", want: 30 * time.Second},
 		{body: "Detection target: 45s", want: 45 * time.Second},
 		{body: "Detection target: soon", invalid: true},
 		{body: "Detection target: 0s", invalid: true},
@@ -31,5 +31,11 @@ func TestReadGoalDetectionTarget(t *testing.T) {
 		if got != tc.want || (err != nil) != tc.invalid {
 			t.Errorf("%q: got %v, %v", tc.body, got, err)
 		}
+	}
+}
+
+func TestReadGoalDetectionTargetDefaultsBeforeGoalBootstrap(t *testing.T) {
+	if got, err := ReadGoalDetectionTarget(t.TempDir()); err != nil || got != 30*time.Second {
+		t.Fatalf("no goal: got %v, %v", got, err)
 	}
 }

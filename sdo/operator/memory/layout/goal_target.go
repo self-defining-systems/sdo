@@ -7,14 +7,16 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"sdo.dev/operator/sdk/traffic"
 )
 
-// ReadGoalDetectionTarget reads the optional "Detection target: 30s" line
-// of the human health objective. A missing target leaves cadence unchanged.
+// ReadGoalDetectionTarget resolves the probe target from the optional
+// "Detection target: 30s" line of the human health objective.
 func ReadGoalDetectionTarget(root string) (time.Duration, error) {
 	data, err := os.ReadFile(filepath.Join(root, GoalFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return 0, nil
+		return traffic.DefaultDetectionTarget, nil
 	}
 	if err != nil {
 		return 0, err
@@ -32,6 +34,9 @@ func ReadGoalDetectionTarget(root string) (time.Duration, error) {
 		if err != nil || target <= 0 {
 			return 0, fmt.Errorf("%s: Detection target must be a positive duration such as 30s", GoalFile)
 		}
+	}
+	if target == 0 {
+		return traffic.DefaultDetectionTarget, nil
 	}
 	return target, nil
 }

@@ -21,10 +21,10 @@
 
 ## Budget and cadence
 
-When the human goal names a `Detection target: 30s` (for example), omit `sampleInterval` and `ratePerSecond`.
-Go reserves time for confirmation and samples each scenario once per remaining interval, within 10–120 s.
-Without a numeric target, set `sampleInterval` (start at 10 s) to get the same rate default. Explicit settings
-override defaults. Check the worst detection time and the requests/s cap with `onboarding journeys --plan`.
+Omit `sampleInterval` and `ratePerSecond` to use the 30 s detection target. The human goal can override it
+with a line such as `Detection target: 45s`. Go reserves time for confirmation and samples each scenario
+once per remaining interval, within 10–120 s. Explicit workload fields override their defaults.
+Check the worst detection time and the requests/s cap with `onboarding journeys --plan`.
 Give each scenario one home workload. Spend remaining budget on the most used journeys, adding faster workloads
 for core paths when their planned time is too long.
 - Set `maxLatency` to about three times the slowest healthy run, at least 1 s. A run over budget starts confirmation.

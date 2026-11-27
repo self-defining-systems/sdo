@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+// DefaultDetectionTarget matches the original probe confirmation budget:
+// three samples at the 10-second sampling floor.
+const DefaultDetectionTarget = time.Duration(DefaultMinSamples) * MinSampleInterval
+
 // observeDelay is what follows a confirmed failure before it opens an
 // incident: the controller reads the prober every 500 ms, the health detector
 // fires on its second evaluation (Firing 2, one per read while a sample

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // The break wait follows the memory's own probes: slow requests at a low rate
@@ -37,9 +39,20 @@ func TestProbeDetectionHorizonUsesTheHealthObjectiveTarget(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workloads, "probe.yaml"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	legacy := probeDetectionHorizon(repo)
+	writeSDO(t, repo, "goal.md", "---\nschema_version: 1\n---\n# Health objective\n\nStay healthy.\n")
+	defaultHorizon := probeDetectionHorizon(repo)
+	defaultProbe, err := traffic.ParseWorkloadJSONWithDetectionTarget([]byte(`{
+		"apiVersion":"sdo.dev/v1alpha1","kind":"TrafficWorkload","name":"probe",
+		"purpose":"health-probe","scenarios":[{"id":"read"}]
+	}`), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := defaultProbe.DetectionHorizon(); defaultHorizon != want {
+		t.Fatalf("goal with no target: got horizon %s, want %s", defaultHorizon, want)
+	}
 	writeSDO(t, repo, "goal.md", "---\nschema_version: 1\n---\n# Health objective\n\nDetection target: 60s\n")
-	if got := probeDetectionHorizon(repo); got <= legacy {
-		t.Fatalf("goal target did not inform the horizon: %s, legacy %s", got, legacy)
+	if got := probeDetectionHorizon(repo); got <= defaultHorizon {
+		t.Fatalf("goal target did not inform the horizon: %s, default %s", got, defaultHorizon)
 	}
 }

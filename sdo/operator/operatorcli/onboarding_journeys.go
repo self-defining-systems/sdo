@@ -52,9 +52,9 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
                      A red scenario leaves other scenarios running. Re-soak a fix with --only ID.
   --only selects exact IDs or, for unmatched filters, ID substrings. --plan builds the probes and prints the
   checklist, schedule and budget without a cluster: nothing is sent.
-  With Detection target: 30s (for example) in the human goal, an unset probe sample interval
-  follows the target within the supported bounds. An unset rate gets one iteration per scenario
-  per interval. Explicit settings still apply.
+  Probe cadence targets detection within 30s by default. Set a different target in the human
+  goal with a line such as Detection target: 45s. SDO uses the target for an unset sampleInterval
+  and defaults an unset ratePerSecond to one iteration per scenario per interval.
   --quick runs memory check --replay off (using its publication environment), then runs one iteration
   of the exact scenario named by --only, including setup and cleanup, and prints its step trace.
   Use it to iterate on a probe before the full checks. A rejected memory check stops before any requests
