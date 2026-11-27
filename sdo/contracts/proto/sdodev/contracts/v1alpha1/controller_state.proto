@@ -251,6 +251,9 @@ message StartupObservation {
   repeated google.protobuf.Duration ready_after = 2;
   // The latest Ready transition already sampled, so a pod is counted once.
   google.protobuf.Timestamp last_ready_at = 3;
+  // The pods (UID) whose start was sampled: a later Ready transition of the
+  // same pod is a readiness flap, not a start.
+  repeated string sampled_pods = 4;
 }
 
 // StartupPeriod records whether a new install has been seen healthy: one

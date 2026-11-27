@@ -45,7 +45,7 @@ func automaticRecoveryWorld(t *testing.T, tc settlingCase, policy string, extra 
 	if policy == settings.AfterPlaybookWait {
 		stage.WaitBound = cfg.AfterPlaybookWait
 	}
-	stage.StabilityWindow = cfg.ClosureStabilityWindow
+	stage.StabilityWindow, stage.EstimateBound = cfg.ClosureStabilityWindow, cfg.AfterPlaybookWait
 	controller, err := NewController(cfg, append(slices.Clone(loop.Detectors[:1]), extra...), world, &recordingDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -206,12 +206,12 @@ func TestAutomaticDeadlineIncludesStartupClearingLagAndResponseCap(t *testing.T)
 	}
 	long := windowedSettlingDetector{settlingDetector{id: "traffic-health", window: 2 * time.Minute}}
 	request := *c.currentIncidentRequest
-	got := automaticRecoveryDeadline(request, report, now, view, []sdk.Detector{long}, 0, 5*time.Second)
+	got := automaticRecoveryDeadline(request, report, now, view, []sdk.Detector{long}, 0, 0, 5*time.Second)
 	if want := now.Add(166 * time.Second); !got.Equal(want) {
 		t.Fatalf("deadline with long clearing lag = %s, want %s", got, want)
 	}
 	request.ResponseDeadline = now.Add(time.Minute)
-	if got := automaticRecoveryDeadline(request, report, now, view, []sdk.Detector{long}, 4*time.Minute, 5*time.Second); !got.Equal(request.ResponseDeadline) {
+	if got := automaticRecoveryDeadline(request, report, now, view, []sdk.Detector{long}, 4*time.Minute, 0, 5*time.Second); !got.Equal(request.ResponseDeadline) {
 		t.Fatalf("deadline = %s, want response cap %s", got, request.ResponseDeadline)
 	}
 }
@@ -744,5 +744,26 @@ func TestStageThatWroteNothingWaitsForItsQueuedPass(t *testing.T) {
 	}
 	if autoReport(c).GetHandoffSelected() || !c.pendingLearnedPassReadyLocked() {
 		t.Fatal("handed off before the queued automatic pass")
+	}
+}
+
+// However slowly the alert set's detectors clear and its workloads start, the
+// estimate after the last write is at most the configured wait bound
+// (response.after_playbook_wait), so a slow probe or a long startup history
+// never holds the agent past it.
+func TestTheRecoveryEstimateIsCappedByTheWaitBound(t *testing.T) {
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{startup: 15 * time.Minute}, settings.AfterPlaybookAgent)
+	report := autoReport(c)
+	written := lastStageReceipt(report)
+	if got, want := report.GetRecoveryDeadline().AsTime(), written.Add(c.config.AfterPlaybookWait); !got.Equal(want) {
+		t.Fatalf("deadline = %s after the write, want the %s bound", got.Sub(written), c.config.AfterPlaybookWait)
+	}
+	view, err := world.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	slow := windowedSettlingDetector{settlingDetector{id: "traffic-health", window: 12 * time.Minute}}
+	if got := automaticRecoveryDeadline(*c.currentIncidentRequest, report, written, view, []sdk.Detector{slow}, 0, 5*time.Minute, 5*time.Second); !got.Equal(written.Add(5 * time.Minute)) {
+		t.Fatalf("deadline = %s after the write, want 5m", got.Sub(written))
 	}
 }

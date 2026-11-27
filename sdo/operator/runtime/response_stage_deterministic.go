@@ -91,8 +91,13 @@ type DeterministicResponseStage struct {
 	// RolloutTimeout bounds the executor's apply-time observation.
 	RolloutTimeout  time.Duration
 	StabilityWindow time.Duration
-	WaitBound       time.Duration
-	diagnoseWait    func(context.Context, time.Duration) error
+	// WaitBound is the after_playbook wait policy's whole budget.
+	WaitBound time.Duration
+	// EstimateBound caps the recovery estimate of the other policies
+	// (response.after_playbook_wait): the agent never waits longer than the
+	// wait policy would.
+	EstimateBound time.Duration
+	diagnoseWait  func(context.Context, time.Duration) error
 }
 
 type responseStageProgress struct {
@@ -908,14 +913,22 @@ func (stage *DeterministicResponseStage) armRecovery(state *IncidentState, loop 
 	state.syncAlertSet()
 	deadline := progress.RecoveryDeadline
 	if deadline.IsZero() {
-		deadline = automaticRecoveryDeadline(state.Request, report, completed, loop.lastDiagnosisView, loop.Detectors, stage.WaitBound, stage.StabilityWindow)
+		deadline = automaticRecoveryDeadline(state.Request, report, completed, loop.lastDiagnosisView, loop.Detectors, stage.WaitBound, stage.EstimateBound, stage.StabilityWindow)
 	}
 	report.RecoveryDeadline = contractTimestamp(deadline)
 	// Legacy reports may have declared clearance before the controller proved it.
 	report.RecoveryWait = nil
 }
 
-func automaticRecoveryDeadline(request IncidentRequest, report *contracts.StageReport, completed time.Time, view sdk.DetectionContext, detectors []sdk.Detector, wait, stability time.Duration) time.Time {
+// automaticRecoveryDeadline is when the stage stops waiting for its writes to
+// clear the alert set. The wait policy waits its whole budget. Otherwise the
+// estimate is the slowest clearing horizon of the alert set's detectors (at
+// least 90 s), plus the stability window and the written workloads' observed
+// startup, and it never exceeds bound (response.after_playbook_wait): a slow
+// probe or a long startup history does not hold the agent longer than the
+// wait policy would. The controller counts it from the settle when a rollout
+// took longer, and the response deadline caps it.
+func automaticRecoveryDeadline(request IncidentRequest, report *contracts.StageReport, completed time.Time, view sdk.DetectionContext, detectors []sdk.Detector, wait, bound, stability time.Duration) time.Time {
 	if completed.IsZero() {
 		return completed
 	}
@@ -946,6 +959,9 @@ func automaticRecoveryDeadline(request IncidentRequest, report *contracts.StageR
 		budget = lag + stability
 		if view != nil {
 			budget += sdk.ResourceStartupAllowance(view, refs...)
+		}
+		if bound > 0 {
+			budget = min(budget, bound)
 		}
 	}
 	deadline := completed.Add(budget)

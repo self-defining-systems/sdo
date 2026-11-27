@@ -87,3 +87,36 @@ func TestObservedStartupSurvivesAControllerRestart(t *testing.T) {
 		t.Fatalf("allowance after re-observing = %s, want 135s", got)
 	}
 }
+
+// A pod that was up, turned unready (a dependency went away) and turned Ready
+// again did not start: the new Ready transition is not a start of its whole
+// age, here or after a controller restart.
+func TestAReadinessFlapIsNotAStart(t *testing.T) {
+	store := NewStartupObservations()
+	started := observationEpoch
+	pod := readyPod("a", started.Add(50*time.Second), 50*time.Second, 0)
+	pod.UID = "synthetic-a"
+	store.Observe([]corev1.Pod{pod}, sameWorkload)
+	flapped := pod.DeepCopy()
+	flapped.Status.Conditions[0].LastTransitionTime = metav1.NewTime(started.Add(100 * time.Minute))
+	store.Observe([]corev1.Pod{*flapped}, sameWorkload)
+	want := 50*time.Second*5/4 + startupSlack
+	if got := store.Allowances()["Deployment/web"]; got != want {
+		t.Fatalf("allowance = %s, want %s: a readiness flap counted as a start", got, want)
+	}
+	restored := NewStartupObservations()
+	restored.restore(store.contract())
+	again := flapped.DeepCopy()
+	again.Status.Conditions[0].LastTransitionTime = metav1.NewTime(started.Add(200 * time.Minute))
+	restored.Observe([]corev1.Pod{*again}, sameWorkload)
+	if got := restored.Allowances()["Deployment/web"]; got != want {
+		t.Fatalf("restored allowance = %s, want %s", got, want)
+	}
+	// A new pod of the workload is a start.
+	next := readyPod("b", started.Add(300*time.Minute), 70*time.Second, 0)
+	next.UID = "synthetic-b"
+	restored.Observe([]corev1.Pod{next}, sameWorkload)
+	if got := restored.Allowances()["Deployment/web"]; got != 70*time.Second*5/4+startupSlack {
+		t.Fatalf("allowance = %s after a new pod's start", got)
+	}
+}
