@@ -11,7 +11,8 @@ import (
 // server stores, so that comparing them with the live object after the write
 // reports only real changes. The server stores resource quantities in canonical
 // form ("1000m" becomes "1", "0.5Gi" becomes "512Mi") and drops empty optional
-// lists.
+// lists. It also omits the zero and false scalars of omitempty fields of a
+// built-in kind's spec, which the server never returns on read.
 func canonicalizePlanObject(object *unstructured.Unstructured) {
 	if object == nil {
 		return
@@ -20,6 +21,9 @@ func canonicalizePlanObject(object *unstructured.Unstructured) {
 		if value, ok := object.Object[field]; ok {
 			object.Object[field] = canonicalizePlanValue(value, "")
 		}
+	}
+	if spec, ok := object.Object["spec"]; ok {
+		dropSourceWireOmitted(map[string]any{"spec": spec}, object.GroupVersionKind())
 	}
 }
 
