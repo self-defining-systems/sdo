@@ -42,7 +42,8 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
     budget           requests/s planned and left under the cap, per workload
     scheduled        a workload runs it; how long until a full failure is confirmed
     passes           three runs in a row pass
-    cleanup          its cleanup succeeds
+    cleanup          its cleanup succeeds; from the steps alone (also --plan): a cleanup reads its
+                     data back gone, and an idempotent write names no new object (Unique)
     concurrent       a second prober running it at once does not make it fail
     latency-bound    its maxLatency leaves room over the slowest healthy run
     altered-answers  (--alter) it fails when a read answers empty, short, changed or as in an

@@ -13,7 +13,7 @@
 - Clean up in the same iteration, in an order the application allows while its background work runs, and end the
   cleanup with a read that shows the data gone (404, or absent from the list). A delete answered 2xx may only schedule
   the removal (delayed deletion, trash, soft delete): use the application's remove-for-good path, and accept only
-  success or not-found, never a refusal. Data that cannot be deleted stays one fixed object, or is bounded and noted.
+  success or not-found, never a refusal. Data that cannot be deleted stays one fixed object (`idempotent-write`, no `Unique`), or is bounded and noted.
 - Probe data must never change what users see. The read of records users already have lists the way a user first
   sees them (default order, first page, no filter that hides other people's records) by a member that shows names,
   so probe records left behind show up there and the healthy run turns red.
