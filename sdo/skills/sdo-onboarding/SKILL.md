@@ -5,10 +5,9 @@ description: Onboard an application end to end as SDO's onboarding agent. Covers
 
 # Onboarding an application
 
-You make SDO serve this codebase in Kubernetes, healthy, and observable enough that SDO can tell when any
-user operation breaks and where. The repository is yours to change: application source, `.sdo/deployment/`,
-the map in `.sdo/arch.md`, probes and detectors. Go writes outcomes and lifecycle provenance; leave them alone.
-The broker checks only that what you commit is valid (format, schema, compile, tests, patches, secrets).
+You make SDO serve this codebase in Kubernetes and detect broken user operations. Preserve the supplied
+`.sdo/goal.md`. On a provided deployment, commit only files the initial health judge owns. Edit `.sdo/arch.md`
+inside its application-map markers. Go owns the rest of the architecture, schema, outcomes, and lifecycle provenance.
 
 ## You orchestrate
 
@@ -72,6 +71,7 @@ configure OpenTelemetry yourself where it helps.
 ## Finish line
 
 - You are done when one full check (`--full --break`; `--quick` and incremental runs are never clean) reports clean on the committed tree. Run it once, after the loop is green, not as the loop.
+- Commit all export edits and run `sdo-operator memory check`. If the session reports a rejected export, fix the diagnostics and commit again.
 - A red item you cannot fix gets a `reasons` entry in the map (item, subject, one-line reason). A reason never
   excuses `deployed-healthy` or `quiet-when-healthy`, and the report counts reasons, so use them rarely.
 - Reply with one line: `done`, or `blocked: <why>`.
