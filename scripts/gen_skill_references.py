@@ -290,7 +290,10 @@ def render_onboarding_card() -> str:
     groups = {
         "Scenarios": r"type (?:Catalog|Scenario|Step|Target|ProbeUser|SideEffect|FaultClass)\b",
         "HTTP": r"(?:type HTTPEndpoint|func .*\*HTTPEndpoint(?=$|\))|func \(\w+ \*HTTPEndpoint\))",
-        "Values": r"(?:type (?:Params?|State)\b|func (?:\(p Params\)|\w+\(.*\) (?:Param|\(Param, Param\))$)|const (?:StateNow|DateLayout|UniqueWidth)\b)",
+        "Values": (
+            r"(?:type (?:Params?|State)\b|func (?:\(p Params\)|\w+\(.*\) (?:Param|\(Param, Param\))$)"
+            r"|const (?:StateNow|DateLayout|UniqueWidth)\b)"
+        ),
         "Custom checks and SSH": (
             r"(?:type (?:Endpoint|Request|Response|Verdict)\b|func (?:Fail|NotYet|Pass)\(|const MethodExec\b)"
         ),
@@ -313,12 +316,12 @@ def render_onboarding_card() -> str:
     lines += ["```", ""]
 
     builder = (SDK.parent / "builder/native_traffic.go").read_text()
-    allowlist = re.search(r"var allowedGeneratorImports = map\[string\]bool\{(.*?)\n}", builder, re.S)
+    allowlist = re.search(r"var allowedGeneratorImports = map\[string\]bool\{(.*?)\n}", builder, re.DOTALL)
     if not allowlist:
         raise ValueError("traffic generator import allowlist not found")
     imports = sorted(re.findall(r'"([^"]+)": true', allowlist[1]))
     appmap = (SDK.parent / "memory/appmap/map.go").read_text()
-    evidence = re.findall(r'^\s+Evidence\w+\s+= "([^"]+)"', appmap, re.M)
+    evidence = re.findall(r'^\s+Evidence\w+\s+= "([^"]+)"', appmap, re.MULTILINE)
     if not evidence or not imports:
         raise ValueError("empty traffic generator import or map evidence list")
     return "\n".join(lines) + "\n".join(
