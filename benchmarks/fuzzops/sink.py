@@ -7,8 +7,8 @@ the controller's evidence sidecar mirrors rollouts, task records and broker ledg
 "Run evidence sink"). Everything here reads only that host directory; it never touches the cluster.
 
 An incident's transcripts are its ``rollout-*.jsonl`` files anywhere below ``incidents/<sha256(id)[:32]>/``. An
-incident directory with a ``ledger.json`` must hold at least one, unless the ledger shows that no agent ran
-(``agents_ran``).
+incident directory with a ``ledger.json`` must hold at least one when there is evidence that an agent task was
+dispatched for it (``agents_ran``).
 """
 
 from __future__ import annotations
@@ -343,40 +343,46 @@ def _reflection_ran(decision: Any) -> bool:
     return failure not in _PRE_START_FAILURES
 
 
-def agents_ran(ledger: Mapping[str, Any]) -> bool:
-    """Whether a responder or reflection agent ran (or may have run) for this broker ledger.
+#: What a dispatched worker leaves in its incident directory: dispatch and session timings, usage checkpoints, the
+#: agent CLI's sessions, command reports, checkpoints, model I/O and the agent's JSONL logs. The controller's own
+#: files (``incident.json``, ``ledger.json``, ``seal.json``, ``corpus/``) are not among them.
+_WORKER_TRACE_DIRS = ("startup", "startup-workers", "usage", "claude", "codex", "checkpoints", "model_io", "scratch")
+_WORKER_TRACE_FILES = "*.jsonl"
 
-    Conservative: True unless the ledger proves no agent ran. It proves that only when the incident has a closure
-    whose responder result is absent because dispatch failed, or is present with no responder session, a
-    ``resolution_path`` other than ``responder`` and no usage; the outcome document records no responder resolution,
-    usage or response loop; and no reflection was dispatched (no ``reflection_dispatch_at``, phase not ``DISPATCH``)
-    and every recorded reflection result has no usage and failed before its session started. An incident without a
-    closure (still open or cut off) counts as having run one.
-    """
+
+def _worker_traces(directory: Path) -> bool:
+    if any(p.is_file() for p in directory.glob(_WORKER_TRACE_FILES)):
+        return True
+    return any(p.is_file() for name in _WORKER_TRACE_DIRS for p in (directory / name).rglob("*"))
+
+
+def _ledger_records_agent(ledger: Mapping[str, Any]) -> bool:
+    """Whether the ledger records a dispatched agent task: a responder session, usage, a response loop or a closing
+    turn."""
     closure = _get(ledger, "closure")
-    if not isinstance(closure, dict) or not closure:
-        return True
     result = _get(closure, "result")
-    if isinstance(result, dict) and result:
-        if _get(result, "responder_session_id") or _get(result, "resolution_path") == "responder":
-            return True
-        if _used(_get(result, "usage")) or _number(_get(result, "response_loops_used")) > 0:
-            return True
-    elif not _get(closure, "dispatch_error"):
+    if _get(result, "responder_session_id"):
         return True
-    outcome = _get(ledger, "outcome_document")
-    if isinstance(outcome, dict):
-        if _get(outcome, "resolution_path") == "responder" or _used(_get(outcome, "usage")):
-            return True
-        if _number(_get(outcome, "response_loops_used")) > 0:
+    for record in (result, _get(ledger, "outcome_document")):
+        if _used(_get(record, "usage")) or _number(_get(record, "response_loops_used")) > 0:
             return True
     decisions = [_get(ledger, "reflection_decision"), *(_get(ledger, "reflection_results") or [])]
     if _get(ledger, "reflection_dispatch_at") and not _only_skipped_turns(decisions):
         return True
-    phase = _get(ledger, "reflection_phase")
-    if phase in ("REFLECTION_PHASE_DISPATCH", 2):
+    if _get(ledger, "reflection_phase") in ("REFLECTION_PHASE_DISPATCH", 2):
         return True
     return any(_reflection_ran(d) for d in decisions)
+
+
+def agents_ran(ledger: Mapping[str, Any], directory: Path | None = None) -> bool:
+    """Whether there is evidence that a responder or closing agent task was dispatched for this incident.
+
+    Evidence is what the ledger records of an agent task, or what a dispatched worker left in the incident's sink
+    ``directory``. Without either, no agent ran: an incident that is open, unclosed or has no ledger says nothing
+    about a dispatch, and neither does a closure's ``resolution_path`` or ``dispatched_at``, which a watch-only
+    controller also records although it starts no worker.
+    """
+    return _ledger_records_agent(ledger) or (directory is not None and _worker_traces(directory))
 
 
 def _only_skipped_turns(decisions: list[Any]) -> bool:
@@ -396,6 +402,11 @@ def closing_turn_ran(ledger: Mapping[str, Any]) -> bool:
 def has_outcome(ledger: Mapping[str, Any]) -> bool:
     outcome = _get(ledger, "outcome_document")
     return isinstance(outcome, dict) and bool(outcome)
+
+
+def frozen_memory(ledger: Mapping[str, Any]) -> bool:
+    """Whether the broker kept this incident's outcome in the ledger only: frozen memory commits nothing."""
+    return bool(_get(ledger, "frozen_memory"))
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -447,7 +458,7 @@ def incident_coverage(directory: Path) -> IncidentCoverage:
     return IncidentCoverage(
         id=incident,
         outcome=has_outcome(ledger),
-        agents_ran=agents_ran(ledger) if ledger else True,
+        agents_ran=agents_ran(ledger, directory),
         rollouts=count_rollouts(directory),
         dir=directory.name,
     )
@@ -465,7 +476,7 @@ def short_ids(missing: Iterable[IncidentCoverage], limit: int = 5) -> str:
 
 def transcripts_verdict(run_dir: Path) -> str:
     """The ``transcripts`` hook's answer: "" when the sink is in place and every incident directory with a ledger
-    holds a rollout unless no agent ran; else ``no sink: <why>`` or ``transcripts missing: N (<short ids>)``."""
+    for which an agent ran holds a rollout; else ``no sink: <why>`` or ``transcripts missing: N (<short ids>)``."""
     if why := layout_problem(run_dir):
         return f"no sink: {why}"
     missing = [

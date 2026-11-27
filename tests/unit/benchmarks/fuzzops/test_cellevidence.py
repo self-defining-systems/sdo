@@ -261,6 +261,49 @@ def test_an_incident_still_open_at_collect_has_no_ledger_to_demand(tmp_path: Pat
     assert any("ledger.json" in p for p in ce.build(run).problems)
 
 
+def _watch_only(run: Path) -> Path:
+    """A watch-only cell: the incident closes, no agent is dispatched, frozen memory commits no outcome."""
+    op = run / "operator"
+    inc = op / "evidence/incidents" / INC
+    ledger = json.loads((inc / "ledger.json").read_text())
+    for key in ("reflection_dispatch_at", "reflection_decision"):
+        del ledger[key]
+    ledger["frozen_memory"] = True
+    ledger["closure"]["result"] = {"resolution_path": "responder", "status": "completed", "usage": {}}
+    ledger["closure_phase_timestamps"] = {"closure_start": T.format(9), "closure_ack": T.format(12)}
+    ledger["outcome_document"] = {"classification": "cleared_without_action", "resolution_path": "responder"}
+    _w(inc / "ledger.json", ledger)
+    for name in ("claude-turns.jsonl", "reflection-usage.jsonl"):
+        (inc / name).unlink()
+    shutil.rmtree(inc / "claude")
+    shutil.rmtree(op / "memory")
+    return inc
+
+
+def test_a_watch_only_cell_owes_no_session_usage_or_committed_outcome(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    _watch_only(run)
+    ev = ce.build(run)
+    assert ev.problems == [], ev.problems
+    assert ce.copy_problems(run / "operator/evidence") == {}
+
+
+def test_a_frozen_memory_incident_still_owes_the_outcome_in_its_ledger(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    inc = _watch_only(run)
+    ledger = json.loads((inc / "ledger.json").read_text())
+    del ledger["outcome_document"]
+    _w(inc / "ledger.json", ledger)
+    assert any(p.startswith("outcome ") for p in ce.build(run).problems)
+
+
+def test_a_dispatched_responder_that_left_no_transcript_is_missing_evidence(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    inc = _watch_only(run)
+    _w(inc / "startup/startup-dispatch.json", {})
+    assert any("an agent ran; no session files" in p for p in ce.build(run).problems)
+
+
 def test_a_cell_is_complete_at_collect_before_the_manager_writes_run_json(tmp_path: Path) -> None:
     """collect runs inside the step; the manager writes run.json only after the step's directory is moved."""
     run = make_cell(tmp_path)

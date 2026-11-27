@@ -254,12 +254,13 @@ since the start), and a lifecycle task sealed or written in the interval. `trans
 `{"incidents": [{"id", "outcome", "agents_ran", "rollouts"}], "rollouts", "missing": [ids with an outcome and an agent
 run but no rollout]}`.
 
-"No agent ran" (`sink.agents_ran` is false) is decided conservatively from the ledger: the incident has a closure whose
-responder result is absent because dispatch failed, or has no `responder_session_id`, a `resolution_path` other than
-`responder`, no usage and no response loop; the outcome document records no responder resolution, usage or loop; no
-reflection was dispatched (`reflection_dispatch_at` unset, phase not `DISPATCH`); and every reflection result has no
-usage and failed before its session started (`session_unavailable`, `session_handoff_invalid`, `request_too_large`).
-Anything else, including an incident with no closure yet, counts as an agent run that needs a rollout.
+An incident needs a rollout only with evidence that an agent task was dispatched for it (`sink.agents_ran`): the
+ledger records a `responder_session_id`, usage, a response loop or a closing turn (a reflection dispatch or result Go
+did not make without a turn), or the incident directory holds what a dispatched worker leaves (`startup/`,
+`startup-workers/`, `usage/`, `claude/`, `codex/`, `checkpoints/`, `model_io/`, `scratch/`, `*.jsonl`). Nothing else
+counts: an incident that is open, unclosed or ledger-less, and a closure's `resolution_path` or `dispatched_at`, which
+a watch-only controller also records. So a watch-only run owes no rollout, session or usage. With `frozen_memory` the
+outcome document is only in the ledger, and the cell manifest does not demand a committed one.
 
 For a manual `install`, pass `--evidence-sink-host-path <node dir> [--evidence-run-id <id>]` (set as
 `SDO_EVIDENCE_HOST_PATH` and `SDO_EVIDENCE_RUN_ID`) so SDO's trajectories, task records,

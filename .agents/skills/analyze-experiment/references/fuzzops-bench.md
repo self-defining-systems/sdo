@@ -96,7 +96,8 @@ overlay files it passed are under the lane's `sdo-config/`.
   never average together. `--with` baselines (`noop`, `best-fix` builtin experiments) supply noop and best-fix cells.
 - Before trusting a run, check `operator/collect.json`: a failed part (memory, state, logs, evidence) means that
   run's SDO-side columns may be incomplete, not that the run is invalid. An `evidence` part failing with
-  `transcripts missing` names incidents whose outcome says an agent ran but whose rollouts never reached the host.
+  `transcripts missing` names incidents with evidence of a dispatched agent task (`sink.agents_ran`) whose rollouts
+  never reached the host; a watch-only run dispatches none.
 - Transcripts (responder and reflection rollouts) live only in `operator/evidence/incidents/*/` (copied from the host
   sink); `operator/transcripts.json` gives per-incident coverage. The lane timeline's `transcripts` check after each
   teardown records `transcripts missing: N` when the sink lost any. Older experiments have `operator/sdo_runtime/`
