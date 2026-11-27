@@ -1751,7 +1751,7 @@ def test_idle_verdict_after_a_restart_needs_no_new_promotion_when_baselines_were
     replaced = _log(
         EVALUATED,
         "2026/11/19 21:49:45 INFO store_baseline_promoted component=postgresql restored=true",
-        '2026/11/19 21:49:45 INFO store_baseline_discarded component=redis reason="store Pods or query changed"',
+        '2026/11/19 21:49:45 INFO store_baseline_discarded component=redis reason="query declaration changed"',
     )
     assert idle_verdict(state, NOW, True, NOW, controller_log=replaced) == "blind: no promoted baseline yet for redis"
 
