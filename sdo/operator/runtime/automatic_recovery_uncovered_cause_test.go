@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk/sdktest"
@@ -36,13 +37,14 @@ func addClue(t *testing.T, c *Controller, clue sdk.Finding, active bool) {
 }
 
 // Two faults on one failing path: the stage restarted api, which the user
-// test's path runs through, and the store's data changed, which no applied
-// program targeted and api's restart cannot reach. The agent starts as soon as
-// the restart settled, not after the user test's full window or the bound.
+// test's path runs through, and the store's data changed before that, which
+// no applied program targeted and api neither calls nor is called by. The
+// agent starts once the user test failed again after the restart settled,
+// not after its full window or the bound.
 func TestAStageThatDidNotCoverACauseHandsOffOnceItsWritesSettle(t *testing.T) {
 	test := &buyTest{failing: alwaysFails}
 	c, world, key := freshWorld(t, test, settings.AfterPlaybookAgent)
-	c.gitRead = buyMap("web, api, store", "{from: web, to: api}, {from: api, to: store}")
+	c.gitRead = buyMap("web, api, store", "{from: web, to: api}, {from: web, to: store}")
 	addClue(t, c, storeStateClue("StatefulSet", "store"), true)
 	at, ok := handoffAfter(t, c, world, test.start, horizon(test))
 	report := autoReport(c)
@@ -58,25 +60,42 @@ func TestAStageThatDidNotCoverACauseHandsOffOnceItsWritesSettle(t *testing.T) {
 }
 
 // What the stage's writes may still clear keeps today's wait: a clue on the
-// written component, on one that calls it, off every alert's path, targeted
-// by the applied program, no longer active, or with no map to place it.
+// written component, on one that calls it or that it calls (a misconfigured
+// caller shows up in its store's state), off every alert's path, no longer
+// active, first seen after the stage applied, or with no map to place it; and
+// any clue while no alert on its path failed again after the writes settled
+// (the alerts may still be clearing).
 func TestACauseTheStageMayHaveAddressedKeepsTheWait(t *testing.T) {
-	path := buyMap("web, api, store", "{from: web, to: api}, {from: api, to: store}")
+	path := buyMap("web, api, store", "{from: web, to: api}, {from: web, to: store}")
 	for name, tc := range map[string]struct {
 		read     gitRead
 		clue     sdk.Finding
 		inactive bool
+		late     bool
+		failing  func(time.Duration) bool
 	}{
-		"on the written component":       {read: path, clue: storeStateClue("Deployment", "api")},
-		"on a caller of the written one": {read: path, clue: storeStateClue("Deployment", "web")},
-		"off every alert's path":         {read: buyMap("web, api", "{from: web, to: api}"), clue: storeStateClue("StatefulSet", "store")},
-		"no longer active":               {read: path, clue: storeStateClue("StatefulSet", "store"), inactive: true},
-		"no application map":             {clue: storeStateClue("StatefulSet", "store")},
+		"on the written component":          {read: path, clue: storeStateClue("Deployment", "api")},
+		"on a caller of the written one":    {read: path, clue: storeStateClue("Deployment", "web")},
+		"on a callee of the written one":    {read: buyMap("web, api, store", "{from: web, to: api}, {from: api, to: store}"), clue: storeStateClue("StatefulSet", "store")},
+		"off every alert's path":            {read: buyMap("web, api", "{from: web, to: api}, {from: web, to: store}"), clue: storeStateClue("StatefulSet", "store")},
+		"no longer active":                  {read: path, clue: storeStateClue("StatefulSet", "store"), inactive: true},
+		"first seen after the stage":        {read: path, clue: storeStateClue("StatefulSet", "store"), late: true},
+		"the user test passes since settle": {read: path, clue: storeStateClue("StatefulSet", "store"), failing: func(at time.Duration) bool { return at < 2*time.Second }},
+		"no application map":                {clue: storeStateClue("StatefulSet", "store")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			test := &buyTest{failing: alwaysFails}
+			if tc.failing != nil {
+				test.failing = tc.failing
+			}
 			c, world, _ := freshWorld(t, test, settings.AfterPlaybookAgent)
 			c.gitRead = tc.read
+			if tc.late {
+				autoStep(t, c, world.clock, time.Second)
+				if !playbookWrote(autoReport(c)) {
+					t.Fatal("the stage did not apply in the first step")
+				}
+			}
 			addClue(t, c, tc.clue, !tc.inactive)
 			if at, ok := handoffAfter(t, c, world, test.start, horizon(test)-time.Second); ok {
 				t.Fatalf("handed off at %s, want no earlier than %s", at, horizon(test))
@@ -95,19 +114,30 @@ func TestCausesBeyondAStageThatRestoredAConfigMapOrAService(t *testing.T) {
 		DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Namespace: "app", Name: "api"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 			Volumes: []corev1.Volume{{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "api-config"}}}}}}}}}},
 		StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Namespace: "app", Name: "store"}}}}
+	// A job the map does not place mounts the shared ConfigMap; the store may
+	// read the API's ConfigMap through the Kubernetes API with its own account.
+	mount := corev1.PodSpec{Volumes: []corev1.Volume{{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "shared"}}}}}}
+	view.DeploymentList[0].Spec.Template.Spec.Volumes = append(view.DeploymentList[0].Spec.Template.Spec.Volumes, mount.Volumes...)
+	view.JobList = []batchv1.Job{{ObjectMeta: metav1.ObjectMeta{Namespace: "app", Name: "migrate"}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: mount}}}}
+	reader := view
+	reader.StatefulSetList = []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Namespace: "app", Name: "store"}, Spec: appsv1.StatefulSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{ServiceAccountName: "store-reader"}}}}}
 	clue := storeStateClue("StatefulSet", "store")
+	settled := c.clock()
 	for name, tc := range map[string]struct {
 		written  sdk.ObjectRef
 		path     string
+		view     *sdktest.Snapshot
 		targeted bool
 		want     bool
 	}{
-		"a restored ConfigMap its consumer api reads": {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "api-config"}, path: "web, api, store", want: true},
-		"a restored Service of api":                   {written: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}, path: "web, api, store", want: true},
-		"the clue is in the restore's scope":          {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "api-config"}, path: "web, api, store", targeted: true},
-		"a ConfigMap no component consumes":           {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "other"}, path: "web, api, store"},
-		"the store's own Service":                     {written: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "store"}, path: "web, api, store"},
-		"the clue is off the failing path":            {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "api-config"}, path: "web, api"},
+		"a ConfigMap a workload off the map also mounts": {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "shared"}, path: "web, api, store"},
+		"a ConfigMap the store may read through the API": {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "api-config"}, path: "web, api, store", view: &reader},
+		"a restored ConfigMap its consumer api reads":    {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "api-config"}, path: "web, api, store", want: true},
+		"a restored Service of api":                      {written: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}, path: "web, api, store", want: true},
+		"the clue is in the restore's scope":             {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "api-config"}, path: "web, api, store", targeted: true},
+		"a ConfigMap no component consumes":              {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "other"}, path: "web, api, store"},
+		"the store's own Service":                        {written: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "store"}, path: "web, api, store"},
+		"the clue is off the failing path":               {written: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "api-config"}, path: "web, api"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			request := *c.currentIncidentRequest
@@ -124,7 +154,7 @@ func TestCausesBeyondAStageThatRestoredAConfigMapOrAService(t *testing.T) {
 				scope = append(scope, FindingFingerprint(clue))
 			}
 			report := &contracts.StageReport{Mitigations: []*contracts.StageMitigation{{
-				ApplyReceipt:               &contracts.PlanApplication{Applied: true, ObjectEffects: []*contracts.PlanObjectEffect{{State: "applied"}}},
+				ApplyReceipt:               &contracts.PlanApplication{Applied: true, StartedAt: contractTimestamp(settled.Add(-30 * time.Second)), ObjectEffects: []*contracts.PlanObjectEffect{{State: "applied"}}},
 				TouchedObjects:             []*contracts.ObjectRef{objectRefContract(tc.written)},
 				ClearedFindingFingerprints: scope,
 			}}}
@@ -132,11 +162,17 @@ func TestCausesBeyondAStageThatRestoredAConfigMapOrAService(t *testing.T) {
 				"  - {name: api, workload: Deployment/api, services: [api], holds_data: false}\n" +
 				"  - {name: web, workload: Deployment/web, services: [web], holds_data: false}\n" +
 				"  - {name: store, workload: StatefulSet/store, services: [store], holds_data: true}\n" +
-				"edges: [{from: web, to: api}, {from: api, to: store}]\n" +
+				"edges: [{from: web, to: api}, {from: web, to: store}]\n" +
 				"operations:\n  - {id: checkout, writes: true, entry: {service: web, port: 80, method: POST, path: /buy}, path: [" + tc.path + "]}\n" +
 				"probes:\n  - {scenario: buy, kind: call, operations: [checkout]}\n```\n<!-- sdo:application-map:end -->\n")
 			m, _ := acceptedVerificationMap(t.Context(), c.gitRead, request)
-			got := causesBeyondStage(view, m, request, report, func(string) bool { return true })
+			live := view
+			if tc.view != nil {
+				live = *tc.view
+			}
+			windowed := windowSnapshot{DetectionContext: live, windows: (&buyTest{every: 2 * time.Second, failing: alwaysFails, start: settled}).window(settled.Add(10 * time.Second))}
+			before := func(string) (bool, time.Time) { return true, settled.Add(-time.Minute) }
+			got := causesBeyondStage(windowed, m, request, report, settled, before)
 			if (len(got) == 1 && got[0] == findingKey(clue)) != tc.want || len(got) > 1 {
 				t.Fatalf("uncovered = %q, want the clue: %v", got, tc.want)
 			}

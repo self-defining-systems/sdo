@@ -239,9 +239,9 @@ type Controller struct {
 	// until then, whether a rollout was seen unfinished and given up on.
 	stageSettledAt              time.Time
 	stageUnsettled, stageGaveUp bool
-	// stageWritesReady is whether the stage's writes were settled and their rollouts Ready at the last observation.
-	stageWritesReady bool
-	stageRollout     time.Duration
+	// stageWritesReadyAt is when the stage's writes settled with their rollouts Ready, zero unless they were at the last observation.
+	stageWritesReadyAt time.Time
+	stageRollout       time.Duration
 
 	closureMutationRevision string
 	earlyLastMutationAt     time.Time
