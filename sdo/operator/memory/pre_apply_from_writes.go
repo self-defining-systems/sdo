@@ -110,10 +110,10 @@ func CapturePreApplyFromWrites(repositoryMount, incidentID string, through time.
 	if err != nil {
 		return err
 	}
-	if err := writeCapturedFile(filepath.Join(dir, "open@pre-apply-recordings.json"), []byte("[]")); err != nil {
+	if err := CreateCaptureFile(repositoryMount, filepath.Join(dir, "open@pre-apply-recordings.json"), []byte("[]")); err != nil {
 		return err
 	}
-	return writeCapturedFile(target, data)
+	return CreateCaptureFile(repositoryMount, target, data)
 }
 
 // overlayScalars returns base with the numbers and booleans of projected laid over the same paths. Strings,
