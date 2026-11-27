@@ -283,6 +283,67 @@ def card_coverage_failures() -> list[str]:
     return [f"program action {name} is missing from the SDK card groups" for name in sorted(actions - listed)]
 
 
+def render_onboarding_card() -> str:
+    """Authoring declarations, excluding the engine and detector runtime APIs."""
+    blocks = [_split_block(block.lstrip("\n"))[0] for block in _doc_blocks("./traffic") if block.strip()]
+    declarations = [block for block in blocks if block]
+    groups = {
+        "Scenarios": r"type (?:Catalog|Scenario|Step|Target|ProbeUser|SideEffect|FaultClass)\b",
+        "HTTP": r"(?:type HTTPEndpoint|func .*\*HTTPEndpoint(?=$|\))|func \(\w+ \*HTTPEndpoint\))",
+        "Values": r"(?:type (?:Params?|State)\b|func (?:\(p Params\)|\w+\(.*\) (?:Param|\(Param, Param\))$)|const (?:StateNow|DateLayout|UniqueWidth)\b)",
+        "Custom checks and SSH": (
+            r"(?:type (?:Endpoint|Request|Response|Verdict)\b|func (?:Fail|NotYet|Pass)\(|const MethodExec\b)"
+        ),
+    }
+    lines = ["## Probe SDK", "", "```go"]
+    for title, pattern in groups.items():
+        lines.append(f"// {title}")
+        for declaration in declarations:
+            head = declaration[0]
+            if re.match(pattern, head):
+                lines.append(_compact(declaration))
+            elif title == "Scenarios" and head == "const (":
+                values = [
+                    " ".join(line.split())
+                    for line in declaration[1:]
+                    if re.match(r"\s+\w+\s+(?:SideEffect|FaultClass)\s+=", line)
+                ]
+                if values:
+                    lines.append("const (" + "; ".join(values) + ")")
+    lines += ["```", ""]
+
+    builder = (SDK.parent / "builder/native_traffic.go").read_text()
+    allowlist = re.search(r"var allowedGeneratorImports = map\[string\]bool\{(.*?)\n}", builder, re.S)
+    if not allowlist:
+        raise ValueError("traffic generator import allowlist not found")
+    imports = sorted(re.findall(r'"([^"]+)": true', allowlist[1]))
+    appmap = (SDK.parent / "memory/appmap/map.go").read_text()
+    evidence = re.findall(r'^\s+Evidence\w+\s+= "([^"]+)"', appmap, re.M)
+    if not evidence or not imports:
+        raise ValueError("empty traffic generator import or map evidence list")
+    return "\n".join(lines) + "\n".join(
+        [
+            f"Generator imports (+ the local generator package): {', '.join(f'`{path}`' for path in imports)}.",
+            f"Map evidence: {', '.join(f'`{value}`' for value in evidence)}. Use `config` for application source.",
+        ]
+    )
+
+
+def sync_onboarding_card(*, check: bool) -> list[str]:
+    path = ROOT / "sdo/skills/sdo-onboarding/SKILL.md"
+    original = path.read_text()
+    begin, end = "<!-- probe-sdk:begin -->", "<!-- probe-sdk:end -->"
+    if original.count(begin) != 1 or original.count(end) != 1:
+        raise ValueError("onboarding skill needs one generated API card region")
+    start, generated = original.split(begin)
+    _, finish = generated.split(end)
+    expected = f"{start}{begin}\n{render_onboarding_card()}\n{end}{finish}"
+    if check:
+        return [str(path.relative_to(ROOT))] if expected != original else []
+    path.write_text(expected)
+    return []
+
+
 def sync_topic_links(skill: str, *, check: bool) -> list[str]:
     path = ROOT / "sdo/skills" / skill / "SKILL.md"
     original = path.read_text()
@@ -357,6 +418,7 @@ def main() -> None:
                 path.write_text(expected)
     card = ROOT / "sdo/skills/sdo-playbook-authoring/references/sdk-card.md"
     failures.extend(card_coverage_failures())
+    failures.extend(sync_onboarding_card(check=args.check))
     expected_card = render_card()
     if args.check:
         if not card.is_file() or card.read_text() != expected_card:

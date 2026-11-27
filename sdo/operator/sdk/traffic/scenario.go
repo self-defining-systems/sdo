@@ -377,7 +377,7 @@ func (s Scenario) Validate() error {
 	switch s.SideEffect {
 	case SideEffectRead:
 		if len(s.Cleanup) > 0 || (s.Marker != "" && len(s.Setup) == 0 && len(s.Users) == 0) {
-			return fmt.Errorf("scenario %s: a read scenario has no cleanup, and a marker only for its setup steps or probe users", s.ID)
+			return fmt.Errorf("scenario %s: SideEffectRead allows Marker only with Setup or Users, and never Cleanup; remove the unused fields or use SideEffectWriteWithCleanup for a write followed by deletion", s.ID)
 		}
 		for _, step := range s.Steps {
 			if s.stepTarget(step).Scheme == "ssh" {
@@ -392,10 +392,10 @@ func (s Scenario) Validate() error {
 			return fmt.Errorf("scenario %s: a write scenario needs a Marker of at least 6 characters naming its synthetic data", s.ID)
 		}
 		if s.SideEffect == SideEffectWriteWithCleanup && len(s.Cleanup) == 0 {
-			return fmt.Errorf("scenario %s: a write-with-cleanup scenario needs cleanup steps", s.ID)
+			return fmt.Errorf("scenario %s: SideEffectWriteWithCleanup needs Cleanup steps ending in a read that verifies deletion; use SideEffectIdempotentWrite only for writes that reuse bounded synthetic data", s.ID)
 		}
 		if s.SideEffect == SideEffectIdempotentWrite && len(s.Cleanup) > 0 {
-			return fmt.Errorf("scenario %s: cleanup applies only to write-with-cleanup scenarios", s.ID)
+			return fmt.Errorf("scenario %s: SideEffectIdempotentWrite cannot have Cleanup; use SideEffectWriteWithCleanup for writes that depend on deletion", s.ID)
 		}
 	default:
 		return fmt.Errorf("scenario %s: sideEffect must be %q, %q, or %q",
@@ -466,7 +466,7 @@ func checkRequest(scenario Scenario, target Target, request Request, phase stepP
 	}
 	marked := phase == phaseCleanup || (write && (phase == phaseSetup || scenario.SideEffect != SideEffectRead))
 	if marked && !requestMentions(request, scenario.Marker) {
-		return fmt.Errorf("write request does not carry the synthetic marker %q", scenario.Marker)
+		return fmt.Errorf("request must carry the synthetic marker %q in its path, body or query (including Cleanup reads)", scenario.Marker)
 	}
 	return nil
 }

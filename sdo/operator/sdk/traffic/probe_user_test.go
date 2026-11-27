@@ -161,7 +161,12 @@ func TestProbeUserDeclarationsAreValidated(t *testing.T) {
 // The generated conformance test runs every scenario against faulty
 // responses; a scenario that logs in is judged by its checks there too.
 func TestConformanceChecksAProbeUserScenario(t *testing.T) {
-	if failures := CheckCatalog(context.Background(), Catalog{userScenario()}); len(failures) != 0 {
+	password := userScenario()
+	token := userScenario()
+	token.ID = "token-user"
+	token.Setup = nil
+	token.Users = []ProbeUser{{Name: "sdoprobe-writer", Token: "token"}}
+	if failures := CheckCatalog(context.Background(), Catalog{password, token}); len(failures) != 0 {
 		t.Fatalf("failures: %v", failures)
 	}
 }
