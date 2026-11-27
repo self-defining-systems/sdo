@@ -1940,6 +1940,7 @@ func evaluateOnce(
 	pinsFile := flags.String("image-pins", "", "JSON rendered.ReceiptPins of the deployment under verification: desired state reads return the images it applied")
 	settingsFile := flags.String("settings", "", "operator configuration the evaluation runs under (the sdo-config mount or the controller's record); empty runs the defaults")
 	outsideCluster := flags.Bool("outside-cluster", false, "this process runs outside the cluster: detectors that dial in-cluster Service names are left out and reported unavailable (evaluation.OutsideClusterReason)")
+	warmupLimit := flags.Duration("warmup-limit", 0, "the most the evaluation waits for the probers to warm before judging what they observed; 0 waits what the accepted workloads declare")
 	watch := flags.Duration("watch", 0, "after the warm-up, judge again every interval and print one verdict per line until cancelled (a detector error is that detector's unavailable entry); 0 evaluates once")
 	writeSoak := flags.Int("write-soak", 0, "with --watch, each pass re-runs the probes' write scenarios this many times, so the lists other probes read keep changing while the detectors judge")
 	if err := flags.Parse(args); err != nil {
@@ -2115,6 +2116,7 @@ func evaluateOnce(
 		}
 		observer := NewTrafficObserver(trafficAPI, workloads, nil, 0)
 		observer.Clock = clock
+		observer.Ceiling = *warmupLimit
 		// The wait is bounded by what the accepted workloads declare they need
 		// (minimum samples at their rate), never below the base budget. When
 		// the bound expires the detectors judge what was observed and report

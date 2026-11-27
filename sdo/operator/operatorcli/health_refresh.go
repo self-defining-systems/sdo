@@ -33,8 +33,11 @@ func refreshControllerHealth(ctx context.Context, scope string, config *contract
 
 // All refresh work, including an unschedulable Job, consumes the install budget.
 // Unbounded installations still have a finite judge budget. A timed-out Job and
-// its proposal are retained so a restart can attach to the identical task.
-const defaultHealthRefreshTimeout = 15 * time.Minute
+// its proposal are retained so a restart can attach to the identical task. The
+// budget holds the judge's bounded corrections: each is a judge turn and a live
+// evaluation of its candidate (a compile and an evaluation of up to 5 minutes
+// each), so two turns fit.
+const defaultHealthRefreshTimeout = 30 * time.Minute
 
 func withHealthRefreshDeadline(ctx context.Context, budget time.Duration, refresh func(context.Context) error) error {
 	if budget <= 0 || budget > defaultHealthRefreshTimeout {
