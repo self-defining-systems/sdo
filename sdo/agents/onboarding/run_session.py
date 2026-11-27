@@ -196,7 +196,12 @@ def run_session(
         try:
             send_message(process.stdin, prompt)
             commit, session_id = finish_turn(
-                process.stdin, process.stdout, transcript, repo, base, operator,
+                process.stdin,
+                process.stdout,
+                transcript,
+                repo,
+                base,
+                operator,
                 allow_export_corrections=resume is None,
             )
         finally:
