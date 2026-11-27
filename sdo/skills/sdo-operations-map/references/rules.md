@@ -30,8 +30,9 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
 
 ## Coverage
 
-- Every operation is in a call or write-read probe. Enforced by: `map.uncovered-operation`.
-- Every writing operation is in a write-read probe. Enforced by: `map.uncovered-write`.
+- Every operation, writing ones too, is in a `call` probe; a write-read or read-later probe does not count.
+  Enforced by: `map.uncovered-operation`.
+- Every writing operation is also in a write-read probe. Enforced by: `map.uncovered-write`.
 - Every data-holding component on a writing operation's path is on a read-later probe's path. Enforced by:
   `map.uncovered-data`.
 - A health-probe scenario declared `knownBroken` (with a short `reason` and the baseline `failsWith`) covers the
