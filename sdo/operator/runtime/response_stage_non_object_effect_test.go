@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +26,9 @@ type aclWorld struct {
 	// stillFailing keeps requests failing after the grant is restored: the
 	// command took effect but was not the incident's cause.
 	stillFailing bool
+	// checkExit, when set, is what the read-only check exits instead of
+	// answering: the check itself fails.
+	checkExit int32
 }
 
 func (w *aclWorld) RunOperation(_ context.Context, op program.ExternalOperation) (int32, error) {
@@ -41,6 +45,9 @@ func (w *aclWorld) RunOperation(_ context.Context, op program.ExternalOperation)
 			}
 		}
 		return 0, nil
+	}
+	if w.checkExit != 0 {
+		return w.checkExit, nil
 	}
 	if w.fixed {
 		return 0, nil
@@ -155,5 +162,30 @@ func TestNonObjectRepairSettlesOnObservedTransition(t *testing.T) {
 				t.Fatalf("want closure attribution based on a confirmed transition: %v", receipt)
 			}
 		})
+	}
+}
+
+// A learned playbook whose read-only check fails (it exits neither "holds"
+// nor "needs the change") never leads to its write: the stage records the
+// failed check in its report and hands the incident to the agent.
+func TestFailedPlaybookCheckNeverLeadsToAWrite(t *testing.T) {
+	stage, state, world := aclStage(t, true, false)
+	world.checkExit = 252
+	report, err := stage.Run(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if world.ensures != 0 {
+		t.Fatalf("the ensure ran %d times after a failed check", world.ensures)
+	}
+	if len(report.GetMitigations()) != 1 {
+		t.Fatalf("mitigations %v", report.GetMitigations())
+	}
+	attempt := report.GetMitigations()[0]
+	if attempt.GetResult() != "apply_error" || !strings.Contains(attempt.GetError(), "external check failed (observation exit 252") || attempt.GetApplyReceipt().GetApplied() {
+		t.Fatalf("attempt %v, want apply_error naming the failed check and nothing applied", attempt)
+	}
+	if report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
+		t.Fatal("a failed check claimed recovery")
 	}
 }

@@ -67,12 +67,12 @@ input for copy. Output and stderr are discarded; commands express observations a
 exit codes. Resolve credentials inside the container, including Secret-backed env.
 
 `EnsureExec{Observe, Ensure, Expect}` observes first, runs ensure only when the
-exit code differs; a successful ensure is not observed again (it can cost a full application boot) `Expect` defaults to zero. Diagnosis uses
+exit code says the change is needed (1, or 0 when `Expect` is 1); any other exit means the check failed, so SDO writes nothing and the action fails; a successful ensure is not observed again (it can cost a full application boot) `Expect` defaults to zero. Diagnosis uses
 `ReadView.Observe(ExternalOperation{Exec: &command})`. Choose an observation that
 actually distinguishes the state the repair changes; a successful process alone
 is insufficient evidence of repair.
 
-`EnsureHTTP` has the same observe/ensure/expect contract using `HTTPRequest`.
+`EnsureHTTP` has the same observe/ensure/expect contract using `HTTPRequest`; its needs-change answer is curl's HTTP-error exit (22).
 Requests run curl inside a selected Pod/container. Nonzero curl exit codes include
 HTTP errors. Bodies and stderr are discarded, redirects are not followed, and
 credentials come from `Bearer` or arbitrary `HeaderEnv` environment references.

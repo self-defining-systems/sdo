@@ -133,8 +133,12 @@ type ExternalEffect struct {
 }
 
 // EnsureExec runs Observe in a Pod and, unless it already exits with Expect,
-// runs Ensure. A successful Ensure is not observed again: the post-apply
-// diagnosis and the alerts verify the state. Effects are irreversible.
+// runs Ensure. Observe is a read-only check with three answers: Expect when the
+// state holds, the needs-change code (ObservationNeedsChange) when Ensure should
+// run, and any other exit when the check itself failed; then Ensure never runs
+// and the action fails with that exit code, because a failed check is no
+// evidence a write is needed. A successful Ensure is not observed again: the
+// post-apply diagnosis and the alerts verify the state. Effects are irreversible.
 type EnsureExec struct {
 	Observe Command
 	Ensure  Command
@@ -145,7 +149,8 @@ type EnsureExec struct {
 func (EnsureExec) action() {}
 
 // EnsureHTTP sends Observe and, unless it already returns Expect, sends Ensure
-// and does not observe again. Effects are irreversible.
+// and does not observe again. As for EnsureExec, only the needs-change code
+// (ObservationNeedsChange) leads to Ensure. Effects are irreversible.
 type EnsureHTTP struct {
 	Observe HTTPRequest
 	Ensure  HTTPRequest
@@ -218,6 +223,30 @@ func credentialHTTPName(name string) bool {
 		if strings.Contains(normalized, credential) {
 			return true
 		}
+	}
+	return false
+}
+
+// CurlHTTPErrorExit is curl's exit code when the server answered an HTTP error
+// status (curl --fail), the needs-change answer of an EnsureHTTP observation.
+const CurlHTTPErrorExit int32 = 22
+
+// ObservationNeedsChange reports whether an Ensure action's observation exit
+// code says the state needs the change. An EnsureExec observation needs it when
+// it exits 1 (0 when Expect is 1); an EnsureHTTP observation when the server
+// answered an HTTP error (CurlHTTPErrorExit). Expect means the state holds. Any
+// other code means the check did not run as written (an uncaught script error,
+// a missing command, an unreachable server): neither answer.
+func ObservationNeedsChange(action Action, code int32) bool {
+	switch a := action.(type) {
+	case EnsureExec:
+		return code != a.Expect && (code == 1 || a.Expect == 1 && code == 0)
+	case *EnsureExec:
+		return a != nil && ObservationNeedsChange(*a, code)
+	case EnsureHTTP:
+		return code != a.Expect && code == CurlHTTPErrorExit
+	case *EnsureHTTP:
+		return a != nil && ObservationNeedsChange(*a, code)
 	}
 	return false
 }

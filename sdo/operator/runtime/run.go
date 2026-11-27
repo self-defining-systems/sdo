@@ -693,6 +693,119 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if launchConfig != nil {
 			apiProxyImage = launchConfig.GetToolchainImage()
 		}
+		// buildLoop is a responder loop for request; LoopFactory also makes it the controller's live one.
+		buildLoop := func(request IncidentRequest) *ResponderLoop {
+			memoryCatalogMu.RLock()
+			defer memoryCatalogMu.RUnlock()
+			loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
+				Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage, ScriptNamespace: *controlNamespace, ScriptNode: lifecycleio.Getenv("SDO_CONTROLLER_NODE"), ScriptRepositoryMount: *repositoryMountPath, ScriptRepositoryPVC: *repositoryPVC, ScriptRepositorySubPath: *repositoryPVCSubPath}, Objects: genericCapture}, Source: planSource,
+
+				Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: time.Duration(policy.Response.VerificationTimeout), PollInterval: time.Second}, Observer: kubernetesCache,
+			}, policy.Response.MaxLoops)
+			if len(TrafficWorkloadNames(detectors)) > 0 {
+				loop.Traffic = proberAPI
+			}
+			loop.WorkingProgramRoot = request.RepositoryWorktree
+			if policy.Response.ExternalClues && request.ExternalMessage != "" {
+				loop.Detectors, loop.ExternalClues = detectors, true
+			}
+			// Backups live on the repository volume beside the other
+			// controller state, outside the published .sdo/ tree.
+			loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}, Payloads: storePayloads}
+			if policy.Response.Menu {
+				loop.MenuConfig = productionResponderMenu()
+				loop.MenuConfig.Unexplained = func(ctx context.Context) (UnexplainedRemovalAssessment, error) {
+					if controller == nil {
+						return UnexplainedRemovalAssessment{}, fmt.Errorf("controller is unavailable")
+					}
+					assessment, err := controller.unexplainedRemovalAssessment(request.IncidentID, *controlNamespace)
+					if err != nil {
+						return assessment, err
+					}
+					if removalClient == nil {
+						for _, removal := range assessment.Removals {
+							assessment.Blockers = append(assessment.Blockers, UnexplainedRemovalBlocker{FindingFingerprint: removal.FindingFingerprint, Ref: removal.Ref, Reason: RemovalUnavailable})
+						}
+						assessment.Removals = nil
+					}
+					return assessment, nil
+				}
+				loop.MenuConfig.RemoveUnexplained = func(ctx context.Context, selected UnexplainedRemoval, client PlanLifecycleClient, ref sdk.ObjectRef, uid types.UID, rv string) error {
+					if removalClient == nil {
+						return fmt.Errorf("removal-only client is unavailable")
+					}
+					return controller.removeUnexplained(ctx, request.IncidentID, *controlNamespace, selected, removalClient, ref, uid, rv)
+				}
+			}
+			loop.VerifyClosure = func(ctx context.Context) ToolResponse {
+				if controller == nil {
+					return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
+				}
+				return controller.cachedResponderVerification(ctx, request.IncidentID, 0)
+			}
+			loop.WaitClosure = func(ctx context.Context, wait time.Duration) ToolResponse {
+				return controller.cachedResponderVerification(ctx, request.IncidentID, wait)
+			}
+			loop.IncidentStatus = func() *apihistory.IncidentVerified { return controller.incidentVerificationWarning(request.IncidentID) }
+			if options.NativeBroker != nil {
+				gate, err := controller.incidentGate(request.IncidentID)
+				if err != nil {
+					loop.gateError = err
+				} else {
+					loop.MutationGate = gate
+				}
+			}
+			loop.CachedFindings = func() ToolResponse { return controller.cachedFindingView(request.IncidentID) }
+			loop.ExternalReceipts = externalReceiptsSource(policy.Agent.Recording, *repositoryMountPath, request.IncidentID, controller.clock)
+			loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
+				if controller == nil {
+					return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
+				}
+				return controller.responderResultVerification(ctx, request.IncidentID, &result)
+			}
+			loop.CurrentEvidence = func() *IncidentRequest {
+				if controller == nil {
+					return nil
+				}
+				controller.mu.Lock()
+				defer controller.mu.Unlock()
+				return cloneIncidentRequest(controller.currentIncidentRequest)
+			}
+			loop.DiagnosisDeadline = time.Duration(policy.Response.DiagnosisDeadline)
+			if controller != nil {
+				loop.IncidentSources = controller.IncidentSources
+			}
+			loop.Telemetry = func() ApplicationTelemetry {
+				telemetryView := ApplicationTelemetry{Metrics: metricsObserver.API()}
+				telemetryView.Sources = metricsSources(telemetryView.Metrics)
+				if known, ok := telemetryView.Metrics.(interface{ TraceReader() telemetry.TraceReader }); ok {
+					telemetryView.Traces = known.TraceReader()
+				}
+				if client := bootstrapProvider.Client; client != nil {
+					telemetryView.PodLogs = func(ctx context.Context, namespace, pod string, options *corev1.PodLogOptions) (io.ReadCloser, error) {
+						return client.CoreV1().Pods(namespace).GetLogs(pod, options).Stream(ctx)
+					}
+				}
+				return telemetryView
+			}
+			loop.BuiltinRestoreAuto = policy.Response.BuiltinRestoreAuto
+			if options.NativeBroker != nil {
+				if policy.Agent.Recording {
+					loop.RecoverySessionRoot = options.NativeBroker.SessionRoot
+				}
+				if replayMode != "off" {
+					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
+				}
+			}
+			loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+				return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: clients.incidentRead, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
+					Source: planSource, SourceCommit: request.SourceCommit, RenderCommit: request.renderedRevision(), Baseline: request.StateChanges, BaselineSource: baselineOf(stateTracker)}
+			}
+			return loop
+		}
+		if options.NativeBroker != nil {
+			options.NativeBroker.LiveCheck = NewLivePlaybookCheck(buildLoop, *namespace)
+		}
 		dispatcher = KubernetesJobDispatcher{
 			AcceptedRepository: resolvedRoot,
 			OnUsageProblem:     func(err error) { fmt.Fprintln(stderr, "responder usage dropped:", err) },
@@ -708,112 +821,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Environment: jobEnvironment,
 			Catalog:     catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
-				memoryCatalogMu.RLock()
-				defer memoryCatalogMu.RUnlock()
-				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage, ScriptNamespace: *controlNamespace, ScriptNode: lifecycleio.Getenv("SDO_CONTROLLER_NODE"), ScriptRepositoryMount: *repositoryMountPath, ScriptRepositoryPVC: *repositoryPVC, ScriptRepositorySubPath: *repositoryPVCSubPath}, Objects: genericCapture}, Source: planSource,
-
-					Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: time.Duration(policy.Response.VerificationTimeout), PollInterval: time.Second}, Observer: kubernetesCache,
-				}, policy.Response.MaxLoops)
-				if len(TrafficWorkloadNames(detectors)) > 0 {
-					loop.Traffic = proberAPI
-				}
-				loop.WorkingProgramRoot = request.RepositoryWorktree
-				if policy.Response.ExternalClues && request.ExternalMessage != "" {
-					loop.Detectors, loop.ExternalClues = detectors, true
-				}
-				// Backups live on the repository volume beside the other
-				// controller state, outside the published .sdo/ tree.
-				loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}, Payloads: storePayloads}
-				if policy.Response.Menu {
-					loop.MenuConfig = productionResponderMenu()
-					loop.MenuConfig.Unexplained = func(ctx context.Context) (UnexplainedRemovalAssessment, error) {
-						if controller == nil {
-							return UnexplainedRemovalAssessment{}, fmt.Errorf("controller is unavailable")
-						}
-						assessment, err := controller.unexplainedRemovalAssessment(request.IncidentID, *controlNamespace)
-						if err != nil {
-							return assessment, err
-						}
-						if removalClient == nil {
-							for _, removal := range assessment.Removals {
-								assessment.Blockers = append(assessment.Blockers, UnexplainedRemovalBlocker{FindingFingerprint: removal.FindingFingerprint, Ref: removal.Ref, Reason: RemovalUnavailable})
-							}
-							assessment.Removals = nil
-						}
-						return assessment, nil
-					}
-					loop.MenuConfig.RemoveUnexplained = func(ctx context.Context, selected UnexplainedRemoval, client PlanLifecycleClient, ref sdk.ObjectRef, uid types.UID, rv string) error {
-						if removalClient == nil {
-							return fmt.Errorf("removal-only client is unavailable")
-						}
-						return controller.removeUnexplained(ctx, request.IncidentID, *controlNamespace, selected, removalClient, ref, uid, rv)
-					}
-				}
-				loop.VerifyClosure = func(ctx context.Context) ToolResponse {
-					if controller == nil {
-						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
-					}
-					return controller.cachedResponderVerification(ctx, request.IncidentID, 0)
-				}
-				loop.WaitClosure = func(ctx context.Context, wait time.Duration) ToolResponse {
-					return controller.cachedResponderVerification(ctx, request.IncidentID, wait)
-				}
-				loop.IncidentStatus = func() *apihistory.IncidentVerified { return controller.incidentVerificationWarning(request.IncidentID) }
-				if options.NativeBroker != nil {
-					gate, err := controller.incidentGate(request.IncidentID)
-					if err != nil {
-						loop.gateError = err
-					} else {
-						loop.MutationGate = gate
-					}
-				}
-				loop.CachedFindings = func() ToolResponse { return controller.cachedFindingView(request.IncidentID) }
-				loop.ExternalReceipts = externalReceiptsSource(policy.Agent.Recording, *repositoryMountPath, request.IncidentID, controller.clock)
-				loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
-					if controller == nil {
-						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
-					}
-					return controller.responderResultVerification(ctx, request.IncidentID, &result)
-				}
-				loop.CurrentEvidence = func() *IncidentRequest {
-					if controller == nil {
-						return nil
-					}
-					controller.mu.Lock()
-					defer controller.mu.Unlock()
-					return cloneIncidentRequest(controller.currentIncidentRequest)
-				}
-				loop.DiagnosisDeadline = time.Duration(policy.Response.DiagnosisDeadline)
-				if controller != nil {
-					loop.IncidentSources = controller.IncidentSources
-				}
-				loop.Telemetry = func() ApplicationTelemetry {
-					telemetryView := ApplicationTelemetry{Metrics: metricsObserver.API()}
-					telemetryView.Sources = metricsSources(telemetryView.Metrics)
-					if known, ok := telemetryView.Metrics.(interface{ TraceReader() telemetry.TraceReader }); ok {
-						telemetryView.Traces = known.TraceReader()
-					}
-					if client := bootstrapProvider.Client; client != nil {
-						telemetryView.PodLogs = func(ctx context.Context, namespace, pod string, options *corev1.PodLogOptions) (io.ReadCloser, error) {
-							return client.CoreV1().Pods(namespace).GetLogs(pod, options).Stream(ctx)
-						}
-					}
-					return telemetryView
-				}
-				loop.BuiltinRestoreAuto = policy.Response.BuiltinRestoreAuto
-				if options.NativeBroker != nil {
-					if policy.Agent.Recording {
-						loop.RecoverySessionRoot = options.NativeBroker.SessionRoot
-					}
-					if replayMode != "off" {
-						loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
-					}
-				}
-				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: clients.incidentRead, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
-						Source: planSource, SourceCommit: request.SourceCommit, RenderCommit: request.renderedRevision(), Baseline: request.StateChanges, BaselineSource: baselineOf(stateTracker)}
-				}
+				loop := buildLoop(request)
 				controller.mu.Lock()
 				controller.responderLoop = loop
 				controller.mu.Unlock()

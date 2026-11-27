@@ -91,6 +91,8 @@ func (f ReflectionWorkerFunc) Reflect(ctx context.Context, closure IncidentClosu
 // safe to select when a full OutcomeDeriver and ReflectionWorker are configured;
 // no partial closure can be acknowledged.
 type NativeIncidentBroker struct {
+	// LiveCheck runs a closing turn's new playbook checks on the live cluster, read only, as part of its memory check; nil skips it.
+	LiveCheck   LivePlaybookCheck
 	Replay      string
 	CodePath    CodePathConfig
 	ShellReader shellpath.Reader

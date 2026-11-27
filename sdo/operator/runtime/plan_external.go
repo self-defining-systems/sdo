@@ -113,6 +113,10 @@ func (e PlanExecutor) externalStep(ctx context.Context, action program.Action, d
 		r.ActionReports[0].Status = "applied"
 		return r, nil
 	}
+	if !program.ObservationNeedsChange(concreteExternalAction(action), before) {
+		// A check that failed is no evidence the write is needed: nothing is written.
+		return r, &ExternalCheckFailedError{Code: before, Expect: expect}
+	}
 	for ref, uid := range identities {
 		pod, getErr := e.Client.Get(ctx, ref)
 		if getErr != nil || pod == nil || string(pod.GetUID()) != uid {
@@ -167,6 +171,15 @@ func (e PlanExecutor) externalStep(ctx context.Context, action program.Action, d
 	}
 	r.ActionReports[0].Status = "applied"
 	return r, nil
+}
+
+// ExternalCheckFailedError is an Ensure action whose read-only observation
+// answered neither "holds" nor "needs the change": the check itself failed, so
+// the executor ran no Ensure and wrote nothing.
+type ExternalCheckFailedError struct{ Code, Expect int32 }
+
+func (e *ExternalCheckFailedError) Error() string {
+	return fmt.Sprintf("external check failed (observation exit %d, neither %d for holds nor the needs-change code); nothing was written", e.Code, e.Expect)
 }
 
 func (c TypedPlanClient) RunOperation(ctx context.Context, o program.ExternalOperation) (int32, error) {
