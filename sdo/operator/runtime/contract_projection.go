@@ -210,6 +210,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		OpeningKeys:           append([]string(nil), request.OpeningKeys...),
 		StandingKeys:          append([]string(nil), request.StandingKeys...),
 		JoinedKeys:            append([]string(nil), request.JoinedKeys...),
+		LatePages:             latePagesContract(request.LatePages),
 		PassingTests:          append([]string(nil), request.PassingTests...),
 		RecentChanges:         append([]string(nil), request.RecentChanges...),
 		ExternalMessage:       request.ExternalMessage,
@@ -609,6 +610,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		OpeningKeys:           append([]string(nil), message.GetOpeningKeys()...),
 		StandingKeys:          append([]string(nil), message.GetStandingKeys()...),
 		JoinedKeys:            append([]string(nil), message.GetJoinedKeys()...),
+		LatePages:             latePagesState(message.GetLatePages()),
 		PassingTests:          append([]string(nil), message.GetPassingTests()...),
 		RecentChanges:         append([]string(nil), message.GetRecentChanges()...),
 		ExternalMessage:       message.GetExternalMessage(),
@@ -874,6 +876,28 @@ func rolloutReceiptsState(receipts []*contracts.ControllerRolloutReceipt) []Cont
 			item.Expectation = *expectation
 		}
 		result = append(result, item)
+	}
+	return result
+}
+
+func latePagesContract(pages []LatePage) []*contracts.LatePage {
+	if len(pages) == 0 {
+		return nil
+	}
+	result := make([]*contracts.LatePage, 0, len(pages))
+	for _, page := range pages {
+		result = append(result, &contracts.LatePage{Key: page.Key, PagedAt: contractTimestamp(page.PagedAt)})
+	}
+	return result
+}
+
+func latePagesState(pages []*contracts.LatePage) []LatePage {
+	if len(pages) == 0 {
+		return nil
+	}
+	result := make([]LatePage, 0, len(pages))
+	for _, page := range pages {
+		result = append(result, LatePage{Key: page.GetKey(), PagedAt: controllerTime(page.GetPagedAt())})
 	}
 	return result
 }

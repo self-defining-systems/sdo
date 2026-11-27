@@ -49,7 +49,7 @@ message LifecycleEvent {
   string event_id = 2 [(buf.validate.field).string.min_len = 1];
   string event = 3 [(buf.validate.field).string = {
     in: [
-      "incident_opened", "workspace_prepared",
+      "incident_opened", "alert_paged", "workspace_prepared",
       "responder_dispatched", "responder_completed", "responder_dispatch_failed", "incident_closed", "closure_committed", "incident_acknowledged"
     ]
   }];

@@ -409,6 +409,17 @@ message IncidentRequest {
   // one. Recovered on an incident holding a page is judged only after the
   // responder returned, since no detector can clear a page.
   string page = 44 [(buf.validate.field).string.max_len = 4096];
+  // Go-owned: user tests and failing user traffic outside the alert set that
+  // started failing after the join window. Each paged on its own; none joins
+  // the alert set or re-prompts the responder, and each opens the next
+  // incident if it still fails when this one closes.
+  repeated LatePage late_pages = 45;
+}
+
+// LatePage is one late user-facing failure paged on an open incident.
+message LatePage {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  google.protobuf.Timestamp paged_at = 2 [(buf.validate.field).required = true];
 }
 
 message ResponseProgress {
