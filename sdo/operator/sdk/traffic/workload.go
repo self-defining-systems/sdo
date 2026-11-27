@@ -91,9 +91,10 @@ type SLO struct {
 	// either rate violation. Defaults to two so one scheduling pause is noise.
 	// The effective floor is capped at Window so a total timeout outage fires.
 	// Set one explicitly for strict timeout objectives.
-	MinTimeouts       int      `json:"minTimeouts,omitempty"`
-	LatencyPercentile int      `json:"latencyPercentile,omitempty"`
-	MaxLatency        Duration `json:"maxLatency,omitempty"`
+	MinTimeouts       int `json:"minTimeouts,omitempty"`
+	LatencyPercentile int `json:"latencyPercentile,omitempty"`
+	// MaxLatency is also the per-run budget for health probe confirmation.
+	MaxLatency Duration `json:"maxLatency,omitempty"`
 }
 
 // WorkloadScenario selects one catalog scenario with a weight and optional

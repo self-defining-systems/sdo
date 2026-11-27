@@ -27,6 +27,7 @@ const (
 // failing, since a success.
 type failingRun struct {
 	count int
+	slow  time.Duration
 	// first and last are when the oldest and the newest of them began, and end
 	// is when the last ended.
 	first, last, end time.Time
@@ -34,14 +35,20 @@ type failingRun struct {
 
 func (s Sample) end() time.Time { return s.At.Add(s.Latency) }
 
-// failed reports a sample that says the application failed.
-func (s Sample) failed() bool { return s.Outcome == OutcomeError || s.Outcome == OutcomeTimeout }
+// failed reports an error, timeout or completed run over the latency budget.
+func (s Sample) failed(slo SLO) bool {
+	return s.Outcome == OutcomeError || s.Outcome == OutcomeTimeout || s.slow(slo)
+}
+
+func (s Sample) slow(slo SLO) bool {
+	return s.Outcome == OutcomeOK && slo.MaxLatency > 0 && s.Latency > slo.MaxLatency.Duration()
+}
 
 // currentRun is the scenario's failing run at now; its count is zero when the
 // newest usable sample succeeded, or when no success precedes the run. Samples
 // are ordered by their start: a request that hangs does not hide a later
 // success, and one that began before the failure does not refute it.
-func currentRun(observed ScenarioObservations, maxAge time.Duration, now time.Time) failingRun {
+func currentRun(observed ScenarioObservations, slo SLO, now time.Time) failingRun {
 	ordered := make([]Sample, 0, len(observed.Samples)+len(observed.Confirming))
 	for _, sample := range slices.Concat(observed.Samples, observed.Confirming) {
 		if sample.Outcome != OutcomeInvalid {
@@ -52,16 +59,19 @@ func currentRun(observed ScenarioObservations, maxAge time.Duration, now time.Ti
 	var run failingRun
 	for i := len(ordered) - 1; i >= 0; i-- {
 		sample := ordered[i]
-		if sample.Outcome == OutcomeOK {
+		if !sample.failed(slo) {
 			return run
 		}
-		if now.Sub(sample.At) > maxAge {
+		if now.Sub(sample.At) > slo.MaxAge.Duration() {
 			continue
 		}
 		if run.count == 0 {
 			run.last = sample.At
 		}
 		run.count++
+		if sample.slow(slo) {
+			run.slow = max(run.slow, sample.Latency)
+		}
 		run.first = sample.At
 		if end := sample.end(); end.After(run.end) {
 			run.end = end
@@ -73,7 +83,7 @@ func currentRun(observed ScenarioObservations, maxAge time.Duration, now time.Ti
 // StartsFailing reports whether a qualified scenario's newest usable sample
 // failed right after a success, so it is worth sampling again now.
 func StartsFailing(observed ScenarioObservations, slo SLO, now time.Time) bool {
-	return observed.Qualified && currentRun(observed, slo.MaxAge.Duration(), now).count == 1
+	return observed.Qualified && currentRun(observed, slo, now).count == 1
 }
 
 // ConfirmedFailures are the scenarios whose failure needs no further samples,
@@ -87,6 +97,7 @@ func ConfirmedFailures(windows map[string]Window) map[string]string {
 		key, scenario string
 		userTest      bool
 		run           failingRun
+		budget        time.Duration
 	}
 	var failing []candidate
 	for name, window := range windows {
@@ -99,8 +110,8 @@ func ConfirmedFailures(windows map[string]Window) map[string]string {
 				continue
 			}
 			slo := window.Workload.ScenarioSLO(id)
-			if run := currentRun(observed, slo.MaxAge.Duration(), window.ObservedAt); run.count > 0 {
-				failing = append(failing, candidate{name + "/" + id, id, observed.UserTest, run})
+			if run := currentRun(observed, slo, window.ObservedAt); run.count > 0 {
+				failing = append(failing, candidate{name + "/" + id, id, observed.UserTest, run, slo.MaxLatency.Duration()})
 			}
 		}
 	}
@@ -130,6 +141,11 @@ func ConfirmedFailures(windows map[string]Window) map[string]string {
 					confirmed[pair[0].key] = "failing at the same time as " + pair[1].key
 				}
 			}
+		}
+	}
+	for _, one := range failing {
+		if reason := confirmed[one.key]; reason != "" && one.run.slow > 0 {
+			confirmed[one.key] = fmt.Sprintf("%s (iteration latency %s > %s)", reason, one.run.slow.Round(time.Millisecond), one.budget)
 		}
 	}
 	return confirmed
@@ -167,7 +183,7 @@ func (c *confirmer) start(scenario string) bool {
 // run samples scenario again confirmDelay after its first failing sample
 // ended, and once more confirmStallSpan after it began unless the failure spans that
 // already. It stops at the first sample that is not a failure.
-func (c *confirmer) run(ctx context.Context, scenario string, first Sample) {
+func (c *confirmer) run(ctx context.Context, scenario string, first Sample, slo SLO) {
 	defer func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -194,7 +210,7 @@ func (c *confirmer) run(ctx context.Context, scenario string, first Sample) {
 			return
 		}
 		c.emit(scenario, sample)
-		if !sample.failed() || sample.At.Sub(first.At) >= confirmStallSpan {
+		if !sample.failed(slo) || sample.At.Sub(first.At) >= confirmStallSpan {
 			return
 		}
 	}

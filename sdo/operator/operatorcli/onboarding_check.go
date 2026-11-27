@@ -73,6 +73,8 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          --quiet-evaluations (3) times past its own clearing horizon; the derived
          length is printed when the first verdict arrives, and --quiet-window
          is only the cap (a detector short of its judgements at the cap is red).
+         A health probe run over maxLatency triggers the same immediate
+         confirmation as a failed request.
          quiet-when-healthy evaluates the memory's detectors (test-request
          scenarios and the request-metrics detector included) against the live
          application every --quiet-interval for --quiet-window (0 skips) and is

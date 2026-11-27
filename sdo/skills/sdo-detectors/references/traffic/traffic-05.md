@@ -211,9 +211,10 @@ type SLO struct {
 	// either rate violation. Defaults to two so one scheduling pause is noise.
 	// The effective floor is capped at Window so a total timeout outage fires.
 	// Set one explicitly for strict timeout objectives.
-	MinTimeouts       int      `json:"minTimeouts,omitempty"`
-	LatencyPercentile int      `json:"latencyPercentile,omitempty"`
-	MaxLatency        Duration `json:"maxLatency,omitempty"`
+	MinTimeouts       int `json:"minTimeouts,omitempty"`
+	LatencyPercentile int `json:"latencyPercentile,omitempty"`
+	// MaxLatency is also the per-run budget for health probe confirmation.
+	MaxLatency Duration `json:"maxLatency,omitempty"`
 }
     SLO bounds a scenario's recent behaviour. Zero fields inherit the workload's
     SLO, and then the package defaults. The default latency bound applies to
@@ -249,10 +250,4 @@ type SLOVerdict struct {
 	FailureSpan time.Duration
 }
     SLOVerdict is one scenario's SLO judgement over its recent samples.
-
-func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVerdict
-    Evaluate judges samples (oldest first) of one scenario at now. Invalid
-    samples and samples older than the SLO's maxAge are ignored, only the
-    latest window samples count, and fewer than minSamples leaves the scenario
-    unevaluated, which is healthy.
 ```

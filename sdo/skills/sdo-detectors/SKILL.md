@@ -48,7 +48,8 @@ only if it has a scenario):
    too little.
 4. Detect by correctness first; a latency bound is a backstop. Time whole scenarios over at least 20 healthy
    iterations and set `maxLatency` to the larger of three times the slowest and 1 s. Record fastest, median,
-   slowest and the bound in a `Calibration` section of the health-objective playbook.
+   slowest and the bound in a `Calibration` section of the health-objective playbook. A run over `maxLatency`
+   starts the same immediate confirmation as an error.
 
 ## Detectors
 
