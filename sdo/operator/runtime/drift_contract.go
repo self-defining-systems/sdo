@@ -8,7 +8,7 @@ import (
 func driftEventsState(items []*contracts.DriftEvent) []sdk.DriftEvent {
 	var events []sdk.DriftEvent
 	for _, item := range items {
-		event := sdk.DriftEvent{Ref: objectRefState(item.GetRef()), Source: item.GetSource(), Manager: item.GetManager(), Operation: item.GetOperation(), ObservedAt: controllerTime(item.GetObservedAt()), Classification: sdk.DriftClassification(item.GetClassification()), ProgramID: item.GetProgramId(), InvestigationVerdict: item.GetInvestigationVerdict(), InvestigationReason: item.GetInvestigationReason(), InvestigationStatus: item.GetInvestigationStatus(), InvestigationCaptureID: item.GetInvestigationCaptureId()}
+		event := sdk.DriftEvent{Ref: objectRefState(item.GetRef()), Source: item.GetSource(), Manager: item.GetManager(), Operation: item.GetOperation(), ObservedAt: controllerTime(item.GetObservedAt()), Classification: sdk.DriftClassification(item.GetClassification()), ProgramID: item.GetProgramId(), InvestigationVerdict: item.GetInvestigationVerdict(), InvestigationReason: item.GetInvestigationReason(), InvestigationStatus: item.GetInvestigationStatus(), InvestigationCaptureID: item.GetInvestigationCaptureId(), SeenHealthy: item.GetSeenHealthy()}
 		if item.GetManagerAt() != nil {
 			at := controllerTime(item.GetManagerAt())
 			event.ManagerAt = &at

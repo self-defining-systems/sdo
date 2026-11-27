@@ -65,6 +65,9 @@ message DriftEvent {
   string investigation_reason = 12;
   repeated DriftEvidence investigation_evidence = 13;
   string investigation_capture_id = 14 [(controller_owned) = true];
+  // The change was present while the application then stayed healthy for a
+  // settle window, so the automatic stage does not restore it.
+  bool seen_healthy = 15 [(controller_owned) = true];
 }
 
 message DriftEvidence {

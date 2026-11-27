@@ -36,6 +36,9 @@ type SourceDeparture struct {
 	Manager string
 	// At is when the manager wrote; zero when the object is gone and nothing records it.
 	At time.Time
+	// SeenHealthy is a change already present while the application then stayed
+	// healthy (sdk.DriftEvent).
+	SeenHealthy bool
 	// Unattributed is a missing object no drift event explains: shown as plain
 	// information, with no claim about who removed it and no restore command.
 	Unattributed bool
@@ -171,7 +174,7 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 			}
 			continue
 		}
-		departure.Manager = event.Manager
+		departure.Manager, departure.SeenHealthy = event.Manager, event.SeenHealthy
 		departure.At = event.ObservedAt
 		if event.ManagerAt != nil {
 			departure.At = *event.ManagerAt

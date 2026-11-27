@@ -42,8 +42,8 @@ func stagePlanRefused(report *contracts.StageReport) bool {
 // but not new evidence. A finding the earlier attempt did not target is.
 const stageIneffective = "ineffective"
 
-// stageBuiltinRestoreManual skips the built-in source-restore playbook, which
-// the stage applies only when response.builtin_restore_auto is set.
+// stageBuiltinRestoreManual skips the built-in source-restore playbook when
+// response.builtin_restore_auto (on by default) is switched off.
 const stageBuiltinRestoreManual = "builtin_restore_manual"
 
 // stageIneffectiveTargets maps a program revision to the findings it applied
@@ -130,6 +130,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if prior := deterministicStageReport(state.PriorStages); prior.GetHandoffSelected() {
 		return proto.Clone(prior).(*contracts.StageReport), nil
 	}
+	ctx = forAutomaticRestore(ctx)
 	report := &contracts.StageReport{Stage: stage.Name(), StartedAt: contractTimestamp(lifecycleio.Now().UTC())}
 	page := pageOpened(&state.Request)
 	if stage.NewLoop == nil {

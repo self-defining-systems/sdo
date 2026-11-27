@@ -239,6 +239,9 @@ message ControllerState {
   // Recent healthy start-to-Ready times per workload, so a restart keeps what
   // the install has learned about how long its workloads take to start.
   repeated StartupObservation startup_observations = 53;
+  // When the application's last settled healthy stretch began. A drift event
+  // observed by then was present while the application stayed healthy.
+  google.protobuf.Timestamp healthy_since = 54;
   reserved 32, 33, 34, 45;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors", "verification_deadline_at";
 }

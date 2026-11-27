@@ -35,9 +35,21 @@ func (e *sourceRestoreEvidence) set(request IncidentRequest) {
 	e.request = request
 }
 
+// automaticRestoreKey marks the context of the automatic response stage.
+type automaticRestoreKey struct{}
+
+// forAutomaticRestore makes the built-in playbook count only departures not
+// present while the application was last healthy: such a change did not break
+// it, and restoring it would restart a component for nothing.
+func forAutomaticRestore(ctx context.Context) context.Context {
+	return context.WithValue(ctx, automaticRestoreKey{}, true)
+}
+
 // departures is the shared classifier over the component's objects, restricted
-// to what a restore can reach (a Secret is never restored from here).
-func (e *sourceRestoreEvidence) departures(view program.ReadView, componentName string) ([]SourceDeparture, error) {
+// to what a restore can reach (a Secret is never restored from here) and, for
+// the automatic stage, to what was not seen healthy.
+func (e *sourceRestoreEvidence) departures(ctx context.Context, view program.ReadView, componentName string) ([]SourceDeparture, error) {
+	automatic := ctx.Value(automaticRestoreKey{}) != nil
 	e.mu.Lock()
 	request := e.request
 	e.mu.Unlock()
@@ -56,7 +68,7 @@ func (e *sourceRestoreEvidence) departures(view program.ReadView, componentName 
 	set := buildSuspectSet(detectInput{Request: request, View: view})
 	var restorable []SourceDeparture
 	for _, departure := range SourceDepartures(departureInput(request, view, set.onset), componentObjects(view, component, namespace)) {
-		if departure.Command() != "" {
+		if departure.Command() != "" && !(automatic && departure.SeenHealthy) {
 			restorable = append(restorable, departure)
 		}
 	}
@@ -78,8 +90,8 @@ func restoreComponent(bindings program.Bindings) string {
 
 // Diagnose matches when the component has a departure from accepted source made
 // by a manager other than SDO since the last deployment (SourceDepartures).
-func (p sourceRestoreProgram) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
-	departures, err := p.evidence.departures(view, restoreComponent(bindings))
+func (p sourceRestoreProgram) Diagnose(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
+	departures, err := p.evidence.departures(ctx, view, restoreComponent(bindings))
 	if err != nil {
 		return program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "source comparison", Observed: err.Error(), Expected: "readable"}}}, nil
 	}
@@ -95,8 +107,8 @@ func (p sourceRestoreProgram) Diagnose(_ context.Context, view program.ReadView,
 
 // Mitigate restores each departed object with the built-in source actions:
 // ReconcileFromSource, CreateFromSource, or DeleteObject for a source-absent object.
-func (p sourceRestoreProgram) Mitigate(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Plan, error) {
-	departures, err := p.evidence.departures(view, restoreComponent(bindings))
+func (p sourceRestoreProgram) Mitigate(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Plan, error) {
+	departures, err := p.evidence.departures(ctx, view, restoreComponent(bindings))
 	if err != nil {
 		return program.Plan{}, err
 	}
