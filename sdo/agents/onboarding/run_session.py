@@ -18,7 +18,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from typing import TextIO
+    from typing import IO
 
 GOAL = ".sdo/goal.md"
 
@@ -77,16 +77,16 @@ def check_export(repo: Path, base: str, operator: str) -> str:
     return commit
 
 
-def send_message(stream: TextIO, message: str) -> None:
+def send_message(stream: IO[str], message: str) -> None:
     frame = {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": message}]}}
     stream.write(json.dumps(frame) + "\n")
     stream.flush()
 
 
 def finish_turn(
-    stdin: TextIO,
-    stdout: TextIO,
-    transcript: TextIO,
+    stdin: IO[str],
+    stdout: IO[str],
+    transcript: IO[str],
     repo: Path,
     base: str,
     operator: str,
@@ -148,7 +148,7 @@ def run_session(
     base: str,
     operator: str,
     prompt: str,
-    transcript: TextIO,
+    transcript: IO[str],
     cli_args: list[str],
 ) -> str:
     command = [
