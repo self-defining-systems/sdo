@@ -48,16 +48,21 @@ func (k Kind) Dials() bool { return k == TCPConnect || k == HTTPGet }
 
 // Limits bound declarations, fan-out, retained output and the collection
 // cycle, like podread: a probe can neither load the application nor stall
-// the controller's evaluation loop.
+// the controller's evaluation loop. MaxProbes is a load budget as
+// podread.MaxQueries is: at most that many probe runs per MinInterval on
+// average (see Load) and at most that many probes started in one cycle; a due
+// probe beyond it keeps its last answer and runs in a later cycle, least
+// recently read first. MaxDeclaredProbes bounds the declarations.
 const (
-	MaxProbes        = 16
-	MaxTargets       = podread.MaxTargets
-	MaxIDBytes       = 128
-	LimitBytes       = 16 * 1024
-	MaxConcurrent    = 4
-	MinInterval      = 30 * time.Second
-	ExecTimeout      = 6 * time.Second
-	CollectionBudget = 8 * time.Second
+	MaxProbes         = 16
+	MaxDeclaredProbes = 64
+	MaxTargets        = podread.MaxTargets
+	MaxIDBytes        = 128
+	LimitBytes        = 16 * 1024
+	MaxConcurrent     = 4
+	MinInterval       = 30 * time.Second
+	ExecTimeout       = 6 * time.Second
+	CollectionBudget  = 8 * time.Second
 	// DialsPerProbe dials are made per probe run, each within DialTimeout.
 	DialsPerProbe = 4
 	DialTimeout   = time.Second
@@ -131,10 +136,22 @@ func (p Probe) Validate() error {
 // Consumer declares a detector's vantage probes. It must watch v1 Pod.
 type Consumer interface{ VantageProbes() []Probe }
 
+// Load is the probes' average runs per MinInterval: each counts
+// MinInterval/Interval.
+func Load(probes []Probe) float64 {
+	var load float64
+	for _, probe := range probes {
+		if probe.Interval > 0 {
+			load += float64(MinInterval) / float64(probe.Interval)
+		}
+	}
+	return load
+}
+
 // ValidateProbes rejects malformed, duplicate or excessive declarations.
 func ValidateProbes(probes []Probe) error {
-	if len(probes) > MaxProbes {
-		return fmt.Errorf("vantage probes exceed %d", MaxProbes)
+	if len(probes) > MaxDeclaredProbes {
+		return fmt.Errorf("vantage probes exceed %d declarations", MaxDeclaredProbes)
 	}
 	seen := map[string]bool{}
 	for _, probe := range probes {
@@ -145,6 +162,9 @@ func ValidateProbes(probes []Probe) error {
 			return fmt.Errorf("duplicate vantage probe %q", probe.ID)
 		}
 		seen[probe.ID] = true
+	}
+	if load := Load(probes); load > MaxProbes+1e-9 {
+		return fmt.Errorf("vantage probes exceed %d: they load %.2f runs per %s; lengthen intervals or drop probes", MaxProbes, load, MinInterval)
 	}
 	return nil
 }

@@ -2,10 +2,9 @@ package memory
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
@@ -18,30 +17,26 @@ import (
 // installs from the application map; the rest of the ID is the component.
 const StoreStateDetectorPrefix = "store-state-"
 
-// MaxStoreStateDetectors bounds the store reads Go installs. Each is one pod
-// read, and pod reads share podread.MaxQueries with the designer's own, so Go
-// takes at most half of that budget.
-const MaxStoreStateDetectors = podread.MaxQueries / 2
+// StoreStateLoad is the pod-read load Go's store readers may use, in reads per
+// podread.MinInterval: pod reads share the podread.MaxQueries load budget with
+// the designer's own, so Go takes half of it. Every readable store gets a
+// reader; more readers mean longer intervals (readMultiples), not fewer readers.
+const StoreStateLoad = podread.MaxQueries / 2
 
-// storeStateInterval is the detector and pod-read interval of a Go-installed
-// store reader: the pod-read floor.
-const storeStateInterval = podread.MinInterval
+// MaxStoreStateDetectors bounds the store readers Go declares: half of
+// podread.MaxDeclaredQueries. Only past it does ranking decide which exist.
+const MaxStoreStateDetectors = podread.MaxDeclaredQueries / 2
 
 // plannedStoreStateDetectors lists one store-state detector per application
-// map component whose data.engine has a storestate adapter, authoritative
-// stores first, then by name, capped at MaxStoreStateDetectors. A missing or
-// unreadable map plans none: the shared check reports the map itself.
+// map component whose data.engine has a storestate adapter: stores a probed
+// user operation depends on first (only they can explain a failing user
+// request; appmap.ComponentCoverage.Probed), then authoritative stores, then
+// by name. Their intervals fit StoreStateLoad with the probed stores read
+// most often. A missing or unreadable map plans none: the shared check reports
+// the map itself.
 func plannedStoreStateDetectors(root string) []plannedDetector {
-	data, err := os.ReadFile(filepath.Join(root, layout.ArchitectureFile))
-	if err != nil {
-		return nil
-	}
-	region, found, err := appmap.Find(string(data))
-	if !found || err != nil {
-		return nil
-	}
-	parsed, err := appmap.Parse(region.YAML)
-	if err != nil {
+	parsed, coverage, ok := acceptedMap(root)
+	if !ok {
 		return nil
 	}
 	var stores []appmap.Component
@@ -57,7 +52,11 @@ func plannedStoreStateDetectors(root string) []plannedDetector {
 		}
 		stores = append(stores, component)
 	}
+	probed := func(c appmap.Component) bool { return coverage.Components[c.Name].Probed() }
 	sort.SliceStable(stores, func(i, j int) bool {
+		if pi, pj := probed(stores[i]), probed(stores[j]); pi != pj {
+			return pi
+		}
 		ai, aj := stores[i].Data.Role == appmap.RoleAuthoritative, stores[j].Data.Role == appmap.RoleAuthoritative
 		if ai != aj {
 			return ai
@@ -67,19 +66,30 @@ func plannedStoreStateDetectors(root string) []plannedDetector {
 	if len(stores) > MaxStoreStateDetectors {
 		stores = stores[:MaxStoreStateDetectors]
 	}
+	onPath := 0
+	for _, component := range stores {
+		if probed(component) {
+			onPath++
+		}
+	}
+	kp, ku := readMultiples(onPath, len(stores)-onPath, StoreStateLoad)
 	planned := make([]plannedDetector, 0, len(stores))
 	for _, component := range stores {
 		id := StoreStateDetectorPrefix + component.Name
+		interval := time.Duration(ku) * podread.MinInterval
+		if probed(component) {
+			interval = time.Duration(kp) * podread.MinInterval
+		}
 		config := storestate.Config{
-			Spec:      sdk.DetectorSpec{ID: id, Interval: storeStateInterval},
+			Spec:      sdk.DetectorSpec{ID: id, Interval: interval},
 			Component: component.Name, Engine: storestate.Engine(component.Data.Engine),
-			Target: podread.Target{Workload: component.Workload}, ReadInterval: storeStateInterval, GapWithoutBaseline: true,
+			Target: podread.Target{Workload: component.Workload}, ReadInterval: interval, GapWithoutBaseline: true,
 		}
 		// The generated constructor cannot fail on a config that passes here.
 		if _, err := storestate.NewDetector(config); err != nil {
 			continue
 		}
-		manifest := genericManifest(id, storeStateInterval.String(), []layout.Watch{{APIVersion: "v1", Kind: "Pod"}})
+		manifest := genericManifest(id, interval.String(), []layout.Watch{{APIVersion: "v1", Kind: "Pod"}})
 		planned = append(planned, plannedDetector{manifest, storeStateSource(id, config)})
 	}
 	return planned
@@ -129,7 +139,7 @@ func New() sdk.Detector {
 	}
 	return d
 }
-`, genericSpec(id), int(storeStateInterval.Seconds()), c.Component, string(c.Engine), c.Target.Workload, int(c.ReadInterval.Seconds()))
+`, genericSpec(id), int(c.Spec.Interval.Seconds()), c.Component, string(c.Engine), c.Target.Workload, int(c.ReadInterval.Seconds()))
 }
 
 func isStoreStateDetector(id string) bool { return strings.HasPrefix(id, StoreStateDetectorPrefix) }

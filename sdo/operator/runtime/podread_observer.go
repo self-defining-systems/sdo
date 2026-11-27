@@ -95,7 +95,10 @@ func (r podReadResults) PodReadResults() map[string]podread.Result {
 	return out
 }
 
-const podReadNotStarted = "skipped: pod-read collection budget ended before this read started"
+const (
+	podReadNotStarted = "skipped: pod-read collection budget ended before this read started"
+	podReadDeferred   = "not read yet: the pod reads due this cycle exceed podread.MaxQueries; it runs in a later cycle"
+)
 
 // podReadJob is one command in one selected container.
 type podReadJob struct {
@@ -108,7 +111,10 @@ type podReadJob struct {
 
 // collect runs the due queries in two waves under one collection budget: the
 // plain queries, then each lookup (podread.Keys) whose source ran, with the
-// keys that source printed. A lookup otherwise keeps its last answer.
+// keys that source printed. A lookup otherwise keeps its last answer. A cycle
+// starts at most podread.MaxQueries queries, lookups counted with their
+// source; the due queries beyond it rotate into later cycles (rotate) and keep
+// their last answer until then.
 func (o *PodReadObserver) collect(ctx context.Context, base sdk.DetectionContext) map[string]podread.Result {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -118,10 +124,33 @@ func (o *PodReadObserver) collect(ctx context.Context, base sdk.DetectionContext
 	sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
 	ctx, cancel := context.WithTimeout(ctx, podread.CollectionBudget)
 	defer cancel()
+	lookups := map[string]int{}
+	for _, query := range o.queries {
+		if query.Keys != nil {
+			lookups[query.Keys.From]++
+		}
+	}
+	var candidates []dueRead
+	for i, query := range o.queries {
+		if query.Keys == nil && o.wouldRun(query, pods, base.Namespace(), now) {
+			candidates = append(candidates, dueRead{index: i, last: o.last[query.ID].at, cost: 1 + lookups[query.ID]})
+		}
+	}
+	start := rotate(candidates, podread.MaxQueries)
+	used := 0
+	deferred := map[string]bool{}
 	due := map[string]bool{}
 	var jobs []podReadJob
-	for _, query := range o.queries {
-		if query.Keys == nil {
+	for i, query := range o.queries {
+		switch {
+		case query.Keys != nil:
+		case start[i]:
+			used += 1 + lookups[query.ID]
+			jobs = append(jobs, o.plan(query, false, pods, base.Namespace(), now, results, due)...)
+		case o.wouldRun(query, pods, base.Namespace(), now):
+			deferred[query.ID] = true
+			o.deferRead(query, pods, base.Namespace(), results)
+		default:
 			jobs = append(jobs, o.plan(query, false, pods, base.Namespace(), now, results, due)...)
 		}
 	}
@@ -129,6 +158,10 @@ func (o *PodReadObserver) collect(ctx context.Context, base sdk.DetectionContext
 	jobs = nil
 	for _, query := range o.queries {
 		if query.Keys == nil {
+			continue
+		}
+		if deferred[query.Keys.From] {
+			o.deferRead(query, pods, base.Namespace(), results)
 			continue
 		}
 		fresh := due[query.Keys.From]
@@ -140,6 +173,14 @@ func (o *PodReadObserver) collect(ctx context.Context, base sdk.DetectionContext
 			}
 			query.Args = podread.ExpandKeys(query.Args, keys)
 		}
+		if !fresh && o.wouldRun(query, pods, base.Namespace(), now) {
+			// A lookup that runs without its source was not counted with it.
+			if used >= podread.MaxQueries {
+				o.deferRead(query, pods, base.Namespace(), results)
+				continue
+			}
+			used++
+		}
 		jobs = append(jobs, o.plan(query, fresh, pods, base.Namespace(), now, results, due)...)
 	}
 	o.run(ctx, jobs, results)
@@ -149,6 +190,27 @@ func (o *PodReadObserver) collect(ctx context.Context, base sdk.DetectionContext
 		}
 	}
 	return results
+}
+
+// wouldRun reports whether the query is due now and has Pods to read.
+func (o *PodReadObserver) wouldRun(query podread.Query, pods []corev1.Pod, namespace string, now time.Time) bool {
+	selected := selectPodReadTargets(query, pods, namespace)
+	if len(selected) == 0 || len(selected) > podread.MaxTargets {
+		return false
+	}
+	retained, ran := o.last[query.ID]
+	return !ran || now.Sub(retained.at) >= query.Interval || len(keepObservedReadings(retained.result.Readings, selected)) == 0
+}
+
+// deferRead records the last answer of a due query this cycle does not start,
+// or an explicit unavailable reading when it has none.
+func (o *PodReadObserver) deferRead(query podread.Query, pods []corev1.Pod, namespace string, results map[string]podread.Result) {
+	retained := o.last[query.ID].result
+	retained.Readings = keepObservedReadings(retained.Readings, selectPodReadTargets(query, pods, namespace))
+	if len(retained.Readings) == 0 {
+		retained = podread.Result{Query: query, Error: podReadDeferred}
+	}
+	results[query.ID] = retained
 }
 
 // collectFresh runs every query now, ignoring retained answers. An app-state

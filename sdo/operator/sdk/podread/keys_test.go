@@ -1,6 +1,7 @@
 package podread_test
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -53,6 +54,37 @@ func TestLookupDeclarationsAreBounded(t *testing.T) {
 	chained.ID, chained.Keys = "second", &podread.Keys{From: "lookup", Prefix: "K\t", Max: 1}
 	if err := podread.ValidateQueries([]podread.Query{query(), lookup(), chained}); err == nil {
 		t.Fatal("a lookup of a lookup was accepted")
+	}
+}
+
+// A read and its lookups start in the same cycle, so together they must fit
+// the per-cycle limit: a larger group would be accepted by its average load
+// and then never start.
+func TestLookupsFitTheirSourcesCycle(t *testing.T) {
+	declare := func(lookups int) []podread.Query {
+		source := query()
+		source.Interval = 10 * time.Minute
+		qs := []podread.Query{source}
+		for i := range lookups {
+			q := lookup()
+			q.ID, q.Interval = fmt.Sprintf("lookup-%d", i), source.Interval
+			qs = append(qs, q)
+		}
+		return qs
+	}
+	if err := podread.ValidateQueries(declare(podread.MaxQueries - 1)); err != nil {
+		t.Fatalf("a group that fills one cycle: %v", err)
+	}
+	for _, lookups := range []int{podread.MaxQueries, 20} {
+		err := podread.ValidateQueries(declare(lookups))
+		if err == nil {
+			t.Fatalf("accepted a read with %d lookups, which no cycle can start", lookups)
+		}
+		for _, want := range []string{`"policy"`, fmt.Sprint(lookups), fmt.Sprint(podread.MaxQueries)} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %s", err, want)
+			}
+		}
 	}
 }
 

@@ -8,8 +8,8 @@ import (
 
 // Coverage says, per component, whether a probed user operation observes it.
 // It is the one computation of probe coverage: the designer's install
-// obligation (map.coverage), the designer brief and the client-link ordering
-// all read it.
+// obligation (map.coverage), the designer brief and the read frequency of Go's
+// store readers and client links all read it.
 type Coverage struct {
 	Components map[string]ComponentCoverage
 	// ExposedEntries is true when the entries are the Services the manifests
@@ -32,6 +32,21 @@ type ComponentCoverage struct {
 	// Unprobed is the designer's recorded reason no user operation can be
 	// probed through the component.
 	Unprobed string
+	// BrokenProbes are the scenario IDs of the probes a workload declares
+	// knownBroken whose operation path includes the component, sorted. They
+	// satisfy no obligation, but the path is still a user path.
+	BrokenProbes []string
+	// DependedOn is true when the component is on no operation's path but a
+	// component on a probed path reaches it over mapped edges: a registry,
+	// discovery or config service the requests depend on, and what it depends on.
+	DependedOn bool
+}
+
+// Probed reports whether a probed user operation depends on the component:
+// its path includes it (knownBroken probes included, since a broken path is
+// when its stores matter most), or it is a dependency of such a path.
+func (c ComponentCoverage) Probed() bool {
+	return len(c.Probes) > 0 || len(c.BrokenProbes) > 0 || c.DependedOn
 }
 
 // Obligation reports whether the designer still owes the component a covering
@@ -116,9 +131,6 @@ func (m Map) Coverage(inv Inventory, workloads []Workload) Coverage {
 	}
 	ops := opPaths(m.Operations)
 	for _, p := range m.Probes {
-		if knownBroken[p.Scenario] {
-			continue
-		}
 		for _, id := range p.Operations {
 			op, ok := ops[id]
 			if !ok || !entryServices[op.Entry.Service] || containsInt(inv.MetricsPorts[op.Entry.Service], op.Entry.Port) {
@@ -126,16 +138,61 @@ func (m Map) Coverage(inv Inventory, workloads []Workload) Coverage {
 			}
 			for _, name := range op.Path {
 				c, ok := out.Components[name]
-				if !ok || slicesContains(c.Probes, p.Scenario) {
+				if !ok {
 					continue
 				}
-				c.Probes = append(c.Probes, p.Scenario)
-				sort.Strings(c.Probes)
+				list := &c.Probes
+				if knownBroken[p.Scenario] {
+					list = &c.BrokenProbes
+				}
+				if slicesContains(*list, p.Scenario) {
+					continue
+				}
+				*list = append(*list, p.Scenario)
+				sort.Strings(*list)
 				out.Components[name] = c
 			}
 		}
 	}
+	out.markDependencies(m)
 	return out
+}
+
+// markDependencies marks DependedOn on each component on no operation's path
+// that a component on a probed path reaches over mapped edges. A request hop
+// is probed only by a probe whose path lists it; possible edges are unconfirmed
+// and never count.
+func (c Coverage) markDependencies(m Map) {
+	hop := map[string]bool{}
+	for _, op := range m.Operations {
+		for _, name := range op.Path {
+			hop[name] = true
+		}
+	}
+	calls := map[string][]string{}
+	for _, e := range m.Edges {
+		calls[e.From] = append(calls[e.From], e.To)
+	}
+	var queue []string
+	for name, comp := range c.Components {
+		if len(comp.Probes) > 0 || len(comp.BrokenProbes) > 0 {
+			queue = append(queue, name)
+		}
+	}
+	sort.Strings(queue)
+	for len(queue) > 0 {
+		next := queue[0]
+		queue = queue[1:]
+		for _, to := range calls[next] {
+			comp, ok := c.Components[to]
+			if !ok || hop[to] || comp.DependedOn {
+				continue
+			}
+			comp.DependedOn = true
+			c.Components[to] = comp
+			queue = append(queue, to)
+		}
+	}
 }
 
 // Obligations lists, sorted, the components the designer still owes a
