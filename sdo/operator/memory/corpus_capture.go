@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/safefs"
 	"slices"
 	"strings"
 	"sync"
@@ -39,10 +41,10 @@ func AppendCapturedRecordings(repositoryMount, incidentID, phase string, added [
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, phase+"-recordings.json")
+	recordings := filepath.Join(dir, phase+"-recordings.json")
 	capturedRecordingsMu.Lock()
 	defer capturedRecordingsMu.Unlock()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(recordings)
 	if err != nil {
 		return err
 	}
@@ -85,19 +87,11 @@ func AppendCapturedRecordings(repositoryMount, incidentID, phase string, added [
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(dir, ".recordings-*")
+	rel, err := safefs.Rel(repositoryMount, recordings)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return safefs.WriteFile(repositoryMount, rel, data, 0600)
 }
 
 // firstObservationKey identifies a state read within its phase. Catalogs are
@@ -336,46 +330,31 @@ func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
 	if phase == "open" || strings.HasPrefix(phase, "open@") {
 		recordingName := "recordings.json"
 		if phase != "open" {
 			recordingName = phase + "-recordings.json"
 		}
-		if err := writeCapturedFile(filepath.Join(dir, recordingName), []byte("[]")); err != nil {
+		if err := CreateCaptureFile(repositoryMount, filepath.Join(dir, recordingName), []byte("[]")); err != nil {
 			return err
 		}
 	}
-	return writeCapturedFile(filepath.Join(dir, phase+".json"), data)
+	return CreateCaptureFile(repositoryMount, filepath.Join(dir, phase+".json"), data)
 }
 
-func writeCapturedFile(path string, data []byte) error {
-	file, err := os.CreateTemp(filepath.Dir(path), ".capture-*")
+// CreateCaptureFile publishes one write-once file below an incident capture
+// directory; an existing file keeps its content. The responder's pod mounts the
+// session directory above it writable, so every capture write is confined to
+// the operator's mount and refuses links.
+func CreateCaptureFile(repositoryMount, file string, data []byte) error {
+	rel, err := safefs.Rel(repositoryMount, file)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(data); err != nil {
-		file.Close()
+	if err := safefs.MkdirAll(repositoryMount, path.Dir(rel), 0700); err != nil {
 		return err
 	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Chmod(0444); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	if err := os.Link(file.Name(), path); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
-	}
-	return nil
+	return safefs.CreateFile(repositoryMount, rel, data, 0444)
 }
 
 // CaptureRepairedProgramReads records fresh answers at the controller's verified

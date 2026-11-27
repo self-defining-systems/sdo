@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 
+	"sdo.dev/operator/safefs"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -27,31 +29,14 @@ func CaptureHealthyBaseline(root, revision string, view sdk.DetectionContext, na
 	if err != nil {
 		return err
 	}
-	path := healthyBaselinePath(root, revision)
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".healthy-*")
+	rel, err := safefs.Rel(root, healthyBaselinePath(root, revision))
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(raw); err != nil {
-		file.Close()
+	if err := safefs.MkdirAll(root, path.Dir(rel), 0700); err != nil {
 		return err
 	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Chmod(0444); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return safefs.WriteSyncedFile(root, rel, raw, 0444)
 }
 
 // BindIncidentHealthyBaseline freezes the pre-incident reference. A later
@@ -69,23 +54,20 @@ func BindIncidentHealthyBaseline(root, revision, incidentID string) error {
 		return err
 	}
 	dir = filepath.Join(dir, "healthy")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := CreateCaptureFile(root, filepath.Join(dir, "healthy.json"), raw); err != nil {
 		return err
 	}
-	if err := writeCapturedFile(filepath.Join(dir, "healthy.json"), raw); err != nil {
-		return err
-	}
-	return writeCapturedFile(filepath.Join(dir, "reference"), []byte(revision+"\n"))
+	return CreateCaptureFile(root, filepath.Join(dir, "reference"), []byte(revision+"\n"))
 }
 
 // RemoveHealthyBaseline prunes an obsolete candidate. Incident references are
 // independent frozen files and remain intact after this private capture expires.
 func RemoveHealthyBaseline(root, reference string) error {
-	err := os.Remove(healthyBaselinePath(root, reference))
-	if os.IsNotExist(err) {
-		return nil
+	rel, err := safefs.Rel(root, healthyBaselinePath(root, reference))
+	if err != nil {
+		return err
 	}
-	return err
+	return safefs.Remove(root, rel)
 }
 
 // BindClosureHealthyBaseline gives an incident without a pre-incident capture
@@ -110,11 +92,8 @@ func BindClosureHealthyBaseline(root, incidentID string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(healthy, 0700); err != nil {
+	if err := CreateCaptureFile(root, filepath.Join(healthy, "healthy.json"), raw); err != nil {
 		return err
 	}
-	if err := writeCapturedFile(filepath.Join(healthy, "healthy.json"), raw); err != nil {
-		return err
-	}
-	return writeCapturedFile(filepath.Join(healthy, "reference"), []byte("closure\n"))
+	return CreateCaptureFile(root, filepath.Join(healthy, "reference"), []byte("closure\n"))
 }

@@ -46,7 +46,7 @@ type routingCaptureNote struct {
 	Detail     string `json:"detail,omitempty"`
 }
 
-func recordRoutingProbeUnavailable(dir, incidentID, phase, reason, detail string) error {
+func recordRoutingProbeUnavailable(root, dir, incidentID, phase, reason, detail string) error {
 	file := filepath.Join(dir, "routing-probe-note.json")
 	if _, err := os.Stat(file); err == nil {
 		return nil
@@ -57,7 +57,7 @@ func recordRoutingProbeUnavailable(dir, incidentID, phase, reason, detail string
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(file, data, 0444); err != nil {
+	if err := memory.CreateCaptureFile(root, file, data); err != nil {
 		return err
 	}
 	slog.Warn("routing_probe=unavailable:"+reason, "incident_id", incidentID, "phase", phase, "detail", detail)
@@ -101,7 +101,7 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 		if !ok {
 			reason = "read_view_not_live"
 		}
-		return recordRoutingProbeUnavailable(dir, incidentID, phase, reason, "")
+		return recordRoutingProbeUnavailable(root, dir, incidentID, phase, reason, "")
 	}
 	live.DetectionContext = snapshot
 	destinations := []string{phase}
@@ -148,7 +148,7 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 		if budget.Err() != nil {
 			skipped := fmt.Sprintf("%d of %d probes skipped", len(targets)-index, len(targets))
 			if err := pinned(func() error {
-				return recordRoutingProbeUnavailable(dir, incidentID, phase, "budget_exhausted", skipped)
+				return recordRoutingProbeUnavailable(root, dir, incidentID, phase, "budget_exhausted", skipped)
 			}); err != nil {
 				return err
 			}
@@ -171,7 +171,7 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 		if probeErr != nil {
 			call.Error = probeErr.Error()
 			if err := pinned(func() error {
-				return recordRoutingProbeUnavailable(dir, incidentID, phase, "probe_failed", call.Error)
+				return recordRoutingProbeUnavailable(root, dir, incidentID, phase, "probe_failed", call.Error)
 			}); err != nil {
 				return err
 			}
@@ -189,7 +189,7 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 		// A cancelled sweep is truncated; leave no marker so it is not final.
 		return err
 	}
-	return pinned(func() error { return os.WriteFile(marker, []byte("sampled\n"), 0444) })
+	return pinned(func() error { return memory.CreateCaptureFile(root, marker, []byte("sampled\n")) })
 }
 
 func routingProbeTargets(snapshot sdktest.Snapshot, findings []sdk.Finding) []routingProbeTarget {

@@ -107,16 +107,21 @@ func MkdirAll(root, rel string, perm fs.FileMode) error {
 // WriteFile atomically replaces the regular file rel below root with data.
 // Parent directories are created. The result has exactly mode's permissions.
 func WriteFile(root, rel string, data []byte, mode fs.FileMode) error {
-	return publish(root, rel, data, mode, false)
+	return publish(root, rel, data, mode, false, false)
+}
+
+// WriteSyncedFile is WriteFile that syncs data before it replaces rel.
+func WriteSyncedFile(root, rel string, data []byte, mode fs.FileMode) error {
+	return publish(root, rel, data, mode, true, false)
 }
 
 // CreateFile is WriteFile for write-once files: it syncs data and links it into
 // place, and an existing regular file keeps its content.
 func CreateFile(root, rel string, data []byte, mode fs.FileMode) error {
-	return publish(root, rel, data, mode, true)
+	return publish(root, rel, data, mode, true, true)
 }
 
-func publish(root, rel string, data []byte, mode fs.FileMode, once bool) error {
+func publish(root, rel string, data []byte, mode fs.FileMode, sync, once bool) error {
 	rel, err := clean(rel)
 	if err != nil {
 		return err
@@ -165,7 +170,7 @@ func publish(root, rel string, data []byte, mode fs.FileMode, once bool) error {
 		_ = f.Close()
 		return err
 	}
-	if once {
+	if sync {
 		if err := f.Sync(); err != nil {
 			_ = f.Close()
 			return err
