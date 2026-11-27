@@ -296,3 +296,18 @@ func TestOperationEntryMayBeAnSSHCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderPutsEachListEntryOnOneLine(t *testing.T) {
+	m := Map{Version: Version, Components: []Component{{Name: "a", Workload: "Deployment/a", Services: []string{"s"}}, {Name: "b", Workload: "Deployment/b"}}}
+	text, err := Render(m, "# keep\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(text, "# keep\nversion: 1\ncomponents:\n  - {name: a, ") || strings.Count(text, "\n  - {") != 2 {
+		t.Fatalf("rendered:\n%s", text)
+	}
+	back, err := Parse(text)
+	if err != nil || len(back.Components) != 2 || back.Components[0].Services[0] != "s" {
+		t.Fatalf("round trip = %+v, %v", back, err)
+	}
+}

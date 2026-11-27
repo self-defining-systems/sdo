@@ -481,13 +481,13 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\x11dispatch_relation\x18\x15 \x01(\tB3\xbaH0r.R\x0fbefore_dispatchR\x0eafter_dispatchR\vno_incidentR\x10dispatchRelation\x1aj\n" +
 	"\x16ParameterBindingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
-	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\xd1\n" +
+	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\xde\n" +
 	"\n" +
 	"\x0eLifecycleEvent\x12D\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\n" +
 	"\x16sdo.lifecycle-event/v1R\rschemaVersion\x12\"\n" +
-	"\bevent_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aeventId\x12\xc4\x01\n" +
-	"\x05event\x18\x03 \x01(\tB\xad\x01\xbaH\xa9\x01r\xa6\x01R\x0fincident_openedR\x12workspace_preparedR\x14responder_dispatchedR\x13responder_completedR\x19responder_dispatch_failedR\x0fincident_closedR\x11closure_committedR\x15incident_acknowledgedR\x05event\x12C\n" +
+	"\bevent_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aeventId\x12\xd1\x01\n" +
+	"\x05event\x18\x03 \x01(\tB\xba\x01\xbaH\xb6\x01r\xb3\x01R\x0fincident_openedR\valert_pagedR\x12workspace_preparedR\x14responder_dispatchedR\x13responder_completedR\x19responder_dispatch_failedR\x0fincident_closedR\x11closure_committedR\x15incident_acknowledgedR\x05event\x12C\n" +
 	"\vrecorded_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
 	"recordedAt\x12:\n" +
 	"\x14evaluation_iteration\x18\x05 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x13evaluationIteration\x12 \n" +

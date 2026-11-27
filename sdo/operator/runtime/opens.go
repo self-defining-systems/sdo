@@ -3,12 +3,14 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
@@ -123,7 +125,8 @@ func (c *Controller) verificationOpeners(detectors []sdk.Detector, catalog []app
 }
 
 // AlertJoinWindow bounds when a new opener belongs to the same incident.
-// After the window an independent fault can open the next incident.
+// After the window an independent fault pages at once (pageLate) and opens the
+// next incident.
 const AlertJoinWindow = 5 * time.Minute
 
 // joinAlertSet admits a user test or failing user traffic into the alert set
@@ -184,6 +187,39 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 		c.withdrawRecoveryLocked(now, finding)
 	}
 	return true
+}
+
+// pageLate pages a user test or failing user traffic that starts failing
+// while an incident is open but does not join its alert set (past the join
+// window, or after the responder returned). The controller works one incident
+// at a time, and the open one can stay open as long as its responder works or
+// its own alerts keep failing, so the page cannot wait for the next incident:
+// it is recorded on the open incident (LatePages, alert_paged) when the
+// failure is detected, once per key. It never joins the alert set or
+// re-prompts a responder; the finding still waits in the batcher and opens the
+// next incident. Kubernetes conditions and clues never page late.
+func (c *Controller) pageLate(finding sdk.Finding, now time.Time) {
+	switch c.openingRole(finding, nil) {
+	case userTestOpener, userTrafficOpener:
+	default:
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	request := c.currentIncidentRequest
+	if !c.incidentOpen || request == nil {
+		return
+	}
+	key := findingKey(finding)
+	if slices.Contains(alertKeys(request), key) || slices.ContainsFunc(request.LatePages, func(page LatePage) bool { return page.Key == key }) {
+		return
+	}
+	request.LatePages = append(request.LatePages, LatePage{Key: key, PagedAt: now.UTC()})
+	slog.Info("late_alert_paged", "incident_id", request.IncidentID, "finding_key", key)
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseAlertPaged, EventId: lifecycleEventID(request.IncidentID, PhaseAlertPaged, key),
+		RecordedAt: contractTimestamp(now), IncidentId: request.IncidentID, FindingKeys: []string{key},
+	})
 }
 
 // captureJoinedAlerts stores the open state alerts joined the incident in, from

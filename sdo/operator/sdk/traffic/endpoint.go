@@ -176,7 +176,12 @@ func FromPrevious(key string) Param {
 	})
 }
 
-// Generate renders params deterministically.
+// Generate renders every parameter of one request to its string value: each
+// Param draws from rng, so the same seed gives the same values, and may read
+// State, such as a value an earlier step saved (FromPrevious). Values are
+// generated in sorted name order, and a parameter derived from another
+// (DaysAfter) after it. It returns nil for empty params and an error when a
+// generator fails or parameters depend on each other in a cycle.
 func (p Params) Generate(rng *rand.Rand, state State) (map[string]string, error) {
 	if len(p) == 0 {
 		return nil, nil

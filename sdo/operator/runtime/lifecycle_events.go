@@ -42,6 +42,10 @@ const (
 const (
 	// PhaseOpened: a batch of findings opened a new incident.
 	PhaseOpened = "incident_opened"
+	// PhaseAlertPaged: a user test or failing user traffic outside the open
+	// incident's alert set started failing after its join window and paged on
+	// its own (finding_keys names it; one event per key).
+	PhaseAlertPaged = "alert_paged"
 	// PhaseWorkspacePrepared: the broker prepared the incident's isolated worktree.
 	PhaseWorkspacePrepared = "workspace_prepared"
 	// PhaseDispatched: the responder was launched for the incident.
@@ -66,6 +70,8 @@ func phaseRank(p string) int {
 	switch p {
 	case PhaseOpened:
 		return 0
+	case PhaseAlertPaged:
+		return 1
 	case PhaseWorkspacePrepared:
 		return 3
 	case PhaseDispatched:

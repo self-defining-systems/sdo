@@ -173,7 +173,12 @@ type Params map[string]Param
     the same request (DaysAfter) come after the one they derive from.
 
 func (p Params) Generate(rng *rand.Rand, state State) (map[string]string, error)
-    Generate renders params deterministically.
+    Generate renders every parameter of one request to its string value:
+    each Param draws from rng, so the same seed gives the same values,
+    and may read State, such as a value an earlier step saved (FromPrevious).
+    Values are generated in sorted name order, and a parameter derived from
+    another (DaysAfter) after it. It returns nil for empty params and an error
+    when a generator fails or parameters depend on each other in a cycle.
 
 type Passwords interface {
 	Password(ctx context.Context, user string) (string, error)

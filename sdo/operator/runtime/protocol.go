@@ -53,6 +53,12 @@ type PriorOutcomeEvidence struct {
 	ExactSourceMatch      bool
 }
 
+// LatePage is one late user-facing failure paged on the open incident.
+type LatePage struct {
+	Key     string
+	PagedAt time.Time
+}
+
 type IncidentRequest struct {
 	// OpeningKeys are the finding keys of the alerts the incident opened on:
 	// failing user tests or held Kubernetes conditions (opens). Recovery is
@@ -64,7 +70,13 @@ type IncidentRequest struct {
 	// JoinedKeys are the finding keys of user tests that started failing while
 	// the incident was open, within AlertJoinWindow of detection. With
 	// OpeningKeys they are the alert set Recovered waits on (alertKeys).
-	JoinedKeys      []string
+	JoinedKeys []string
+	// LatePages are the user tests and failing user traffic outside the alert
+	// set that started failing while the incident was open, after
+	// AlertJoinWindow: each paged on its own when it started failing. They never
+	// join the alert set or re-prompt the responder; each opens the next
+	// incident if it still fails when this one closes.
+	LatePages       []LatePage
 	ExternalMessage string
 	// Page is the text of a page received through the external incident inbox
 	// in detector mode. With no OpeningKeys the page opened the incident
