@@ -240,6 +240,8 @@ type ResponderLoop struct {
 	Now             func() time.Time
 	CachedFindings  func() ToolResponse
 	IncidentStatus  func() *apihistory.IncidentVerified
+	// RecoveryWaiting is what Recovered waits on, for `sdo detect`; "" when unknown.
+	RecoveryWaiting func() string
 	WaitClosure     func(context.Context, time.Duration) ToolResponse
 	// WaitClock paces `sdo detect --wait`; nil uses production timers.
 	WaitClock kclock.WithTicker

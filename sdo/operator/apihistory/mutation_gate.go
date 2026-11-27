@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -36,20 +37,45 @@ type MutationGate struct {
 	ScriptJobStopped func(string) bool
 }
 type MutationLease struct {
-	gate *MutationGate
-	file *mutationLock
-	name string
+	gate   *MutationGate
+	file   *mutationLock
+	name   string
+	record mutationRecord
 }
 type MutationObservation struct {
 	gate     *MutationGate
 	file     *mutationLock
 	Revision string
 	Pending  bool
+	// OpenSessions are exec and attach streams past their upgrade. They do not
+	// block the fence; the fence ends them.
+	OpenSessions []JournalEntry
 }
+
+// LeaseSubject names what one lease covers: "patch deployments/web".
+type LeaseSubject struct {
+	Verb   string `json:"verb,omitempty"`
+	Object string `json:"object,omitempty"`
+}
+
+func (s LeaseSubject) String() string { return strings.TrimSpace(s.Verb + " " + s.Object) }
+
 type mutationRecord struct {
-	ScriptJob string `json:"script_job,omitempty"`
-	Pending   bool   `json:"pending"`
-	Uncertain bool   `json:"uncertain"`
+	ScriptJob string       `json:"script_job,omitempty"`
+	Pending   bool         `json:"pending"`
+	Uncertain bool         `json:"uncertain"`
+	Session   bool         `json:"session,omitempty"`
+	Subject   LeaseSubject `json:"subject,omitzero"`
+	Started   time.Time    `json:"started,omitzero"`
+}
+
+// JournalEntry is one unfinished or uncertain lease of the journal.
+type JournalEntry struct {
+	Subject   LeaseSubject
+	Started   time.Time
+	Session   bool
+	Pending   bool
+	Uncertain bool
 }
 
 func PrepareMutationGate(directory string) (*MutationGate, error) {
@@ -107,39 +133,53 @@ func (g *MutationGate) lock(mode int) (*mutationLock, error) {
 	}
 	return &mutationLock{File: f, releaseStorage: releaseStorage}, nil
 }
-func (g *MutationGate) Begin() (*MutationLease, error) {
+func (g *MutationGate) Begin() (*MutationLease, error) { return g.BeginWrite(LeaseSubject{}) }
+
+// BeginWrite starts a write lease that names its subject in the journal.
+func (g *MutationGate) BeginWrite(subject LeaseSubject) (*MutationLease, error) {
+	return g.begin(mutationRecord{Pending: true, ScriptJob: g.ScriptJob, Subject: subject, Started: apiio.Now().UTC()})
+}
+
+// fenced reports a sealed or verified incident; the caller holds a shared lock.
+func (g *MutationGate) fenced() error {
+	if _, err := os.Stat(filepath.Join(g.Directory, "incident-closed")); !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return err
+		}
+		return errors.New("incident_closed")
+	}
+	warning, err := g.Verified()
+	if err != nil {
+		return err
+	}
+	if warning != nil {
+		return errors.New("incident_verified")
+	}
+	return nil
+}
+
+func (g *MutationGate) begin(record mutationRecord) (*MutationLease, error) {
 	f, err := g.lock(syscall.LOCK_SH)
 	if err != nil {
 		return nil, err
 	}
-	if _, err = os.Stat(filepath.Join(g.Directory, "incident-closed")); !errors.Is(err, os.ErrNotExist) {
+	if err := g.fenced(); err != nil {
 		f.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("incident_closed")
-	}
-	warning, err := g.Verified()
-	if err != nil || warning != nil {
-		f.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("incident_verified")
+		return nil, err
 	}
 	name := "mutation-" + apiio.Text() + ".json"
-	b, _ := json.Marshal(mutationRecord{Pending: true, ScriptJob: g.ScriptJob})
+	b, _ := json.Marshal(record)
 	// The private session directory protects the journal. Its files must be
 	// readable across UIDs, including on storage that squashes root.
 	if err := os.WriteFile(filepath.Join(g.Directory, name), b, 0644); err != nil {
 		f.Close()
 		return nil, err
 	}
-	return &MutationLease{gate: g, file: f, name: name}, nil
+	return &MutationLease{gate: g, file: f, name: name, record: record}, nil
 }
 func (w *MutationLease) Finish(uncertain bool) error {
 	defer w.file.Close()
-	b, _ := json.Marshal(mutationRecord{Uncertain: uncertain, ScriptJob: w.gate.ScriptJob})
+	b, _ := json.Marshal(mutationRecord{Uncertain: uncertain, ScriptJob: w.gate.ScriptJob, Session: w.record.Session, Subject: w.record.Subject, Started: w.record.Started})
 	next := filepath.Join(w.gate.Directory, "."+w.name)
 	if err := os.WriteFile(next, b, 0644); err != nil {
 		return err
@@ -177,7 +217,11 @@ func (g *MutationGate) TryObserve() (*MutationObservation, error) {
 			f.Close()
 			return nil, err
 		}
-		if record.Pending || record.Uncertain {
+		if record.Session && record.Pending && !record.Uncertain {
+			// Past its upgrade (the lease's lock is released): an open stream,
+			// not a write in flight.
+			result.OpenSessions = append(result.OpenSessions, record.entry())
+		} else if record.Pending || record.Uncertain {
 			quiescent, checked := stopped[record.ScriptJob]
 			if !checked && record.ScriptJob != "" && g.ScriptJobStopped != nil {
 				quiescent = g.ScriptJobStopped(record.ScriptJob)
@@ -191,6 +235,30 @@ func (g *MutationGate) TryObserve() (*MutationObservation, error) {
 	result.Revision = fmt.Sprintf("%x", hash.Sum(nil))
 	return result, nil
 }
+func (r mutationRecord) entry() JournalEntry {
+	return JournalEntry{Subject: r.Subject, Started: r.Started, Session: r.Session, Pending: r.Pending, Uncertain: r.Uncertain}
+}
+
+// InFlight lists the journal's unfinished and uncertain leases without taking
+// the lock, so a blocked observation can name what blocks it.
+func (g *MutationGate) InFlight() []JournalEntry {
+	entries, _ := os.ReadDir(g.Directory)
+	var result []JournalEntry
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "mutation-") || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(g.Directory, entry.Name()))
+		var record mutationRecord
+		if err != nil || json.Unmarshal(b, &record) != nil || !(record.Pending || record.Uncertain) {
+			continue
+		}
+		result = append(result, record.entry())
+	}
+	slices.SortFunc(result, func(a, b JournalEntry) int { return a.Started.Compare(b.Started) })
+	return result
+}
+
 func (o *MutationObservation) Fence(at time.Time) error {
 	if o.Pending {
 		return errors.New("pending or uncertain mutation blocks closure")

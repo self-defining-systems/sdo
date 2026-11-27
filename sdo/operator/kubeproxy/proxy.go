@@ -4,9 +4,11 @@ package kubeproxy
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/http/httputil"
@@ -115,8 +117,26 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 				w.Header().Add("Warning", fmt.Sprintf("299 - %q", withdrawn))
 			}
 		}
-		if gate != nil && write {
-			lease, err := gate.Begin()
+		// A port-forward is a network tunnel: like the app's own port, what it
+		// carries is no API write, so it takes no lease and is never fenced.
+		// Exec and attach take a session lease: the handshake is a write, the
+		// open stream is not, and the fence closes it.
+		var sessionLease *apihistory.SessionLease
+		if gate != nil && write && e.Subresource != "portforward" {
+			var finish func(bool) error
+			var err error
+			subject := apihistory.LeaseSubject{Verb: e.Verb, Object: leaseObject(e)}
+			if session {
+				subject.Verb = e.Subresource
+				if sessionLease, err = gate.BeginSession(subject); err == nil {
+					finish = sessionLease.Finish
+				}
+			} else {
+				var lease *apihistory.MutationLease
+				if lease, err = gate.BeginWrite(subject); err == nil {
+					finish = lease.Finish
+				}
+			}
 			if err != nil {
 				warning, _ := gate.Verified()
 				message := "incident mutation rejected"
@@ -138,7 +158,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 				}{"Status", "v1", "Failure", err.Error(), message, 409, warning})
 				return
 			}
-			defer func() { _ = lease.Finish(uncertain.Load()) }()
+			defer func() { _ = finish(uncertain.Load()) }()
 		}
 		record := func(event apihistory.Event, body []byte) {
 			if recorder != nil {
@@ -147,6 +167,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 		}
 		var completed *apihistory.Event
 		var responseBody []byte
+		var closedAtRecovery func() bool
 		// Projection starts after forwarding returns. Store.Record schedules bounded
 		// workers; raw bytes never enter its recording queue.
 		defer func() {
@@ -154,6 +175,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 				if completed.Status == http.StatusSwitchingProtocols {
 					// ServeHTTP returns only after the upgraded stream closes.
 					completed.SessionEnd = proxyio.Now().UTC()
+					completed.ClosedAtRecovery = closedAtRecovery != nil && closedAtRecovery()
 				}
 				record(*completed, responseBody)
 			}
@@ -215,6 +237,15 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 			if res.StatusCode == http.StatusSwitchingProtocols {
 				end.Finished = proxyio.Now().UTC()
 				end.Omission = "upgrade_metadata_only"
+				if sessionLease != nil {
+					if stream, ok := res.Body.(io.ReadWriteCloser); ok {
+						gated := &fencedStream{ReadWriteCloser: stream, lease: sessionLease, done: make(chan struct{})}
+						res.Body = gated
+						sessionLease.Established()
+						go gated.closeAtFence(e)
+						closedAtRecovery = gated.closedAtRecovery
+					}
+				}
 				recordEnd(end, nil)
 				return nil
 			}
@@ -283,6 +314,58 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 	})
 }
 
+// leaseObject is the object a lease names: "deployments/web", "pods/web-0".
+func leaseObject(e apihistory.Event) string {
+	object := e.Resource
+	if e.Name != "" {
+		object += "/" + e.Name
+	}
+	if e.Namespace != "" {
+		object = e.Namespace + "/" + object
+	}
+	return object
+}
+
+// fencedStream is the upstream side of an exec or attach stream: each client
+// message is forwarded under the session lease, and the fence closes it.
+type fencedStream struct {
+	io.ReadWriteCloser
+	lease  *apihistory.SessionLease
+	done   chan struct{}
+	once   sync.Once
+	closed atomic.Bool
+}
+
+func (s *fencedStream) Write(p []byte) (int, error) {
+	n, err := s.lease.Forward(func() (int, error) { return s.ReadWriteCloser.Write(p) })
+	if errors.Is(err, apihistory.ErrSessionFenced) {
+		s.closeForRecovery()
+	}
+	return n, err
+}
+
+func (s *fencedStream) Close() error {
+	s.once.Do(func() { close(s.done) })
+	return s.ReadWriteCloser.Close()
+}
+
+func (s *fencedStream) closeForRecovery() {
+	s.closed.Store(true)
+	_ = s.Close()
+}
+
+func (s *fencedStream) closedAtRecovery() bool { return s.closed.Load() }
+
+// closeAtFence ends a stream that outlived Recovered, so it cannot write after the fence.
+func (s *fencedStream) closeAtFence(e apihistory.Event) {
+	select {
+	case <-s.done:
+	case <-s.lease.Fenced():
+		slog.Info("agent_session_closed_at_recovery", "subresource", e.Subresource, "object", leaseObject(e), "request_id", e.RequestID)
+		s.closeForRecovery()
+	}
+}
+
 // bodyPrefix keeps the first bytes of a request body for field-path extraction while the request streams on.
 // The bytes are never stored; only the key paths derived from them are.
 type bodyPrefix struct {
@@ -328,8 +411,7 @@ func nonPersistingReview(e apihistory.Event) bool {
 }
 
 // certainOnFailure reports a request whose failure cannot leave a change
-// behind. A port-forward carries only the bytes its client sends once the
-// upgrade succeeded, and the lease spans that stream; an access or token
+// behind. A port-forward is a tunnel that changes no API object; an access or token
 // review and a server-side dry run persist nothing. Any other write the
 // client or the upstream abandoned may still be applied by the API server.
 func certainOnFailure(r *http.Request, e apihistory.Event) bool {

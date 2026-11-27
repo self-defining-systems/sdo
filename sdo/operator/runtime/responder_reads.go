@@ -49,7 +49,7 @@ func (l *ResponderLoop) readOnce(ctx context.Context, request ToolRequest) (read
 			ExternalClues: l.ExternalClues, Request: l.Request, Programs: l.Programs, Provider: l.Provider, Detectors: l.Detectors,
 			Executor: l.Executor, Traffic: l.Traffic, ReadView: l.ReadView, DiagnosisDeadline: l.DiagnosisDeadline,
 			Now: l.Now, GitRead: l.GitRead, Trust: l.Trust, MenuConfig: l.MenuConfig,
-			IncidentStatus: l.IncidentStatus, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentSources: l.IncidentSources, Telemetry: l.Telemetry,
+			IncidentStatus: l.IncidentStatus, RecoveryWaiting: l.RecoveryWaiting, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentSources: l.IncidentSources, Telemetry: l.Telemetry,
 			ExternalReceipts: l.ExternalReceipts, applicationsLog: append([]RecordedPlanApplication(nil), l.applicationsLog...),
 			CorpusSessionRoot: l.CorpusSessionRoot, sessionID: l.sessionID, MaxBatches: l.MaxBatches,
 			batches: l.batches, loopOpen: l.loopOpen, applySeq: l.applySeq, continuation: l.continuation,

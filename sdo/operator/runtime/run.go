@@ -747,6 +747,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return controller.cachedResponderVerification(ctx, request.IncidentID, wait)
 			}
 			loop.IncidentStatus = func() *apihistory.IncidentVerified { return controller.incidentVerificationWarning(request.IncidentID) }
+			loop.RecoveryWaiting = func() string { return controller.recoveryWaitingLine(request.IncidentID) }
 			if options.NativeBroker != nil {
 				gate, err := controller.incidentGate(request.IncidentID)
 				if err != nil {

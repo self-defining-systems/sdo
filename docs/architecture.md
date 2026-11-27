@@ -809,7 +809,7 @@ records verb, object, status, resulting resource version and the changed field p
 Secret or ConfigMap `data`); for exec, attach and port-forward it records the
 target, container, an allowlist-redacted command (program base name plus only
 arguments with no `=`, `:`, `@`, quote or attached flag value; a shell's `-c` payload
-withheld) and the session span. No request body, Secret value or credential-shaped
+withheld) and the session span. A port-forward is a network tunnel: it takes no incident write lease and is never fenced. An exec or attach stream holds the lease only for its upgrade handshake; afterwards each client message is forwarded under the shared lock, the journal lists the stream as an open session that never blocks the controller's observation, and the stream is closed when the controller fences the incident (`closed_at_recovery` on its end event). When Recovered does not hold, `sdo detect` names what it waits on (a named write in flight, a pending rollout, an active alert, the stability window left). No request body, Secret value or credential-shaped
 argument is stored, and streams pass through untouched. The redacted `events.jsonl`
 and `manifest.json` of each recording are mirrored to the evidence sink
 (`incidents/<d>/api-history*/`, `lifecycle/<key>/api-history/`); blobs, the identity

@@ -26,7 +26,7 @@ func (l *ResponderLoop) HandleInvestigatorRead(ctx context.Context, request Tool
 			ExternalClues: l.ExternalClues, Request: l.liveRequest(), Programs: l.Programs, Provider: l.Provider, Detectors: l.Detectors,
 			Executor: l.Executor, Traffic: l.Traffic, ReadView: l.ReadView, DiagnosisDeadline: l.DiagnosisDeadline,
 			Now: l.Now, GitRead: l.GitRead, Trust: l.Trust, MenuConfig: l.MenuConfig,
-			IncidentStatus: l.IncidentStatus, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentSources: l.IncidentSources,
+			IncidentStatus: l.IncidentStatus, RecoveryWaiting: l.RecoveryWaiting, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentSources: l.IncidentSources,
 			ExternalReceipts: l.ExternalReceipts, applicationsLog: append([]RecordedPlanApplication(nil), l.applicationsLog...),
 			CorpusSessionRoot: l.CorpusSessionRoot, sessionID: l.sessionID, MaxBatches: l.MaxBatches,
 			batches: l.batches, loopOpen: l.loopOpen, applySeq: l.applySeq, continuation: l.continuation,

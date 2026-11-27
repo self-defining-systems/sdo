@@ -63,17 +63,19 @@ const (
 // (`sdo detect --wait` polls for minutes) hold operationMu for reading, so the
 // guard shares it: only a writer, which takes operationMu exclusively, is a
 // reason to call the loop unsafe.
-func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), closureGuardState) {
+//
+// reason says what an unsafe pass waits on, for the agent and the logs.
+func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), closureGuardState, string) {
 	noop := func() {}
 	if l == nil {
-		return &responderClosureGuard{}, noop, closureGuardHeld
+		return &responderClosureGuard{}, noop, closureGuardHeld, ""
 	}
 	if !l.operationMu.TryRLock() {
-		return nil, noop, closureGuardUnsafe
+		return nil, noop, closureGuardUnsafe, "an SDO write command is running"
 	}
 	if !l.mu.TryLock() {
 		l.operationMu.RUnlock()
-		return nil, noop, closureGuardBusy
+		return nil, noop, closureGuardBusy, ""
 	}
 	release := func() { l.mu.Unlock(); l.operationMu.RUnlock() }
 	// MP exposes reservations through this optional, no-I/O interface. Keep the
@@ -81,27 +83,32 @@ func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), clos
 	if pending, ok := any(l).(interface{ hasPendingMitigationsLocked() bool }); ok {
 		if pending.hasPendingMitigationsLocked() {
 			release()
-			return nil, noop, closureGuardUnsafe
+			return nil, noop, closureGuardUnsafe, "an SDO mitigation has not finished"
 		}
 	} else {
 		for _, application := range l.applicationsLog {
 			if application.Pending {
 				release()
-				return nil, noop, closureGuardUnsafe
+				return nil, noop, closureGuardUnsafe, "an SDO plan application has not finished"
 			}
 		}
 	}
 	if l.gateError != nil {
+		reason := "the write gate failed: " + l.gateError.Error()
 		release()
-		return nil, noop, closureGuardUnsafe
+		return nil, noop, closureGuardUnsafe, reason
 	}
 	var guard *apihistory.MutationObservation
 	if l.MutationGate != nil {
 		var err error
 		guard, err = l.MutationGate.TryObserve()
 		if err != nil || guard == nil {
+			reason := journalWaiting(l.MutationGate.InFlight())
+			if err != nil {
+				reason = "the write journal is unreadable: " + err.Error()
+			}
 			release()
-			return nil, noop, closureGuardUnsafe
+			return nil, noop, closureGuardUnsafe, reason
 		}
 	}
 	l.closureReceipts = nil
@@ -112,7 +119,7 @@ func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), clos
 				guard.Close()
 			}
 			release()
-			return nil, noop, closureGuardUnsafe
+			return nil, noop, closureGuardUnsafe, "an external action receipt is pending"
 		}
 		l.closureReceipts = receipts
 		if guard != nil {
@@ -124,7 +131,119 @@ func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), clos
 			guard.Close()
 		}
 		release()
-	}, closureGuardHeld
+	}, closureGuardHeld, ""
+}
+
+// journalWaiting names the journal's unfinished writes: "write in flight:
+// patch app/deployments/web since 19:14:35Z".
+func journalWaiting(entries []apihistory.JournalEntry) string {
+	var parts []string
+	for _, entry := range entries {
+		kind := "write in flight"
+		switch {
+		case entry.Uncertain:
+			kind = "write of unknown outcome"
+		case entry.Session:
+			kind = "session starting"
+		}
+		subject := entry.Subject.String()
+		if subject == "" {
+			subject = "an API write"
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s since %s", kind, subject, hms(entry.Started)))
+	}
+	if len(parts) == 0 {
+		return "a write is in flight"
+	}
+	if len(parts) > 3 {
+		parts = append(parts[:3], fmt.Sprintf("+%d more", len(parts)-3))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// noteRecoveryWaitingLocked records what the last closure pass waited on and since when.
+func (c *Controller) noteRecoveryWaitingLocked(now time.Time, what string) {
+	if what != c.recoveryWaitingOn {
+		c.recoveryWaitingOn, c.recoveryWaitingSince = what, now
+	}
+}
+
+// recoveryWaitingLine is what Recovered waits on for incident id, or "".
+func (c *Controller) recoveryWaitingLine(id string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != id || !c.incidentOpen {
+		return ""
+	}
+	return c.recoveryWaitingLineLocked()
+}
+
+func (c *Controller) recoveryWaitingLineLocked() string {
+	if c.recoveryWaitingOn == "" {
+		return ""
+	}
+	return fmt.Sprintf("waiting on: %s (noted %s)", c.recoveryWaitingOn, hms(c.recoveryWaitingSince))
+}
+
+func loopGate(l *ResponderLoop) *apihistory.MutationGate {
+	if l == nil {
+		return nil
+	}
+	return l.MutationGate
+}
+
+// recoveryBlockerInput is one closure pass that did not verify.
+type recoveryBlockerInput struct {
+	unsafe         bool
+	unsafeReason   string
+	guard          *apihistory.MutationObservation
+	gate           *apihistory.MutationGate
+	restorePending bool
+	observationErr error
+	source         closureSourceReport
+	recovery       recoveryCheck
+	findings       []sdk.Finding
+	healthVerified bool
+}
+
+// recoveryBlocker is the first reason a closure pass did not verify.
+func recoveryBlocker(in recoveryBlockerInput) string {
+	switch {
+	case in.unsafe:
+		return in.unsafeReason
+	case in.guard != nil && in.guard.Pending:
+		if in.gate != nil {
+			return journalWaiting(in.gate.InFlight())
+		}
+		return "a write is in flight or of unknown outcome"
+	case in.restorePending:
+		return "an automatic restore has not finished"
+	case in.observationErr != nil:
+		return "observation unavailable: " + in.observationErr.Error()
+	case len(in.source.Rollouts) > 0:
+		return "rollout pending: " + findingObjects(in.source.Rollouts)
+	case len(in.source.Effects) > 0:
+		return "source effect pending: " + findingObjects(in.source.Effects)
+	case in.recovery.verdict == recoveryPending:
+		return in.recovery.reason
+	case len(in.findings) > 0:
+		names := make([]string, 0, len(in.findings))
+		for _, finding := range in.findings {
+			names = append(names, alertName(finding))
+		}
+		return fmt.Sprintf("%d alert(s) active: %s", len(in.findings), plainName(strings.Join(names, ", "), 120))
+	case !in.healthVerified:
+		return "fresh clear samples of the alert set"
+	}
+	return ""
+}
+
+func findingObjects(findings []sdk.Finding) string {
+	names := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		names = append(names, finding.PrimaryResource.Kind+"/"+finding.PrimaryResource.Name)
+	}
+	return plainName(strings.Join(names, ", "), 120)
 }
 
 // The controller-owned receipts survive a missing final model report. Only an
