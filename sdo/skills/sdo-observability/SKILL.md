@@ -15,6 +15,8 @@ by what the application reports, so each operation needs its own request, error 
 - Find the Prometheus (and tracing) endpoints the cluster already runs and query them directly
   ([PromQL](references/dialects/promql.md), [LogQL](references/dialects/logql.md)).
 - Change code only for what is missing, and keep the change small: a middleware, an exporter, a label.
+- Telemetry is optional: an app with no request metrics is still monitored by its probes. Note what is missing
+  and why; never stop for it.
 
 ## One request metric per entry
 

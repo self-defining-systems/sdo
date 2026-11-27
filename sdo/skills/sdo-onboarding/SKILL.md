@@ -33,8 +33,10 @@ fast first, and stop when the budget line shows little left.
 3. **One probe first**, end to end through `onboarding journeys --only`, then the rest in batches of three or four.
    Start with the [worked example](references/example.md). Open the [map](../sdo-operations-map/references/map.md)
    or [traffic](../sdo-detectors/references/traffic.md) reference only for a missing field or signature.
-4. **Request metrics**: enable and map a request counter by route, method and status wherever the app can expose
-   one. Verify in `onboarding check --metrics` that the mapped series distinguish the operations.
+4. **Request metrics (optional)**: when the app already exposes a request counter by route, method and status,
+   map it and confirm in `onboarding check --metrics` that the mapped series distinguish the operations. Without
+   `--prometheus` the check runs SDO's own Prometheus. When the app has no such counter, probes alone are enough:
+   note the reason under `## Request metrics` and go on. Do not change application code or deploy a backend for it.
 5. **Check, fix the first red line, repeat.** Commit when a batch is green.
 
 ## What a good probe is
@@ -80,7 +82,7 @@ every workload (unset is 4 iterations/s). Give most of the budget to the journey
 | `sdo-operator onboarding journeys --repo DIR --namespace NS --only ID` | after each probe (seconds once built) |
 | same with `--alter` | when it passes: an unnoticed wrong answer is a missing check |
 | `sdo-operator memory check` | after each batch; map, coverage, ownership, compile |
-| `sdo-operator onboarding check --metrics --repo DIR --namespace NS --prometheus URL` | once, when metrics are mapped |
+| `sdo-operator onboarding check --metrics --repo DIR --namespace NS` | once, when a request counter is mapped |
 | `... onboarding journeys --alter --soak 5m` | initial scheduled run |
 | same with `--only ID` | after fixing a scenario or a dependency it uses |
 
@@ -90,7 +92,7 @@ background and write the next probe meanwhile.
 ## Finish line
 
 Every journey has passed, every current scenario has a green healthy-run line, and `memory check` is green
-on the committed tree. Re-soak only scenarios affected by a fix. The metrics check must confirm per-route counters
-where the app can expose them. Record the reason for any unavailable route metric. Open the default user list pages
-as an ordinary user and confirm no probe record is there. With ten minutes left, stop adding:
-remove what is not green, commit, and say what is uncovered.
+on the committed tree. Re-soak only scenarios affected by a fix. A mapped request counter is confirmed by the
+metrics check; missing metrics, traces or logs are a noted reason, never a reason to stop. Open the default user list
+pages as an ordinary user and confirm no probe record is there. With ten minutes left, stop adding:
+remove what is not green, commit, and say what is uncovered. SDO keeps the committed export either way.
