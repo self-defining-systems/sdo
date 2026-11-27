@@ -48,7 +48,8 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
     altered-answers  (--alter) it fails when a read answers empty, short, changed or as in an
                      earlier run; the answers are altered on their way back, nothing is broken
     healthy-run      (--soak) each selected scenario that passed its checks, sampled on a schedule.
-                     A red scenario leaves other scenarios running. Re-soak a fix with --only ID.
+                     A red scenario leaves other scenarios running. It stops early once every
+                     scenario is red or has 10 samples, none failed. Re-soak a fix with --only ID.
   --only selects exact IDs or, for unmatched filters, ID substrings. --plan builds the probes and prints the
   checklist, schedule and budget without a cluster: nothing is sent. Exit 0 when nothing is red and
   no journey is missing or failing, 1 otherwise, 2 for usage or infrastructure errors.`

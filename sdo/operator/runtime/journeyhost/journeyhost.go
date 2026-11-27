@@ -28,6 +28,9 @@ type Options struct {
 	Plan bool
 }
 
+// soakPoll is how often the healthy run checks whether it may stop early.
+const soakPoll = 5 * time.Second
+
 // Run judges the memory's probes against the application, reached through port
 // forwards, and writes the report as JSON to out.
 func Run(ctx context.Context, catalog traffic.Catalog, documents map[string][]byte, applicationMap string, in io.Reader, out, progress io.Writer) error {
@@ -65,6 +68,15 @@ func Run(ctx context.Context, catalog traffic.Catalog, documents map[string][]by
 			if err != nil {
 				return err
 			}
+			go func() {
+				// Stop early once every scenario is decided (SoakSettled).
+				for hostio.Pause(soakCtx, soakPoll) == nil {
+					if journeycheck.SoakSettled(p.Windows()) {
+						stop()
+						return
+					}
+				}
+			}()
 			p.Run(soakCtx)
 			report.Results = append(report.Results, journeycheck.Soaked(p.Windows())...)
 		}
