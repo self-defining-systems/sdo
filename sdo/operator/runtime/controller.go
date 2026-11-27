@@ -331,7 +331,10 @@ type Controller struct {
 	// after the responder launched (learned matches, late drift). They stay
 	// after_dispatch in telemetry; restore rebuilds them from the timeline.
 	lateJoinedKeys map[string]struct{}
-	stateRestored  bool
+	// joinCapturesDue counts alerts that joined the open incident since the
+	// last observation captured the state they joined in.
+	joinCapturesDue int
+	stateRestored   bool
 
 	// CheckHealth refuses evaluation and effects while the compiled detector bundle
 	// lags the accepted health policy; the rebuilt controller resumes the work.
@@ -922,6 +925,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			}
 		})
 	})
+	c.captureJoinedAlerts(snapshot)
 	if setupHealthy {
 		c.mu.Lock()
 		c.setupEvaluatedRevision = c.config.SourceCommit

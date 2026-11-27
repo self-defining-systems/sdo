@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sdo.dev/operator/memory/layout"
 	"slices"
 	"strings"
@@ -289,12 +290,20 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 	return nil
 }
 
+// joinedCapturePhase names the open state an alert joined the incident in: the
+// nth joined alert's capture is open@join-n. A fault that starts while the
+// incident is open shows only there.
+var joinedCapturePhase = regexp.MustCompile(`^open@join-[1-9][0-9]*$`)
+
+// JoinedCapturePhase is the capture phase of the nth alert that joined an incident.
+func JoinedCapturePhase(n int) string { return fmt.Sprintf("open@join-%d", n) }
+
 // CaptureIncidentSnapshot stores the first namespace-local view at each boundary.
 func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string, refs ...sdk.ObjectRef) error {
 	releaseSessionStorage := SessionStorageUse()
 	defer releaseSessionStorage()
 
-	if phase != "open" && phase != "fixed" && phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
+	if phase != "open" && phase != "fixed" && phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" && !joinedCapturePhase.MatchString(phase) {
 		return fmt.Errorf("invalid corpus capture phase %q", phase)
 	}
 	dir, err := IncidentCorpusDir(repositoryMount, incidentID)

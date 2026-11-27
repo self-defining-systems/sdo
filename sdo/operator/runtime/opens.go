@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"slices"
 	"sort"
@@ -196,6 +197,7 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	}
 	request.JoinedKeys = append(request.JoinedKeys, key)
 	sort.Strings(request.JoinedKeys)
+	c.joinCapturesDue++
 	finding.Fingerprint = FindingFingerprint(finding)
 	request.Findings = append(request.Findings, finding)
 	sortFindings(request.Findings)
@@ -214,6 +216,31 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 		c.escalateLocked(now)
 	}
 	return true
+}
+
+// captureJoinedAlerts stores the open state alerts joined the incident in, from
+// the observation they activated in. A fault that starts while the incident is
+// open is absent from the opening captures; without this one the closing turn's
+// own-incident check rejects a playbook written for it. Evidence only, never a
+// gate: a failure is reported and the incident goes on.
+func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
+	c.mu.Lock()
+	due, request := c.joinCapturesDue, c.currentIncidentRequest
+	c.joinCapturesDue = 0
+	var id, namespace string
+	var refs []sdk.ObjectRef
+	joined := 0
+	if request != nil {
+		id, namespace, refs, joined = request.IncidentID, request.Namespace, findingCaptureRefs(request.Findings), len(request.JoinedKeys)
+	}
+	c.mu.Unlock()
+	if due == 0 || id == "" || c.config.CorpusSessionRoot == "" || snapshot == nil {
+		return
+	}
+	// One capture per pass holds every alert that joined in it.
+	if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, id, memory.JoinedCapturePhase(joined), snapshot, namespace, refs...); err != nil && c.OnError != nil {
+		c.OnError(fmt.Errorf("capture joined alert open state: %w", err))
+	}
 }
 
 // userTests reads the accepted map once per source commit.
