@@ -185,6 +185,21 @@ type Descriptor struct {
     its observations, so detectors can explain and localize failures without the
     generator code.
 
+type DetectionEstimate struct {
+	// Every is the mean time between the scenario's scheduled samples.
+	Every time.Duration
+	// Typical is for a failure at a random moment whose requests fail about
+	// as fast as a healthy run.
+	Typical time.Duration
+	// Worst is for a failure at the worst moment of the schedule whose
+	// requests hang until the request timeout.
+	Worst time.Duration
+}
+    DetectionEstimate is how long a health probe takes to notice a scenario
+    whose every request starts failing, through the fast confirmation path
+    (ConfirmedFailures). It is computed from the workload's own schedule and
+    SDO's confirmation rules, never measured.
+
 type Doer interface {
 	Do(*http.Request) (*http.Response, error)
 }
@@ -217,7 +232,4 @@ type Engine struct {
 func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Target) string, clock Clock) (*Engine, error)
     NewEngine validates workload against catalog and prepares its schedule.
     baseURL maps a scenario target to scheme://host:port.
-
-func (e *Engine) Descriptors() []Descriptor
-    Descriptors describe the workload's scenarios in workload order.
 ```

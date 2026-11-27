@@ -225,3 +225,15 @@ func (p *Process) MirrorFrame(ctx context.Context, frame *pb.MirrorRequest) erro
 func (p *Process) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.TrafficResponse, error) {
 	return p.client.Traffic(ctx, r)
 }
+
+// RunProgram runs a built program with input on stdin, against the cluster
+// kubeconfig names (the environment's when empty).
+func RunProgram(ctx context.Context, binary, kubeconfig string, in io.Reader, out, errOut io.Writer) error {
+	command := exec.CommandContext(ctx, binary)
+	command.Stdin, command.Stdout, command.Stderr = in, out, errOut
+	command.Env = os.Environ()
+	if kubeconfig != "" {
+		command.Env = append(command.Env, "KUBECONFIG="+kubeconfig)
+	}
+	return command.Run()
+}

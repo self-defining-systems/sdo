@@ -154,7 +154,7 @@ func TestApplicationMapGapsBlockTheDesignerAndAreNotesForOthers(t *testing.T) {
 		mention string
 		hint    string
 	}{
-		{"operation without a call probe", strings.Replace(mapYAML, "operations: [list-items, add-item]}\n  - {scenario: write", "operations: [list-items]}\n  - {scenario: write", 1), RuleMapUncoveredOp, "add-item", "call"},
+		{"read operation without a call probe", strings.ReplaceAll(strings.Replace(mapYAML, "kind: call, operations: [list-items, add-item]", "kind: call, operations: [add-item]", 1), "operations: [add-item, list-items]", "operations: [add-item]"), RuleMapUncoveredOp, "list-items", "call"},
 		{"writing operation without a write-read probe", strings.Replace(mapYAML, "operations: [add-item, list-items]", "operations: [list-items]", 1), RuleMapUncoveredWrite, "add-item", "write-read"},
 		{"data component without a read-later probe", strings.Replace(mapYAML, "path: [web, api, db]\n  - id: add-item", "path: [web, api]\n  - id: add-item", 1), RuleMapUncoveredData, "db", "read-later"},
 		{"unknown component", strings.Replace(mapYAML, "to: cache", "to: queue", 1), RuleMapUnknownName, "queue", ""},

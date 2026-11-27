@@ -106,6 +106,10 @@ type Sample struct {
 	// on an iteration that passed: exercised, own-only or empty. It is an
 	// operability note, never a failure: a fresh install has no user data.
 	ExistingRecords string `json:"existingRecords,omitempty"`
+	// ExistingMarked is how many records that step listed carry the
+	// scenario's Marker: probe data users see. A count that keeps rising over
+	// a run means the probes leave data behind.
+	ExistingMarked int `json:"existingMarked,omitempty"`
 	// Convergence says, for each step that answered NotYet, how many attempts
 	// it took and for how long, whether it passed or ran out of time.
 	Convergence  []Convergence `json:"convergence,omitempty"`
@@ -537,6 +541,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 		}
 		if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.MarksExistingRecords() {
 			sample.ExistingRecords = existingRecordsOutcome(state[ExistingMembersKey], scenario.Marker)
+			sample.ExistingMarked = existingRecordsMarked(state[ExistingMembersKey], scenario.Marker)
 		}
 	}
 	// Waiting for a NotYet step to pass is in Convergence, not in latency.

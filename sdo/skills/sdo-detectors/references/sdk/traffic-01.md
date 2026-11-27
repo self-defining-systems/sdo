@@ -77,6 +77,7 @@ type Clock interface{ ... }
 type Consumer interface{ ... }
 type Convergence struct{ ... }
 type Descriptor struct{ ... }
+type DetectionEstimate struct{ ... }
 type Doer interface{ ... }
 type Duration time.Duration
 type Endpoint interface{ ... }

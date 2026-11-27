@@ -57,6 +57,10 @@ type Sample struct {
 	// on an iteration that passed: exercised, own-only or empty. It is an
 	// operability note, never a failure: a fresh install has no user data.
 	ExistingRecords string `json:"existingRecords,omitempty"`
+	// ExistingMarked is how many records that step listed carry the
+	// scenario's Marker: probe data users see. A count that keeps rising over
+	// a run means the probes leave data behind.
+	ExistingMarked int `json:"existingMarked,omitempty"`
 	// Convergence says, for each step that answered NotYet, how many attempts
 	// it took and for how long, whether it passed or ran out of time.
 	Convergence  []Convergence `json:"convergence,omitempty"`
@@ -225,7 +229,4 @@ type Verdict struct {
 	Pending bool
 }
     Verdict is an Endpoint's judgement of one response.
-
-func Fail(format string, args ...any) Verdict
-    Fail rejects a response with a reason that names what was wrong.
 ```

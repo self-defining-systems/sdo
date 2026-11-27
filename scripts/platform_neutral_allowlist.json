@@ -1,8 +1,4 @@
 {
-  "sdo/agents/onboarding/prompts/onboarding.md": {
-    "count": 1,
-    "reason": "tool list names the local cluster runtime the onboarding agent happens to have; reword to the generic tool set"
-  },
   "sdo/operator/contracts/settings/config.go": {
     "count": 4,
     "reason": "Evidence.HostPath is an opt-in node directory for evidence; remove after the PVC evidence migration (Evidence.Volume, a Kubernetes volume, becomes the single evidence path; kind lanes move to local-path PVCs)"

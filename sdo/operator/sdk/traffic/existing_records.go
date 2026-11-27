@@ -37,6 +37,22 @@ func existingRecordsOutcome(saved string, marker string) string {
 	return ExistingRecordsOwnOnly
 }
 
+// existingRecordsMarked counts the members a marked step read that carry the
+// scenario's Marker.
+func existingRecordsMarked(saved string, marker string) int {
+	var members []string
+	if marker == "" || json.Unmarshal([]byte(saved), &members) != nil {
+		return 0
+	}
+	n := 0
+	for _, member := range members {
+		if strings.Contains(member, marker) {
+			n++
+		}
+	}
+	return n
+}
+
 // ExistingRecordsStep is the compiled fact about one step built with
 // ReadsExistingRecords.
 type ExistingRecordsStep struct {
