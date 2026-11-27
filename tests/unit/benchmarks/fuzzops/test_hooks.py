@@ -817,7 +817,7 @@ def test_the_benchmark_profile_differs_from_production_in_a_few_documented_field
             "after_playbook_wait": "5m",
             "investigators": 2,
         },
-        "onboarding": {"journeys_required": False},
+        "onboarding": {"journeys_required": False, "soak": "0s"},
         "detection": {"self_heal_hold": "60s"},
     }
 
