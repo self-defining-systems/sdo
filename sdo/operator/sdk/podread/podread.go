@@ -19,17 +19,24 @@ import (
 
 // Limits bound declarations, target fan-out and retained output, so a read can
 // neither load the application nor stall the controller's evaluation loop.
-// MaxConcurrent and CollectionBudget apply across every query of a cycle,
-// lookups (Keys) included.
+// MaxQueries is a load budget: the declared queries may make at most that many
+// query runs per MinInterval on average (see Load), and the controller starts
+// at most that many queries in one cycle, lookups (Keys) included. A due query
+// beyond it keeps its last answer and runs in a later cycle, least recently
+// read first, so many queries on longer intervals rotate under the same
+// per-cycle load as MaxQueries at MinInterval. MaxDeclaredQueries bounds the
+// declarations themselves. MaxConcurrent and CollectionBudget apply across
+// every query of a cycle.
 const (
-	MaxQueries    = 16
-	MaxTargets    = 16
-	MaxArgs       = 32
-	MaxArgBytes   = 1024
-	MaxIDBytes    = 128
-	LimitBytes    = 4 * 1024
-	MaxConcurrent = 4
-	MinInterval   = 30 * time.Second
+	MaxQueries         = 16
+	MaxDeclaredQueries = 64
+	MaxTargets         = 16
+	MaxArgs            = 32
+	MaxArgBytes        = 1024
+	MaxIDBytes         = 128
+	LimitBytes         = 4 * 1024
+	MaxConcurrent      = 4
+	MinInterval        = 30 * time.Second
 	// ExecTimeout covers a kubectl-exec of a store client (psql, redis-cli) on a loaded node, which
 	// measured above 3 s; CollectionBudget leaves room for a second wave of reads (the first can use ExecTimeout).
 	ExecTimeout      = 10 * time.Second
@@ -228,10 +235,22 @@ func (q Query) Validate() error {
 	return nil
 }
 
+// Load is the queries' average runs per MinInterval: each counts
+// MinInterval/Interval.
+func Load(qs []Query) float64 {
+	var load float64
+	for _, q := range qs {
+		if q.Interval > 0 {
+			load += float64(MinInterval) / float64(q.Interval)
+		}
+	}
+	return load
+}
+
 // ValidateQueries rejects malformed, duplicate or excessive declarations.
 func ValidateQueries(qs []Query) error {
-	if len(qs) > MaxQueries {
-		return fmt.Errorf("pod reads exceed %d", MaxQueries)
+	if len(qs) > MaxDeclaredQueries {
+		return fmt.Errorf("pod reads exceed %d declarations", MaxDeclaredQueries)
 	}
 	byID := map[string]Query{}
 	for _, q := range qs {
@@ -242,6 +261,9 @@ func ValidateQueries(qs []Query) error {
 			return fmt.Errorf("duplicate pod read %q", q.ID)
 		}
 		byID[q.ID] = q
+	}
+	if load := Load(qs); load > MaxQueries+1e-9 {
+		return fmt.Errorf("pod reads exceed %d: they load %.2f reads per %s; lengthen intervals or drop queries", MaxQueries, load, MinInterval)
 	}
 	for _, q := range qs {
 		if q.Keys == nil {

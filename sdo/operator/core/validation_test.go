@@ -19,7 +19,7 @@ func clientLinks(t *testing.T, id string, count int) sdk.Detector {
 		link := traffic.Link{From: "api", To: fmt.Sprintf("%s-%d", id, i), Port: 80}
 		links[i] = vantage.ClientLink{ID: id + "." + link.ID(), From: podread.Target{Workload: "Deployment/api"}, Link: link}
 	}
-	detector, err := vantage.NewClientLinksDetector(sdk.DetectorSpec{ID: id, Interval: time.Minute, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}}, links, time.Minute)
+	detector, err := vantage.NewClientLinksDetector(sdk.DetectorSpec{ID: id, Interval: time.Minute, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}}, links, vantage.MinInterval)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func clientLinks(t *testing.T, id string, count int) sdk.Detector {
 }
 
 // The controller merges every detector's vantage probes and refuses more than
-// vantage.MaxProbes, so memory whose detectors are each within the budget but
+// the vantage.MaxProbes load, so memory whose detectors are each within the budget but
 // together exceed it must be refused before it is accepted.
 func TestValidateDetectorsBoundsVantageProbesAcrossDetectors(t *testing.T) {
 	half := vantage.MaxProbes/2 + 1

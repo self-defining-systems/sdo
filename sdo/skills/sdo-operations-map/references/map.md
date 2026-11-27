@@ -68,6 +68,10 @@ Rules the memory check enforces:
   the live application. `source` cites the file for config evidence, the object and field for manifest evidence,
   or says how you observed the call. A component may carry the same `evidence` list for what grounds its
   `holds_data` and `data`; omit it when the source declares them.
+- Map every component a workload is configured to use, with its edge, even when no operation path lists it: a
+  registry, discovery or config service its Pods resolve peers or read settings from. Such a component on no path
+  that a probed path's component reaches over edges counts as probed, so Go reads its store and dials its links as
+  often as the path's; one no probed component reaches does not.
 - A probe's path is the union of its operations' paths. Its scenario's `DependsOn` names at least one Service of
   every component on that path and no other Service.
 - `call` scenarios are in workload `probe-call`, `write-read` scenarios (a write side effect, at least one

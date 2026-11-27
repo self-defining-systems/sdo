@@ -2,6 +2,7 @@ package podread_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,7 @@ func TestDetectorDeclarations(t *testing.T) {
 	for i := range many {
 		many[i] = query()
 		many[i].ID = strings.Repeat("q", i+1)
+		many[i].Interval = podread.MinInterval
 	}
 	if _, err := podread.Queries([]sdk.Detector{reader{id: "a", watches: podWatch, queries: many}}); err == nil {
 		t.Fatal("excess queries accepted")
@@ -140,5 +142,30 @@ func TestRequireNeverReportsAFailedReadAsAResult(t *testing.T) {
 	}
 	if _, err := podread.Require(sdktest.Snapshot{PodReads: map[string]podread.Result{"policy": {Readings: []podread.Reading{good, {Pod: "q", ExitCode: 1}}}}}, "policy"); err != nil {
 		t.Fatalf("a nonzero exit is a result: %v", err)
+	}
+}
+
+// The query limit bounds load, not declarations: a query counts as
+// MinInterval/Interval of one read per base interval, so twice as many queries
+// at twice the interval fit, and the declaration count has its own bound.
+func TestQueryBudgetIsLoadPerBaseInterval(t *testing.T) {
+	declare := func(n int, interval time.Duration) []podread.Query {
+		qs := make([]podread.Query, n)
+		for i := range qs {
+			qs[i] = podread.Query{ID: fmt.Sprintf("q-%d", i), Target: podread.Target{Labels: map[string]string{"tier": "store"}}, Args: []string{"cli"}, Interval: interval}
+		}
+		return qs
+	}
+	if err := podread.ValidateQueries(declare(2*podread.MaxQueries, 2*podread.MinInterval)); err != nil {
+		t.Fatalf("twice the queries at twice the interval: %v", err)
+	}
+	if err := podread.ValidateQueries(declare(podread.MaxQueries+1, podread.MinInterval)); err == nil {
+		t.Fatal("load above the budget accepted")
+	}
+	if err := podread.ValidateQueries(declare(podread.MaxDeclaredQueries+1, 10*podread.MinInterval)); err == nil {
+		t.Fatal("declarations above the count bound accepted")
+	}
+	if got := podread.Load(declare(3, 3*podread.MinInterval)); got != 1 {
+		t.Fatalf("load of three queries at three base intervals = %v, want 1", got)
 	}
 }
