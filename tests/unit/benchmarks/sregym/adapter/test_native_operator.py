@@ -190,7 +190,7 @@ def test_host_passes_given_journeys_and_the_bench_profile_does_not_require_them(
             launch_host(config)
     assert "--journeys" not in calls[0]
     assert calls[1][calls[1].index("--journeys") + 1] == "users sign in\nusers browse items"
-    assert yaml.safe_load(BENCH_PROFILE.read_text())["onboarding"] == {"journeys_required": False}
+    assert yaml.safe_load(BENCH_PROFILE.read_text())["onboarding"] == {"journeys_required": False, "soak": "0s"}
 
 
 def test_sync_and_maintenance_use_go_cli_without_python_broker(

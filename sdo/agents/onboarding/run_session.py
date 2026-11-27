@@ -4,7 +4,14 @@
 Keep the conversation open until its committed export passes the broker's
 initial health-judge memory check. The agent's final reply is a report, never
 a gate: a committed export that validates is kept whatever the reply says. A
-successful exit identifies the commit to export. This launcher uses only the standard library so it can run in a kit.
+successful exit identifies the commit to export.
+
+`--session-out FILE` records the session id with the validated commit. After
+install the controller soaks the probes; when `sdo-operator onboarding soak`
+reports red it prints the one follow-up turn, and `--resume ID` sends exactly
+that message to the same session, validating the export again. Give the
+follow-up its own transcript so its time and tokens stay apart. This launcher
+uses only the standard library so it can run in a kit.
 """
 
 from __future__ import annotations
@@ -91,13 +98,14 @@ def finish_turn(
     repo: Path,
     base: str,
     operator: str,
-) -> str:
+) -> tuple[str, str | None]:
     """Wait for a terminal result and drain registered background work, then validate.
 
     The reply is printed on stderr and never decides the outcome; only
     `check_export` does. An unsuccessful result event still raises.
     """
     state = None
+    session_id: str | None = None
     pending: set[str] = set()
     reported_tasks = False
     result: dict[str, Any] | None = None
@@ -111,6 +119,8 @@ def finish_turn(
         if not isinstance(event, dict):
             continue
         kind, subtype = event.get("type"), event.get("subtype")
+        if isinstance(event.get("session_id"), str) and event["session_id"]:
+            session_id = event["session_id"]
         if kind == "result":
             if subtype != "success" or event.get("is_error") is not False:
                 raise RuntimeError("Claude returned an unsuccessful result. See the transcript.")
@@ -136,7 +146,7 @@ def finish_turn(
         if isinstance(answer, str) and answer.strip():
             print(f"Onboarding reply: {answer.strip().splitlines()[0]}", file=sys.stderr)
         try:
-            return check_export(repo, base, operator)
+            return check_export(repo, base, operator), session_id
         except ExportRejected as error:
             print(f"Onboarding export rejected:\n{error}", file=sys.stderr)
             send_message(
@@ -155,7 +165,8 @@ def run_session(
     prompt: str,
     transcript: IO[str],
     cli_args: list[str],
-) -> str:
+    resume: str | None = None,
+) -> tuple[str, str | None]:
     command = [
         "claude",
         "-p",
@@ -165,6 +176,7 @@ def run_session(
         "--output-format",
         "stream-json",
         "--verbose",
+        *(["--resume", resume] if resume else []),
         *cli_args,
     ]
     with subprocess.Popen(
@@ -179,7 +191,7 @@ def run_session(
         assert process.stdout is not None
         try:
             send_message(process.stdin, prompt)
-            commit = finish_turn(process.stdin, process.stdout, transcript, repo, base, operator)
+            commit, session_id = finish_turn(process.stdin, process.stdout, transcript, repo, base, operator)
         finally:
             process.stdin.close()
             try:
@@ -191,7 +203,7 @@ def run_session(
             raise RuntimeError(f"Claude exited {process.returncode} after validation. See the transcript.")
     if committed_head(repo) != commit:
         raise RuntimeError("The checkout changed after validation.")
-    return commit
+    return commit, session_id or resume
 
 
 def main() -> int:
@@ -202,6 +214,8 @@ def main() -> int:
     parser.add_argument(
         "--operator", default="sdo-operator", help="pinned operator binary on PATH or at an absolute path"
     )
+    parser.add_argument("--session-out", type=Path, help="write the session id and validated commit here as JSON")
+    parser.add_argument("--resume", help="session id to resume with the prompt as its one follow-up message")
     parser.add_argument("prompt", type=Path)
     parser.add_argument("transcript", type=Path)
     parser.add_argument("repo", type=Path)
@@ -219,7 +233,9 @@ def main() -> int:
             cli_args = args.claude_args
             if cli_args[:1] == ["--"]:
                 cli_args = cli_args[1:]
-            commit = run_session(repo, base, args.operator, prompt, transcript, cli_args)
+            commit, session_id = run_session(repo, base, args.operator, prompt, transcript, cli_args, args.resume)
+        if args.session_out is not None:
+            args.session_out.write_text(json.dumps({"session_id": session_id, "commit": commit}) + "\n")
     except (ExportRejected, OSError, RuntimeError, subprocess.CalledProcessError) as error:
         print(error, file=sys.stderr)
         return 1

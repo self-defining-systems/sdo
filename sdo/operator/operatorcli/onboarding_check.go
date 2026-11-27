@@ -148,7 +148,7 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
 // RunOnboarding runs "sdo-operator onboarding <args>" and returns the exit code.
 func RunOnboarding(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(stdout, OnboardingInitUsage+"\n\n"+OnboardingJourneysUsage+"\n\n"+OnboardingUsage)
+		fmt.Fprintln(stdout, OnboardingInitUsage+"\n\n"+OnboardingJourneysUsage+"\n\n"+OnboardingSoakUsage+"\n\n"+OnboardingUsage)
 		return exitClean
 	}
 	if args[0] == "init" {
@@ -167,6 +167,18 @@ func RunOnboarding(ctx context.Context, args []string, stdout, stderr io.Writer)
 		code, err := onboardingJourneys(ctx, args[1:], stdout, stderr)
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(stdout, OnboardingJourneysUsage)
+			return exitClean
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, "sdo-operator onboarding:", err)
+			return exitInfra
+		}
+		return code
+	}
+	if args[0] == "soak" {
+		code, err := onboardingSoak(ctx, args[1:], stdout, stderr)
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(stdout, OnboardingSoakUsage)
 			return exitClean
 		}
 		if err != nil {

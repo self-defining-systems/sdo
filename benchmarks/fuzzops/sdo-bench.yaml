@@ -10,5 +10,6 @@ response:
   investigators: 2                  # up to 2 read-only investigator sessions when the responder has made no write for investigator_delay (default 60s); production default is 0
 onboarding:
   journeys_required: false          # a benchmark app has no people to give journeys (production requires them); a harness that has them passes `host --journeys`
+  soak: 0s                          # benchmark lanes install accepted memory for every problem; the post-onboarding soak (production 5m) would only delay each lane's start
 detection:
   self_heal_hold: 60s               # faults are graded in minutes (D2); production holds 5m. A restart that heals in 30 s still opens nothing

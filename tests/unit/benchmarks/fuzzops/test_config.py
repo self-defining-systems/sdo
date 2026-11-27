@@ -27,8 +27,9 @@ def test_a_benchmark_lane_resolves_to_the_values_benchmarks_ran_with(operator_bi
     assert config.duration_seconds(lane["detection"]["self_heal_hold"]) == 60
     assert config.duration_seconds(production["detection"]["self_heal_hold"]) == 300
     # A benchmark app has no people to give journeys, so the profile does not require them; production does.
-    assert lane["onboarding"] == {"journeys_required": False}
-    assert production["onboarding"] == {"journeys_required": True}
+    # Lanes install accepted memory for every problem, so they skip the post-onboarding soak.
+    assert lane["onboarding"] == {"journeys_required": False, "soak": "0s"}
+    assert production["onboarding"] == {"journeys_required": True, "soak": "5m0s"}
     assert {
         **production,
         "response": lane["response"],
