@@ -1,6 +1,7 @@
 package hostio
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/hmac"
@@ -9,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -192,6 +194,7 @@ type ProbeUsers struct {
 }
 
 type probeUser struct {
+	token   string
 	ready   bool
 	running bool
 	failed  time.Time
@@ -261,8 +264,21 @@ func (p *ProbeUsers) pending(reason string) error {
 
 // Password implements traffic.Passwords. It never waits for a run.
 func (p *ProbeUsers) Password(_ context.Context, user string) (string, error) {
+	return p.credential(user, false)
+}
+
+// Token implements traffic.ProbeTokens, sharing the password's provisioning
+// attempt. Tokens live in the host's memory, never in its readiness marker.
+func (p *ProbeUsers) Token(_ context.Context, user string) (string, error) {
+	return p.credential(user, true)
+}
+
+func (p *ProbeUsers) credential(user string, token bool) (string, error) {
 	if p.Unavailable != "" {
 		return "", errors.New(p.Unavailable)
+	}
+	if token && !p.Procedure.ReturnsToken {
+		return "", errors.New("the probe_identity procedure needs returns_token to provision a token")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -276,6 +292,9 @@ func (p *ProbeUsers) Password(_ context.Context, user string) (string, error) {
 	}
 	switch {
 	case state.ready:
+		if token {
+			return state.token, nil
+		}
 		return ProbeUserPassword(p.seed, user), nil
 	case state.running:
 		return "", p.pending(fmt.Sprintf("procedure %s is provisioning the user", p.Procedure.ID))
@@ -290,10 +309,10 @@ func (p *ProbeUsers) Password(_ context.Context, user string) (string, error) {
 func (p *ProbeUsers) attempt(user string, state *probeUser) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.Procedure.IdentityTimeout())
 	defer cancel()
-	err := p.provision(ctx, user)
+	token, err := p.provision(ctx, user)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	state.running, state.ready, state.err = false, err == nil, err
+	state.running, state.ready, state.token, state.err = false, err == nil, token, err
 	if err != nil {
 		state.failed = p.now()
 	}
@@ -301,17 +320,17 @@ func (p *ProbeUsers) attempt(user string, state *probeUser) {
 }
 
 // provision runs the procedure for user once.
-func (p *ProbeUsers) provision(ctx context.Context, user string) error {
+func (p *ProbeUsers) provision(ctx context.Context, user string) (string, error) {
 	p.mu.Lock()
 	seed := p.seed
 	p.mu.Unlock()
 	if seed == nil {
 		if p.Seed == nil {
-			return errors.New("no probe-identity seed source")
+			return "", errors.New("no probe-identity seed source")
 		}
 		loaded, err := p.Seed()
 		if err != nil {
-			return err
+			return "", err
 		}
 		p.mu.Lock()
 		p.seed, seed = loaded, loaded
@@ -319,25 +338,39 @@ func (p *ProbeUsers) provision(ctx context.Context, user string) error {
 	}
 	argv, err := p.Procedure.Bind(map[string]any{program.ProbeIdentityParam: user})
 	if err != nil {
-		return err
+		return "", err
 	}
 	pod, uid, err := p.readyPod(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
-	marker := p.readyMarker(seed, user, pod.Name, uid)
+	var marker string
+	var stdout io.Writer
+	var output tokenOutput
+	if p.Procedure.ReturnsToken {
+		stdout = &output
+	} else {
+		marker = p.readyMarker(seed, user, pod.Name, uid)
+	}
 	if marker != "" {
 		if _, err := os.Stat(marker); err == nil {
-			return nil
+			return "", nil
 		}
 	}
 	command := program.Command{Pod: pod, Container: p.Procedure.Container, Args: argv, Stdin: ProbeUserPassword(seed, user) + "\n"}
-	code, err := kubereads.RunCommand(ctx, p.Exec, p.ProtectedNamespace, command)
+	code, err := kubereads.RunCommandWithOutput(ctx, p.Exec, p.ProtectedNamespace, command, stdout)
 	if err != nil {
-		return fmt.Errorf("run in Pod %s: %w", pod.Name, err)
+		return "", fmt.Errorf("run in Pod %s: %w", pod.Name, err)
 	}
 	if code != 0 {
-		return fmt.Errorf("exited %d in Pod %s container %s", code, pod.Name, p.Procedure.Container)
+		return "", fmt.Errorf("exited %d in Pod %s container %s", code, pod.Name, p.Procedure.Container)
+	}
+	if p.Procedure.ReturnsToken {
+		token := strings.TrimSuffix(strings.TrimSuffix(output.buf.String(), "\n"), "\r")
+		if output.overflow || len(token) > maxProbeToken || token == "" || strings.ContainsFunc(token, func(r rune) bool { return r < 33 || r > 126 }) {
+			return "", errors.New("probe identity stdout must contain one nonempty API token line of at most 4096 bytes")
+		}
+		return token, nil
 	}
 	if marker != "" {
 		// Best effort: without the marker the next host provisions again.
@@ -345,7 +378,24 @@ func (p *ProbeUsers) provision(ctx context.Context, user string) error {
 			_ = os.WriteFile(marker, nil, 0o600)
 		}
 	}
-	return nil
+	return "", nil
+}
+
+const maxProbeToken = 4096
+
+// tokenOutput bounds captured credentials even if a procedure prints logs.
+type tokenOutput struct {
+	buf      bytes.Buffer
+	overflow bool
+}
+
+func (o *tokenOutput) Write(p []byte) (int, error) {
+	room := maxProbeToken + 2 - o.buf.Len() // allow CRLF
+	if len(p) > room {
+		o.overflow = true
+	}
+	_, _ = o.buf.Write(p[:min(room, len(p))])
+	return len(p), nil
 }
 
 // readyMarker is the path of user's readiness marker for the Pod that ran the

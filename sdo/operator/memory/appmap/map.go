@@ -682,6 +682,8 @@ type Scenario struct {
 	StatusOnly bool
 	// Users are the names of the probe users the scenario signs in as.
 	Users []string
+	// NeedsProbeToken is true when any of the users requests a provisioned token.
+	NeedsProbeToken bool
 	// KnownBroken is true when the scenario's workload declares it
 	// knownBroken: it is not a gated probe.
 	KnownBroken bool

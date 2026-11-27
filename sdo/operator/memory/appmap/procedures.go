@@ -26,6 +26,7 @@ type Procedure struct {
 	// ProbeIdentity marks the procedure that provisions probe users; see
 	// program.Procedure.ProbeIdentity.
 	ProbeIdentity bool `yaml:"probe_identity,omitempty"`
+	ReturnsToken  bool `yaml:"returns_token,omitempty"`
 }
 
 // ProcedureParam is one typed parameter of a procedure.
@@ -40,7 +41,7 @@ type ProcedureParam struct {
 // Program converts the entry to the SDK's form. A timeout that does not parse
 // is an error.
 func (p Procedure) Program() (program.Procedure, error) {
-	out := program.Procedure{ID: p.ID, Component: p.Component, Container: p.Container, Job: p.Job, Command: append([]string(nil), p.Command...), Effect: p.Effect, Verify: p.Verify, Source: p.Source, ProbeIdentity: p.ProbeIdentity}
+	out := program.Procedure{ID: p.ID, Component: p.Component, Container: p.Container, Job: p.Job, Command: append([]string(nil), p.Command...), Effect: p.Effect, Verify: p.Verify, Source: p.Source, ProbeIdentity: p.ProbeIdentity, ReturnsToken: p.ReturnsToken}
 	for _, param := range p.Params {
 		out.Params = append(out.Params, program.ProcedureParam{Name: param.Name, Type: param.Type, Pattern: param.Pattern, Required: param.Required, Default: param.Default})
 	}
@@ -54,7 +55,7 @@ func (p Procedure) Program() (program.Procedure, error) {
 	return out, nil
 }
 
-const procedureHint = "a procedure is {id, component, container, command, params?, effect: check|repair|data|long, verify?, timeout?, probe_identity?, source} or {id, job: Job/<name>, effect, source}; a probe_identity procedure takes only a required string username and reads the password from stdin"
+const procedureHint = "a procedure is {id, component, container, command, params?, effect: check|repair|data|long, verify?, timeout?, probe_identity?, returns_token?, source} or {id, job: Job/<name>, effect, source}; a probe_identity procedure takes only a required string username and reads the password from stdin; set returns_token to capture one API token on stdout"
 
 // procedures checks each procedure's fields and that its component is
 // declared and its Job is in the source inventory.
@@ -138,6 +139,9 @@ func (c *checker) checkProbeUsers(scenarios []Scenario) {
 		if !ok {
 			c.add(RuleSchema, "declare the application's own admin command that creates or approves a non-admin user as a procedure with probe_identity: true, or sign the probe up through self-service sign-up in Setup", "scenario %s signs in as probe users %s but the map has no probe_identity procedure", s.ID, strings.Join(s.Users, ", "))
 			continue
+		}
+		if s.NeedsProbeToken && !identity.ReturnsToken {
+			c.add(RuleSchema, "set returns_token on the probe_identity procedure and print one API token on stdout", "scenario %s requests a probe token but the identity procedure does not return one", s.ID)
 		}
 		for _, user := range s.Users {
 			if _, err := identity.Bind(map[string]any{program.ProbeIdentityParam: user}); err != nil {

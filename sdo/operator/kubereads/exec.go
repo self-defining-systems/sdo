@@ -55,10 +55,11 @@ func HTTPCommand(h program.HTTPRequest) program.Command {
 // Nonzero exits are results, not errors; transport and authorization failures
 // are errors. The control namespace is refused.
 func RunCommand(ctx context.Context, exec PodExec, protectedNamespace string, command program.Command) (int32, error) {
-	return runCommand(ctx, exec, protectedNamespace, command, nil)
+	return RunCommandWithOutput(ctx, exec, protectedNamespace, command, nil)
 }
 
-func runCommand(ctx context.Context, exec PodExec, protectedNamespace string, command program.Command, stdout io.Writer) (int32, error) {
+// RunCommandWithOutput is RunCommand with an explicit stdout destination.
+func RunCommandWithOutput(ctx context.Context, exec PodExec, protectedNamespace string, command program.Command, stdout io.Writer) (int32, error) {
 	if protectedNamespace != "" && command.Pod.Namespace == protectedNamespace {
 		return 0, apierrors.NewForbidden(schema.GroupResource{Resource: "namespaces"}, command.Pod.Namespace, fmt.Errorf("generic plans cannot access the SDO control namespace"))
 	}
@@ -124,7 +125,7 @@ func ReadOutput(ctx context.Context, get func(context.Context, sdk.ObjectRef) (*
 		return 0, err
 	}
 	return withPodIdentity(ctx, get, command.Pod, uid, func() (int32, error) {
-		return runCommand(ctx, exec, protectedNamespace, command, stdout)
+		return RunCommandWithOutput(ctx, exec, protectedNamespace, command, stdout)
 	})
 }
 

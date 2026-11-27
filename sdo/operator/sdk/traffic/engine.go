@@ -441,7 +441,12 @@ func (e *Engine) PlanAt(ctx context.Context, iteration uint64, at time.Time) ([]
 	rng := e.Rand(iteration)
 	state := State{StateNow: at.UTC().Format(time.RFC3339)}
 	for _, u := range scenario.Users {
-		state[u.As] = passwordPlaceholder
+		if u.As != "" {
+			state[u.As] = passwordPlaceholder
+		}
+		if u.Token != "" {
+			state[u.Token] = "[token]"
+		}
 		if u.SSHKey != "" {
 			state[u.SSHKey] = publicKeyPlaceholder
 		}
@@ -498,17 +503,18 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 		sample.IdentityWait = identityWait(err)
 		return scenario.ID, sample
 	}
-	// Texts are kept whole until the passwords are replaced, then bounded, so
-	// a cut never leaves part of a password behind.
+	// Texts are kept whole until credentials are replaced, then bounded, so
+	// a cut never leaves part of a credential behind.
 	defer func() { result.redact(passwords); result.bound() }()
 	for _, values := range []State{passwords, keys} {
 		for key, value := range values {
 			state[key] = value
 		}
 	}
+	deadline := sample.At.Add(e.workload.IterationTimeout.Duration())
 	// Setup draws from its own copy of the iteration's source, so the steps
 	// build the same requests whether or not setup ran first.
-	if failed := e.setup(iterationCtx, scenario, e.Rand(iteration), state, passwords, &sample); failed {
+	if failed := e.setup(iterationCtx, scenario, e.Rand(iteration), state, passwords, deadline, &sample); failed {
 		return scenario.ID, sample
 	}
 	for _, values := range []State{passwords, keys} {
@@ -518,10 +524,9 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	}
 	state[StateNow] = sample.At.Format(time.RFC3339)
 	started := e.clock.Now()
-	deadline := sample.At.Add(e.workload.IterationTimeout.Duration())
 	var waited time.Duration
 	for _, step := range scenario.Steps {
-		result := e.untilNotPending(iterationCtx, scenario, step, rng, state, passwords, deadline)
+		result := e.untilNotPending(iterationCtx, scenario, step, rng, state, passwords, phaseStep, deadline)
 		waited += result.waited
 		sample.record(result)
 		if result.outcome != OutcomeOK {
@@ -556,7 +561,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 // succeeded never runs again, so a write it made (a credential, a fixture) is
 // not repeated when a later step fails and the setup is retried. It reports
 // whether a setup step failed; the failure is then recorded in sample.
-func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, state State, passwords State, sample *Sample) bool {
+func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, state State, passwords State, deadline time.Time, sample *Sample) bool {
 	if len(scenario.Setup) == 0 {
 		return false
 	}
@@ -574,10 +579,7 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 		}
 		for index := progress.done; index < len(scenario.Setup); index++ {
 			step := scenario.Setup[index]
-			// A step may change State before it fails; only a passing step's
-			// changes are kept.
-			attempt := saved.clone()
-			result := e.step(ctx, scenario, step, rng, attempt, passwords, phaseSetup)
+			result := e.untilNotPending(ctx, scenario, step, rng, saved, passwords, phaseSetup, deadline)
 			sample.record(result)
 			if result.outcome != OutcomeOK {
 				sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
@@ -586,7 +588,6 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 				sample.Latency = e.since(started)
 				return true
 			}
-			saved = attempt
 			e.setups.advance(scenario, index+1, saved)
 		}
 		progress = setupProgress{done: len(scenario.Setup), saved: saved}
@@ -604,6 +605,7 @@ func (r *setupRecord) advance(scenario Scenario, done int, saved State) {
 	delete(kept, StateNow)
 	for _, u := range scenario.Users {
 		delete(kept, u.As)
+		delete(kept, u.Token)
 		delete(kept, u.SSHKey)
 	}
 	r.mu.Lock()
@@ -695,6 +697,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 			delete(saved, StateNow)
 			for _, u := range scenario.Users {
 				delete(saved, u.As)
+				delete(saved, u.Token)
 				delete(saved, u.SSHKey)
 			}
 			e.setups.fixtures[key] = saved
@@ -705,11 +708,11 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 	return e.send(ctx, scenario, step, target, request, state, passwords, line)
 }
 
-// untilNotPending runs a step of Steps; while its check answers NotYet it
+// untilNotPending runs a Setup or Steps step; while its check answers NotYet it
 // builds and sends the step again, after a short pause, on a copy of state
 // (only the last attempt's changes are kept), until the step passes or fails or
 // the iteration deadline passes, which fails it with the last reason.
-func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, passwords State, deadline time.Time) stepResult {
+func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, passwords State, phase stepPhase, deadline time.Time) stepResult {
 	started := e.clock.Now()
 	attempts, sent := 0, 0
 	var result stepResult
@@ -718,7 +721,7 @@ func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step St
 		attempts++
 		lastStart = e.clock.Now()
 		attempt := state.clone()
-		result = e.step(ctx, scenario, step, rng, attempt, passwords, phaseStep)
+		result = e.step(ctx, scenario, step, rng, attempt, passwords, phase)
 		sent += result.sent
 		if !result.pending {
 			if result.outcome == OutcomeOK {
@@ -728,14 +731,15 @@ func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step St
 			}
 			break
 		}
-		if remaining := deadline.Sub(e.clock.Now()); remaining <= 0 || ctx.Err() != nil {
+		remaining := deadline.Sub(e.clock.Now())
+		if remaining <= 0 || ctx.Err() != nil {
 			break
 		}
 		select {
 		case <-ctx.Done():
-		case <-e.clock.After(pendingPause):
+		case <-e.clock.After(min(remaining, pendingPause)):
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || !e.clock.Now().Before(deadline) {
 			break
 		}
 	}
@@ -754,7 +758,7 @@ func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step St
 func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target Target, request Request, state State, passwords State, line string) stepResult {
 	if target.Scheme == "ssh" {
 		if carriesPassword(request, passwords) {
-			return stepResult{outcome: OutcomeInvalid, request: line, err: "an EXEC request may not send a probe-user password"}
+			return stepResult{outcome: OutcomeInvalid, request: line, err: "an EXEC request may not send a probe-user password or token"}
 		}
 		return e.execStep(ctx, scenario, step, target, request, state, line)
 	}
@@ -793,7 +797,8 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 	if truncated {
 		body = body[:MaxResponseBody]
 	}
-	verdict := step.Endpoint.Check(Response{Status: response.StatusCode, Header: response.Header.Clone(), Body: body}, state)
+	observed := Response{Status: response.StatusCode, Header: response.Header.Clone(), Body: body, credentials: passwords}
+	verdict := step.Endpoint.Check(observed, state)
 	if !verdict.OK && truncated && response.StatusCode >= 200 && response.StatusCode < 300 {
 		return stepResult{
 			outcome: OutcomeInvalid, status: response.StatusCode, sent: 1, request: line, defect: DefectResponseTruncated, byteCap: MaxResponseBody,
@@ -805,7 +810,7 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 		e.limits.wait(base, e.clock.Now().Add(wait))
 		return stepResult{
 			outcome: OutcomeInvalid, status: response.StatusCode, sent: 1, request: line, defect: DefectRateLimited,
-			observed: observedExcerpt(body, response.StatusCode, ""),
+			observed: observed.excerpt(""),
 			err:      fmt.Sprintf("%s: step %q was refused with HTTP 429; the probe waits %s before it sends to this target again: the probe's load, not an application failure (lower the probe's rate if it recurs)", DefectRateLimited, step.Name, wait),
 		}
 	}
@@ -814,7 +819,7 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 		if strings.TrimSpace(reason) == "" {
 			reason = fmt.Sprintf("HTTP %d rejected by check", response.StatusCode)
 		}
-		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observedExcerpt(body, response.StatusCode, ""), pending: verdict.Pending}
+		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observed.excerpt(""), pending: verdict.Pending}
 	}
 	return stepResult{outcome: OutcomeOK, status: response.StatusCode, sent: 1, request: line}
 }

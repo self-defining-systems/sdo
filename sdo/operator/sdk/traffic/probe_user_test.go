@@ -165,3 +165,38 @@ func TestConformanceChecksAProbeUserScenario(t *testing.T) {
 		t.Fatalf("failures: %v", failures)
 	}
 }
+
+type tokenPasswords struct{ passwords }
+
+func (p tokenPasswords) Token(_ context.Context, _ string) (string, error) {
+	return "session-sdoprobe-writer", nil
+}
+
+func TestProbeUsesProvisionedTokenWithoutSigningIn(t *testing.T) {
+	scenario := userScenario()
+	scenario.Setup = nil
+	scenario.Users = []ProbeUser{{Name: "sdoprobe-writer", Token: "token"}}
+	api := &loginAPI{}
+	engine := setupEngine(t, scenario, api)
+	engine.UsePasswords(tokenPasswords{})
+	plans, err := engine.Plan(context.Background(), 0)
+	if err != nil || plans[0].Headers["PRIVATE-TOKEN"] != "[token]" {
+		t.Fatalf("plan should use a placeholder: %v (%v)", plans, err)
+	}
+	for i := range uint64(2) {
+		if _, sample := engine.Iterate(context.Background(), i); sample.Outcome != OutcomeOK {
+			t.Fatalf("token did not authenticate: %+v", sample)
+		}
+	}
+	if api.logins != 0 || api.sent != 2 {
+		t.Fatalf("sent %d requests including %d logins", api.sent, api.logins)
+	}
+
+	scenario.Steps = []Step{{Name: "bad", Endpoint: GET("/api/repos/{token}", nil).Contains("repo")}}
+	engine = setupEngine(t, scenario, api)
+	engine.UsePasswords(tokenPasswords{})
+	_, sample := engine.Iterate(context.Background(), 0)
+	if sample.Outcome != OutcomeError || strings.Contains(sample.Request+sample.Error+sample.Observed, "session-sdoprobe-writer") {
+		t.Fatalf("failed sample must redact the token: %+v", sample)
+	}
+}
