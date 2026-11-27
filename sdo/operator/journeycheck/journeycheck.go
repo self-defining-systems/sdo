@@ -95,7 +95,7 @@ func (r Report) Reds() int {
 type Config struct {
 	Catalog   traffic.Catalog
 	Workloads []traffic.Workload
-	// Only keeps the scenarios whose ID contains one of these; empty keeps all.
+	// Only selects exact IDs or, for unmatched filters, ID substrings. Empty keeps all.
 	Only []string
 	// Alter runs the altered-answers item.
 	Alter bool
@@ -142,9 +142,13 @@ func Run(ctx context.Context, c Config) Report {
 	slowest := make([]time.Duration, len(c.Catalog))
 	slots := make(chan struct{}, parallel)
 	shared := &sharedSetup{}
+	ids := make(map[string]bool, len(c.Catalog))
+	for _, scenario := range c.Catalog {
+		ids[scenario.ID] = true
+	}
 	var running sync.WaitGroup
 	for i, scenario := range c.Catalog {
-		if !selected(scenario.ID, c.Only) {
+		if !selected(scenario.ID, c.Only, ids) {
 			continue
 		}
 		if gap, ok := cleanupResult(scenario); ok {
@@ -190,9 +194,9 @@ func Run(ctx context.Context, c Config) Report {
 	return report
 }
 
-func selected(id string, only []string) bool {
+func selected(id string, only []string, ids map[string]bool) bool {
 	for _, o := range only {
-		if strings.Contains(id, o) {
+		if id == o || (!ids[o] && strings.Contains(id, o)) {
 			return true
 		}
 	}

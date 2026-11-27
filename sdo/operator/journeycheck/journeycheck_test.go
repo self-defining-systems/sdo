@@ -221,3 +221,16 @@ func TestDeferredDeletionIsSeenByTheCleanupReadBack(t *testing.T) {
 		t.Fatalf("want the read-back step named in a red cleanup, got %+v", r.Results)
 	}
 }
+
+func TestOnlyExactScenarioIDDoesNotAlsoJudgeLongerIDs(t *testing.T) {
+	c := config(&store{items: map[string]string{}}, scenario(true))
+	other := c.Catalog[0]
+	other.ID += "-later"
+	c.Catalog = append(c.Catalog, other)
+	c.Workloads[0].Scenarios = append(c.Workloads[0].Scenarios, traffic.WorkloadScenario{ID: other.ID})
+	c.Only = []string{c.Catalog[0].ID}
+	report := Run(context.Background(), c)
+	if !report.judged(c.Catalog[0].ID) || report.judged(other.ID) {
+		t.Fatalf("expected one judgment for the exact ID: %+v", report.Results)
+	}
+}

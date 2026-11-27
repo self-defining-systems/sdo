@@ -49,7 +49,7 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
                      earlier run; the answers are altered on their way back, nothing is broken
     healthy-run      (--soak) each selected scenario that passed its checks, sampled on a schedule.
                      A red scenario leaves other scenarios running. Re-soak a fix with --only ID.
-  --only keeps scenarios whose ID contains one of the texts. --plan builds the probes and prints the
+  --only selects exact IDs or, for unmatched filters, ID substrings. --plan builds the probes and prints the
   checklist, schedule and budget without a cluster: nothing is sent. Exit 0 when nothing is red and
   no journey is missing or failing, 1 otherwise, 2 for usage or infrastructure errors.`
 
@@ -61,7 +61,7 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 	repo := flags.String("repo", "", "application repository")
 	namespace := flags.String("namespace", "", "application namespace")
 	kubeconfig := flags.String("kubeconfig", "", "kubeconfig file")
-	only := flags.String("only", "", "comma-separated scenario ID parts")
+	only := flags.String("only", "", "comma-separated scenario IDs or substrings")
 	alter := flags.Bool("alter", false, "also alter each answer")
 	soak := flags.Duration("soak", 0, "also run passing selected scenarios this long")
 	asJSON := flags.Bool("json", false, "print the report as JSON")
