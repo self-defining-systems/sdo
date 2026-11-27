@@ -1041,8 +1041,9 @@ func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
 // launch or while the automatic stage owns the repair, and otherwise stays
 // tracked only. An opener joins the incident's opening alerts before launch;
 // a user test or failing user traffic joins its alert set while the responder
-// or the automatic stage works it (joinAlertSet). Every other opener waits in
-// the batcher for the next incident.
+// or the automatic stage works it (joinAlertSet), and otherwise pages at once on
+// the open incident (pageLate). Every other opener waits in the batcher for the
+// next incident.
 func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, now time.Time, spec sdk.DetectorSpec) {
 	if c.config.ExternalIncidentsOnly {
 		// External clues: tracked for the candidate view only.
@@ -1066,6 +1067,7 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 		c.attachLearnedActivation(finding)
 		return
 	}
+	c.pageLate(finding, now)
 	if spec.Class == "" {
 		c.batcher.AddAt(finding, now)
 		return

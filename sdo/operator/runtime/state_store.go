@@ -44,6 +44,7 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	copy.OpeningKeys = append([]string(nil), request.OpeningKeys...)
 	copy.StandingKeys = append([]string(nil), request.StandingKeys...)
 	copy.JoinedKeys = append([]string(nil), request.JoinedKeys...)
+	copy.LatePages = append([]LatePage(nil), request.LatePages...)
 	copy.DriftEvents = append([]sdk.DriftEvent(nil), request.DriftEvents...)
 	copy.NamespaceOnboarding = cloneNamespaceOnboarding(request.NamespaceOnboarding)
 	copy.DetectorHistory = cloneEvaluations(request.DetectorHistory)
