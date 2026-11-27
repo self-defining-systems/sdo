@@ -99,6 +99,8 @@ type HTTPEndpoint struct{ ... }
     func GET(path string, query Params) *HTTPEndpoint
     func POST(path string, query Params) *HTTPEndpoint
     func PUT(path string, query Params) *HTTPEndpoint
+type HeldFailure struct{ ... }
+    func HeldFailures(spec sdk.DetectorSpec, ctx sdk.DetectionContext, workload string) []HeldFailure
 type IdentityPendingError struct{ ... }
 type KnownBroken struct{ ... }
 type Link struct{ ... }

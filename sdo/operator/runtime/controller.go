@@ -874,7 +874,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.noteStartupEvaluation(spec.ID)
 			return nil
 		}
-		validFindings := findings
+		validFindings := c.corroboratedFailures(detector, snapshot, findings)
 		if gatesSetup(spec) {
 			gatingFindings = append(gatingFindings, currentFindings(validFindings)...)
 		} else if setupHealthy {
