@@ -17,12 +17,13 @@ import (
 )
 
 // openers is the per-commit view opens reads: the scenario IDs of the user
-// tests, or nil when the accepted map is unreadable.
+// tests, or nil when the accepted map is unreadable, and the accepted map.
 type openers struct {
-	mu        sync.Mutex
-	loaded    bool
-	commit    string
-	userTests map[string]bool
+	mu          sync.Mutex
+	loaded      bool
+	commit      string
+	userTests   map[string]bool
+	acceptedMap appmap.Map
 }
 
 // opens reports whether a finding is an alert that opens an incident:
@@ -268,13 +269,20 @@ func (c *Controller) handOverStillFailingLocked(request IncidentRequest, now tim
 
 // userTests reads the accepted map once per source commit.
 func (c *Controller) userTests() map[string]bool {
+	tests, _ := c.openerView()
+	return tests
+}
+
+// openerView is the user tests and the accepted map, read once per source
+// commit.
+func (c *Controller) openerView() (map[string]bool, appmap.Map) {
 	c.openers.mu.Lock()
 	defer c.openers.mu.Unlock()
 	c.mu.Lock()
 	commit, repository := c.config.SourceCommit, c.config.RepositoryWorktree
 	c.mu.Unlock()
 	if c.openers.loaded && c.openers.commit == commit {
-		return c.openers.userTests
+		return c.openers.userTests, c.openers.acceptedMap
 	}
 	m, document := acceptedVerificationMap(context.Background(), c.gitRead, IncidentRequest{SourceCommit: commit, RepositoryWorktree: repository})
 	var tests map[string]bool
@@ -286,8 +294,8 @@ func (c *Controller) userTests() map[string]bool {
 			}
 		}
 	}
-	c.openers.loaded, c.openers.commit, c.openers.userTests = true, commit, tests
-	return tests
+	c.openers.loaded, c.openers.commit, c.openers.userTests, c.openers.acceptedMap = true, commit, tests, m
+	return tests, m
 }
 
 // openingKeys are the request's opening alerts. A request persisted before

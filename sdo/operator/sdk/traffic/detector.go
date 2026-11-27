@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -208,9 +209,38 @@ func (d sloDetector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.
 	if window.LoadError != "" {
 		return nil, fmt.Errorf("traffic workload %s: %s", d.workload, window.LoadError)
 	}
-	descriptors := make(map[string]Descriptor, len(window.Scenarios))
-	for _, observed := range window.Scenarios {
-		descriptors[observed.Scenario.ID] = observed.Scenario
+	findings := make([]sdk.Finding, 0)
+	for _, judged := range d.judge(ctx, window) {
+		if judged.held {
+			continue
+		}
+		verdict := judged.verdict
+		if verdict.Healthy {
+			verdict.Healthy, verdict.Violations = false, []string{judged.confirmed}
+		}
+		findings = append(findings, ScenarioFinding(d.spec, ctx.Namespace(), window.Workload, judged.descriptor, verdict))
+	}
+	sort.Slice(findings, func(left int, right int) bool { return findings[left].RuleID < findings[right].RuleID })
+	return findings, nil
+}
+
+// judgedScenario is one scenario's SLO verdict under the detector's hold:
+// reported, held (failing but not yet reportable), or neither (healthy).
+type judgedScenario struct {
+	verdict    SLOVerdict
+	descriptor Descriptor
+	observed   ScenarioObservations
+	// confirmed is the ConfirmedFailures reason, empty when not confirmed.
+	confirmed string
+	held      bool
+}
+
+// judge returns the scenarios Detect reports (held false) and those its hold
+// still withholds (held true). Healthy, unconfirmed scenarios are left out.
+func (d sloDetector) judge(ctx sdk.DetectionContext, window Window) []judgedScenario {
+	observed := make(map[string]ScenarioObservations, len(window.Scenarios))
+	for _, o := range window.Scenarios {
+		observed[o.Scenario.ID] = o
 	}
 	var confirmed map[string]string
 	if d.hold > 0 {
@@ -221,19 +251,92 @@ func (d sloDetector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.
 		windows[d.workload] = window
 		confirmed = ConfirmedFailures(windows)
 	}
-	findings := make([]sdk.Finding, 0)
+	var out []judgedScenario
 	for _, verdict := range Judge(window) {
 		reason := confirmed[d.workload+"/"+verdict.ScenarioID]
-		if reason == "" && (verdict.Healthy || verdict.FailureSpan < d.hold) {
+		if reason == "" && verdict.Healthy && d.hold == 0 {
 			continue
 		}
-		if verdict.Healthy {
-			verdict.Healthy, verdict.Violations = false, []string{reason}
+		one := judgedScenario{verdict: verdict, descriptor: observed[verdict.ScenarioID].Scenario, observed: observed[verdict.ScenarioID], confirmed: reason}
+		if reason == "" && (verdict.Healthy || verdict.FailureSpan < d.hold) {
+			one.held = true
 		}
-		findings = append(findings, ScenarioFinding(d.spec, ctx.Namespace(), window.Workload, descriptors[verdict.ScenarioID], verdict))
+		out = append(out, one)
 	}
-	sort.Slice(findings, func(left int, right int) bool { return findings[left].RuleID < findings[right].RuleID })
-	return findings, nil
+	return out
+}
+
+// HeldFailure is a failing scenario the detector's persistence hold still
+// withholds: Detect does not report it yet.
+type HeldFailure struct {
+	ScenarioID string
+	// FirstFailureAt is the earliest failing sample of the current failure:
+	// the SLO's failure episode or the run of failing samples since the last
+	// success, whichever began first.
+	FirstFailureAt time.Time
+	// Hard reports that the newest usable sample is an error answer (an error
+	// status or a wrong answer), not a timeout or a slow success.
+	Hard    bool
+	finding func(reason string) sdk.Finding
+}
+
+// Finding is the scenario finding Detect would report for this failure, with
+// reason added to its violations. Its rule and fingerprint are those of the
+// finding the hold reports later.
+func (h HeldFailure) Finding(reason string) sdk.Finding { return h.finding(reason) }
+
+// HeldFailures are the scenarios of detector's workload whose newest usable
+// sample failed but which its persistence hold still withholds. A detector
+// with no hold (one whose spec sets Persistence.MinDuration, or not a health
+// detector) holds nothing back. The detector itself stays pure: whether a held
+// failure is reported early is the caller's decision.
+func HeldFailures(spec sdk.DetectorSpec, ctx sdk.DetectionContext, workload string) []HeldFailure {
+	d, _ := NewDetector(spec, workload).(sloDetector)
+	window, ok := WindowFrom(ctx, workload)
+	if d.hold == 0 || !ok || window.LoadError != "" || window.Workload.Purpose != PurposeHealthProbe {
+		return nil
+	}
+	var held []HeldFailure
+	for _, judged := range d.judge(ctx, window) {
+		if !judged.held {
+			continue
+		}
+		slo := window.Workload.ScenarioSLO(judged.verdict.ScenarioID)
+		newest, ok := newestUsable(judged.observed)
+		if !ok || !newest.failed(slo) {
+			continue
+		}
+		first := judged.verdict.FirstFailureAt
+		if run := currentRun(judged.observed, slo, window.ObservedAt); run.count > 0 && (first.IsZero() || run.first.Before(first)) {
+			first = run.first
+		}
+		if first.IsZero() {
+			first = newest.At
+		}
+		verdict, descriptor, namespace := judged.verdict, judged.descriptor, ctx.Namespace()
+		held = append(held, HeldFailure{
+			ScenarioID: verdict.ScenarioID, FirstFailureAt: first, Hard: newest.Outcome == OutcomeError,
+			finding: func(reason string) sdk.Finding {
+				v := verdict
+				v.Healthy, v.Violations = false, append(slices.Clone(v.Violations), reason)
+				return ScenarioFinding(spec, namespace, window.Workload, descriptor, v)
+			},
+		})
+	}
+	return held
+}
+
+// newestUsable is the scenario's latest-starting usable sample, confirming
+// samples included.
+func newestUsable(observed ScenarioObservations) (Sample, bool) {
+	var newest Sample
+	found := false
+	for _, sample := range slices.Concat(observed.Samples, observed.Confirming) {
+		if sample.Outcome != OutcomeInvalid && (!found || !sample.At.Before(newest.At)) {
+			newest, found = sample, true
+		}
+	}
+	return newest, found
 }
 
 // ScenarioFinding explains one unhealthy scenario. The primary resource is

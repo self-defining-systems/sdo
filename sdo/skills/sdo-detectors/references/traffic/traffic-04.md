@@ -120,6 +120,32 @@ func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint
     for a JSON string. Write "{key}" for a string and {key} for a number.
     The filled body must be valid JSON.
 
+type HeldFailure struct {
+	ScenarioID string
+	// FirstFailureAt is the earliest failing sample of the current failure:
+	// the SLO's failure episode or the run of failing samples since the last
+	// success, whichever began first.
+	FirstFailureAt time.Time
+	// Hard reports that the newest usable sample is an error answer (an error
+	// status or a wrong answer), not a timeout or a slow success.
+	Hard bool
+	// Has unexported fields.
+}
+    HeldFailure is a failing scenario the detector's persistence hold still
+    withholds: Detect does not report it yet.
+
+func HeldFailures(spec sdk.DetectorSpec, ctx sdk.DetectionContext, workload string) []HeldFailure
+    HeldFailures are the scenarios of detector's workload whose newest usable
+    sample failed but which its persistence hold still withholds. A detector
+    with no hold (one whose spec sets Persistence.MinDuration, or not a health
+    detector) holds nothing back. The detector itself stays pure: whether a held
+    failure is reported early is the caller's decision.
+
+func (h HeldFailure) Finding(reason string) sdk.Finding
+    Finding is the scenario finding Detect would report for this failure,
+    with reason added to its violations. Its rule and fingerprint are those of
+    the finding the hold reports later.
+
 type IdentityPendingError struct {
 	Reason string
 	Wait   time.Duration
@@ -218,26 +244,4 @@ type LinkJudgement struct {
 	Bound    time.Duration
 }
     LinkJudgement is why JudgeLink reports a link, with the samples judged.
-
-func JudgeLink(window Window, observed LinkObservations) (LinkJudgement, bool)
-    JudgeLink reports a qualified link whose fresh dials show it unreachable
-    (LinkFailing), intermittent (at least LinkLossPercent of the last
-    LinkLossWindow dials failed, consecutive or not) or slow. Slow needs each
-    of the last LinkSlowWindows windows of Failures dials to have a median
-    above the bound: LinkLatencyFactor times the baseline, the baseline plus
-    LinkSpreadFactor times its spread, and MinLinkLatencyBound, where baseline
-    and spread are first multiplied by the slowdown the link's peers (the
-    setting's Peers) share. A loaded prober node slows every dial alike, so it
-    never makes one link slow. A stalled host (HostStallBound) explains dial
-    timeouts and slowness everywhere at once, even where the peers stay fast:
-    slowness is not judged while any judged dial was made on a stalled host,
-    its timeouts do not count toward intermittent, and a run of them is
-    unreachable only once it fills LinkLossWindow dials. Refusals, resets and
-    protocol failures are judged as usual. Only recent samples are judged:
-    the slow and loss windows reach back at most the larger of MaxAge and twice
-    their length in probe periods.
-
-func JudgeLinkIn(setting LinkSetting, observed LinkObservations) (LinkJudgement, bool)
-    JudgeLinkIn judges dials with an explicit setting, so the same rules judge a
-    link-probe workload's dials and a vantage probe's dials from a client Pod.
 ```
