@@ -589,29 +589,40 @@ func (r Rule) thinAll(steps map[time.Time]counts, run []time.Time, thinClient fl
 	return true
 }
 
-// confirmsRecovery is a window with enough requests, none of them failed.
+// confirmsRecovery is a window with enough requests, none of them failed:
+// no server error, and client errors within the healthy client share.
 func (r Rule) confirmsRecovery(c counts, healthyClient float64) bool {
 	return c.total >= r.minHealthy() && c.server == 0 && c.client-healthyClient*c.total < 1
 }
 
+// heldClientShare is the client-error share a held finding's recovery
+// tolerates: the least share the rule calls a client-error jump when no
+// healthy share is trusted. A held finding has no trusted baseline (it filled
+// with the failure), yet healthy traffic carries routine client errors; asking
+// for none would hold the incident for as long as the route lives.
+func (r Rule) heldClientShare() float64 {
+	return math.Max(r.MinShare, r.MinRatio*r.ShareFloor)
+}
+
 // lookbackFailureFree reports that the steps cover the whole lookback, carry
-// requests, and not one of them failed. A route with too few requests per
-// window never reaches confirmsRecovery's volume and never goes quiet; without
-// this a finding held by an incident would outlive its fault for as long as
-// the route lives.
-func (r Rule) lookbackFailureFree(steps map[time.Time]counts, times []time.Time) bool {
+// requests, and none failed: no server error, and client errors within the
+// healthy client share over the whole lookback. A route with too few requests
+// per window never reaches confirmsRecovery's volume and never goes quiet;
+// without this a finding held by an incident would outlive its fault for as
+// long as the route lives.
+func (r Rule) lookbackFailureFree(steps map[time.Time]counts, times []time.Time, healthyClient float64) bool {
 	if len(times) < int(r.lookback()/r.Step) {
 		return false
 	}
-	requests := 0.0
+	var sum counts
 	for _, t := range times {
 		c := steps[t]
-		if c.server != 0 || c.client != 0 {
+		if c.server != 0 {
 			return false
 		}
-		requests += c.total
+		sum = sum.add(c)
 	}
-	return requests > 0
+	return sum.total > 0 && sum.client-healthyClient*sum.total < 1
 }
 
 // quietNewest reports that the newest evaluation window saw no requests at
@@ -700,16 +711,19 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		if quiet {
 			return sdk.Finding{}, false
 		}
+		// Recovery judges the failure the rule raises on: server errors, and
+		// client errors only above a share the rule could call a jump.
+		allowance := r.heldClientShare()
 		for _, t := range times {
-			if r.confirmsRecovery(steps[t], 0) {
+			if r.confirmsRecovery(steps[t], allowance) {
 				return sdk.Finding{}, false
 			}
 		}
-		if r.lookbackFailureFree(steps, times) {
+		if r.lookbackFailureFree(steps, times, allowance) {
 			return sdk.Finding{}, false
 		}
 		best, raisedAt, onset = &verdict{class: ClassServer}, len(times)-1, recent.ObservedAt
-		heldUnconfirmed = " The incident this finding holds is open and no recent step had enough requests with none failed, so recovery is not confirmed."
+		heldUnconfirmed = fmt.Sprintf(" The incident this finding holds is open and no recent step had enough requests with no server error and client errors under %.1f%%, so recovery is not confirmed.", allowance*100)
 	}
 	if best == nil {
 		return sdk.Finding{}, false
@@ -748,7 +762,7 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	meta["samples"] = samples.metadata()
 	if op.undeclared {
 		fingerprint = "requestmetrics/errors/undeclared/" + op.Service + "/" + op.Route
-		note = " This is an undeclared route: the application map declares no operation for it."
+		note += " This is an undeclared route: the application map declares no operation for it."
 		meta["undeclared_route"] = true
 		if op.truncated != "" {
 			note += " Truncated: " + op.truncated + "."
