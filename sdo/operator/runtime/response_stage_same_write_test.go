@@ -111,9 +111,14 @@ type restartProgram struct {
 	answered *atomic.Int32
 	// undecided makes every diagnosis answer an explained Unknown itself, with no failed read.
 	undecided bool
+	// fixed declares no object parameter: the program acts on resources it names itself.
+	fixed bool
 }
 
 func (p restartProgram) Spec() program.ProgramSpec {
+	if p.fixed {
+		return program.ProgramSpec{ID: p.id}
+	}
 	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}}}
 }
 

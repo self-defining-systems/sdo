@@ -1140,7 +1140,7 @@ func (stage *DeterministicResponseStage) readPlaybookDetectors(ctx context.Conte
 		}
 		var credits ProgramCredits
 		loop.locked(func() { credits = loop.Credits })
-		pending = detectorsOnFailingPaths(pending, credits, m, state.Request)
+		pending = detectorsOnFailingPaths(pending, credits, fixedReachPlaybooks(loop.Programs), m, state.Request)
 	}
 	if len(pending) == 0 {
 		return
@@ -1182,13 +1182,16 @@ func (stage *DeterministicResponseStage) readPlaybookDetectors(ctx context.Conte
 // detectorsOnFailingPaths keeps the detectors whose learned playbooks may fix
 // a component on the path of an opening user test: the path of each opening
 // user test's operations in the accepted map, and the components each
-// playbook was credited for (CreditKey). A detector is left out only when all
-// of that is known and none of its playbooks' credited components is on any
-// such path: its playbooks fixed something else, so its fresh reading cannot
-// bind a playbook for this incident and the stage does not wait for it. A
-// missing map, an opening alert that is not a mapped user test, or a playbook
-// with no credit keeps the detector, as before.
-func detectorsOnFailingPaths(detectors []sdk.Detector, credits ProgramCredits, m appmap.Map, request IncidentRequest) []sdk.Detector {
+// playbook was credited for (CreditKey). Credits record past fixes, not
+// reach, so they bound a playbook only when its program has a fixed reach (no
+// object parameter, see fixedReachPlaybooks). A detector is left out only when
+// all of that is known and none of its playbooks' credited components is on
+// any such path: its playbooks fixed something else, so its fresh reading
+// cannot bind a playbook for this incident and the stage does not wait for it.
+// A missing map, an opening alert that is not a mapped user test, a playbook
+// with no credit or one whose program takes an object parameter keeps the
+// detector, as before.
+func detectorsOnFailingPaths(detectors []sdk.Detector, credits ProgramCredits, fixedReach map[string]bool, m appmap.Map, request IncidentRequest) []sdk.Detector {
 	if len(m.Components) == 0 {
 		return detectors
 	}
@@ -1220,22 +1223,23 @@ func detectorsOnFailingPaths(detectors []sdk.Detector, credits ProgramCredits, m
 	}
 	var kept []sdk.Detector
 	for _, detector := range detectors {
-		if detectorMayBindOnPath(detector.Spec(), credits, onPath) {
+		if detectorMayBindOnPath(detector.Spec(), credits, fixedReach, onPath) {
 			kept = append(kept, detector)
 		}
 	}
 	return kept
 }
 
-// detectorMayBindOnPath reports whether a playbook the detector names has no
-// credit (unknown reach) or was credited for a workload on the path.
-func detectorMayBindOnPath(spec sdk.DetectorSpec, credits ProgramCredits, onPath map[string]bool) bool {
+// detectorMayBindOnPath reports whether a playbook the detector names has an
+// unknown reach (no credit, or a program that is not of fixed reach) or was
+// credited for a workload on the path.
+func detectorMayBindOnPath(spec sdk.DetectorSpec, credits ProgramCredits, fixedReach map[string]bool, onPath map[string]bool) bool {
 	for _, reference := range spec.Playbooks {
 		id, err := layout.PlaybookID(reference)
 		if err != nil || id == layout.HealthObjectivePlaybook || id == SourceRestoreID {
 			continue
 		}
-		if !credits.Has(id) {
+		if !credits.Has(id) || !fixedReach[id] {
 			return true
 		}
 		for _, key := range credits[id] {
@@ -1245,6 +1249,23 @@ func detectorMayBindOnPath(spec sdk.DetectorSpec, credits ProgramCredits, onPath
 		}
 	}
 	return false
+}
+
+// fixedReachPlaybooks are the registered programs that declare no object
+// parameter: they act on resources they name themselves, so the components
+// they were credited for are where they can act. A program with an object
+// parameter binds whatever resource a finding names.
+func fixedReachPlaybooks(programs program.ProgramRegistry) map[string]bool {
+	fixed := map[string]bool{}
+	if programs == nil {
+		return fixed
+	}
+	for _, spec := range programs.List() {
+		if !slices.ContainsFunc(spec.Params, func(p program.ParamSpec) bool { return p.ValueKind == "" }) {
+			fixed[spec.ID] = true
+		}
+	}
+	return fixed
 }
 
 // playbookDetectors are the loop's detectors that name a learned playbook and
