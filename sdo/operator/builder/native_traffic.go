@@ -6,9 +6,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -170,7 +172,7 @@ func validateGeneratorSources(base, module string) error {
 		for _, imported := range file.Imports {
 			name, err := strconv.Unquote(imported.Path.Value)
 			if err != nil || !allowed[name] {
-				return fmt.Errorf("%s: generators may not import %q", path, name)
+				return fmt.Errorf("%s: generators may not import %q; allowed imports: %s", path, name, strings.Join(slices.Sorted(maps.Keys(allowed)), ", "))
 			}
 		}
 		file, err = parser.ParseFile(token.NewFileSet(), path, nil, 0)
