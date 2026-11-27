@@ -346,3 +346,40 @@ func TestShortOutagesReportNothing(t *testing.T) {
 		})
 	}
 }
+
+func TestSlowSuccessfulProbeUsesImmediateConfirmation(t *testing.T) {
+	// Healthy
+	// samples keep p50 below the workload's bound throughout this test.
+	budget := func(w *traffic.Workload, _ *traffic.Scenario) {
+		w.SLO.MaxLatency = traffic.Duration(time.Second)
+	}
+	for _, test := range []struct {
+		name       string
+		slowFor    time.Duration
+		confirming int
+		pages      bool
+	}{
+		{"one slow result", time.Second, 1, false},
+		{"confirmed slowdown", 9 * time.Second, 2, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run := runFaulty(t, []string{"a"}, onset+9*time.Second, budget, func(_ string, at time.Duration) (int, time.Duration, error) {
+				if elapsed := at - onset; elapsed >= 0 && elapsed < test.slowFor {
+					return 200, 1500 * time.Millisecond, nil
+				}
+				return 200, 0, nil
+			})
+			if run.confirming != test.confirming || (run.paged != 0) != test.pages {
+				t.Fatalf("got %d confirming samples and first finding at %s", run.confirming, run.paged)
+			}
+			sent := run.app.sent["/a"]
+			first, again := sent[len(sent)-1-test.confirming], sent[len(sent)-test.confirming]
+			if again-first != 2550*time.Millisecond {
+				t.Fatalf("confirmation waited %s from first sample start", again-first)
+			}
+			if run.paged != 0 && run.paged-onset >= 7*time.Second {
+				t.Fatalf("confirmation reported too late: %s", run.paged-onset)
+			}
+		})
+	}
+}

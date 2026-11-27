@@ -849,8 +849,11 @@ func (e *Engine) Run(ctx context.Context, first uint64, emit func(scenario strin
 					emit(scenario, sample)
 				}
 				<-slots
-				if sample.failed() && e.startsFailing != nil && e.startsFailing(scenario) && confirm.start(scenario) {
-					confirm.run(ctx, scenario, sample)
+				if e.startsFailing != nil {
+					slo := e.workload.ScenarioSLO(scenario)
+					if sample.failed(slo) && e.startsFailing(scenario) && confirm.start(scenario) {
+						confirm.run(ctx, scenario, sample, slo)
+					}
 				}
 			}(iteration)
 		default:
