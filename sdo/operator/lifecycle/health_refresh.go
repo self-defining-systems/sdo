@@ -31,7 +31,8 @@ func (c Coordinator) RefreshHealth(ctx context.Context, cfg Config, revision mem
 	}
 	// The judge's candidate is verified against the live deployment of the
 	// accepted source. A seeded install that SDO never deployed has none: its
-	// candidate is published unverified, and said so (see publishUnverified).
+	// candidate's detectors are verified against the live application as found
+	// (see gateCandidate).
 	deployment, err := c.acceptedDeployment(ctx, cfg)
 	if err != nil {
 		return broker.Receipt{}, fmt.Errorf("refresh health requirements: %w", err)
@@ -122,8 +123,8 @@ func missingNames(absent map[string]bool) []string {
 
 // acceptedDeployment re-verifies the recorded deployment of the accepted head
 // against the live cluster and returns the receipt a refreshed detector is
-// judged against. With no recorded deployment it returns the zero receipt (not
-// Ready), the signal for the unverified publication of a seeded install.
+// judged against. With no recorded deployment it returns a Seeded receipt (not
+// Ready): the detectors are judged against the live application as found.
 func (c Coordinator) acceptedDeployment(ctx context.Context, cfg Config) (DeploymentReceipt, error) {
 	accepted, found, err := c.Broker.AcceptedSourceEvidence(ctx)
 	if errors.Is(err, planfile.ErrAbsent) {
@@ -133,7 +134,10 @@ func (c Coordinator) acceptedDeployment(ctx context.Context, cfg Config) (Deploy
 		return DeploymentReceipt{}, fmt.Errorf("accepted deployment evidence: %w", err)
 	}
 	if !found {
-		return DeploymentReceipt{Source: cfg.DeploymentSource, Environment: cfg.RenderEnvironment}, nil
+		if c.Verifier == nil {
+			return DeploymentReceipt{}, &MissingDependencyError{Operation: "health refresh of a seeded application", Missing: []string{"Verifier"}}
+		}
+		return DeploymentReceipt{Source: cfg.DeploymentSource, Environment: cfg.RenderEnvironment, Seeded: true}, nil
 	}
 	if c.Readiness == nil || c.Verifier == nil {
 		return DeploymentReceipt{}, &MissingDependencyError{Operation: "health refresh of a deployed application", Missing: missingNames(map[string]bool{"Readiness": c.Readiness == nil, "Verifier": c.Verifier == nil})}
@@ -142,8 +146,8 @@ func (c Coordinator) acceptedDeployment(ctx context.Context, cfg Config) (Deploy
 	// its tree is not what the recorded receipt describes, so judging it
 	// against that receipt (O2.resources) fails and, at controller start,
 	// keeps the controller, and with it the head deployer, from ever running.
-	// The candidate is published unverified, as for a seeded install; the head
-	// deployment verifies the push.
+	// The live application is not the head either, so the candidate is
+	// published unverified; the head deployment verifies the push.
 	undeployed, err := c.Broker.HeadUndeployed(ctx)
 	if err != nil {
 		return DeploymentReceipt{}, fmt.Errorf("accepted head against its deployment: %w", err)

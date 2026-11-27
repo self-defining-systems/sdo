@@ -418,7 +418,9 @@ func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, n
 // candidate is not accepted yet (an upstream advance). The deployed tree must
 // be commit's tree or an ancestor's, the live workloads must still match it
 // (re-verified in root, where commit lives), and neither root nor its
-// detector tree may change during the evaluation.
+// detector tree may change during the evaluation. A Seeded receipt (an install
+// SDO never deployed) binds no deployment: the detectors are judged against
+// the live namespace as found.
 func (v IndependentHealthVerifier) VerifyCandidate(ctx context.Context, root, commit, namespace, objective string, source lifecycle.DeploymentReceipt) (lifecycle.HealthVerdict, error) {
 	checked, err := v.checkCandidate(ctx, root, commit, namespace, objective, source)
 	if err != nil {
@@ -443,9 +445,10 @@ type checkedCandidate struct {
 }
 
 // checkCandidate verifies what a verdict on commit rests on: it is the clean HEAD of root, the deployed source
-// is an ancestor, the diagnostics tree exists, and the deployment still is what the receipt says.
+// is an ancestor, the diagnostics tree exists, and the deployment still is what the receipt says. A Seeded
+// receipt has no deployment to check.
 func (v IndependentHealthVerifier) checkCandidate(ctx context.Context, root, commit, namespace, objective string, source lifecycle.DeploymentReceipt) (checkedCandidate, error) {
-	if root == "" || v.OperatorRoot == "" || v.Readiness == nil || namespace == "" || strings.TrimSpace(objective) == "" || commit == "" || !source.Ready {
+	if root == "" || v.OperatorRoot == "" || v.Readiness == nil || namespace == "" || strings.TrimSpace(objective) == "" || commit == "" || !(source.Ready || source.Seeded) {
 		return checkedCandidate{}, errors.New("repository, operator, observer, namespace, objective, commit, and source evidence are required")
 	}
 	git := func(args ...string) (string, error) {
@@ -467,6 +470,17 @@ func (v IndependentHealthVerifier) checkCandidate(ctx context.Context, root, com
 	} else if status != "" {
 		return checkedCandidate{}, errors.New("verified repository changed before health verification")
 	}
+	detectorTree, err := git("rev-parse", commit+":"+layout.DiagnosticsDir)
+	if err != nil {
+		return checkedCandidate{}, fmt.Errorf("verified health diagnostics: %w", err)
+	}
+	if detectorTree == "" {
+		return checkedCandidate{}, errors.New("verified detector tree is empty")
+	}
+	checked := checkedCandidate{root: root, detectorTree: detectorTree, git: git}
+	if source.Seeded {
+		return checked, nil
+	}
 	ancestorTrees, err := git("log", "--format=%H %T", commit)
 	if err != nil {
 		return checkedCandidate{}, err
@@ -482,13 +496,6 @@ func (v IndependentHealthVerifier) checkCandidate(ctx context.Context, root, com
 	if sourceCommit == "" {
 		return checkedCandidate{}, errors.New("deployed source tree is not an ancestor of the verified health diagnostics")
 	}
-	detectorTree, err := git("rev-parse", commit+":"+layout.DiagnosticsDir)
-	if err != nil {
-		return checkedCandidate{}, fmt.Errorf("verified health diagnostics: %w", err)
-	}
-	if detectorTree == "" {
-		return checkedCandidate{}, errors.New("verified detector tree is empty")
-	}
 	// The commit lives in root, which is not the accepted repository for a
 	// candidate: re-verify the deployment against root.
 	readiness := *v.Readiness
@@ -496,7 +503,7 @@ func (v IndependentHealthVerifier) checkCandidate(ctx context.Context, root, com
 	if _, err := readiness.VerifyAccepted(ctx, sourceCommit, namespace, source); err != nil {
 		return checkedCandidate{}, fmt.Errorf("deployed source changed before health verification: %w", err)
 	}
-	return checkedCandidate{root: root, detectorTree: detectorTree, git: git}, nil
+	return checked, nil
 }
 
 // verdict is the lifecycle's verdict for an evaluation of the checked candidate.

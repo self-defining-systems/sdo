@@ -122,6 +122,11 @@ type DeploymentReceipt struct {
 	Images      []string
 	ResourceIDs []string
 	Ready       bool
+	// Seeded marks the receipt of an install whose deployment SDO never
+	// recorded (a seeded application): it is never Ready and binds nothing,
+	// and a verifier judges a candidate's detectors against the live
+	// namespace as found.
+	Seeded bool
 	// Recreated lists the objects the deployer deleted and created again
 	// because an immutable field changed (audit; not deployment identity).
 	Recreated []rendered.Recreation

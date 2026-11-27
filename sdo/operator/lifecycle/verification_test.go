@@ -44,10 +44,12 @@ type fakeBroker struct {
 	// makes that many Accept calls fail with ErrCandidateStale (the head moved),
 	// stageErrors is consumed one per StageCandidate call.
 	stages, accepts, discards int
-	staleAccepts              int
-	stageErrors               []error
-	candidates                []broker.Candidate
-	evidence2                 []broker.CandidateEvidence
+	// publishes counts plain Publish calls (no staged candidate).
+	publishes    int
+	staleAccepts int
+	stageErrors  []error
+	candidates   []broker.Candidate
+	evidence2    []broker.CandidateEvidence
 	// source is the deployment of the accepted head AcceptedSourceEvidence returns.
 	source *broker.AcceptedSource
 	// headUndeployed is HeadUndeployed's answer: the head's effective source is not the recorded deployment's.
@@ -112,6 +114,7 @@ func (b *fakeBroker) accept(id string) broker.Receipt {
 func (b *fakeBroker) Publish(_ context.Context, id string, _ broker.Actor, _ broker.Phase) (broker.Receipt, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.publishes++
 	return b.accept(id), nil
 }
 
@@ -359,11 +362,14 @@ type fakeVerifier struct {
 	candidateRoots []string
 	// objectives records the health objective of each VerifyCandidate call.
 	objectives []string
+	// sources records the deployment receipt of each VerifyCandidate call.
+	sources []lifecycle.DeploymentReceipt
 }
 
 func (v *fakeVerifier) VerifyCandidate(ctx context.Context, root, commit, namespace, objective string, source lifecycle.DeploymentReceipt) (lifecycle.HealthVerdict, error) {
 	v.candidateRoots = append(v.candidateRoots, root+"@"+commit)
 	v.objectives = append(v.objectives, objective)
+	v.sources = append(v.sources, source)
 	return v.Verify(ctx, commit, namespace, objective, source)
 }
 

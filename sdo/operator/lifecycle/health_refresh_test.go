@@ -3,6 +3,7 @@ package lifecycle_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"sdo.dev/operator/broker"
@@ -57,19 +58,85 @@ func TestRefreshHealthGatesTheCandidateAgainstTheAcceptedDeployment(t *testing.T
 	}
 }
 
-// A seeded install SDO never deployed has no recorded deployment to verify the
-// candidate against: the refresh publishes through the broker's own validation,
-// stages and verifies nothing live, and the typed unverified path is the only
-// way to get there.
-func TestRefreshHealthOfASeededInstallPublishesWithoutLiveVerification(t *testing.T) {
+// A seeded install SDO never deployed has no recorded deployment, but it has a
+// live application: the judge's staged candidate is verified against it (the
+// deployment items skipped, never run), and the verified proposal is published.
+func TestRefreshHealthOfASeededInstallVerifiesTheDetectorsLive(t *testing.T) {
 	h, fake := gateHarness(t, clear)
-	h.coordinator.Readiness, h.coordinator.Verifier = nil, nil
 	receipt, err := h.coordinator.RefreshHealth(context.Background(), refreshConfig(), refreshRevision())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Commit == "" || fake.stages != 0 || fake.accepts != 0 {
-		t.Fatalf("receipt=%+v stages=%d accepts=%d, want a plain publication with no staged verification", receipt, fake.stages, fake.accepts)
+	if receipt.Commit == "" || fake.stages != 1 || fake.publishes != 1 || fake.accepts != 0 {
+		t.Fatalf("receipt=%+v stages=%d publishes=%d accepts=%d, want the staged candidate verified, then published", receipt, fake.stages, fake.publishes, fake.accepts)
+	}
+	if want := fake.candidates[0].Path + "@" + fake.candidates[0].Commit; len(h.verifier.candidateRoots) != 1 || h.verifier.candidateRoots[0] != want {
+		t.Fatalf("detectors verified on %v, want the staged checkout %s", h.verifier.candidateRoots, want)
+	}
+	if source := h.verifier.sources[0]; !source.Seeded || source.Ready {
+		t.Fatalf("verified against %+v, want the seeded application as found", source)
+	}
+	if len(h.readiness.liveCalls) != 0 {
+		t.Fatalf("deployment checks ran on %v; a seeded install has no recorded deployment to check", h.readiness.liveCalls)
+	}
+}
+
+// A user test the designer adds that fails on the healthy seeded application
+// (it never passed there) goes back to the designer with the failing probe's
+// file, and only the corrected proposal is published.
+func TestRefreshHealthOfASeededInstallReturnsAFailingProbeToTheDesigner(t *testing.T) {
+	probeFails := lifecycle.HealthVerdict{Outcome: lifecycle.VerificationSourceFault, Summary: "accepted health detectors report firing", Detectors: []lifecycle.DetectorState{{DetectorID: "traffic-writes", Status: "firing", Reason: "write-commit: step push-event failed"}}}
+	h, fake := gateHarness(t, probeFails, clear)
+	receipt, err := h.coordinator.RefreshHealth(context.Background(), refreshConfig(), refreshRevision())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Commit == "" || h.workers.judgeRuns != 2 || fake.publishes != 1 || fake.discards != 2 {
+		t.Fatalf("receipt=%+v judge runs=%d publishes=%d discards=%d, want one correction, then one publication", receipt, h.workers.judgeRuns, fake.publishes, fake.discards)
+	}
+	previous := h.workers.judgeRequests[1].GetPreviousDiagnostics()
+	if len(previous) == 0 || previous[0].GetRule() != "operability.O4.detectors" ||
+		previous[0].GetPath() != ".sdo/diagnostics/traffic/workloads/writes.yaml" || !strings.Contains(previous[0].GetMessage(), "push-event") {
+		t.Fatalf("designer correction diagnostics = %v", previous)
+	}
+}
+
+// A designer probe that keeps failing on the seeded application is never
+// re-attributed to the application and never published: the bounded judge
+// loop ends the refresh instead.
+func TestRefreshHealthOfASeededInstallNeverPublishesAProbeThatKeepsFailing(t *testing.T) {
+	h, fake := gateHarness(t, judgeFiring)
+	if _, err := h.coordinator.RefreshHealth(context.Background(), refreshConfig(), refreshRevision()); err == nil {
+		t.Fatal("a refresh whose designer probe never passed on the live application succeeded")
+	}
+	if fake.publishes != 0 || fake.accepts != 0 || h.workers.judgeRuns < 2 {
+		t.Fatalf("publishes=%d accepts=%d judge runs=%d, want corrections and no publication", fake.publishes, fake.accepts, h.workers.judgeRuns)
+	}
+}
+
+// When a detector Go wrote fires, the seeded application itself is unhealthy
+// and nothing can judge the designer's detectors: the refresh is published
+// unverified, as before, rather than keeping the controller from starting.
+func TestRefreshHealthOfAnUnhealthySeededInstallPublishesUnverified(t *testing.T) {
+	h, fake := gateHarness(t, firing)
+	receipt, err := h.coordinator.RefreshHealth(context.Background(), refreshConfig(), refreshRevision())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Commit == "" || fake.publishes != 1 || h.workers.judgeRuns != 1 {
+		t.Fatalf("receipt=%+v publishes=%d judge runs=%d, want one unverified publication", receipt, fake.publishes, h.workers.judgeRuns)
+	}
+}
+
+// A seeded refresh is verified live, so a Coordinator without a verifier
+// refuses before any judge work.
+func TestRefreshHealthOfASeededInstallNeedsAVerifier(t *testing.T) {
+	h, _ := gateHarness(t, clear)
+	h.coordinator.Verifier = nil
+	_, err := h.coordinator.RefreshHealth(context.Background(), refreshConfig(), refreshRevision())
+	var missing *lifecycle.MissingDependencyError
+	if !errors.As(err, &missing) || h.workers.judgeRuns != 0 {
+		t.Fatalf("error = %v, judge runs = %d; want a MissingDependencyError before any judge", err, h.workers.judgeRuns)
 	}
 }
 
@@ -95,8 +162,9 @@ func TestRefreshHealthVerifiesAgainstTheAcceptedObjective(t *testing.T) {
 // against the previous deployment's receipt failed O2.resources (the receipt
 // held the old release's generated Job, the desired set the new one), so the
 // controller crash-looped on start and the head poller, which lives in that
-// controller, never deployed the push. The refresh publishes unverified, as for
-// a seeded install, and the head deployment verifies the push.
+// controller, never deployed the push. The live application is not the head
+// either, so the refresh publishes unverified and the head deployment verifies
+// the push.
 func TestRefreshHealthOfAHeadAheadOfItsDeploymentPublishesWithoutLiveVerification(t *testing.T) {
 	h, fake := gateHarness(t, clear)
 	fake.source = deployedSource()

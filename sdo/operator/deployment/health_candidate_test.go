@@ -125,6 +125,35 @@ func TestVerifyCandidateRefusesWhatItCannotBind(t *testing.T) {
 	}
 }
 
+// A seeded install has no recorded deployment: its Seeded receipt binds none,
+// so the candidate's detectors are judged against the live namespace as found,
+// unpinned, while the checkout must still be the clean candidate commit. A
+// receipt that is neither ready nor seeded still binds nothing and is refused.
+func TestVerifyCandidateJudgesASeededInstallAsFound(t *testing.T) {
+	accepted, candidate, commit, deployer, _ := candidateFixture(t)
+	var roots []string
+	var scopes []HealthScope
+	verifier := IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: t.TempDir(), Readiness: deployer, Probe: recordingProbe{status: "firing", roots: &roots, scopes: &scopes}}
+	ctx := context.Background()
+	verdict, err := verifier.VerifyCandidate(ctx, candidate, commit, depNamespace, "serve", lifecycle.DeploymentReceipt{Seeded: true})
+	if err != nil || verdict.Outcome != lifecycle.VerificationSourceFault {
+		t.Fatalf("verdict = %+v, err = %v; want the live detectors' verdict", verdict, err)
+	}
+	if len(roots) != 1 || roots[0] != candidate || len(scopes[0].Pins.Images) != 0 {
+		t.Fatalf("probe evaluated %v with scope %+v, want the candidate's detectors unpinned", roots, scopes)
+	}
+	if _, err := verifier.VerifyCandidate(ctx, candidate, commit, depNamespace, "serve", lifecycle.DeploymentReceipt{}); err == nil {
+		t.Fatal("a receipt that is neither ready nor seeded was judged")
+	}
+	writeFile(t, candidate, "untracked.txt", "x")
+	if _, err := verifier.VerifyCandidate(ctx, candidate, commit, depNamespace, "serve", lifecycle.DeploymentReceipt{Seeded: true}); err == nil {
+		t.Fatal("a dirty seeded candidate was judged")
+	}
+	if len(roots) != 1 {
+		t.Fatal("detectors evaluated for a refused candidate")
+	}
+}
+
 func TestVerifyCandidateReportsAFiringCandidateAsASourceFault(t *testing.T) {
 	accepted, candidate, commit, deployer, receipt := candidateFixture(t)
 	var roots []string
