@@ -66,6 +66,36 @@ def plain_render(helm_output: str, *, migrations: bool = False) -> str:
     return yaml.safe_dump_all(docs, sort_keys=False)
 
 
+#: The Kubernetes the lanes run (EKS vcluster lanes serve 1.36) and the kind-level API versions the chart probes with
+#: ``.Capabilities.APIVersions.Has "<group>/<version>/<Kind>"``. ``helm template`` alone assumes Kubernetes 1.20 and
+#: knows no kind-level versions, so chart 9.x to 10.4 rendered HorizontalPodAutoscalers as ``autoscaling/v2beta1``
+#: and PodDisruptionBudgets as ``policy/v1beta1``, which a live install on the lane never does and the lane does
+#: not serve. Checked: with these, the 9.11.4 render equals ``helm get manifest`` of a lane's install, and the
+#: 10.5.4 render is unchanged.
+CLUSTER_KUBE_VERSION = "1.36.0"
+CLUSTER_API_VERSIONS = (
+    "autoscaling/v2/HorizontalPodAutoscaler",
+    "policy/v1/PodDisruptionBudget",
+    "batch/v1/CronJob",
+    "networking.k8s.io/v1/Ingress",
+    "networking.k8s.io/v1/IngressClass",
+)
+
+
+def helm_template(chart: Path, values: Path) -> str:
+    """``helm template`` of ``chart`` with ``values`` as the lane cluster's install renders it."""
+    capabilities = ["--kube-version", CLUSTER_KUBE_VERSION]
+    for version in CLUSTER_API_VERSIONS:
+        capabilities += ["--api-versions", version]
+    done = subprocess.run(
+        ["helm", "template", "gitlab", str(chart), "-n", NAMESPACE, "-f", str(values), *capabilities],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout
+
+
 def render_release(release: Release, archive: Path, pack: Path, *, migrations: bool = False) -> dict[str, str]:
     """The release rendered through the fuzzops GitLab pack at ``pack`` (its ``chart/`` and ``values-fuzzops.yaml``)."""
     with tempfile.TemporaryDirectory(prefix="gitlab-series-") as scratch:
@@ -77,13 +107,8 @@ def render_release(release: Release, archive: Path, pack: Path, *, migrations: b
         chart.write_text(
             re.sub(r"(- name: gitlab\n\s+version: )\S+", rf"\g<1>{release.version}", chart.read_text(), count=1)
         )
-        done = subprocess.run(
-            ["helm", "template", "gitlab", str(build), "-n", NAMESPACE, "-f", str(pack / "values-fuzzops.yaml")],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    return {RENDER_FILE: plain_render(done.stdout, migrations=migrations)}
+        rendered = helm_template(build, pack / "values-fuzzops.yaml")
+    return {RENDER_FILE: plain_render(rendered, migrations=migrations)}
 
 
 def fetch(release: Release, cache: Path) -> Path:

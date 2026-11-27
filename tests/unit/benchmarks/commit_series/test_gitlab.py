@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
+import pytest
 import yaml
 
 from benchmarks.commit_series import gitlab
@@ -244,3 +246,25 @@ def test_a_series_baseline_never_claims_a_judgment_of_source_no_judge_saw(tmp_pa
     assert "SDO-Actor: health_judge" not in message
     assert "SDO-Validation: passed" not in message
     assert "SDO-Actor: human" in message
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="needs helm")
+def test_a_release_renders_as_the_lane_cluster_installs_it(tmp_path: Path) -> None:
+    """``helm template`` alone renders for Kubernetes 1.20 with no kind-level API versions, so a chart that picks
+    ``autoscaling/v2`` or ``policy/v1`` by ``.Capabilities`` falls back to beta APIs the lanes no longer serve; a
+    live install picks the served ones. The series must hold what the install would."""
+    chart = tmp_path / "chart"
+    (chart / "templates").mkdir(parents=True)
+    (chart / "Chart.yaml").write_text("apiVersion: v2\nname: probe\nversion: 0.1.0\n")
+    (chart / "templates" / "hpa.yaml").write_text(
+        "apiVersion: "
+        '{{ if .Capabilities.APIVersions.Has "autoscaling/v2/HorizontalPodAutoscaler" }}autoscaling/v2'
+        "{{ else }}autoscaling/v2beta1{{ end }}\n"
+        "kind: HorizontalPodAutoscaler\nmetadata:\n  name: web\n"
+        '  labels:\n    new-enough: "{{ semverCompare ">=1.30.0-0" .Capabilities.KubeVersion.Version }}"\n'
+    )
+    values = tmp_path / "values.yaml"
+    values.write_text("{}\n")
+    doc = yaml.safe_load(gitlab.helm_template(chart, values))
+    assert doc["apiVersion"] == "autoscaling/v2"
+    assert doc["metadata"]["labels"]["new-enough"] == "true"
