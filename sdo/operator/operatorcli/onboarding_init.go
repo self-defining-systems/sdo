@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 
-	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -185,11 +184,15 @@ Steps: []traffic.Step{{Name: "todo", Endpoint: traffic.GET("/{replace-with-journ
 	if err != nil {
 		return err
 	}
-	body, err := yaml.Marshal(m)
+	header := ""
+	if found {
+		header = appmap.Header(region.YAML)
+	}
+	body, err := appmap.Render(m, header)
 	if err != nil {
 		return err
 	}
-	block := appmap.BeginMarker + "\n```yaml\n" + string(body) + "```\n" + appmap.EndMarker + "\n"
+	block := appmap.BeginMarker + "\n```yaml\n" + body + "```\n" + appmap.EndMarker + "\n"
 	document := strings.TrimRight(string(arch), "\n") + "\n\n" + block
 	if found {
 		document = strings.Replace(string(arch), region.Block, block, 1)

@@ -60,23 +60,23 @@ func (e *HTTPEndpoint) WithForm(form Params) *HTTPEndpoint
 func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint
 func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint
 // Values
-const DateLayout = "2006-01-02"
-const StateNow = "sdo.now"
-const UniqueWidth = 16
-func FromSeedPair(key string, count int, first func(index int) string, second func(index int) string) (Param, Param)
-type Param interface{Value(rng *rand.Rand, state State, generated map[string]string) (string, error)}
-func Const(value string) Param
-func DateRange(from string, to string) Param
-func DaysAfter(param string, min int, max int) Param
-func FloatBetween(low float64, high float64, decimals int) Param
-func FromPrevious(key string) Param
-func FromSeed(count int, render func(index int) string) Param
-func IntBetween(low int, high int) Param
-func OneOf(values ...string) Param
-func Unique(prefix string) Param
-type Params map[string]Param
-func (p Params) Generate(rng *rand.Rand, state State) (map[string]string, error)
-type State map[string]string
+const DateLayout = "2006-01-02" // layout DateRange and DaysAfter read and write
+const StateNow = "sdo.now" // State key holding the start time of the iteration, RFC 3339 in UTC
+const UniqueWidth = 16 // number of hex digits Unique appends
+func FromSeedPair(key string, count int, first func(index int) string, second func(index int) string) (Param, Param) // returns two parameters rendered from the same seeded record, such as a user name and its password
+type Param interface{Value(rng *rand.Rand, state State, generated map[string]string) (string, error)} // generates one request parameter from the iteration's random source, its shared State, and the parameters of the same request generated so far
+func Const(value string) Param // fixed value
+func DateRange(from string, to string) Param // picks a calendar date (YYYY-MM-DD) in [from, to]
+func DaysAfter(param string, min int, max int) Param // date between min and max days after another date parameter of the same request, such as a check-out date after a check-in date
+func FloatBetween(low float64, high float64, decimals int) Param // picks a decimal in [low, high] rounded to decimals places
+func FromPrevious(key string) Param // value an earlier step of the same iteration saved in State, for example with SaveJSON
+func FromSeed(count int, render func(index int) string) Param // picks one of the count records the application seeds at startup and renders it, for example a seeded user name
+func IntBetween(low int, high int) Param // picks an integer in [low, high]
+func OneOf(values ...string) Param // picks one of values uniformly
+func Unique(prefix string) Param // prefix plus UniqueWidth lowercase hex digits drawn from the iteration's random source
+type Params map[string]Param // maps parameter names to generators
+func (p Params) Generate(rng *rand.Rand, state State) (map[string]string, error) // renders every parameter of one request to its string value
+type State map[string]string // carries values between the steps of one iteration, for example an ID a create step saved for the read and cleanup steps that follow
 // Custom checks and SSH
 const MethodExec = "EXEC"
 type Endpoint interface{Build(ctx context.Context, rng *rand.Rand, state State) (Request, error); Check(response Response, state State) Verdict}
