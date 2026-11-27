@@ -228,7 +228,7 @@ jobs:
         env:
           SDO_PYTEST_SHARD: ${{ matrix.shard }}
         run: |
-          SDO_PYTEST_LOG="$RUNNER_TEMP/pytest.log" bash ./scripts/test_python.sh --durations=30 \
+          SDO_PYTEST_LOG="$RUNNER_TEMP/pytest.log" bash ./scripts/test_python.sh --durations=0 --durations-min=1.0 \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py \
             --ignore=tests/unit/benchmarks/sregym/assurance/test_script_execution.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_sdo3_s3a_contracts.py \
@@ -257,7 +257,9 @@ jobs:
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_program_reuse.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_request_envelope_real_go.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_idempotent_helm_real_sregym.py \
-            --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_wrk2_replacement.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_worker_imports_real_sregym.py
       - name: PR-tier tests stay under the slow-test budget
         if: env.SDO_CI_SKIP != 'true'
         env:

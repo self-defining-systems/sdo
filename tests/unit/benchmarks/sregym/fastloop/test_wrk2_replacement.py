@@ -1,4 +1,7 @@
-"""Adapter seam contracts for the pinned load-generator replacement lifecycle."""
+"""Adapter seam contracts for the pinned load-generator replacement lifecycle, nightly tier: PR CI ignores this file.
+
+Each case runs SREGym's real ``Wrk2`` class in SREGym's own environment.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +10,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.sregym_env
 
 
 @pytest.mark.parametrize("scenario", ["terminating", "gone", "active", "finalizer", "api-error", "delete-timeout"])

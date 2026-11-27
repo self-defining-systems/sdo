@@ -213,6 +213,17 @@ def test_pytest_slow_tests_ignore_parameter_suffixes_and_fast_tests() -> None:
     assert slow.pytest_slow(lines, 10) == {"tests/unit/test_a.py::test_x": 11.15}
 
 
+def test_pytest_slow_tests_count_every_phase_of_one_case_together() -> None:
+    """A test costs its setup, call and teardown; parameter cases (ids may hold spaces) are never added up."""
+    lines = [
+        "6.00s setup    tests/unit/test_a.py::test_split",
+        "5.00s call     tests/unit/test_a.py::test_split",
+        "6.00s call     tests/unit/test_a.py::test_cases[one two]",
+        "7.00s call     tests/unit/test_a.py::test_cases[one three]",
+    ]
+    assert slow.pytest_slow(lines, 10) == {"tests/unit/test_a.py::test_split": 11.0}
+
+
 def test_slow_test_script_fails_on_an_unlisted_offender(tmp_path: Path) -> None:
     log = tmp_path / "go.json"
     log.write_text(go_event("pass", "sdo.dev/new", "TestNewSlow", 30) + "\n")

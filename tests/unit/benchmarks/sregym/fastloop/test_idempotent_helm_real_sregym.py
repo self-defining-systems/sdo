@@ -14,6 +14,7 @@ import pytest
 from tests.unit.benchmarks.sregym.fastloop.test_idempotent_helm import helm_state  # noqa: F401
 
 
+@pytest.mark.sregym_env
 @pytest.mark.requires_sregym
 def test_the_real_sregym_helm_class_is_idempotent_after_the_bridge_patches_it(helm_state):  # noqa: F811
     """SREGym's own callers (`Helm.install(**configs)`) reach the replacement; unpatched, they fail."""

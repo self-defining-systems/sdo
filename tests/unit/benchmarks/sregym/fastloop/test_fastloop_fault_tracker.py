@@ -116,6 +116,7 @@ def test_probe_errors_count_as_unresolved_and_are_recorded() -> None:
     assert "api down" in tracker.samples[-1].errors["a"]
 
 
+@pytest.mark.sregym_env
 def test_registered_composites_declare_faults_in_injection_order() -> None:
     assert [fault.kind for fault in composite_faults("composite3_hotel_geo_rate_recommendation")] == [
         "readiness",
@@ -157,6 +158,7 @@ def _reader(objects: dict[tuple[str, str], dict[str, Any] | None]):
     return lambda kind, name: objects.get((kind, name))
 
 
+@pytest.mark.sregym_env
 def test_probes_report_per_fault_state_from_cluster_objects() -> None:
     faults = composite_faults("composite5_hotel_geo_rate_recommendation_frontend_user")
     blocking = {
@@ -185,6 +187,7 @@ def test_probes_report_per_fault_state_from_cluster_objects() -> None:
     assert all(probe() for probe in probes.values())
 
 
+@pytest.mark.sregym_env
 def test_a_network_policy_that_allows_traffic_no_longer_blocks() -> None:
     faults = composite_faults("composite3_hotel_geo_rate_recommendation")
     relaxed = {"spec": {"podSelector": {"matchLabels": {}}, "ingress": [{}], "egress": [{}]}}
@@ -196,6 +199,7 @@ def test_a_network_policy_that_allows_traffic_no_longer_blocks() -> None:
     assert probe() is True
 
 
+@pytest.mark.sregym_env
 def test_unreadable_deployment_is_unresolved() -> None:
     faults = composite_faults("composite3_hotel_geo_rate_recommendation")
     probe = probes_for(faults, _reader({}))["readiness:geo"]
@@ -209,6 +213,7 @@ def test_unknown_fault_kind_is_rejected() -> None:
         probes_for((FaultSpec("mystery", "x"),), _reader({}))
 
 
+@pytest.mark.sregym_env
 @pytest.mark.requires_sregym
 def test_all_playbook_stream_ids_resolve_to_registered_fault_probes_without_a_cluster() -> None:
     root = Path(__file__).resolve().parents[5]

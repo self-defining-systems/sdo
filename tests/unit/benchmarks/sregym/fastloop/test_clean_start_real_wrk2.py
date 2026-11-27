@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.sregym_env
 @pytest.mark.requires_sregym
 def test_real_wrk2_creates_harness_objects_and_grader_reads_the_same_namespace() -> None:
     import os
