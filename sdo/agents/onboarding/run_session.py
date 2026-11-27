@@ -10,7 +10,8 @@ successful exit identifies the commit to export.
 install the controller soaks the probes; when `sdo-operator onboarding soak`
 reports red it prints the one follow-up turn, and `--resume ID` sends exactly
 that message to the same session, validating the export again. Give the
-follow-up its own transcript so its time and tokens stay apart. This launcher uses only the standard library so it can run in a kit.
+follow-up its own transcript so its time and tokens stay apart. This launcher
+uses only the standard library so it can run in a kit.
 """
 
 from __future__ import annotations

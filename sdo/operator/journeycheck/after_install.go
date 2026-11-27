@@ -49,10 +49,10 @@ func (r SoakRecord) Red() []Result {
 type InstalledSoak struct {
 	began    time.Time
 	duration time.Duration
-	windows  map[string]*soakWindow
+	windows  map[string]*soakedWorkload
 }
 
-type soakWindow struct {
+type soakedWorkload struct {
 	workload  traffic.Workload
 	scenarios map[string]*soakScenario
 }
@@ -71,7 +71,7 @@ type soakKey struct {
 
 // NewInstalledSoak starts a soak at began that lasts duration.
 func NewInstalledSoak(began time.Time, duration time.Duration) *InstalledSoak {
-	return &InstalledSoak{began: began, duration: duration, windows: map[string]*soakWindow{}}
+	return &InstalledSoak{began: began, duration: duration, windows: map[string]*soakedWorkload{}}
 }
 
 // Until is when the soak ends.
@@ -89,7 +89,7 @@ func (s *InstalledSoak) Observe(windows map[string]traffic.Window) {
 		}
 		w := s.windows[name]
 		if w == nil {
-			w = &soakWindow{scenarios: map[string]*soakScenario{}}
+			w = &soakedWorkload{scenarios: map[string]*soakScenario{}}
 			s.windows[name] = w
 		}
 		w.workload = window.Workload
