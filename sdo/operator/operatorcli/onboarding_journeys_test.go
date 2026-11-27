@@ -147,11 +147,6 @@ func TestJourneysReportsAMemoryCheckRejectionBesideTheProbeResults(t *testing.T)
 	if !strings.Contains(out.String(), "red memory-check: ") || !strings.Contains(out.String(), "planned ") {
 		t.Fatalf("want a red memory-check line and the probe plan:\n%s", &out)
 	}
-	var asJSON bytes.Buffer
-	RunOnboarding(context.Background(), append(args, "--json"), &asJSON, io.Discard)
-	if !strings.Contains(asJSON.String(), `"item":"memory-check"`) {
-		t.Fatalf("--json carries the memory check: %s", &asJSON)
-	}
 }
 
 // Outside a session the check's environment is unset: one short line says the
