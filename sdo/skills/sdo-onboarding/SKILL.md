@@ -5,10 +5,10 @@ description: Onboard a deployed application as SDO's onboarding agent. Covers tu
 
 # Onboarding an application
 
-The application runs; the people who run it listed its user journeys. You write what SDO needs to notice a broken
-journey within seconds: the map (`.sdo/arch.md`), probes (`.sdo/diagnostics/traffic/`) and the health-objective
-playbook. Go adds the generic Kubernetes, endpoint, store and request-metric detectors when memory is published;
-do not write them. Work alone: one author, no subagents, no reviewers.
+Work alone. Author the application map, traffic probes (`.sdo/diagnostics/traffic/`) and health-objective playbook
+to detect broken journeys within seconds. Go adds generic detectors at publication. Preserve `.sdo/goal.md`.
+Commit only files the initial health judge owns. Edit `.sdo/arch.md` inside its application-map markers.
+Go owns the remaining architecture, schema, outcomes and lifecycle provenance.
 
 ## The journey checklist is your to-do list
 
@@ -91,8 +91,9 @@ background and write the next probe meanwhile.
 
 ## Finish line
 
-Every journey has passed, every current scenario has a green healthy-run line, and `memory check` is green
-on the committed tree. Re-soak only scenarios affected by a fix. A mapped request counter is confirmed by the
-metrics check; missing metrics, traces or logs are a noted reason, never a reason to stop. Open the default user list
-pages as an ordinary user and confirm no probe record is there. With ten minutes left, stop adding:
-remove what is not green, commit, and say what is uncovered. SDO keeps the committed export either way.
+Every journey passes and every scenario has a green healthy-run line. Re-soak only scenarios affected by a fix.
+Confirm mapped per-route counters and document unavailable metrics, traces or logs. Missing telemetry never blocks
+onboarding. As an ordinary user, confirm default list pages show no probe records.
+With ten minutes left, stop adding. Remove work that is still red and say what is uncovered. Commit all export edits
+and pass `sdo-operator memory check` on the committed tree. If the session rejects an export, fix the diagnostics
+and commit again. SDO keeps the validated export even when coverage is partial.
