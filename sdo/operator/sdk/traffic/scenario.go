@@ -129,9 +129,10 @@ type Request struct {
 
 // Response is what the engine received for a Request. Body is bounded.
 type Response struct {
-	Status int
-	Header http.Header
-	Body   []byte
+	Status      int
+	Header      http.Header
+	Body        []byte
+	credentials State
 }
 
 // Verdict is an Endpoint's judgement of one response.
@@ -139,7 +140,7 @@ type Verdict struct {
 	OK     bool
 	Reason string
 	// Pending marks "not yet": the effect the step looks for may still arrive.
-	// The engine then re-Builds and re-sends the step until it passes, fails
+	// For Setup and Steps, the engine re-builds and re-sends it until it passes, fails
 	// (a Verdict that is neither OK nor Pending), or the iteration timeout
 	// passes, which fails the step with the last Reason. A pending verdict
 	// outside Steps (setup, cleanup) is a failure.
@@ -375,8 +376,8 @@ func (s Scenario) Validate() error {
 	}
 	switch s.SideEffect {
 	case SideEffectRead:
-		if len(s.Cleanup) > 0 || (s.Marker != "" && len(s.Setup) == 0) {
-			return fmt.Errorf("scenario %s: a read scenario has no cleanup, and a marker only for its setup steps", s.ID)
+		if len(s.Cleanup) > 0 || (s.Marker != "" && len(s.Setup) == 0 && len(s.Users) == 0) {
+			return fmt.Errorf("scenario %s: a read scenario has no cleanup, and a marker only for its setup steps or probe users", s.ID)
 		}
 		for _, step := range s.Steps {
 			if s.stepTarget(step).Scheme == "ssh" {

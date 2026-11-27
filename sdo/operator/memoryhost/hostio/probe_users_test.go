@@ -3,6 +3,7 @@ package hostio
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -46,6 +47,7 @@ type recordingExec struct {
 	calls   []execCall
 	release chan struct{}
 	exit    int
+	stdout  string
 }
 
 type execCall struct {
@@ -55,7 +57,7 @@ type execCall struct {
 	stdin     string
 }
 
-func (e *recordingExec) Stream(_ context.Context, pod sdk.ObjectRef, container string, command []string, stdin string, _ io.Writer) error {
+func (e *recordingExec) Stream(_ context.Context, pod sdk.ObjectRef, container string, command []string, stdin string, stdout io.Writer) error {
 	e.mu.Lock()
 	e.calls = append(e.calls, execCall{pod: pod.Name, container: container, argv: command, stdin: stdin})
 	e.mu.Unlock()
@@ -64,6 +66,10 @@ func (e *recordingExec) Stream(_ context.Context, pod sdk.ObjectRef, container s
 	}
 	if e.exit != 0 {
 		return utilexec.CodeExitError{Err: errors.New("exit"), Code: e.exit}
+	}
+	if stdout != nil {
+		_, err := io.WriteString(stdout, e.stdout)
+		return err
 	}
 	return nil
 }
@@ -304,5 +310,42 @@ func TestProbeUsersReadinessSurvivesTheHost(t *testing.T) {
 	waitAttempt(t, again, "sdoprobe-writer")
 	if len(redo.calls) != 1 {
 		t.Fatalf("a replaced Pod must provision again, ran %d", len(redo.calls))
+	}
+}
+
+func TestProbeIdentityReturnsOneTokenPerUser(t *testing.T) {
+	const canary = "synthetic-token-canary"
+	for _, test := range []struct {
+		name, stdout string
+		valid        bool
+	}{
+		{"token", canary + "\n", true},
+		{"empty", "", false},
+		{"multiline", canary + "\nunexpected\n", false},
+		{"oversize", canary + strings.Repeat("x", 16384), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const user = "sdoprobe-writer"
+			exec := &recordingExec{stdout: test.stdout}
+			document := strings.Replace(identityMap, "probe_identity: true", "probe_identity: true\n    returns_token: true", 1)
+			users := NewProbeUsers(document, filepath.Join(t.TempDir(), "seed"), "app", "sdo-system", identityCluster(), exec)
+			if _, err := users.Token(context.Background(), user); !strings.Contains(fmt.Sprint(err), "pending") {
+				t.Fatalf("wanted a pending identity, got %v", err)
+			}
+			waitAttempt(t, users, user)
+			for range 2 {
+				token, err := users.Token(context.Background(), user)
+				if test.valid {
+					if token != canary || err != nil {
+						t.Fatalf("token unavailable: %v", err)
+					}
+				} else if err == nil || token != "" || strings.Contains(err.Error(), canary) {
+					t.Fatal("malformed output must be rejected without exposing the token")
+				}
+			}
+			if len(exec.calls) != 1 {
+				t.Fatalf("procedure ran %d times", len(exec.calls))
+			}
+		})
 	}
 }

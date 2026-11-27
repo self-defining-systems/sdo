@@ -118,14 +118,18 @@ func TestApplicationMapMatchesScenarios(t *testing.T) {
     scenarios := []appmap.Scenario{}
     for _, s := range TrafficCatalog() {
         users := []string{}
-        for _, u := range s.Users { users = append(users, u.Name) }
+        needsToken := false
+        for _, u := range s.Users {
+            users = append(users, u.Name)
+            needsToken = needsToken || u.Token != ""
+        }
         existing := []appmap.ExistingRecordsStep{}
         for _, step := range s.ExistingRecordsSteps() {
             existing = append(existing, appmap.ExistingRecordsStep{Name: step.Name, ChecksContent: step.ChecksContent, OwnKeys: step.OwnKeys})
         }
         broken := false
         for _, id := range KnownBrokenScenarios { broken = broken || id == s.ID }
-        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup), StatusOnly: s.StatusOnly(), Users: users, KnownBroken: broken, ExistingRecords: existing})
+        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup), StatusOnly: s.StatusOnly(), Users: users, NeedsProbeToken: needsToken, KnownBroken: broken, ExistingRecords: existing})
     }
     findings := m.CheckScenarios(scenarios)
     if findings == nil { findings = []appmap.Finding{} }
