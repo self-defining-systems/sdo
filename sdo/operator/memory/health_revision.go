@@ -57,16 +57,6 @@ func HealthInputs(ctx context.Context, repository, revision string) (HealthRevis
 	return HealthRevision{Commit: revision, SourceInputs: source, Objective: objective, DetectorRevision: detectors}, nil
 }
 
-// SourceInputs is HealthRevision.SourceInputs of one revision: the digest of
-// every tracked input outside operational memory plus the effective
-// deployment inputs, without reading the health objective. It identifies the
-// deployment a revision describes, so controller state taken from a running
-// deployment (the promoted store baselines) can be bound to it.
-func SourceInputs(ctx context.Context, repository, revision string) (string, error) {
-	_, source, _, err := treeInputs(ctx, repository, revision)
-	return source, err
-}
-
 // treeInputs resolves revision and digests its source and detector inputs.
 func treeInputs(ctx context.Context, repository, revision string) (commit, source, detectors string, err error) {
 	resolved, err := healthGit(ctx, repository, "rev-parse", "--verify", revision+"^{commit}")

@@ -12,19 +12,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/journeycheck"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/operatorcli/internal/processio"
 )
 
 // OnboardingJourneysUsage documents "sdo-operator onboarding journeys".
 const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo DIR --namespace NS [--only ID,ID] [--alter] [--soak 5m]
-                                       [--plan] [--kubeconfig FILE] [--json] [--operator-root DIR] [--seed FILE]
+                                       [--plan | --quick --only ID] [--verbose | --json]
+                                       [--kubeconfig FILE] [--operator-root DIR] [--seed FILE]
 
   Runs the probes in DIR's working tree (no commit needed) against the healthy application, through
   port forwards. The report starts with the checklist of the user journeys .sdo/goal.md lists, in
@@ -38,11 +39,12 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
   with how soon a full failure of the journey is noticed (each operation by its soonest probe, the
   journey by its latest operation), computed from the workloads' schedule and SDO's confirmation,
   what its probes cost and what sampling the slowest at the 10 s floor would add. Then one line per
-  finding, the first red first:
+  scenario, with details for red checks. --verbose shows every finding:
     budget           requests/s planned and left under the cap, per workload
     scheduled        a workload runs it; how long until a full failure is confirmed
     passes           three runs in a row pass
-    cleanup          its cleanup succeeds
+    cleanup          its cleanup succeeds; from the steps alone (also --plan): a cleanup reads its
+                     data back gone, and an idempotent write names no new object (Unique)
     concurrent       a second prober running it at once does not make it fail
     latency-bound    its maxLatency leaves room over the slowest healthy run
     altered-answers  (--alter) it fails when a read answers empty, short, changed or as in an
@@ -51,7 +53,15 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
                      A red scenario leaves other scenarios running. It stops early once every
                      scenario is red or has 10 samples, none failed. Re-soak a fix with --only ID.
   --only selects exact IDs or, for unmatched filters, ID substrings. --plan builds the probes and prints the
-  checklist, schedule and budget without a cluster: nothing is sent. Exit 0 when nothing is red and
+  checklist, schedule and budget without a cluster: nothing is sent.
+  Probe cadence targets detection within 30s by default. Set a different target in the human
+  goal with a line such as Detection target: 45s. SDO uses the target for an unset sampleInterval
+  and defaults an unset ratePerSecond to one iteration per scenario per interval.
+  --quick runs memory check --replay off (using its publication environment), then runs one iteration
+  of the exact scenario named by --only, including setup and cleanup, and prints its step trace.
+  Use it to iterate on a probe before the full checks. A rejected memory check stops before any requests
+  and prints its own diagnostics (MemoryCheckReport with --json).
+  Exit 0 when nothing is red and
   no journey is missing or failing, 1 otherwise, 2 for usage or infrastructure errors.`
 
 func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
@@ -66,6 +76,8 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 	alter := flags.Bool("alter", false, "also alter each answer")
 	soak := flags.Duration("soak", 0, "also run passing selected scenarios this long")
 	asJSON := flags.Bool("json", false, "print the report as JSON")
+	verbose := flags.Bool("verbose", false, "print every finding and progress")
+	quick := flags.Bool("quick", false, "validate memory and run one iteration of the selected scenario")
 	plan := flags.Bool("plan", false, "read the schedule only: send nothing")
 	operatorRoot := flags.String("operator-root", operatorRootDefault(processio.Environment), "operator source tree")
 	seed := flags.String("seed", "", "probe-identity seed file (default: .git/sdo-probe-identity/seed in DIR)")
@@ -75,7 +87,30 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 	if flags.NArg() != 0 || *namespace == "" || !filepath.IsAbs(*repo) {
 		return 0, errors.New("journeys requires --repo (absolute path) and --namespace")
 	}
+	if *quick && (*only == "" || strings.Contains(*only, ",") || *plan || *alter || *soak != 0) {
+		return 0, errors.New("--quick requires --only with one exact scenario ID and cannot combine with --plan, --alter or --soak")
+	}
 	slog.SetLogLoggerLevel(slog.LevelWarn) // the build's stage lines are not findings
+	if *quick {
+		checkArgs := []string{"check", "--root", *repo, "--replay", "off"}
+		if *asJSON {
+			checkArgs = append(checkArgs, "--json")
+		}
+		var checked bytes.Buffer
+		code := RunMemory(ctx, checkArgs, func(key string) string {
+			if key == "SDO_OPERATOR_ROOT" {
+				return *operatorRoot
+			}
+			return processio.Environment(key)
+		}, &checked, stderr)
+		if code != exitClean {
+			fmt.Fprint(stdout, checked.String())
+			return code, nil
+		}
+		if *verbose && !*asJSON {
+			fmt.Fprint(stdout, checked.String())
+		}
+	}
 	if *seed == "" {
 		*seed = filepath.Join(*repo, ".git", "sdo-probe-identity", "seed")
 	}
@@ -83,9 +118,15 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 	if *only != "" {
 		parts = strings.Split(*only, ",")
 	}
-	given, applicationMap, mapErr, err := journeyGoalAndMap(*repo)
-	if err != nil {
-		return 0, err
+	var given []appmap.GivenJourney
+	var applicationMap appmap.Map
+	var mapErr string
+	if !*quick {
+		var err error
+		given, applicationMap, mapErr, err = journeyGoalAndMap(*repo)
+		if err != nil {
+			return 0, err
+		}
 	}
 	diagnostics, err := memory.CandidateDiagnostics(*repo)
 	if err != nil {
@@ -100,7 +141,14 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 	if err != nil {
 		return reportCompile(stdout, err)
 	}
-	options, err := json.Marshal(map[string]any{"Namespace": *namespace, "SeedPath": *seed, "Only": parts, "Alter": *alter, "Soak": time.Duration(*soak), "Plan": *plan})
+	target, err := layout.ReadGoalDetectionTarget(*repo)
+	if err != nil {
+		return 0, err
+	}
+	options, err := json.Marshal(journeycheck.Options{
+		Namespace: *namespace, SeedPath: *seed, Only: parts, Alter: *alter, Soak: *soak,
+		Plan: *plan, Once: *quick, Verbose: *verbose, DetectionTarget: target,
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -112,16 +160,20 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 		return 0, fmt.Errorf("read the probe report: %w", err)
 	}
-	if mapErr != "" {
-		report.Results = append([]journeycheck.Result{{Item: "application-map", Subject: "all", Status: journeycheck.Red, Detail: mapErr}}, report.Results...)
+	if !*quick {
+		if mapErr != "" {
+			report.Results = append([]journeycheck.Result{{Item: "application-map", Subject: "all", Status: journeycheck.Red, Detail: mapErr}}, report.Results...)
+		}
+		report.AddChecklist(given, applicationMap)
 	}
-	report.AddChecklist(given, applicationMap)
 	if *asJSON {
 		data, err := json.Marshal(report)
 		if err != nil {
 			return 0, err
 		}
 		fmt.Fprintln(stdout, string(data))
+	} else if *verbose {
+		fmt.Fprint(stdout, report.VerboseText())
 	} else {
 		fmt.Fprint(stdout, report.Text())
 	}

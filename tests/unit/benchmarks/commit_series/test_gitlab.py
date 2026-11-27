@@ -176,3 +176,71 @@ def test_a_series_baseline_carries_the_base_jobs_and_names_every_job_of_the_seri
     vcs(clone, "checkout", "-q", "-b", "replay")
     vcs(clone, "fetch", "-q", str(repo), release)
     vcs(clone, "cherry-pick", release)
+
+
+def test_a_release_is_named_by_the_most_significant_version_field_it_changes() -> None:
+    assert gitlab.release_kind("9.11.4", "10.0.1") == "Major"
+    assert gitlab.release_kind("10.0.1", "10.1.1") == "Minor"
+    assert gitlab.release_kind("10.5.4", "10.5.5") == "Patch"
+
+
+JUDGED = "\n\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed\n"
+
+
+def _derived_message(tmp_path: Path, *, source_changed_after_judgment: bool) -> str:
+    """Derive a series baseline from a memory whose last health judgment did or did not see its current source; the
+    derived commit's message."""
+    web = "kind: Deployment\nmetadata:\n  name: web\nspec:\n  image: v1\n"
+    job = "kind: Job\nmetadata:\n  name: db-migrations-1a2b3c4\n"
+    repo = tmp_path / "upstream"
+    (repo / "k8s").mkdir(parents=True)
+    vcs(repo, "init", "-q", "-b", "trunk")
+    at_base = web.replace("v1", "v2") if source_changed_after_judgment else web
+    (repo / "k8s" / "render.yaml").write_text("---\n".join([at_base, job]))
+    vcs(repo, "add", "-A")
+    vcs(repo, "commit", "-q", "-m", "base")
+    series = tmp_path / "series.json"
+    series.write_text(
+        json.dumps({"upstream": {"repo": str(repo), "base": vcs(repo, "rev-parse", "HEAD"), "commits": []}})
+    )
+    memory = tmp_path / "memory-src"
+    (memory / "k8s").mkdir(parents=True)
+    (memory / ".sdo" / "deployment").mkdir(parents=True)
+    (memory / "k8s" / "render.yaml").write_text(web)
+    (memory / ".sdo" / "deployment" / "plan.yaml").write_text(json.dumps({"expectedWorkloadIds": []}))
+    vcs(memory, "init", "-q", "-b", "mem")
+    vcs(memory, "add", "-A")
+    vcs(memory, "commit", "-q", "-m", "judged" + JUDGED)
+    (memory / ".sdo" / "goal.md").write_text("memory-only change after the judgment\n")
+    vcs(memory, "add", "-A")
+    vcs(memory, "commit", "-q", "-m", "detectors")
+    if source_changed_after_judgment:
+        # the curator moved the app source to the series base release; no judge has seen it
+        (memory / "k8s" / "render.yaml").write_text(at_base)
+        vcs(memory, "commit", "-q", "-a", "-m", "source at the series base")
+    out = tmp_path / "baseline"
+    out.mkdir()
+    vcs(memory, "bundle", "create", str(out / "memory.bundle"), "mem")
+    (out / "baseline.json").write_text(
+        json.dumps({"bundle": "memory.bundle", "branch": "mem", "commit": vcs(memory, "rev-parse", "HEAD")})
+    )
+    gitlab.derive_baseline(out, tmp_path / "derived", series)
+    clone = tmp_path / "clone"
+    vcs(tmp_path, "clone", "-q", "-b", "mem", str(tmp_path / "derived" / "memory.bundle"), str(clone))
+    return vcs(clone, "log", "-1", "--format=%B")
+
+
+def test_a_series_baseline_keeps_a_current_judgment_current(tmp_path: Path) -> None:
+    """Adding the series' Jobs to memory whose judgment saw its source needs no new judgment."""
+    message = _derived_message(tmp_path, source_changed_after_judgment=False)
+    assert "SDO-Actor: health_judge" in message
+    assert "SDO-Validation: passed" in message
+
+
+def test_a_series_baseline_never_claims_a_judgment_of_source_no_judge_saw(tmp_path: Path) -> None:
+    """When the source changed after the last health judgment (a baseline moved to another release), the derived
+    commit must not claim one: the controller then refreshes health on the source it actually runs."""
+    message = _derived_message(tmp_path, source_changed_after_judgment=True)
+    assert "SDO-Actor: health_judge" not in message
+    assert "SDO-Validation: passed" not in message
+    assert "SDO-Actor: human" in message

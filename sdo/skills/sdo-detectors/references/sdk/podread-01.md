@@ -115,7 +115,8 @@ type Query struct {
     credentials inside the container through its environment.
 
 func Queries(ds []sdk.Detector) ([]Query, error)
-    Queries merges identical query IDs and rejects conflicting definitions.
+    Queries merges identical query IDs and rejects conflicting definitions,
+    naming both declaring detectors.
 
 func (q Query) Validate() error
     Validate checks a query's identifiers, role, command and bounds.

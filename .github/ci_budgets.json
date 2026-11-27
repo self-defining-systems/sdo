@@ -11,7 +11,8 @@
       "go": 60,
       "controller-e2e": 40,
       "python": 45,
-      "images": 30
+      "images": 30,
+      "report": 5
     },
     "ci-health.yml": {
       "health": 5

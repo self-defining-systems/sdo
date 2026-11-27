@@ -390,7 +390,7 @@ def test_python_runner_builds_protocol_tools_once_before_workers(tmp_path: Path)
         command.write_text(f"#!/bin/sh\nset -eu\n{body}\n")
         command.chmod(0o755)
     result = subprocess.run(
-        ["bash", str(ROOT / "scripts/test_python.sh"), "--durations=30"],
+        ["bash", str(ROOT / "scripts/test_python.sh"), "--durations=0"],
         env={
             **os.environ,
             "PATH": f"{tmp_path}:{os.environ['PATH']}",
@@ -405,7 +405,7 @@ def test_python_runner_builds_protocol_tools_once_before_workers(tmp_path: Path)
     lines = calls.read_text().splitlines()
     assert len([line for line in lines if line.startswith("go build ")]) == 3  # receipt, submission guard, RBAC helper
     assert lines[-1].startswith("uv run --extra test pytest ")
-    assert "--durations=30" in lines[-1]
+    assert "--durations=0" in lines[-1]
 
 
 def test_python_runner_starts_the_operator_build_before_collection() -> None:
@@ -420,7 +420,8 @@ def test_architecture_delegation_requires_the_full_python_suite() -> None:
     jobs = workflow()["jobs"]
     commands = "\n".join(step.get("run", "") for step in jobs["checks"]["steps"] + jobs["python"]["steps"])
     assert "check_errors.sh --python-suite" in commands
-    assert "scripts/test_python.sh --durations=30" in commands
+    # Every duration, not a top-N list: the budget step reads this log and must see each slow test.
+    assert "scripts/test_python.sh --durations=0 --durations-min=1.0" in commands
     assert "--tach" not in commands
     assert "--ignore=tests/unit/test_architecture.py" not in commands
 

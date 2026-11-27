@@ -267,11 +267,6 @@ func (t *FindingStateTracker) HasPendingDetector(detectorID string) bool {
 	return false
 }
 
-func (t *FindingStateTracker) awaitingActivation(key string) bool {
-	state := t.states[key]
-	return state != nil && !state.Active && state.FiringCount > 0
-}
-
 func (t *FindingStateTracker) Snapshot() map[string]FindingState {
 	result := make(map[string]FindingState, len(t.states))
 	for fingerprint, state := range t.states {

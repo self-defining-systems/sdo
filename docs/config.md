@@ -156,6 +156,7 @@ fallback when a field is left unset.
 | Value | Fallback | Source |
 |---|---|---|
 | probe health minimum duration | `9s` | `traffic.DefaultHealthMinDuration` |
+| probe detection target | `30s` | `traffic.DefaultDetectionTarget` |
 | probe SLO window (samples) | `5` | `traffic.DefaultWindow` |
 | probe SLO minimum samples | `3` | `traffic.DefaultMinSamples` |
 | probe SLO maximum sample age | `30s` | `traffic.DefaultMaxAge` |

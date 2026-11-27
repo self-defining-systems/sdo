@@ -136,6 +136,10 @@ const (
 	RuleMapRecordsUnread  = "map.records-unread"
 	RuleMapNoUserRecords  = "map.no-user-records"
 	RuleMapReaders        = "map.readers"
+	// RuleMapEffectUnobserved: a probe lists background work (an internal
+	// operation) without waiting for its effect or without the user action
+	// that starts it.
+	RuleMapEffectUnobserved = "map.effect-unobserved"
 	// Ownership of the map region: the designer changes nothing outside it,
 	// and nobody else changes it.
 	RuleMapOutsideRegion = "ownership.map-outside-region"

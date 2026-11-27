@@ -104,6 +104,18 @@ func RunDir(t testing.TB) string {
 
 // NewWorld builds the binaries, starts the cluster and kubelet, deploys the toy
 // application, and installs the controller exactly as the toy lane does.
+// RequireTrustedScriptRunner fails a test that needs learned scripts to run
+// when the fake kubelet cannot start the trusted script runner: it runs under
+// `sudo -n bwrap` to drop to UID 65534. Without passwordless sudo every learned
+// script exits 127, the automatic stage fails and the incident goes to the agent,
+// which reads as a routing regression rather than a missing prerequisite.
+func RequireTrustedScriptRunner(t testing.TB) {
+	t.Helper()
+	if out, err := exec.Command("sudo", "-n", "true").CombinedOutput(); err != nil {
+		t.Fatalf("learned scripts need passwordless sudo for the trusted runner's UID transition in bubblewrap: sudo -n true: %v: %s", err, bytes.TrimSpace(out))
+	}
+}
+
 func NewWorld(t testing.TB) *World {
 	t.Helper()
 	root := RepoRoot(t)

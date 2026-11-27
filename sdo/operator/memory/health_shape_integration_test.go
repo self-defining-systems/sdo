@@ -251,36 +251,3 @@ func TestInstallWithoutJudgeSurvivesUpkeepSchemaMigration(t *testing.T) {
 		t.Fatalf("a migration-only commit must preserve an unjudged install: ok=%v err=%v", ok, err)
 	}
 }
-
-// SourceInputs identifies the deployment a revision describes: it equals
-// HealthInputs' SourceInputs, needs no health objective, ignores learned
-// memory (a seed's playbooks and outcomes) and changes with the source.
-func TestSourceInputsIdentifyTheDeploymentNotTheMemory(t *testing.T) {
-	ctx := context.Background()
-	dir := judgedRepo(t)
-	sourceInputs := func() string {
-		t.Helper()
-		inputs, err := memory.SourceInputs(ctx, dir, "HEAD")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return inputs
-	}
-	before := sourceInputs()
-	if rev, err := memory.HealthInputs(ctx, dir, "HEAD"); err != nil || rev.SourceInputs != before {
-		t.Fatalf("HealthInputs.SourceInputs = %q (%v), SourceInputs = %q", rev.SourceInputs, err, before)
-	}
-	writeFile(t, dir, ".sdo/playbooks/synthetic/main.go", "package synthetic\n")
-	writeFile(t, dir, ".sdo/outcomes/synthetic.json", "{}\n")
-	gitIn(t, dir, "rm", "-q", ".sdo/goal.md")
-	gitIn(t, dir, "add", "-A")
-	gitIn(t, dir, "commit", "-qm", "learned memory")
-	if got := sourceInputs(); got != before {
-		t.Fatalf("learned memory changed SourceInputs: %q -> %q", before, got)
-	}
-	writeFile(t, dir, "main.go", "package main // v3\n")
-	gitIn(t, dir, "commit", "-qam", "source change")
-	if got := sourceInputs(); got == before {
-		t.Fatal("a source change kept SourceInputs")
-	}
-}

@@ -6,11 +6,11 @@ import pytest
 from google.protobuf import timestamp_pb2
 
 from sdo.agents.responder.codex import _responder_prompt, recent_changes_block
-from sdo.agents.responder.incident_opening import symptom
+from sdo.agents.responder.incident_opening import learned_playbooks_block, symptom
 from tests.proto_messages import evolve
 from tests.unit.sdo.agents.prompts.cases import incident
 
-#: The text around the page, with the telemetry sentence and a long skills path: about 770 bytes today.
+#: The text around the page, with the telemetry sentence and a long skills path: about 520 bytes today.
 FIXED_BYTES = 800
 
 
@@ -43,12 +43,15 @@ def test_the_first_message_requires_no_skill_and_no_command() -> None:
 
 
 def test_the_fixed_part_of_the_first_message_cannot_grow_back() -> None:
-    """Everything the responder is told besides the page (symptom, candidates) and the branch line."""
+    """Everything the responder is told besides the page (symptom, playbooks, candidates)."""
     request = _opened_by_a_test("login")
     full = str(_responder_prompt(request))
-    page = symptom(request) + recent_changes_block(request)
+    # Each block is removed on its own: the template and the other blocks sit between them.
+    for block in (symptom(request), learned_playbooks_block(request), recent_changes_block(request)):
+        assert block in full
+        full = full.replace(block, "", 1)
 
-    fixed = len(full.replace(page, "").encode())
+    fixed = len(full.encode())
     assert fixed <= FIXED_BYTES, f"{fixed} > {FIXED_BYTES}: the first-try prompt grew; cut text or justify the raise"
 
 

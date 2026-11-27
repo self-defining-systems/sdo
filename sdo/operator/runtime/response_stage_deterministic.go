@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
+	"log/slog"
 	"runtime/debug"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
@@ -15,8 +16,12 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/appmap"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/storestate"
 	"sdo.dev/operator/sdk/workloadhealth"
 )
 
@@ -236,6 +241,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if state.Coverage == nil {
 		var runs []ProgramRun
 		var err error
+		// openCtx and until bound the opening diagnosis and its re-asks; zero
+		// until is no bound beyond ctx.
+		openCtx, until := ctx, time.Time{}
 		if state.Refresh {
 			// A later pass diagnoses live state: the loop's findings are the ones
 			// it last observed, which predate whatever joined the incident since.
@@ -265,11 +273,21 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 		} else {
-			runs = loop.InitialDiagnose(ctx)
+			// The opening read of playbook detectors and the opening diagnosis
+			// share one diagnosis deadline, so the responder's dispatch slips by
+			// at most that bound in all. The read takes at most half of it,
+			// leaving the diagnosis the rest.
+			bound := loop.deadline()
+			until = loop.clock().Add(bound)
+			var cancelOpen context.CancelFunc
+			openCtx, cancelOpen = context.WithTimeout(ctx, bound)
+			defer cancelOpen()
+			stage.readPlaybookDetectors(openCtx, loop, state, loop.clock().Add(bound/2))
+			runs = loop.InitialDiagnose(openCtx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 		}
 		if !state.Refresh {
-			if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
+			if runs, err = stage.reaskUnanswered(openCtx, loop, state, runs, until); err != nil && (ctx.Err() != nil || openCtx.Err() == nil) {
 				return report, err
 			}
 		}
@@ -1031,9 +1049,9 @@ func (stage *DeterministicResponseStage) diagnoseBackoff(ctx context.Context) er
 // capture) would otherwise leave the stage nothing to apply for the whole
 // incident. An Unknown the program answered itself is final. Only the failed
 // programs are diagnosed again; the failed runs stay as evidence and an answer
-// is appended after them.
-func (stage *DeterministicResponseStage) reaskUnanswered(ctx context.Context, loop *ResponderLoop, state *IncidentState, runs []ProgramRun) ([]ProgramRun, error) {
-	for try := 1; try < stageDiagnoseTries; try++ {
+// is appended after them. No re-ask starts once until (non-zero) has passed.
+func (stage *DeterministicResponseStage) reaskUnanswered(ctx context.Context, loop *ResponderLoop, state *IncidentState, runs []ProgramRun, until time.Time) ([]ProgramRun, error) {
+	for try := 1; try < stageDiagnoseTries && (until.IsZero() || loop.clock().Before(until)); try++ {
 		unanswered := unansweredRuns(runs)
 		if len(unanswered) == 0 {
 			return runs, nil
@@ -1099,4 +1117,264 @@ func diagnosisFailure(v program.Verdict) string {
 		}
 	}
 	return "diagnosis unavailable"
+}
+
+// readPlaybookDetectors gives the opening diagnosis, and the responder's task,
+// a current reading of every detector that names a learned playbook. Such a
+// finding is what binds that playbook (or, for one with no program, shows it to
+// the responder), and the incident opens on whichever detector fired first: a
+// slower detector (a store read, a long interval) may not have evaluated since
+// the fault began. Each one not already firing is evaluated on demand against
+// a fresh read of the pod reads it may use (freshPodReads): its own, and the
+// store-state reads every detector shares. A detector whose reads did not all
+// answer, or that failed, is asked again after a backoff. All of it ends by
+// until; a detector with no answer by then keeps the findings the incident
+// opened with. With no detector that names a learned playbook, nothing is read
+// and nothing waits.
+func (stage *DeterministicResponseStage) readPlaybookDetectors(ctx context.Context, loop *ResponderLoop, state *IncidentState, until time.Time) {
+	pending := loop.playbookDetectors(state.Findings)
+	if len(pending) > 0 {
+		var m appmap.Map
+		if state.Request.SourceCommit != "" {
+			m, _ = acceptedVerificationMap(ctx, loop.gitRead(), state.Request)
+		}
+		var credits ProgramCredits
+		loop.locked(func() { credits = loop.Credits })
+		pending = detectorsOnFailingPaths(pending, credits, fixedReachPlaybooks(loop.Programs), m, state.Request)
+	}
+	if len(pending) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, until.Sub(loop.clock()))
+	defer cancel()
+	response := ToolResponse{Findings: []sdk.Finding{}}
+	for {
+		pending = loop.readDetectorsOnce(ctx, pending, &response)
+		if len(pending) == 0 || ctx.Err() != nil || !loop.clock().Before(until) || stage.diagnoseBackoff(ctx) != nil {
+			break
+		}
+	}
+	for _, detector := range pending {
+		slog.Info("stage_playbook_detector_unanswered", "incident_id", state.Request.IncidentID, "detector_id", detector.Spec().ID)
+	}
+	if len(response.DetectorStates) == 0 {
+		return
+	}
+	updateStageFindings(state, response)
+	// The incident's findings are what the stage repairs and the responder is
+	// told about, so a playbook's answer joins them as if it had fired first.
+	// The alert set is unchanged: recovery still answers to the opening alerts.
+	known := map[string]bool{}
+	for _, finding := range state.Request.Findings {
+		known[FindingFingerprint(finding)] = true
+	}
+	for _, finding := range response.Findings {
+		if !known[FindingFingerprint(finding)] {
+			state.Request.Findings = append(state.Request.Findings, finding)
+		}
+	}
+	loop.locked(func() {
+		loop.findings = append([]sdk.Finding(nil), state.Findings...)
+		loop.Request.Findings = append([]sdk.Finding(nil), state.Request.Findings...)
+	})
+}
+
+// detectorsOnFailingPaths keeps the detectors whose learned playbooks may fix
+// a component on the path of an opening user test: the path of each opening
+// user test's operations in the accepted map, and the components each
+// playbook was credited for (CreditKey). Credits record past fixes, not
+// reach, so they bound a playbook only when its program has a fixed reach (no
+// object parameter, see fixedReachPlaybooks). A detector is left out only when
+// all of that is known and none of its playbooks' credited components is on
+// any such path: its playbooks fixed something else, so its fresh reading
+// cannot bind a playbook for this incident and the stage does not wait for it.
+// A missing map, an opening alert that is not a mapped user test, a playbook
+// with no credit or one whose program takes an object parameter keeps the
+// detector, as before.
+func detectorsOnFailingPaths(detectors []sdk.Detector, credits ProgramCredits, fixedReach map[string]bool, m appmap.Map, request IncidentRequest) []sdk.Detector {
+	if len(m.Components) == 0 {
+		return detectors
+	}
+	pm := m.Program()
+	onPath := map[string]bool{}
+	for _, key := range openingKeys(&request) {
+		_, scenario, ok := openingUserTest(request, key)
+		if !ok {
+			return detectors
+		}
+		var operations []string
+		for _, probe := range m.Probes {
+			if probe.Scenario == scenario {
+				operations = append(operations, probe.Operations...)
+			}
+		}
+		components, ok := operationComponents(m, pm, operations)
+		if !ok {
+			return detectors
+		}
+		for _, component := range components {
+			if c, found := pm.Component(component); found {
+				onPath[c.Workload] = true
+			}
+		}
+	}
+	if len(onPath) == 0 {
+		return detectors
+	}
+	var kept []sdk.Detector
+	for _, detector := range detectors {
+		if detectorMayBindOnPath(detector.Spec(), credits, fixedReach, onPath) {
+			kept = append(kept, detector)
+		}
+	}
+	return kept
+}
+
+// detectorMayBindOnPath reports whether a playbook the detector names has an
+// unknown reach (no credit, or a program that is not of fixed reach) or was
+// credited for a workload on the path.
+func detectorMayBindOnPath(spec sdk.DetectorSpec, credits ProgramCredits, fixedReach map[string]bool, onPath map[string]bool) bool {
+	for _, reference := range spec.Playbooks {
+		id, err := layout.PlaybookID(reference)
+		if err != nil || id == layout.HealthObjectivePlaybook || id == SourceRestoreID {
+			continue
+		}
+		if !credits.Has(id) || !fixedReach[id] {
+			return true
+		}
+		for _, key := range credits[id] {
+			if onPath[key.Component.Kind+"/"+key.Component.Name] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// fixedReachPlaybooks are the registered programs that declare no object
+// parameter: they act on resources they name themselves, so the components
+// they were credited for are where they can act. A program with an object
+// parameter binds whatever resource a finding names.
+func fixedReachPlaybooks(programs program.ProgramRegistry) map[string]bool {
+	fixed := map[string]bool{}
+	if programs == nil {
+		return fixed
+	}
+	for _, spec := range programs.List() {
+		if !slices.ContainsFunc(spec.Params, func(p program.ParamSpec) bool { return p.ValueKind == "" }) {
+			fixed[spec.ID] = true
+		}
+	}
+	return fixed
+}
+
+// playbookDetectors are the loop's detectors that name a learned playbook and
+// have no active finding among findings. A learned playbook is a registered
+// program, or any playbook a learned detector names (one with no program, a
+// README with scripts, is still the responder's best lead). The generic
+// health-objective playbook is not one.
+func (l *ResponderLoop) playbookDetectors(findings []sdk.Finding) []sdk.Detector {
+	programs := map[string]bool{}
+	if l.Programs != nil {
+		for _, spec := range l.Programs.List() {
+			if spec.ID != SourceRestoreID {
+				programs[spec.ID] = true
+			}
+		}
+	}
+	firing := map[string]bool{}
+	for _, finding := range findings {
+		if finding.Status == sdk.FindingActive {
+			firing[finding.DetectorID] = true
+		}
+	}
+	var detectors []sdk.Detector
+	for _, detector := range l.Detectors {
+		spec := detector.Spec()
+		if firing[spec.ID] {
+			continue
+		}
+		for _, reference := range spec.Playbooks {
+			id, err := layout.PlaybookID(reference)
+			if err != nil || id == layout.HealthObjectivePlaybook || id == SourceRestoreID {
+				continue
+			}
+			if programs[id] || spec.Class == sdk.DetectorClassLearned {
+				detectors = append(detectors, detector)
+				break
+			}
+		}
+	}
+	return detectors
+}
+
+// detectorPodReads reports whether a pod read may feed detector: one it
+// declares, or a store-state read, which every detector may consult through
+// storestate.Changes.
+func detectorPodReads(detector sdk.Detector) func(podread.Query) bool {
+	declared := map[string]bool{}
+	if consumer, ok := detector.(podread.Consumer); ok {
+		for _, query := range consumer.PodReads() {
+			declared[query.ID] = true
+		}
+	}
+	return func(query podread.Query) bool {
+		_, _, store := storestate.ParseQueryID(query.ID)
+		return store || declared[query.ID]
+	}
+}
+
+// readDetectorsOnce evaluates detectors against one snapshot whose pod reads
+// they may use are read now, and adds each answer to response. It returns the
+// detectors that did not answer: failed, or with a read left unread this time.
+// It holds both loop locks, as the opening diagnosis does, so it runs between
+// tool calls and never beside a write.
+func (l *ResponderLoop) readDetectorsOnce(ctx context.Context, detectors []sdk.Detector, response *ToolResponse) []sdk.Detector {
+	ctx, closeMemory := withMemoryScope(ctx)
+	defer closeMemory()
+	wants := make([]func(podread.Query) bool, len(detectors))
+	for i, detector := range detectors {
+		wants[i] = detectorPodReads(detector)
+	}
+	fresh := &freshPodReads{want: func(query podread.Query) bool {
+		return slices.ContainsFunc(wants, func(want func(podread.Query) bool) bool { return want(query) })
+	}}
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	view, err := l.snapshotView(withFreshPodReads(ctx, fresh))
+	if err != nil {
+		return detectors
+	}
+	var unanswered, answering []sdk.Detector
+	for i, detector := range detectors {
+		if fresh.unreadAny(wants[i]) {
+			unanswered = append(unanswered, detector)
+		} else {
+			answering = append(answering, detector)
+		}
+	}
+	results := evaluateDetectors(ctx, answering, view)
+	for _, detector := range answering {
+		id := detector.Spec().ID
+		result := results[id]
+		if result.err != nil {
+			unanswered = append(unanswered, detector)
+			continue
+		}
+		evaluation := DetectorEvaluation{DetectorID: id, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear}
+		for _, finding := range result.findings {
+			if finding.Status == sdk.FindingActive {
+				response.Findings = append(response.Findings, finding)
+				evaluation.Status = DetectorEvaluationFiring
+				evaluation.Fingerprints = append(evaluation.Fingerprints, FindingFingerprint(finding))
+			}
+		}
+		if evaluation.Status == DetectorEvaluationClear && !detectorConfirmed(detector, view) {
+			evaluation.Status = DetectorEvaluationPending
+		}
+		response.DetectorStates = append(response.DetectorStates, evaluation)
+	}
+	return unanswered
 }

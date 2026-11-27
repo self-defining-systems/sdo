@@ -143,6 +143,11 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 	if !removal {
 		expected, expectedErr := program.FieldValue(patch.After.Object, path)
 		actual, actualErr := program.FieldValue(live.Object, path)
+		// The after-image is in read form: a written zero the server omits is
+		// absent there too, and an absent live field is then the write.
+		if expectedErr != nil && actualErr != nil {
+			expected, actual, expectedErr, actualErr = nil, nil, nil, nil
+		}
 		if expectedErr != nil || actualErr != nil {
 			return fmt.Errorf("value write observation unknown: requested path unavailable")
 		}

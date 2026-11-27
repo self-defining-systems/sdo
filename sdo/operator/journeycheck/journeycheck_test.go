@@ -234,3 +234,80 @@ func TestOnlyExactScenarioIDDoesNotAlsoJudgeLongerIDs(t *testing.T) {
 		t.Fatalf("expected one judgment for the exact ID: %+v", report.Results)
 	}
 }
+
+// An idempotent write writes one fixed object every time, so it needs no
+// cleanup. One that names its object with Unique creates a new one every
+// iteration, which nothing removes: red before anything is sent. A random
+// value on a fixed object (OneOf) piles nothing up.
+func TestAnIdempotentWriteThatNamesANewObjectEachTimeIsRedInAPlan(t *testing.T) {
+	idempotent := func(params traffic.Params) traffic.Scenario {
+		sc := scenario(true)
+		sc.SideEffect, sc.Cleanup = traffic.SideEffectIdempotentWrite, nil
+		sc.Steps = []traffic.Step{{Name: "put", Endpoint: traffic.PUT("/settings", nil).WithJSON(`{"name":"{name}"}`, params).Status(200)}}
+		return sc
+	}
+	plan := func(sc traffic.Scenario) Result {
+		c := config(&store{items: map[string]string{}}, sc)
+		c.Plan = true
+		return find(Run(context.Background(), c), ItemCleanup)
+	}
+	if got := plan(idempotent(traffic.Params{"name": traffic.Unique("sdoprobe-")})); got.Status != Red || !strings.Contains(got.Detail, "new object") {
+		t.Fatalf("want a red pile-up item, got %+v", got)
+	}
+	if got := plan(idempotent(traffic.Params{"name": traffic.OneOf("a", "b", "c")})); got.Status == Red {
+		t.Fatalf("a fixed object with a random value piles nothing up: %+v", got)
+	}
+}
+
+func TestSinglePassRunsAndCleansUpOneIteration(t *testing.T) {
+	for _, failCleanup := range []bool{false, true} {
+		s := &store{items: map[string]string{}, failDelete: failCleanup}
+		c := config(s, scenario(true))
+		c.Only, c.Once, c.Alter = []string{"write-item"}, true, false
+		r := Run(context.Background(), c)
+		if s.next != 1 || (!failCleanup && len(s.items) != 0) || r.Red() != failCleanup {
+			t.Fatalf("cleanup fails=%v: created %d, remaining %d, results %+v", failCleanup, s.next, len(s.items), r.Results)
+		}
+		if text := r.Text(); !strings.Contains(text, "create → read → delete") || (!failCleanup && !strings.Contains(text, "delete → gone")) {
+			t.Fatalf("expected an ordered trace through cleanup: %s", text)
+		}
+	}
+	s := &store{items: map[string]string{}}
+	c := config(s, scenario(true))
+	c.Once, c.Only = true, []string{"item"}
+	if r := Run(context.Background(), c); !r.Red() || s.next != 0 {
+		t.Fatalf("a substring must not select a scenario in a single pass: %+v", r)
+	}
+}
+
+func TestJourneyTextShowsOneSummaryPerScenarioAndDetailsForRed(t *testing.T) {
+	r := Report{
+		Results: []Result{
+			{ItemPasses, "read", Green, "three healthy runs"},
+			{ItemConcurrent, "read", Green, "both probers agree"},
+			{ItemPasses, "write", Green, "write passed"},
+			{ItemCleanup, "write", Red, "delete refused"},
+			{ItemSoak, "probe-write/write", Red, "records grew"},
+		},
+		Schedules: []Schedule{{Scenario: "write", Workloads: []string{"probe-write"}}},
+	}
+	brief := r.Text()
+	if strings.Count(brief, "green read") != 1 || strings.Count(brief, "red write") != 1 ||
+		strings.Contains(brief, "both probers agree") || !strings.Contains(brief, "delete refused") || !strings.Contains(brief, "records grew") {
+		t.Fatalf("brief report:\n%s", brief)
+	}
+	verbose := r.VerboseText()
+	if !strings.Contains(verbose, "three healthy runs") || !strings.Contains(verbose, "both probers agree") || len(brief) >= len(verbose) {
+		t.Fatalf("verbose report:\n%s", verbose)
+	}
+	t.Logf("terse %d bytes, verbose %d bytes", len(brief), len(verbose))
+}
+
+func TestCadenceThatMeetsTheHumanTargetDoesNotRequireSpendingTheWholeBudget(t *testing.T) {
+	c := config(&store{items: map[string]string{}}, scenario(true))
+	c.Plan, c.DetectionTarget = true, 70*time.Second
+	c.Workloads[0].SampleInterval, c.Workloads[0].RatePerSecond = traffic.Duration(time.Minute), 1.0/60
+	if r := Run(context.Background(), c); r.Red() {
+		t.Fatalf("a low-load plan that meets the target should pass: %+v", r.Results)
+	}
+}

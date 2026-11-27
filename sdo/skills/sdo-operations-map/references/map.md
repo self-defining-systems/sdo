@@ -63,7 +63,8 @@ Rules the memory check enforces:
 - `data.engine` is one of postgres, mysql, mongodb, redis, memcached, consul, other. `data.role` is
   `authoritative` (no `derived_from`) or `derived`: `derived_from` lists authoritative components, and a derived
   component has `holds_data: false`. For an engine SDO can read (all but other), Go installs a
-  `store-state-<component>` health detector on the component's workload; do not author another.
+  `store-state-<component>` health detector on the component's workload, unless a health detector already reads
+  that store; do not author another.
 - `evidence` is a non-empty subset of `[config, manifest, observed]`: `config` is the application source or its
   config files, `manifest` the rendered manifests (an env value, a ConfigMap entry, an image, a volume), `observed`
   the live application. `source` cites the file for config evidence, the object and field for manifest evidence,

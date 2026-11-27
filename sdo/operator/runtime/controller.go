@@ -1034,8 +1034,10 @@ func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
 // admitActivation is the one entry for a newly active finding. A finding
 // already in the open incident is refreshed; a clue joins before
 // launch or while the automatic stage owns the repair, and otherwise stays
-// tracked only. An opener joins the incident's opening alerts before launch
-// and otherwise waits in the batcher for the next incident.
+// tracked only. An opener joins the incident's opening alerts before launch;
+// a user test or failing user traffic joins its alert set while the responder
+// or the automatic stage works it (joinAlertSet). Every other opener waits in
+// the batcher for the next incident.
 func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, now time.Time, spec sdk.DetectorSpec) {
 	if c.config.ExternalIncidentsOnly {
 		// External clues: tracked for the candidate view only.
@@ -1053,8 +1055,6 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	if c.attachBeforeLaunch([]sdk.Finding{finding}, true) {
 		return
 	}
-	// An opener inside the join window belongs to the current alert set.
-	// Later openers wait for the next incident.
 	if c.joinAlertSet(finding, now) {
 		// The automatic stage can evaluate a learned playbook for the joined
 		// symptom while it owns the repair.
@@ -1174,7 +1174,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.readPage(ctx, now, snapshot)
 	c.mu.Lock()
 	incidentOpen := c.incidentOpen || c.earlyReportPendingLocked()
-	closurePending := c.closureBlocksNextLocked() && c.broker != nil
+	closurePending := c.closureBlocksNextLocked() && c.broker != nil || c.priorIncidentWorkLocked() != ""
 	c.mu.Unlock()
 	if incidentOpen {
 		c.mu.Lock()
@@ -1371,7 +1371,7 @@ func (c *Controller) nextWake() (time.Time, string) {
 	// attached. Otherwise an expired deadline would spin the runtime loop for
 	// the whole incident.
 	startupHolding := c.startup.holding(c.clock())
-	batchActionable := !startupHolding && (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil)) ||
+	batchActionable := !startupHolding && (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil) && c.priorIncidentWorkLocked() == "") ||
 		c.canAttachBeforeLaunchLocked()
 	c.mu.Unlock()
 	if deadline, ok := c.batcher.Deadline(); ok && batchActionable {
@@ -1945,6 +1945,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	page := pageOpened(c.currentIncidentRequest)
+	handover := false
 	pageBoundReached := page && !early && !now.Before(c.recoveryGraceEndsLocked())
 	if observationErr != nil && !pageBoundReached {
 		c.mu.Unlock()
@@ -2193,12 +2194,15 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			return false
 		}
 		// A page is a bounded response attempt. An alert-opened incident
-		// stays open after escalation until its alerts clear or it is reset.
+		// stays open after escalation until its alerts clear, it is reset, or
+		// a new opener waits for the next incident: then it closes escalated
+		// and the next incident opens on every alert still failing.
 		c.escalateLocked(now)
-		if !page {
+		if !page && !c.nextIncidentWaitingLocked(now) {
 			c.mu.Unlock()
 			return false
 		}
+		handover = !page
 	}
 	// Back off freezing the closure after deciding whether automatic recovery
 	// should hand off. A prior freeze failure cannot suppress that decision.
@@ -2313,7 +2317,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	if verified && c.awaitingAutomaticRecoveryLocked() != nil && playbookApplied(closure.Request.PriorStages) && c.escalatedAt.IsZero() {
 		markAutomaticRecovery(deterministicStageReport(closure.Request.PriorStages), now, contracts.RecoveryWait_EXIT_REASON_CLEARED)
 	}
-	if page && !verified && closure.Result != nil {
+	if (page || handover) && !verified && closure.Result != nil {
 		closure.Result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)
 	}
 	if !verified && !terminalFailure && len(verification.Findings) == 0 {
@@ -2413,6 +2417,9 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		}
 	}
 
+	if handover {
+		c.handOverStillFailingLocked(closure.Request, now)
+	}
 	if early {
 		c.incidentOpen = false
 		c.publishHeldLocked()
@@ -2760,6 +2767,27 @@ func (c *Controller) SetIncidentBroker(broker IncidentBroker) error {
 		c.head = headPollState{poller: native.headPoller()}
 	}
 	return nil
+}
+
+// priorIncidentWorkLocked names the previous incident's work that may still
+// write: a queued or running reflection (its closing and cleanup turns and the
+// source publication and deploy it carries), a queue that has not been read,
+// or a rollout a restart must record. The next incident opens only after it,
+// so two incidents never write at once. Caller holds c.mu.
+func (c *Controller) priorIncidentWorkLocked() string {
+	if _, ok := c.broker.(ReflectionQueue); !ok {
+		return ""
+	}
+	state := &c.reflections
+	switch {
+	case state.rollout != "":
+		return "a reflection's rollout is pending"
+	case state.running != "" || len(state.queued) > 0:
+		return "a reflection is queued or running"
+	case state.unknown || state.rescan:
+		return "the reflection queue is unread"
+	}
+	return ""
 }
 
 // sourceDeployBusy is the work a source deploy after a closure must not

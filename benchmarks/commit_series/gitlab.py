@@ -165,12 +165,30 @@ def build(
 # ---- the baseline a series runs on ---------------------------------------------------------------------------------
 
 _GENERATED = re.compile(r"^[a-z0-9]{5,10}$")  # the grammar of a plan's `*` (sdo/operator/rendered/workloads.go)
-MEMORY_COMMIT_MESSAGE = (
+MEMORY_COMMIT_SUBJECT = (
     "sdo(series-base): the series' Jobs are workloads of the deployment plan\n\n"
     "The base release's migration and bucket Jobs are in the render, and the plan names every Job a release of the\n"
     "series carries (a generated name as Job/<namespace>/<prefix>-*).\n\n"
+)
+#: The derived commit keeps the source memory's health judgment current when that judgment saw the source: adding
+#: the series' Jobs needs no new one.
+JUDGED_TRAILERS = (
     "SDO-Incident: commit-series-baseline\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed\n"
 )
+#: When no judgment saw the source (it was moved to another release after the last one), the commit claims none, as
+#: an install-existing commit does: the controller then refreshes health on the source it actually runs.
+UNJUDGED_TRAILERS = "SDO-Actor: human\nSDO-Phase: initial\nSDO-Origin: commit-series-baseline\n"
+_JUDGE_GREP = ("--grep=^SDO-Actor: health_judge$", "--grep=^SDO-Phase: initial$", "--grep=^SDO-Validation: passed$")
+
+
+def judgment_current(work: Path) -> bool:
+    """Whether the last health judgment on ``work``'s first-parent line saw the source it holds now: no app file and no
+    deployment input (``.sdo/deployment/``) changed since (the inputs ``memory.AcceptedHealthRevision`` binds)."""
+    judge = _git(work, "log", "--first-parent", "-1", "--format=%H", "--all-match", *_JUDGE_GREP, "HEAD")
+    if not judge:
+        return False
+    changed = _git(work, "diff", "--name-only", judge, "HEAD").splitlines()
+    return not [p for p in changed if not p.startswith(".sdo/") or p.startswith(".sdo/deployment/")]
 
 
 def stable_job_id(name: str, namespace: str = NAMESPACE) -> str:
@@ -195,7 +213,8 @@ def derive_baseline(source: Path, dest: Path, series: Path) -> str:
     """A copy of the baseline ``source`` for the series ``series`` (its ``series.json``) in ``dest``: the memory's
     render gains the base release's Jobs (merged in where they sit in the base render) and its deployment plan names
     every Job the series carries. Returns the new memory commit. The series' commits then apply onto it as they did
-    onto the source."""
+    onto the source. The commit claims a health judgment only when the source's last one is current
+    (``judgment_current``)."""
     spec = json.loads(series.read_text())["upstream"]
     repo = Path(spec["repo"])
     base_text = _git(repo, "show", f"{spec['base']}:{RENDER_FILE}") + "\n"
@@ -219,6 +238,7 @@ def derive_baseline(source: Path, dest: Path, series: Path) -> str:
         )
         if merged.returncode != 0:
             raise ValueError(f"the base release's Jobs do not merge into the baseline's render ({merged.returncode})")
+        trailers = JUDGED_TRAILERS if judgment_current(work) else UNJUDGED_TRAILERS
         (work / RENDER_FILE).write_text(merged.stdout)
         plan_path = work / ".sdo" / "deployment" / "plan.yaml"
         plan = json.loads(plan_path.read_text())
@@ -226,7 +246,7 @@ def derive_baseline(source: Path, dest: Path, series: Path) -> str:
             i for i in series_job_ids(repo, [spec["base"], *spec["commits"]]) if i not in plan["expectedWorkloadIds"]
         ]
         plan_path.write_text(json.dumps(plan, separators=(",", ":")))
-        _git(work, "commit", "-q", "-a", "-m", MEMORY_COMMIT_MESSAGE)
+        _git(work, "commit", "-q", "-a", "-m", MEMORY_COMMIT_SUBJECT + trailers)
         head = _git(work, "rev-parse", "HEAD")
         _git(work, "bundle", "create", str(dest / baseline["bundle"]), baseline["branch"])
     baseline["commit"] = head
@@ -288,6 +308,14 @@ def archive_values(archive: Path) -> tuple[set[str], bool]:
         return flatten_keys(values), any(n.endswith("/values.schema.json") and n.count("/") == 1 for n in names)
 
 
+def release_kind(previous: str, version: str) -> str:
+    """``Major``, ``Minor`` or ``Patch``: the most significant version field that changes from ``previous``."""
+    before, after = previous.split("."), version.split(".")
+    if before[0] != after[0]:
+        return "Major"
+    return "Minor" if before[1] != after[1] else "Patch"
+
+
 def derive_list(index: Path, versions: list[str], base_version: str, pack: Path, cache: Path) -> dict[str, Any]:
     """A release list document for ``base_version`` then ``versions``: digests from the chart repository's ``index``,
     effects measured by rendering each release through the pack and comparing with the one before."""
@@ -322,7 +350,7 @@ def derive_list(index: Path, versions: list[str], base_version: str, pack: Path,
             assert previous is not None
             changes = derive_changes(previous[0], docs, previous[1], keys, schema)
             record["changes"] = changes
-            kind = "Minor" if version.split(".")[1] != out[-1]["version"].split(".")[1] else "Patch"
+            kind = release_kind(out[-1]["version"], version)
             record["note"] = (
                 f"{kind} release, app {out[-1]['app_version']} -> {entry['appVersion']}: "
                 f"{changes['images_changed']} image references change, "

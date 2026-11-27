@@ -52,6 +52,15 @@ type Server struct {
 
 	runMu   sync.Mutex
 	running map[string]bool
+	// evaluating is each detector's evaluation in flight.
+	evaluating map[string]*detectorRun
+}
+
+// detectorRun is one detector evaluation in flight. done closes when it ends;
+// abandoned is set (under runMu) when its caller stopped waiting for it.
+type detectorRun struct {
+	done      chan struct{}
+	abandoned bool
 }
 
 // mirrorHistory is how many applied mirror sequences the host keeps readable.
@@ -338,26 +347,23 @@ func (s *Server) readState(ctx context.Context, request *pb.ReadStateRequest) (a
 		values appstate.Values
 		err    error
 	}
-	done := make(chan outcome, 1)
-	go func() {
-		defer func() {
-			s.runMu.Lock()
-			delete(s.running, key)
-			s.runMu.Unlock()
-		}()
+	done := goThenRelease(func() (got outcome) {
 		defer func() {
 			if value := recover(); value != nil {
-				done <- outcome{err: fmt.Errorf("app-state reader panicked: %v", value)}
+				got = outcome{err: fmt.Errorf("app-state reader panicked: %v", value)}
 			}
 		}()
 		live, err := s.readFactory(ctx, snapshot)
 		if err != nil {
-			done <- outcome{err: err}
-			return
+			return outcome{err: err}
 		}
 		values, err := appstate.Run(ctx, reader, s.programObjects(live, snapshot))
-		done <- outcome{values, err}
-	}()
+		return outcome{values, err}
+	}, func() {
+		s.runMu.Lock()
+		delete(s.running, key)
+		s.runMu.Unlock()
+	})
 	select {
 	case got := <-done:
 		return got.values, got.err
@@ -413,40 +419,70 @@ func withinTransportBudget(ctx context.Context) (context.Context, context.Cancel
 }
 
 // runDetector runs one detector, abandoning it when it outlives ctx. A detector
-// that ignores its context keeps its goroutine, so it is never started twice
-// concurrently: the leak is bounded by the number of detectors.
+// is never run twice concurrently: an evaluation that arrives while another of
+// the same detector runs waits for it to end and then runs on its own view
+// (a scheduled run and an on-demand read coalesce; neither fails as busy).
+// A run its caller abandoned (a detector that ignores its context keeps its
+// goroutine) is not waited for: the next caller is told it is still running,
+// so the leak is bounded by the number of detectors.
 func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.DetectionContext) ([]*pb.Finding, detectorFailure) {
 	id := d.Spec().ID
 	s.runMu.Lock()
-	if s.running[id] {
+	for s.evaluating[id] != nil {
+		running := s.evaluating[id]
+		if running.abandoned {
+			s.runMu.Unlock()
+			return nil, detectorFailure{"detector is still running a previous evaluation", sdk.ReadClassUnavailable}
+		}
 		s.runMu.Unlock()
-		return nil, detectorFailure{"detector is still running a previous evaluation", sdk.ReadClassUnavailable}
+		select {
+		case <-running.done:
+		case <-ctx.Done():
+			return nil, detectorFailure{fmt.Sprintf("detector evaluation abandoned: %v", ctx.Err()), sdk.ReadClassUnavailable}
+		}
+		s.runMu.Lock()
 	}
-	if s.running == nil {
-		s.running = map[string]bool{}
+	if s.evaluating == nil {
+		s.evaluating = map[string]*detectorRun{}
 	}
-	s.running[id] = true
+	run := &detectorRun{done: make(chan struct{})}
+	s.evaluating[id] = run
 	s.runMu.Unlock()
 	type outcome struct {
 		findings []*pb.Finding
 		failure  detectorFailure
 	}
-	done := make(chan outcome, 1)
-	go func() {
-		defer func() {
-			s.runMu.Lock()
-			delete(s.running, id)
-			s.runMu.Unlock()
-		}()
+	done := goThenRelease(func() outcome {
 		findings, failure := detect(ctx, d, view)
-		done <- outcome{findings, failure}
-	}()
+		return outcome{findings, failure}
+	}, func() {
+		s.runMu.Lock()
+		delete(s.evaluating, id)
+		close(run.done)
+		s.runMu.Unlock()
+	})
 	select {
 	case got := <-done:
 		return got.findings, got.failure
 	case <-ctx.Done():
+		s.runMu.Lock()
+		run.abandoned = true
+		s.runMu.Unlock()
 		return nil, detectorFailure{fmt.Sprintf("detector evaluation abandoned: %v", ctx.Err()), sdk.ReadClassUnavailable}
 	}
+}
+
+// goThenRelease runs work on its own goroutine and delivers its result after
+// release has returned, so a caller holding the result never finds the slot work
+// ran in still taken. work recovers its own panics.
+func goThenRelease[T any](work func() T, release func()) <-chan T {
+	done := make(chan T, 1)
+	go func() {
+		result := work()
+		release()
+		done <- result
+	}()
+	return done
 }
 
 // detectorFailure is why a detector produced no answer: its text and its read

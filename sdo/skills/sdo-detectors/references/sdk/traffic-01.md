@@ -37,6 +37,7 @@ const MinSampleInterval = 10 * time.Second ...
 const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
+const DefaultDetectionTarget = time.Duration(DefaultMinSamples) * MinSampleInterval
 const DefaultHealthMinDuration = 9 * time.Second
 const DefaultRateLimitWait = time.Minute
 const DefectRateLimited = "rate_limited"
@@ -83,6 +84,8 @@ type Duration time.Duration
 type Endpoint interface{ ... }
 type Engine struct{ ... }
     func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Target) string, ...) (*Engine, error)
+type EventualEndpoint struct{ ... }
+    func Eventually(endpoint Endpoint) *EventualEndpoint
 type Exec struct{ ... }
 type ExecResult struct{ ... }
 type Execer interface{ ... }
@@ -163,5 +166,6 @@ type Window struct{ ... }
 type WindowSet interface{ ... }
 type Workload struct{ ... }
     func ParseWorkloadJSON(data []byte) (Workload, error)
+    func ParseWorkloadJSONWithDetectionTarget(data []byte, target time.Duration) (Workload, error)
 type WorkloadScenario struct{ ... }
 ```

@@ -192,7 +192,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		scope := newRecoveryScope(alertKeys(&effect.Closure.Request))
 		now := c.clock()
 		for _, observation := range recheck.Observations {
-			if !recheck.Admitting && effect.Closure.ClosureStabilityWindow == 0 && observation.Status == DetectorEvaluationClear {
+			if effect.Closure.ClosureStabilityWindow == 0 && observation.Status == DetectorEvaluationClear {
 				continue
 			}
 			c.recordRecoveryObservation(actionCtx, observation.ID, now, observation.Findings, observation.Status, observation.Error, observation.Reason, scope)
@@ -201,14 +201,6 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		resumed := c.pendingClosure == nil
 		c.mu.Unlock()
 		if resumed {
-			cancel()
-			return c.PersistState(ctx)
-		}
-		// A raw sample may be the first observation of a new episode. Give it
-		// a chance to activate through the tracker before freezing, within the
-		// join window. Unavailable nonmembers carry no recovery obligation.
-		if recheck.Admitting && c.closureHasConfirmingOpeners(recheck.Observations, scope) {
-			c.scheduleClosureRecheck()
 			cancel()
 			return c.PersistState(ctx)
 		}
@@ -539,7 +531,6 @@ const (
 )
 
 type closureRecheck struct {
-	Admitting    bool
 	Observations []recoveryObservation
 	States       []DetectorEvaluation
 	// IncompleteStates preserve named blockers in the accepted outcome history.
@@ -579,14 +570,14 @@ const closureInventoryLoadBound = 30 * time.Second
 
 // revalidateClosure checks live dependencies and admitted source fields, rather
 // than treating a matching policy generation as proof of continued recovery.
-// Alert owners prove recovery. Eligible nonmembers are sampled for admission.
+// Alert owners prove recovery. A new opener outside the alert set opens the
+// next incident and never holds this closure.
 // Source and render checks can add notes to the outcome.
 func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) (result closureRecheck) {
 	var observations []recoveryObservation
 	var states []DetectorEvaluation
-	var admitting bool
 	defer func() {
-		result.Observations, result.States, result.Admitting = observations, states, admitting
+		result.Observations, result.States = observations, states
 	}()
 	confirmed := closureRecheck{Verdict: closureRecheckConfirmed}
 	if (len(closure.FinalDetectorStates) == 0 && closure.HealthClearedAt == nil) || closure.DispatchError != "" {
@@ -612,23 +603,6 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	ordered := make([]string, 0, len(ids))
 	for id := range ids {
 		ordered = append(ordered, id)
-	}
-	// A verified outcome must see new opening findings since the last
-	// scheduled pass, even on a detector outside the original proof.
-	admitting = !closure.Frozen && !closure.DetectedAt.IsZero() && c.clock().Sub(closure.DetectedAt) <= AlertJoinWindow
-	if admitting {
-		var nonmembers []sdk.Detector
-		for id, detector := range c.detectors {
-			if !ids[id] {
-				nonmembers = append(nonmembers, detector)
-			}
-		}
-		slices.SortFunc(nonmembers, func(a, b sdk.Detector) int { return strings.Compare(a.Spec().ID, b.Spec().ID) })
-		for id, opens := range c.closureOpeners(ctx, nonmembers) {
-			if opens {
-				ordered = append(ordered, id)
-			}
-		}
 	}
 	sort.Strings(ordered)
 	var incomplete, sourceNotes []string
@@ -666,9 +640,6 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		read := reads[id]
 		findings, status, err := read.findings, read.status, read.err
 		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReasonIn(detector, snapshot, scope)})
-		if !ids[id] {
-			continue
-		}
 		evaluated++
 		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(scope.blocking(findings)), Reason: detectorConfirmationReasonIn(detector, snapshot, scope)}
 		if err != nil {
@@ -716,18 +687,6 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	confirmed.Skipped = gone
 	confirmed.DriftNotes = driftNotes
 	return confirmed
-}
-
-func (c *Controller) closureHasConfirmingOpeners(observations []recoveryObservation, scope recoveryScope) bool {
-	for _, observation := range observations {
-		for _, finding := range observation.Findings {
-			if finding.Status == sdk.FindingActive && !scope.holds(finding) &&
-				c.tracker.awaitingActivation(findingKey(finding)) && c.opens(finding) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // closureDriftNotes compares the accepted source with the live namespace for a
@@ -1090,12 +1049,14 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseAcknowledged, RecordedAt: contractTimestamp(c.clock()), IncidentId: receipt.IncidentID, OutcomeCommit: receipt.OutcomeCommit})
 	if pending != nil {
 		states := c.tracker.Snapshot()
+		handedOver := handedOverClose(pending)
 		var acknowledged []string
 		for _, key := range findingKeys(pending.Request.Findings) {
 			state, ok := states[key]
 			// A new episode after this command's proof is residual work, even
-			// when its fingerprint is identical to the original finding.
-			if ok && state.Active && state.FirstSeenAt.After(pending.VerifiedAt) {
+			// when its fingerprint is identical to the original finding. A
+			// handover left its active alerts for the next incident.
+			if ok && state.Active && (handedOver || state.FirstSeenAt.After(pending.VerifiedAt)) {
 				continue
 			}
 			acknowledged = append(acknowledged, key)
@@ -1103,6 +1064,16 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 		c.batcher.RemoveKeys(acknowledged)
 	}
 	c.mu.Unlock()
+}
+
+// handedOverClose reports a closure that handed its still-failing alerts to
+// the next incident: an alert-opened incident that escalated and closed
+// unverified because a new opener waited. Any other unverified close (a page,
+// an external incident) acknowledges its alerts, so the same symptoms never
+// re-prompt the agent at once.
+func handedOverClose(closure *IncidentClosure) bool {
+	return !closure.EscalatedAt.IsZero() && !pageOpened(&closure.Request) && closure.Request.ExternalMessage == "" &&
+		closure.HealthClearedAt == nil && len(closure.FinalDetectorStates) == 0
 }
 
 func (c *Controller) reportBrokerError(operation string, err error) {

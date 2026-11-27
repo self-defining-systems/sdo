@@ -10,6 +10,7 @@ import (
 
 	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/planwire"
@@ -258,9 +259,17 @@ func explainPlanDesiredFields(preview PlanApplicationResult, getFinal func(sdk.O
 				changed[path] = true
 			}
 		}
-		expectedFields := planComparableFields(want, want, owner, changed)
-		observedFields := planComparableFields(current, want, owner, changed)
-		if requireChange && reflect.DeepEqual(planComparableFields(baseline, want, owner, changed), expectedFields) {
+		// Compare in the API server's wire form, as the source comparison does:
+		// a read omits zero and false scalars of omitempty fields and fills
+		// built-in defaults, so an explicit written zero reads back absent.
+		gvk := schema.FromAPIVersionAndKind(preImage.Ref.APIVersion, preImage.Ref.Kind)
+		wireWant, wireCurrent := want.DeepCopy(), current.DeepCopy()
+		normalizeSourceWire(wireWant.Object, wireCurrent.Object, gvk)
+		expectedFields := planComparableFields(wireWant, wireWant, owner, changed)
+		observedFields := planComparableFields(wireCurrent, wireWant, owner, changed)
+		baseWant, wireBaseline := want.DeepCopy(), baseline.DeepCopy()
+		normalizeSourceWire(baseWant.Object, wireBaseline.Object, gvk)
+		if requireChange && reflect.DeepEqual(planComparableFields(wireBaseline, baseWant, owner, changed), planComparableFields(baseWant, baseWant, owner, changed)) {
 			return failed(fmt.Sprintf("%s/%s: the plan changed no compared field", preImage.Ref.Kind, preImage.Ref.Name))
 		}
 		if !reflect.DeepEqual(observedFields, expectedFields) {

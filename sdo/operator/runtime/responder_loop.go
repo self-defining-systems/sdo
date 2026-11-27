@@ -209,6 +209,8 @@ type selectedPlan struct {
 	programID          string
 	bindings           program.Bindings
 	plan               program.Plan
+	// snapshot is the one the plan was made on (its view's), nil when unknown.
+	snapshot sdk.DetectionContext
 }
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
@@ -799,13 +801,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		if l.CorpusSessionRoot != "" {
 			l.capturePhase = "open@detect"
-			if _, err := l.snapshotView(ctx); err != nil {
+			view, err := l.snapshotView(ctx)
+			if err != nil {
 				response.Error = err.Error()
 				break
 			}
 			// An object without an acceptance record compares as unknown;
 			// accepted source itself is still shown.
-			l.recordSourceComparisons(ctx, l.capturePhase, *request.Ref)
+			l.recordSourceComparisons(ctx, l.capturePhase, viewSnapshot(view), *request.Ref)
 		}
 		object, err := acceptedIncidentManifest(ctx, l.Executor.Source, l.Request.renderedRevision(), l.Request.Namespace, *request.Ref)
 		if errors.Is(err, ErrAcceptedManifestAbsent) {
@@ -1031,6 +1034,7 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 	// Captures are immutable historical evidence. Every operational diagnosis,
 	// including a resumed initial diagnosis, uses this attempt's fresh snapshot.
 	view := NewCycleReadView(l.ReadView(snapshot))
+	view.snapshot = snapshot
 	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
 		phase := l.capturePhase
 		return &sdktest.RecordingReadView{ReadView: view, OnRecord: func(call sdktest.PrimitiveCall) {
@@ -1164,7 +1168,7 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding, st
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
 	if l.capturePhase != "" {
-		l.recordSourceComparisons(ctx, l.capturePhase, findingCaptureRefs(findings)...)
+		l.recordSourceComparisons(ctx, l.capturePhase, viewSnapshot(view), findingCaptureRefs(findings)...)
 	}
 	return runs
 }
@@ -1339,7 +1343,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 	}
 	id := fmt.Sprintf("plan-%s-%d", l.sessionID, len(l.plans)+1)
 	diagnoser, _ := l.Programs.Diagnoser(request.ProgramID)
-	l.plans[id] = selectedPlan{revision: l.programRevision(request.ProgramID), diagnoser: diagnoser, targetFingerprints: append([]string(nil), request.FindingFingerprints...), id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
+	l.plans[id] = selectedPlan{revision: l.programRevision(request.ProgramID), diagnoser: diagnoser, targetFingerprints: append([]string(nil), request.FindingFingerprints...), id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan, snapshot: viewSnapshot(view)}
 	response.PlanID, response.Patches = id, preview.Patches
 	response.Summary = fmt.Sprintf("%s: %d dry-run patches", id, len(preview.Patches))
 }
@@ -1387,9 +1391,16 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if l.pendingConflict(ctx, refs, response) {
 		return
 	}
-	// A missing capture is an evidence gap; it must not block the repair.
+	// A missing capture is an evidence gap; it must not block the repair. The
+	// automatic stage plans and applies in one step with nothing written
+	// between, so its plan's snapshot is the pre-write state; an agent may
+	// have written between its plan and apply, so its apply reads afresh.
+	var preWrite sdk.DetectionContext
+	if request.stage && len(selected) == 1 {
+		preWrite = selected[0].snapshot
+	}
 	endPreApply := l.phase("preapply_capture")
-	_ = l.capturePreApply(ctx, planCaptureRefs(batch)...)
+	_ = l.capturePreApply(ctx, preWrite, planCaptureRefs(batch)...)
 	endPreApply()
 	l.applySeq++
 	if !request.stage {

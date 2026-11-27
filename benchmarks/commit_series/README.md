@@ -107,7 +107,9 @@ refused head, the golden copy returns the app to the base release. Position 1 th
 (`verify_start`, plus the branch's head and SDO's hold) and runs nothing on a lane that does not; the series clock restarts
 at position 1. The baseline must also name the series' Jobs: `python -m benchmarks.commit_series.gitlab baseline SRC DEST
 --series series.json` derives it (a head push cannot amend the deployment plan). The baseline must be SDO's memory for the app
-**as of the series base commit**: the first push is a diff against the base.
+**as of the series base commit**: the first push is a diff against the base. The derived commit claims a health judgment only when the
+source memory's last one saw its app source; a baseline moved to another release by hand gets none, so its first
+install runs the health refresh (write a judged baseline after it with `python -m benchmarks.fuzzops.judged`).
 
 ## Series
 

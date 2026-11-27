@@ -817,7 +817,7 @@ def test_the_benchmark_profile_differs_from_production_in_a_few_documented_field
             "after_playbook_wait": "5m",
             "investigators": 2,
         },
-        "onboarding": {"journeys_required": False},
+        "onboarding": {"journeys_required": False, "soak": "0s"},
         "detection": {"self_heal_hold": "60s"},
     }
 
@@ -1751,7 +1751,7 @@ def test_idle_verdict_after_a_restart_needs_no_new_promotion_when_baselines_were
     replaced = _log(
         EVALUATED,
         "2026/11/19 21:49:45 INFO store_baseline_promoted component=postgresql restored=true",
-        '2026/11/19 21:49:45 INFO store_baseline_discarded component=redis reason="store Pods or query changed"',
+        '2026/11/19 21:49:45 INFO store_baseline_discarded component=redis reason="query declaration changed"',
     )
     assert idle_verdict(state, NOW, True, NOW, controller_log=replaced) == "blind: no promoted baseline yet for redis"
 

@@ -22,6 +22,7 @@ import (
 	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/memory/appmap"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/onboardcheck"
 	"sdo.dev/operator/onboardcheck/kubebreak"
 	"sdo.dev/operator/operatorcli/internal/processio"
@@ -536,6 +537,10 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 // probeDetectionHorizon is the longest time the repository's health-probe
 // workloads can take to raise a failing scenario (zero without any).
 func probeDetectionHorizon(repo string) time.Duration {
+	target, err := layout.ReadGoalDetectionTarget(repo)
+	if err != nil {
+		return 0 // the detector build reports the invalid objective
+	}
 	files, _ := filepath.Glob(filepath.Join(repo, ".sdo", "diagnostics", "traffic", "workloads", "*.yaml"))
 	var longest time.Duration
 	for _, file := range files {
@@ -547,7 +552,7 @@ func probeDetectionHorizon(repo string) time.Duration {
 		if err != nil {
 			continue
 		}
-		if workload, err := traffic.ParseWorkloadJSON(raw); err == nil {
+		if workload, err := traffic.ParseWorkloadJSONWithDetectionTarget(raw, target); err == nil {
 			longest = max(longest, workload.DetectionHorizon())
 		}
 	}

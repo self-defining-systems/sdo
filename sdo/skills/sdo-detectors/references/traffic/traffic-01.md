@@ -154,6 +154,10 @@ const (
 const DateLayout = "2006-01-02"
     DateLayout is the layout DateRange and DaysAfter read and write.
 
+const DefaultDetectionTarget = time.Duration(DefaultMinSamples) * MinSampleInterval
+    DefaultDetectionTarget matches the original probe confirmation budget:
+    three samples at the 10-second sampling floor.
+
 const DefaultHealthMinDuration = 9 * time.Second
     DefaultHealthMinDuration is how long a health (Class health) traffic
     detector's failing samples must span, from the first failing sample in the
@@ -219,10 +223,4 @@ const MethodExec = "EXEC"
 const RuleIDPrefix = "scenario-slo."
     RuleIDPrefix prefixes the rule ID of each scenario finding
     ("scenario-slo.<id>").
-
-const StateNow = "sdo.now"
-    StateNow is the State key holding the start time of the iteration, RFC
-    3339 in UTC. The engine sets it and records the same instant as Sample.At,
-    so replaying an iteration with that time rebuilds the same requests.
-    Build reads the time from here and never from a clock.
 ```

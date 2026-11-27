@@ -21,7 +21,7 @@ func (r Request) mapBlocks() bool { return r.Actor == HealthJudge && r.Phase == 
 // them: they block only a commit that changes the map, the probes or the health
 // detectors, so restoring or operating with an accepted memory is unaffected.
 func coverageRuleV1(rule string) bool {
-	return rule == RuleMapUnprobedEntry || rule == RuleMapUnprobedShare || rule == RuleMapRecordsUnread
+	return rule == RuleMapUnprobedEntry || rule == RuleMapUnprobedShare || rule == RuleMapRecordsUnread || rule == RuleMapEffectUnobserved
 }
 
 // touchesDesignerPaths reports whether the diff against Base changes the

@@ -74,24 +74,20 @@ func alertSetController(t *testing.T, now time.Time, probes ...*switchedProbe) (
 }
 
 // The opening alert was a side effect: it clears while a second user test,
-// failing since the incident opened, still hurts users. Recovered waits on the
-// whole alert set, so the incident stays open until that test passes too.
-func TestRecoveredWaitsForUserTestsThatFailWhileTheIncidentIsOpen(t *testing.T) {
+// which started failing while the responder still ran, still hurts users.
+// Recovered waits on the whole alert set, so the incident stays open until that
+// test passes too.
+func TestRecoveredWaitsForUserTestsThatJoinWhileTheResponderRuns(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1000, 0).UTC()
 	opening := &switchedProbe{id: memory.TrafficDetectorPrefix + "opening", scenario: "ssh"}
 	hurt := &switchedProbe{id: memory.TrafficDetectorPrefix + "hurt", scenario: "clone"}
 	hurt.failing.Store(true)
 	c, closed := alertSetController(t, now, opening, hurt)
-	step := func(count int) {
-		for range count {
-			if err := c.Step(ctx, now, nil); err != nil {
-				t.Fatal(err)
-			}
-			now = now.Add(time.Second)
-		}
-	}
-	step(8)
+	c.responderDone = false
+	c.admitActivation(ctx, hurt.finding(), now, hurt.Spec())
+	c.responderDone = true
+	stepFor(t, c, now, 8)
 	if c.currentIncidentRequest == nil || closed.Result != nil {
 		t.Fatalf("the incident closed while a user test that joined it still failed: %+v", closed.Result)
 	}
@@ -103,11 +99,50 @@ func TestRecoveredWaitsForUserTestsThatFailWhileTheIncidentIsOpen(t *testing.T) 
 	}
 }
 
-// Every opener uses the same join window. Clues never hold recovery.
-func TestOnlyOpenersInTheJoinWindowJoinTheAlertSet(t *testing.T) {
+// After the responder returned, a user test that starts failing is a symptom
+// nobody works on: the incident closes on its own alert set, verified, and
+// the test opens the next incident.
+func TestAUserTestFailingAfterTheResponderReturnedOpensTheNextIncident(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	c, closed, hurt := lateUserTestController(t, now)
+	first := c.currentIncidentRequest.IncidentID
+	for step := 0; step < 20 && (c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID == first); step++ {
+		stepFor(t, c, now, 1)
+		now = now.Add(time.Second)
+	}
+	if closed.Result == nil || closed.Request.IncidentID != first || !closed.EscalatedAt.IsZero() || len(closed.Request.JoinedKeys) != 0 ||
+		len(closed.FinalDetectorStates) == 0 {
+		t.Fatalf("the first incident did not close verified on its own alert set: %+v", closed)
+	}
+	next := c.currentIncidentRequest
+	if next == nil || next.IncidentID == first || !slices.Equal(next.OpeningKeys, findingKeys([]sdk.Finding{hurt.finding()})) {
+		t.Fatalf("the late user test did not open the next incident: %+v", next)
+	}
+}
+
+// lateUserTestController is an incident that opened on a Kubernetes condition
+// (cleared now) and whose responder returned; a user test fails from now on.
+func lateUserTestController(t *testing.T, now time.Time) (*Controller, *IncidentClosure, *switchedProbe) {
+	t.Helper()
+	condition := &switchedProbe{id: memory.KubernetesConditionDetectorIDs()[0], scenario: "not-ready"}
+	hurt := &switchedProbe{id: memory.TrafficDetectorPrefix + "hurt", scenario: "clone"}
+	hurt.failing.Store(true)
+	c, closed := alertSetController(t, now, condition, hurt)
+	opening := sdk.Finding{DetectorID: condition.id, RuleID: "workload-container-not-ready", Status: sdk.FindingActive, Severity: sdk.SeverityCritical,
+		Summary: "web not ready", Evidence: "synthetic", PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "web"}}
+	opening.Fingerprint = FindingFingerprint(opening)
+	c.currentIncidentRequest.Findings, c.currentIncidentRequest.OpeningKeys = []sdk.Finding{opening}, findingKeys([]sdk.Finding{opening})
+	c.incidentFindingKeys = findingKeys([]sdk.Finding{opening})
+	return c, closed, hurt
+}
+
+// Every user test and failing user traffic uses the same join window.
+// Kubernetes conditions never join; clues never hold recovery.
+func TestOnlyUserTestsInTheJoinWindowJoinTheAlertSet(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	opening := &switchedProbe{id: memory.TrafficDetectorPrefix + "opening", scenario: "ssh"}
 	c, _ := alertSetController(t, now, opening)
+	c.responderDone = false
 	userTest := (&switchedProbe{id: memory.TrafficDetectorPrefix + "late", scenario: "clone"}).finding()
 	clue := sdk.Finding{DetectorID: "resource-saturation", RuleID: "cpu", Status: sdk.FindingActive, Severity: sdk.SeverityWarning,
 		Summary: "cpu", Evidence: "synthetic", PrimaryResource: sdk.ObjectRef{Kind: "Pod", Namespace: "demo", Name: "web"}}
@@ -119,13 +154,19 @@ func TestOnlyOpenersInTheJoinWindowJoinTheAlertSet(t *testing.T) {
 		t.Fatalf("a clue joined the alert set: %v", c.currentIncidentRequest.JoinedKeys)
 	}
 	c.admitActivation(ctx, condition, now, sdk.DetectorSpec{})
+	if len(c.currentIncidentRequest.JoinedKeys) != 0 {
+		t.Fatalf("a Kubernetes condition joined the alert set: %v", c.currentIncidentRequest.JoinedKeys)
+	}
+	if batched := c.batcher.Snapshot().Findings; len(batched) != 1 || findingKey(batched[0]) != findingKey(condition) {
+		t.Fatalf("the condition must wait for the next incident: batched %v", batched)
+	}
 	c.admitActivation(ctx, userTest, c.incidentDetectedAt.Add(AlertJoinWindow), sdk.DetectorSpec{})
-	if got := c.currentIncidentRequest.JoinedKeys; len(got) != 2 || !slices.Contains(got, findingKey(condition)) || !slices.Contains(got, findingKey(userTest)) {
-		t.Fatalf("expected the condition and probe to join: %v", got)
+	if got := c.currentIncidentRequest.JoinedKeys; len(got) != 1 || got[0] != findingKey(userTest) {
+		t.Fatalf("expected the user test to join: %v", got)
 	}
 	late := (&switchedProbe{id: memory.TrafficDetectorPrefix + "independent", scenario: "write"}).finding()
 	c.admitActivation(ctx, late, c.incidentDetectedAt.Add(AlertJoinWindow+time.Second), sdk.DetectorSpec{})
-	if len(c.currentIncidentRequest.JoinedKeys) != 2 {
+	if len(c.currentIncidentRequest.JoinedKeys) != 1 {
 		t.Fatalf("a user test after the window joined: %v", c.currentIncidentRequest.JoinedKeys)
 	}
 }

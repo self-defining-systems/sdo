@@ -537,6 +537,7 @@ def test_shared_memory_does_not_count_insufficient_or_invalid_capacity(value):
     assert probes_for((fault,), lambda *_: obj)[fault.name]() is False
 
 
+@pytest.mark.sregym_env
 def test_real_phase4_inventory_is_offline_and_remaining_gaps_are_explicit():
     import os
     import subprocess

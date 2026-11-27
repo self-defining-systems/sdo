@@ -23,6 +23,11 @@ type DiagnosticsProjection struct {
 
 var ErrDiagnosticsNotBootstrapped = errors.New("diagnostics have not been bootstrapped")
 
+var authoredCodePaths = []string{layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir}
+
+// The human goal supplies the default cadence compiled into probe workloads.
+var compiledMemoryPaths = append([]string{layout.GoalFile}, authoredCodePaths...)
+
 func AcceptedDiagnostics(ctx context.Context, repository string) (DiagnosticsProjection, error) {
 	directory, err := CandidateDiagnostics(repository)
 	if err != nil {
@@ -40,12 +45,13 @@ func AcceptedDiagnostics(ctx context.Context, repository string) (DiagnosticsPro
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
-	status, err := git("status", "--porcelain", "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir, layout.CorpusDir)
+	statusPaths := append(append([]string{"status", "--porcelain", "--"}, compiledMemoryPaths...), layout.CorpusDir)
+	status, err := git(statusPaths...)
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
 	if status != "" {
-		return DiagnosticsProjection{}, errors.New("diagnostics and program memory must match the accepted commit before controller launch")
+		return DiagnosticsProjection{}, errors.New("goal, diagnostics and program memory must match the accepted commit before controller launch")
 	}
 	fingerprint, err := ControllerFingerprint(ctx, root, revision)
 	if err != nil {
@@ -54,13 +60,17 @@ func AcceptedDiagnostics(ctx context.Context, repository string) (DiagnosticsPro
 	return DiagnosticsProjection{Directory: directory, Fingerprint: fingerprint, AcceptedRevision: revision}, nil
 }
 
-// ControllerFingerprint identifies the accepted detector and program source
-// trees compiled into one controller binary.
+// ControllerFingerprint identifies the accepted memory compiled into a
+// controller build, including the goal that sets its probe cadence.
 func ControllerFingerprint(ctx context.Context, repository, revision string) (string, error) {
+	return memoryFingerprint(ctx, repository, revision, compiledMemoryPaths)
+}
+
+func memoryFingerprint(ctx context.Context, repository, revision string, paths []string) (string, error) {
 	if revision == "" {
 		return "", errors.New("controller revision is required")
 	}
-	output, err := memoryio.Git(ctx, repository, true, nil, "ls-tree", "-z", revision, "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir)
+	output, err := memoryio.Git(ctx, repository, true, nil, append([]string{"ls-tree", "-z", revision, "--"}, paths...)...)
 	if err != nil {
 		return "", fmt.Errorf("read accepted controller source trees: %w: %s", err, strings.TrimSpace(string(output)))
 	}

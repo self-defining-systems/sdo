@@ -22,6 +22,24 @@ import (
 type CycleReadView struct {
 	*sdktest.RecordingReadView
 	memory memoryPreparation
+	// snapshot is the cluster snapshot the view reads, when the loop took it.
+	snapshot sdk.DetectionContext
+}
+
+// viewSnapshot is the cluster snapshot behind a loop's read view, through the
+// recording wrapper a capture phase adds; nil when the view has none.
+func viewSnapshot(view program.ReadView) sdk.DetectionContext {
+	for depth := 0; depth < 4 && view != nil; depth++ {
+		switch v := view.(type) {
+		case *CycleReadView:
+			return v.snapshot
+		case *sdktest.RecordingReadView:
+			view = v.ReadView
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 func NewCycleReadView(view program.ReadView) *CycleReadView {

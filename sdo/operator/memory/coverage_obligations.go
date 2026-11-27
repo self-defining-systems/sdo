@@ -73,8 +73,9 @@ func MapWorkload(file string, content []byte) (appmap.Workload, bool) {
 // CoverageObligations renders, for the detection designer's brief, the
 // components on the user path that no probed user operation covers and that
 // record no unprobed reason: the memory check's map.coverage findings. It also
-// names the components no user path reaches that have no Service (workers),
-// which only an operation through an entry can cover. It is empty when the
+// names the components no user path reaches that hold no data (workers,
+// whether or not a metrics Service selects them), which only a user operation
+// whose effect the probe waits for can cover. It is empty when the
 // checkout has no parsable map or nothing is owed.
 func CoverageObligations(checkout string) string {
 	m, coverage, ok := acceptedMap(checkout)
@@ -88,7 +89,7 @@ func CoverageObligations(checkout string) string {
 		if got.Entry {
 			entries = append(entries, strings.Join(comp.Services, ", "))
 		}
-		if !got.OnUserPath && len(comp.Services) == 0 && got.Unprobed == "" {
+		if !got.OnUserPath && comp.Data == nil && got.Unprobed == "" {
 			workers = append(workers, comp.Name)
 		}
 	}
@@ -144,7 +145,7 @@ func CoverageObligations(checkout string) string {
 		fmt.Fprintf(&b, "\nThe map holds data (%s), so it needs at least one gated probe (call or read-later) with a step built with `ReadsExistingRecords(path, field, pattern)` that lists records users made or the deployment seeded and checks their shape (map.records-unread). An empty list passes, so a fresh install stays healthy. The step must not template a key a write step of its scenario saved; list live and save the id from the list. Only when users keep no records, set `no_user_records: <why>` at the top level of the map.\n", strings.Join(stores, ", "))
 	}
 	if len(workers) > 0 {
-		fmt.Fprintf(&b, "\nNo user path reaches these components and they have no Service: %s. If users depend on them (background jobs, queues), map the edge that reaches them and cover them with an operation through an entry, such as a write-read or read-later probe, or record `unprobed: <why>`.\n", strings.Join(workers, ", "))
+		fmt.Fprintf(&b, "\nNo user path reaches these components and they hold no data: %s. If one does work users wait for (a worker, consumer or schedule that takes work from a queue or table users write), declare its internal operation and probe it through the user operation that hands it the work: perform that operation, then read the effect (a status that moves on, a result that becomes readable) in a step wrapped in traffic.Eventually (map.effect-unobserved). A synchronous read-back, or an edge drawn toward the worker, does not observe it. Otherwise record `unprobed: <why>`.\n", strings.Join(workers, ", "))
 	}
 	return b.String()
 }
