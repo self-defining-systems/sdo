@@ -62,6 +62,45 @@ type Report struct {
 	Journeys []JourneyItem `json:"journeys,omitempty"`
 	// Unlisted says the checklist found no journeys in the goal.
 	Unlisted bool `json:"unlisted,omitempty"`
+	// Memory is the shared memory check's non-blocking result; its blocking
+	// errors are red Results of item ItemMemoryCheck.
+	Memory *MemoryCheck `json:"memory_check,omitempty"`
+}
+
+// ItemMemoryCheck names the red results that are the memory check's errors.
+const ItemMemoryCheck = "memory-check"
+
+// MemoryCheck is what the memory check beside the probes left out of Results:
+// why it did not run (Skipped), or its notes, which never reject.
+type MemoryCheck struct {
+	Skipped string   `json:"skipped,omitempty"`
+	Notes   []string `json:"notes,omitempty"`
+}
+
+// memoryText is the memory check's lines after its red results: why it was
+// skipped, or its notes counted (listed in full when verbose).
+func (r Report) memoryText(verbose bool) string {
+	if r.Memory == nil {
+		return ""
+	}
+	var b strings.Builder
+	if r.Memory.Skipped != "" {
+		fmt.Fprintf(&b, "memory check skipped: %s\n", r.Memory.Skipped)
+	}
+	switch {
+	case len(r.Memory.Notes) == 0:
+	case verbose:
+		for _, note := range r.Memory.Notes {
+			fmt.Fprintf(&b, "note %s: %s\n", ItemMemoryCheck, note)
+		}
+	default:
+		noun := "notes"
+		if len(r.Memory.Notes) == 1 {
+			noun = "note"
+		}
+		fmt.Fprintf(&b, "memory check: %d %s (--verbose lists them)\n", len(r.Memory.Notes), noun)
+	}
+	return b.String()
 }
 
 // Schedule is how the health probes sample one scenario: what it costs and how
@@ -544,6 +583,7 @@ func (r Report) VerboseText() string {
 			}
 		}
 	}
+	b.WriteString(r.memoryText(true))
 	if !r.Once {
 		b.WriteString(r.summary())
 	}

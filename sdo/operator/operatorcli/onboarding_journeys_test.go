@@ -105,3 +105,84 @@ func TestJourneysSoakInAnOnboardingSessionSaysTheControllerSoaks(t *testing.T) {
 		t.Fatalf("outside a session --soak is not refused: %q", &stderr)
 	}
 }
+
+// journeysRepo is parityRepo with the one generator its workload names, so the
+// probes compile.
+func journeysRepo(t *testing.T) string {
+	t.Helper()
+	repo := parityRepo(t)
+	dir := filepath.Join(repo, ".sdo", "diagnostics", "traffic", "generators")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := "package generators\n\nimport \"sdo.dev/operator/sdk/traffic\"\n\nfunc Scenarios() traffic.Catalog {\n\treturn traffic.Catalog{\n\t\t{\n\t\t\tID: \"a\", Description: \"Read items.\",\n\t\t\tTarget: traffic.Target{Service: \"web\", Port: 80},\n\t\t\tDependsOn: []string{\"web\"}, SideEffect: traffic.SideEffectRead,\n\t\t\tSteps: []traffic.Step{{Name: \"get\", Endpoint: traffic.GET(\"/items\", nil)}},\n\t\t\tDetects: []traffic.FaultClass{traffic.FaultWrongBody},\n\t\t},\n\t}\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "generators.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
+func operatorSourceRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// A journeys run that is not --quick runs the shared memory check too and
+// reports its rejection beside the probe results: the probes still run, each
+// blocking error is one red line, notes are counted, and the exit is nonzero.
+func TestJourneysReportsAMemoryCheckRejectionBesideTheProbeResults(t *testing.T) {
+	repo := journeysRepo(t)
+	t.Setenv("SDO_ACTOR", "invalid-actor")
+	t.Setenv("SDO_PHASE", "initial")
+	t.Setenv("SDO_BASE_COMMIT", "HEAD")
+	args := []string{"journeys", "--repo", repo, "--namespace", "example", "--plan", "--operator-root", operatorSourceRoot(t)}
+	var out, errOut bytes.Buffer
+	if code := RunOnboarding(context.Background(), args, &out, &errOut); code != exitDiagnostics {
+		t.Fatalf("exit %d, want %d: %q %q", code, exitDiagnostics, &out, &errOut)
+	}
+	if !strings.Contains(out.String(), "red memory-check: ") || !strings.Contains(out.String(), "planned ") {
+		t.Fatalf("want a red memory-check line and the probe plan:\n%s", &out)
+	}
+}
+
+// Outside a session the check's environment is unset: one short line says the
+// memory check was skipped and the probe run goes on.
+func TestJourneysSkipsTheMemoryCheckWithoutItsEnvironment(t *testing.T) {
+	repo := journeysRepo(t)
+	for _, key := range []string{"SDO_ACTOR", "SDO_PHASE", "SDO_BASE_COMMIT"} {
+		t.Setenv(key, "")
+	}
+	var out bytes.Buffer
+	args := []string{"journeys", "--repo", repo, "--namespace", "example", "--plan", "--operator-root", operatorSourceRoot(t)}
+	if code := RunOnboarding(context.Background(), args, &out, io.Discard); code != exitClean && code != exitDiagnostics {
+		t.Fatalf("exit %d: %s", code, &out)
+	}
+	if !strings.Contains(out.String(), "memory check skipped: ") || strings.Contains(out.String(), "red memory-check") {
+		t.Fatalf("want one skipped line:\n%s", &out)
+	}
+}
+
+func TestMemoryFlagErrorsAreOneShortLine(t *testing.T) {
+	var out, errOut bytes.Buffer
+	code := RunMemory(context.Background(), []string{"check", "--repo", "/work"}, nil, &out, &errOut)
+	line := strings.TrimSpace(errOut.String())
+	if code != exitInfra || out.Len() != 0 || strings.Contains(line, "\n") || strings.Contains(line, "usage:") ||
+		!strings.Contains(line, "--root DIR") || !strings.Contains(line, "--help") {
+		t.Fatalf("code %d, stdout %q, stderr %q", code, &out, line)
+	}
+	errOut.Reset()
+	RunMemory(context.Background(), []string{"check", "--nope"}, nil, &out, &errOut)
+	line = strings.TrimSpace(errOut.String())
+	if strings.Contains(line, "\n") || !strings.Contains(line, "--replay") || !strings.Contains(line, "--help") {
+		t.Fatalf("stderr %q", line)
+	}
+	errOut.Reset()
+	RunMemory(context.Background(), []string{"bogus"}, nil, &out, &errOut)
+	if strings.Contains(errOut.String(), "usage:") {
+		t.Fatalf("an unknown command does not print the whole usage: %q", &errOut)
+	}
+}

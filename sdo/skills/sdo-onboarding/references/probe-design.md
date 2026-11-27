@@ -39,5 +39,5 @@ for core paths when their planned time is too long.
 | same with `--alter` in place of `--quick` | after it passes: check repeatability, concurrency and wrong answers |
 | `sdo-operator onboarding check --metrics --repo DIR --namespace NS` | once, when a request counter is mapped |
 
-Reports give one line per scenario with details for failures. Use `--verbose` for every check. Run long checks in
+Every run also runs `memory check` (red `memory-check` lines), so it needs no separate call. Reports give one line per scenario with details for failures. Use `--verbose` for every check. Run long checks in
 the background and write the next probe meanwhile.

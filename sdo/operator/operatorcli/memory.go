@@ -149,7 +149,7 @@ func RunMemory(ctx context.Context, args []string, getenv func(string) string, s
 		fmt.Fprintln(stdout, MemoryUsage)
 		return exitClean
 	default:
-		err = fmt.Errorf("unknown memory command %q\n%s", args[0], MemoryUsage)
+		err = fmt.Errorf("unknown memory command %q (migrate, adopt-existing, import, check, test, ls, new, outcomes); see sdo-operator memory --help", args[0])
 	}
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(stdout, MemoryUsage)
@@ -179,7 +179,10 @@ func parseFlags(flags *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 	for {
 		if err := flags.Parse(args); err != nil {
-			return nil, err
+			if errors.Is(err, flag.ErrHelp) {
+				return nil, err
+			}
+			return nil, shortFlagError(flags, err)
 		}
 		args = flags.Args()
 		if len(args) == 0 {
@@ -188,6 +191,19 @@ func parseFlags(flags *flag.FlagSet, args []string) ([]string, error) {
 		positional = append(positional, args[0])
 		args = args[1:]
 	}
+}
+
+// shortFlagError is a flag parse error as one line: the error, the command's
+// flags and the help hint, never the whole usage. A --repo that the command
+// does not take (it takes --root) says so.
+func shortFlagError(flags *flag.FlagSet, err error) error {
+	var names []string
+	flags.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
+	command := flags.Name()
+	if strings.Contains(err.Error(), "-repo") && flags.Lookup("root") != nil {
+		return fmt.Errorf("%s takes --root DIR, not --repo (default: the Git checkout containing the current directory); flags: %s; see sdo-operator memory --help", command, strings.Join(names, " "))
+	}
+	return fmt.Errorf("%s: %w; flags: %s; see sdo-operator memory --help", command, err, strings.Join(names, " "))
 }
 
 // checkoutRoot resolves a memory command's --root. An empty root means the Git checkout containing the current
