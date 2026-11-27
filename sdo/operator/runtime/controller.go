@@ -331,9 +331,9 @@ type Controller struct {
 	// after the responder launched (learned matches, late drift). They stay
 	// after_dispatch in telemetry; restore rebuilds them from the timeline.
 	lateJoinedKeys map[string]struct{}
-	// joinCapturesDue counts alerts that joined the open incident since the
+	// joinCapturesDue are the alerts that joined the open incident since the
 	// last observation captured the state they joined in.
-	joinCapturesDue int
+	joinCapturesDue []string
 	stateRestored   bool
 
 	// CheckHealth refuses evaluation and effects while the compiled detector bundle

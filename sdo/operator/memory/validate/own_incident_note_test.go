@@ -17,11 +17,11 @@ func TestOwnIncidentFailureLinesBecomeDiagnosticsOnThePlaybook(t *testing.T) {
 }
 
 func TestOwnIncidentNotesNameTheOutcomeAndThePlaybook(t *testing.T) {
-	match := ownIncidentNote(sdktest.OwnIncidentResult{ProgramID: "fresh", Outcome: sdktest.OwnIncidentMatch, Capture: "open@detect.json"})
+	match := OwnIncidentNote(sdktest.OwnIncidentResult{ProgramID: "fresh", Outcome: sdktest.OwnIncidentMatch, Capture: "open@detect.json"})
 	if match.Rule != RuleOwnIncidentReplay || match.Path != ".sdo/playbooks/fresh" || !strings.HasPrefix(match.Message, "match:") {
 		t.Fatalf("match note = %+v", match)
 	}
-	blind := ownIncidentNote(sdktest.OwnIncidentResult{ProgramID: "fresh", Outcome: sdktest.OwnIncidentUnverified, Reason: "no captured open state"})
+	blind := OwnIncidentNote(sdktest.OwnIncidentResult{ProgramID: "fresh", Outcome: sdktest.OwnIncidentUnverified, Reason: "no captured open state"})
 	if blind.Message != "unverified: no captured open state" {
 		t.Fatalf("unverified note = %+v", blind)
 	}
@@ -38,5 +38,18 @@ func TestRecoveredMatchNoteBoundsObjectsAndText(t *testing.T) {
 		strings.Contains(note.Message, "zz") || !strings.HasPrefix(note.Message, "also Matches after recovery: Pod/app/") ||
 		!strings.HasSuffix(note.Message, "a standing condition may truly match: then say so in the README") {
 		t.Fatalf("recovered note (%d bytes) = %+v", len(note.Message), note)
+	}
+}
+
+// Go reads back which capture a new playbook's Diagnose matched in, so its
+// first corpus case comes from that capture; other notes say nothing.
+func TestOwnIncidentMatchCaptureReadsTheNoteBack(t *testing.T) {
+	note := OwnIncidentNote(sdktest.OwnIncidentResult{ProgramID: "later", Outcome: sdktest.OwnIncidentMatch, Capture: "open@join-2.json"})
+	if id, phase, ok := OwnIncidentMatchCapture(note.Rule, note.Path, note.Message); !ok || id != "later" || phase != "join-2" {
+		t.Fatalf("read back = %q %q %v", id, phase, ok)
+	}
+	blind := OwnIncidentNote(sdktest.OwnIncidentResult{ProgramID: "later", Outcome: sdktest.OwnIncidentUnverified, Reason: "no captured open state"})
+	if _, _, ok := OwnIncidentMatchCapture(blind.Rule, blind.Path, blind.Message); ok {
+		t.Fatal("an unverified note named a capture")
 	}
 }

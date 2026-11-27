@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sdo.dev/operator/memory/layout"
 	"slices"
 	"strings"
@@ -33,7 +32,7 @@ func AppendCapturedRecordings(repositoryMount, incidentID, phase string, added [
 	releaseSessionStorage := SessionStorageUse()
 	defer releaseSessionStorage()
 
-	if phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
+	if phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" && !sdktest.IsJoinCapturePhase(strings.TrimPrefix(phase, "open@")) {
 		return fmt.Errorf("invalid corpus recording phase %q", phase)
 	}
 	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
@@ -223,12 +222,12 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 		if label.Provenance.OpenAt == sdktest.CapturedFixedNoMatchPhase && len(label.RootCauseProgramIDs) == 0 && len(label.NoMatchProgramIDs) > 0 {
 			openName = "fixed.json"
 		} else if label.Provenance.OpenAt != "" {
-			if label.Provenance.OpenAt != "detect" && label.Provenance.OpenAt != "settle" && label.Provenance.OpenAt != "pre-apply" {
+			if label.Provenance.OpenAt != "detect" && label.Provenance.OpenAt != "settle" && label.Provenance.OpenAt != "pre-apply" && !sdktest.IsJoinCapturePhase(label.Provenance.OpenAt) {
 				return fmt.Errorf("invalid captured open phase %q", label.Provenance.OpenAt)
 			}
 			openName = "open@" + label.Provenance.OpenAt + ".json"
 		} else {
-			for _, phase := range []string{"open@pre-apply", "open@settle", "open@detect"} {
+			for _, phase := range append([]string{"open@pre-apply", "open@settle", "open@detect"}, openPhases(sdktest.JoinCapturePhases(trusted))...) {
 				data, readErr := os.ReadFile(filepath.Join(trusted, phase+".json"))
 				if readErr == nil && sdktest.SnapshotMatchesDigest(data, label.Provenance.OpenSHA256) {
 					openName = phase + ".json"
@@ -253,7 +252,7 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 					return err
 				}
 				exact := false
-				for _, phase := range []string{"detect", "pre-apply"} {
+				for _, phase := range append([]string{"detect", "pre-apply"}, sdktest.JoinCapturePhases(trusted)...) {
 					want, err := os.ReadFile(filepath.Join(trusted, "open@"+phase+"-recordings.json"))
 					want, _ = corpusRecordings(want)
 					exact = exact || (err == nil && string(got) == string(want))
@@ -290,20 +289,25 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 	return nil
 }
 
-// joinedCapturePhase names the open state an alert joined the incident in: the
-// nth joined alert's capture is open@join-n. A fault that starts while the
-// incident is open shows only there.
-var joinedCapturePhase = regexp.MustCompile(`^open@join-[1-9][0-9]*$`)
+// JoinedCapturePhase is the capture phase of the nth pass in which alerts
+// joined an incident.
+func JoinedCapturePhase(n int) string { return "open@" + sdktest.JoinCapturePhase(n) }
 
-// JoinedCapturePhase is the capture phase of the nth alert that joined an incident.
-func JoinedCapturePhase(n int) string { return fmt.Sprintf("open@join-%d", n) }
+// openPhases prefixes capture phases with "open@".
+func openPhases(phases []string) []string {
+	out := make([]string, 0, len(phases))
+	for _, phase := range phases {
+		out = append(out, "open@"+phase)
+	}
+	return out
+}
 
 // CaptureIncidentSnapshot stores the first namespace-local view at each boundary.
 func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string, refs ...sdk.ObjectRef) error {
 	releaseSessionStorage := SessionStorageUse()
 	defer releaseSessionStorage()
 
-	if phase != "open" && phase != "fixed" && phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" && !joinedCapturePhase.MatchString(phase) {
+	if phase != "open" && phase != "fixed" && phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" && !(strings.HasPrefix(phase, "open@") && sdktest.IsJoinCapturePhase(strings.TrimPrefix(phase, "open@"))) {
 		return fmt.Errorf("invalid corpus capture phase %q", phase)
 	}
 	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
@@ -389,7 +393,7 @@ func CaptureRepairedProgramReads(repositoryMount, incidentID string, view progra
 	if err != nil {
 		return err
 	}
-	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+	for _, phase := range append([]string{"open@detect", "open@settle", "open@pre-apply"}, openPhases(sdktest.JoinCapturePhases(dir))...) {
 		raw, err := os.ReadFile(filepath.Join(dir, phase+"-recordings.json"))
 		if errors.Is(err, os.ErrNotExist) {
 			continue

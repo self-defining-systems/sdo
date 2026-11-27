@@ -224,7 +224,9 @@ func fixedCaptureVerdicts(ctx context.Context, outcome *contracts.OutcomeRecord,
 		calls []sdktest.PrimitiveCall
 	}
 	recordings := []capturedCalls{}
-	for _, phase := range []string{"detect", "pre-apply"} {
+	// Every opening capture and every alert-join capture: a fault that started
+	// while the incident was open shows only in the capture its alert joined in.
+	for _, phase := range append([]string{"detect", "pre-apply"}, sdktest.JoinCapturePhases(captures)...) {
 		data, err := os.ReadFile(filepath.Join(captures, "open@"+phase+"-recordings.json"))
 		if os.IsNotExist(err) {
 			continue
