@@ -83,7 +83,7 @@ every workload (unset is 4 iterations/s). Give most of the budget to the journey
 | same with `--alter` | when it passes: an unnoticed wrong answer is a missing check |
 | `sdo-operator memory check` | after each batch; map, coverage, ownership, compile |
 | `sdo-operator onboarding check --metrics --repo DIR --namespace NS` | once, when a request counter is mapped |
-| `... onboarding journeys --alter --soak 5m` | initial scheduled run |
+| `... onboarding journeys --alter --soak 5m` | initial scheduled run, in the background; stops once each scenario is decided |
 | same with `--only ID` | after fixing a scenario or a dependency it uses |
 
 Reports put red lines first. Write long output to a file and read the red lines; never poll: run a long check in the
