@@ -35,7 +35,17 @@ type MutationGate struct {
 	Directory        string
 	ScriptJob        string
 	ScriptJobStopped func(string) bool
+	// Clock stamps leases and session activity; nil reads the wall clock.
+	Clock func() time.Time
 }
+
+func (g *MutationGate) now() time.Time {
+	if g.Clock != nil {
+		return g.Clock().UTC()
+	}
+	return apiio.Now().UTC()
+}
+
 type MutationLease struct {
 	gate   *MutationGate
 	file   *mutationLock
@@ -48,7 +58,7 @@ type MutationObservation struct {
 	Revision string
 	Pending  bool
 	// OpenSessions are exec and attach streams past their upgrade. They do not
-	// block the fence; the fence ends them.
+	// block the fence: the stability window starts at their last activity.
 	OpenSessions []JournalEntry
 }
 
@@ -67,12 +77,15 @@ type mutationRecord struct {
 	Session   bool         `json:"session,omitempty"`
 	Subject   LeaseSubject `json:"subject,omitzero"`
 	Started   time.Time    `json:"started,omitzero"`
+	// Active is when bytes last flowed on an established session.
+	Active time.Time `json:"active,omitzero"`
 }
 
 // JournalEntry is one unfinished or uncertain lease of the journal.
 type JournalEntry struct {
 	Subject   LeaseSubject
 	Started   time.Time
+	Active    time.Time
 	Session   bool
 	Pending   bool
 	Uncertain bool
@@ -137,11 +150,12 @@ func (g *MutationGate) Begin() (*MutationLease, error) { return g.BeginWrite(Lea
 
 // BeginWrite starts a write lease that names its subject in the journal.
 func (g *MutationGate) BeginWrite(subject LeaseSubject) (*MutationLease, error) {
-	return g.begin(mutationRecord{Pending: true, ScriptJob: g.ScriptJob, Subject: subject, Started: apiio.Now().UTC()})
+	return g.begin(mutationRecord{Pending: true, ScriptJob: g.ScriptJob, Subject: subject, Started: g.now()})
 }
 
-// fenced reports a sealed or verified incident; the caller holds a shared lock.
-func (g *MutationGate) fenced() error {
+// Fenced reports a sealed or verified incident: no new write or session may
+// start. A caller that must not race the fence holds a shared lock.
+func (g *MutationGate) Fenced() error {
 	if _, err := os.Stat(filepath.Join(g.Directory, "incident-closed")); !errors.Is(err, os.ErrNotExist) {
 		if err != nil {
 			return err
@@ -163,7 +177,7 @@ func (g *MutationGate) begin(record mutationRecord) (*MutationLease, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := g.fenced(); err != nil {
+	if err := g.Fenced(); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -219,8 +233,11 @@ func (g *MutationGate) TryObserve() (*MutationObservation, error) {
 		}
 		if record.Session && record.Pending && !record.Uncertain {
 			// Past its upgrade (the lease's lock is released): an open stream,
-			// not a write in flight.
+			// not a write in flight. Its activity is no new write, so the
+			// revision leaves it out.
 			result.OpenSessions = append(result.OpenSessions, record.entry())
+			record.Active = time.Time{}
+			b, _ = json.Marshal(record)
 		} else if record.Pending || record.Uncertain {
 			quiescent, checked := stopped[record.ScriptJob]
 			if !checked && record.ScriptJob != "" && g.ScriptJobStopped != nil {
@@ -236,7 +253,7 @@ func (g *MutationGate) TryObserve() (*MutationObservation, error) {
 	return result, nil
 }
 func (r mutationRecord) entry() JournalEntry {
-	return JournalEntry{Subject: r.Subject, Started: r.Started, Session: r.Session, Pending: r.Pending, Uncertain: r.Uncertain}
+	return JournalEntry{Subject: r.Subject, Started: r.Started, Active: r.Active, Session: r.Session, Pending: r.Pending, Uncertain: r.Uncertain}
 }
 
 // InFlight lists the journal's unfinished and uncertain leases without taking
@@ -257,6 +274,27 @@ func (g *MutationGate) InFlight() []JournalEntry {
 	}
 	slices.SortFunc(result, func(a, b JournalEntry) int { return a.Started.Compare(b.Started) })
 	return result
+}
+
+// LastSessionActivity is the newest activity of the open sessions and that
+// session; ok is false without one.
+func (o *MutationObservation) LastSessionActivity() (at time.Time, session JournalEntry, ok bool) {
+	for _, entry := range o.OpenSessions {
+		active := entry.Active
+		if active.IsZero() {
+			active = entry.Started
+		}
+		if !ok || active.After(at) {
+			at, session, ok = active, entry, true
+		}
+	}
+	return at, session, ok
+}
+
+// sealed reports the terminal seal.
+func (g *MutationGate) sealed() bool {
+	_, err := os.Stat(filepath.Join(g.Directory, "incident-closed"))
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 func (o *MutationObservation) Fence(at time.Time) error {

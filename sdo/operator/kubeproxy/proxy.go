@@ -118,15 +118,20 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 			}
 		}
 		// A port-forward is a network tunnel: like the app's own port, what it
-		// carries is no API write, so it takes no lease and is never fenced.
-		// Exec and attach take a session lease: the handshake is a write, the
-		// open stream is not, and the fence closes it.
+		// carries is no API write, so it takes no lease; a new one is refused
+		// once the incident is fenced, like a new exec, and an open one is left
+		// alone. Exec and attach take a session lease: the handshake is a write,
+		// and the open stream counts as one while bytes flow (the stability
+		// window starts at its last activity).
 		var sessionLease *apihistory.SessionLease
-		if gate != nil && write && e.Subresource != "portforward" {
+		if gate != nil && write {
 			var finish func(bool) error
 			var err error
 			subject := apihistory.LeaseSubject{Verb: e.Verb, Object: leaseObject(e)}
-			if session {
+			if e.Subresource == "portforward" {
+				err = gate.Fenced()
+				finish = func(bool) error { return nil }
+			} else if session {
 				subject.Verb = e.Subresource
 				if sessionLease, err = gate.BeginSession(subject); err == nil {
 					finish = sessionLease.Finish
@@ -167,7 +172,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 		}
 		var completed *apihistory.Event
 		var responseBody []byte
-		var closedAtRecovery func() bool
+		var closedAtEnd func() bool
 		// Projection starts after forwarding returns. Store.Record schedules bounded
 		// workers; raw bytes never enter its recording queue.
 		defer func() {
@@ -175,7 +180,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 				if completed.Status == http.StatusSwitchingProtocols {
 					// ServeHTTP returns only after the upgraded stream closes.
 					completed.SessionEnd = proxyio.Now().UTC()
-					completed.ClosedAtRecovery = closedAtRecovery != nil && closedAtRecovery()
+					completed.ClosedAtIncidentEnd = closedAtEnd != nil && closedAtEnd()
 				}
 				record(*completed, responseBody)
 			}
@@ -242,8 +247,8 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 						gated := &fencedStream{ReadWriteCloser: stream, lease: sessionLease, done: make(chan struct{})}
 						res.Body = gated
 						sessionLease.Established()
-						go gated.closeAtFence(e)
-						closedAtRecovery = gated.closedAtRecovery
+						go gated.closeAtSeal(e)
+						closedAtEnd = gated.closedAtEnd
 					}
 				}
 				recordEnd(end, nil)
@@ -326,8 +331,10 @@ func leaseObject(e apihistory.Event) string {
 	return object
 }
 
-// fencedStream is the upstream side of an exec or attach stream: each client
-// message is forwarded under the session lease, and the fence closes it.
+// fencedStream is the upstream side of an exec or attach stream: bytes in
+// either direction are the session's activity, each client message is
+// forwarded under the session lease (held while a verification fence stands),
+// and the terminal seal closes it.
 type fencedStream struct {
 	io.ReadWriteCloser
 	lease  *apihistory.SessionLease
@@ -336,10 +343,18 @@ type fencedStream struct {
 	closed atomic.Bool
 }
 
+func (s *fencedStream) Read(p []byte) (int, error) {
+	n, err := s.ReadWriteCloser.Read(p)
+	if n > 0 {
+		s.lease.Touch()
+	}
+	return n, err
+}
+
 func (s *fencedStream) Write(p []byte) (int, error) {
-	n, err := s.lease.Forward(func() (int, error) { return s.ReadWriteCloser.Write(p) })
+	n, err := s.lease.Forward(s.done, func() (int, error) { return s.ReadWriteCloser.Write(p) })
 	if errors.Is(err, apihistory.ErrSessionFenced) {
-		s.closeForRecovery()
+		s.closeAtEnd()
 	}
 	return n, err
 }
@@ -349,20 +364,20 @@ func (s *fencedStream) Close() error {
 	return s.ReadWriteCloser.Close()
 }
 
-func (s *fencedStream) closeForRecovery() {
+func (s *fencedStream) closeAtEnd() {
 	s.closed.Store(true)
 	_ = s.Close()
 }
 
-func (s *fencedStream) closedAtRecovery() bool { return s.closed.Load() }
+func (s *fencedStream) closedAtEnd() bool { return s.closed.Load() }
 
-// closeAtFence ends a stream that outlived Recovered, so it cannot write after the fence.
-func (s *fencedStream) closeAtFence(e apihistory.Event) {
+// closeAtSeal ends a stream that outlived its incident, so it cannot write after it.
+func (s *fencedStream) closeAtSeal(e apihistory.Event) {
 	select {
 	case <-s.done:
-	case <-s.lease.Fenced():
-		slog.Info("agent_session_closed_at_recovery", "subresource", e.Subresource, "object", leaseObject(e), "request_id", e.RequestID)
-		s.closeForRecovery()
+	case <-s.lease.Ended():
+		slog.Info("agent_session_closed_at_incident_end", "subresource", e.Subresource, "object", leaseObject(e), "request_id", e.RequestID)
+		s.closeAtEnd()
 	}
 }
 
