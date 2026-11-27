@@ -1174,7 +1174,10 @@ type StartupObservation struct {
 	Workload   string                 `protobuf:"bytes,1,opt,name=workload,proto3" json:"workload,omitempty"`
 	ReadyAfter []*durationpb.Duration `protobuf:"bytes,2,rep,name=ready_after,json=readyAfter,proto3" json:"ready_after,omitempty"`
 	// The latest Ready transition already sampled, so a pod is counted once.
-	LastReadyAt   *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_ready_at,json=lastReadyAt,proto3" json:"last_ready_at,omitempty"`
+	LastReadyAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_ready_at,json=lastReadyAt,proto3" json:"last_ready_at,omitempty"`
+	// The pods (UID) whose start was sampled: a later Ready transition of the
+	// same pod is a readiness flap, not a start.
+	SampledPods   []string `protobuf:"bytes,4,rep,name=sampled_pods,json=sampledPods,proto3" json:"sampled_pods,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1226,6 +1229,13 @@ func (x *StartupObservation) GetReadyAfter() []*durationpb.Duration {
 func (x *StartupObservation) GetLastReadyAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.LastReadyAt
+	}
+	return nil
+}
+
+func (x *StartupObservation) GetSampledPods() []string {
+	if x != nil {
+		return x.SampledPods
 	}
 	return nil
 }
@@ -2219,12 +2229,13 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"*state.failed_closure_has_permanent_failure\x126a failed closure requires its permanent failure record\x1aXthis.closure_state != 5 || (has(this.closure_failure) && this.closure_failure.permanent)\x1a\xe0\x02\n" +
 	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xc8\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 5))\x1a\x9c\x01\n" +
 	"!state.pending_closure_has_payload\x129pending or processing closure requires its frozen payload\x1a<!(this.closure_state in [1, 2]) || has(this.pending_closure)\x1a\x9c\x01\n" +
-	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b/\x100J\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#J\x04\b-\x10.R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x18disabled_setup_detectorsR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursorsR\x18verification_deadline_at\"\xac\x01\n" +
+	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b/\x100J\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#J\x04\b-\x10.R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x18disabled_setup_detectorsR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursorsR\x18verification_deadline_at\"\xcf\x01\n" +
 	"\x12StartupObservation\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12:\n" +
 	"\vready_after\x18\x02 \x03(\v2\x19.google.protobuf.DurationR\n" +
 	"readyAfter\x12>\n" +
-	"\rlast_ready_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vlastReadyAt\"\xe0\x02\n" +
+	"\rlast_ready_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vlastReadyAt\x12!\n" +
+	"\fsampled_pods\x18\x04 \x03(\tR\vsampledPods\"\xe0\x02\n" +
 	"\rStartupPeriod\x125\n" +
 	"\bbegan_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\abeganAt\x125\n" +
 	"\bbound_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\aboundAt\x12A\n" +

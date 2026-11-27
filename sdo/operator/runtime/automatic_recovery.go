@@ -13,8 +13,10 @@ import (
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/requestmetrics"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -287,13 +289,17 @@ func memberFailing(window traffic.Window, scenario string) bool {
 	return false
 }
 
-// alertsBeyondStage are the alert set's Kubernetes conditions that the settled
-// writes of the automatic stage cannot clear. Such a condition reports an
-// object as it is now, so it does not lag a repair, unlike a request or
-// user-test alert; no applied program targeted it; and its component does not
-// depend, over the accepted map, on any component the stage wrote. When any of
-// that cannot be established there is none, and the stage waits its bound.
-func alertsBeyondStage(view sdk.DetectionContext, m program.AppMap, request IncidentRequest, report *contracts.StageReport) []string {
+// alertsBeyondStage are the alert set's alerts that the settled writes of the
+// automatic stage cannot clear: no applied program targeted the alert, and no
+// component it reports on depends, over the accepted map, on a component the
+// stage wrote. A Kubernetes condition reports its object's component. A user
+// test reports the path components of the operations its scenario exercises,
+// and a request-error alert those of its operation, so a repair that is still
+// propagating to users along a written component's callers waits; a user test
+// also needs its newest sample failing. When any of that cannot be
+// established there is none, and the stage waits its bound.
+func alertsBeyondStage(view sdk.DetectionContext, m appmap.Map, request IncidentRequest, report *contracts.StageReport) []string {
+	pm := m.Program()
 	written, targeted := map[string]bool{}, map[string]bool{}
 	for _, attempt := range report.GetMitigations() {
 		receipt := attempt.GetApplyReceipt()
@@ -306,7 +312,7 @@ func alertsBeyondStage(view sdk.DetectionContext, m program.AppMap, request Inci
 			return nil
 		}
 		for _, ref := range attempt.GetTouchedObjects() {
-			component, ok := m.ComponentOf(view, objectRefState(ref))
+			component, ok := pm.ComponentOf(view, objectRefState(ref))
 			if !ok {
 				return nil
 			}
@@ -316,16 +322,79 @@ func alertsBeyondStage(view sdk.DetectionContext, m program.AppMap, request Inci
 			targeted[fp] = true
 		}
 	}
+	if len(written) == 0 {
+		return nil
+	}
 	var beyond []string
 	for _, finding := range newRecoveryScope(alertKeys(&request)).blocking(request.Findings) {
-		if !slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID) || targeted[FindingFingerprint(finding)] {
+		if targeted[FindingFingerprint(finding)] {
 			continue
 		}
-		if component, ok := m.ComponentOf(view, finding.PrimaryResource); ok && len(written) > 0 && !dependsOnAny(m, component.Name, written) {
+		components, ok := alertComponents(view, m, pm, request, finding)
+		if ok && !slices.ContainsFunc(components, func(name string) bool { return dependsOnAny(pm, name, written) }) {
 			beyond = append(beyond, findingKey(finding))
 		}
 	}
 	return beyond
+}
+
+// alertComponents are the map components an alert reports on, or false when
+// the map does not tell: a Kubernetes condition's object, a failing user
+// test's operation paths, a request-error alert's operation path.
+func alertComponents(view sdk.DetectionContext, m appmap.Map, pm program.AppMap, request IncidentRequest, finding sdk.Finding) ([]string, bool) {
+	if slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID) {
+		component, ok := pm.ComponentOf(view, finding.PrimaryResource)
+		return []string{component.Name}, ok
+	}
+	var operations []string
+	if workload, scenario, ok := openingUserTest(request, findingKey(finding)); ok {
+		window, observed := traffic.WindowFrom(view, workload)
+		if !observed || !newestSampleFailed(window, scenario) {
+			return nil, false
+		}
+		for _, probe := range m.Probes {
+			if probe.Scenario == scenario {
+				operations = append(operations, probe.Operations...)
+			}
+		}
+	} else if finding.DetectorID == memory.RequestMetricsDetectorID && finding.RuleID == requestmetrics.RuleErrors && finding.Metadata["undeclared_route"] != true {
+		if id, _ := finding.Metadata["operation"].(string); id != "" {
+			operations = append(operations, id)
+		}
+	}
+	var components []string
+	for _, id := range operations {
+		i := slices.IndexFunc(m.Operations, func(op appmap.Operation) bool { return op.ID == id })
+		if i < 0 || len(m.Operations[i].Path) == 0 {
+			return nil, false
+		}
+		for _, name := range m.Operations[i].Path {
+			if _, ok := pm.Component(name); !ok {
+				return nil, false
+			}
+			components = append(components, name)
+		}
+	}
+	return components, len(components) > 0
+}
+
+// newestSampleFailed reports a qualified scenario whose newest usable sample
+// failed.
+func newestSampleFailed(window traffic.Window, scenario string) bool {
+	if window.LoadError != "" {
+		return false
+	}
+	for _, observed := range window.Scenarios {
+		if observed.Scenario.ID != scenario || !observed.Qualified {
+			continue
+		}
+		for i := len(observed.Samples) - 1; i >= 0; i-- {
+			if outcome := observed.Samples[i].Outcome; outcome != traffic.OutcomeInvalid {
+				return outcome != traffic.OutcomeOK
+			}
+		}
+	}
+	return false
 }
 
 // dependsOnAny reports whether the component is, or calls directly or
@@ -360,7 +429,7 @@ func (c *Controller) beyondStageAlerts(ctx context.Context, now time.Time, snaps
 	c.mu.Lock()
 	settled := c.stageSettledAt
 	c.mu.Unlock()
-	return append(alertsBeyondStage(snapshot, m.Program(), request, report),
+	return append(alertsBeyondStage(snapshot, m, request, report),
 		userTestsStillFailing(snapshot, request, settled, c.config.ClosureStabilityWindow)...)
 }
 
@@ -430,7 +499,7 @@ func (c *Controller) automaticDeadlineLocked(report *contracts.StageReport) time
 	if c.config.AfterPlaybook == settings.AfterPlaybookWait {
 		wait = c.config.AfterPlaybookWait
 	}
-	bound := automaticRecoveryDeadline(*c.currentIncidentRequest, report, lastStageReceipt(report), nil, nil, wait, c.config.ClosureStabilityWindow)
+	bound := automaticRecoveryDeadline(*c.currentIncidentRequest, report, lastStageReceipt(report), nil, nil, wait, c.config.AfterPlaybookWait, c.config.ClosureStabilityWindow)
 	if bound.IsZero() {
 		return c.responderCompletedAt
 	}

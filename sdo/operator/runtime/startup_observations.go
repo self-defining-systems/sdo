@@ -19,6 +19,8 @@ const (
 	startupSamplesPerWorkload = 20
 	// startupMaxWorkloads bounds the workloads tracked.
 	startupMaxWorkloads = 200
+	// startupPodsPerWorkload bounds the sampled pods remembered per workload.
+	startupPodsPerWorkload = 64
 	// startupPercentile is the share of recent healthy starts the allowance
 	// covers; startupMargin and startupSlack widen it.
 	startupPercentile = 0.95
@@ -43,6 +45,8 @@ type StartupObservations struct {
 type workloadStartups struct {
 	ready     []time.Duration
 	lastReady time.Time
+	// pods are the pods whose start was sampled, oldest first.
+	pods []string
 }
 
 // NewStartupObservations returns an empty store.
@@ -51,22 +55,25 @@ func NewStartupObservations() *StartupObservations {
 }
 
 // Observe records the healthy starts among pods: a Running pod whose Ready
-// condition turned true with no container restart. Each Ready transition is
-// sampled once. workload names a pod's workload (sdk.PodWorkload).
+// condition turned true with no container restart. Each pod is sampled once,
+// at the first Ready transition seen: a later one (the pod turned unready, say
+// while a dependency was down, and Ready again) is no start, and its distance
+// from the container start is the pod's age. workload names a pod's workload
+// (sdk.PodWorkload).
 func (s *StartupObservations) Observe(pods []corev1.Pod, workload func(corev1.Pod) string) {
 	if s == nil {
 		return
 	}
 	type sample struct {
-		workload string
-		readyAt  time.Time
-		after    time.Duration
+		workload, pod string
+		readyAt       time.Time
+		after         time.Duration
 	}
 	var samples []sample
 	for _, pod := range pods {
 		readyAt, after, ok := podStartToReady(pod)
 		if ok {
-			samples = append(samples, sample{workload(pod), readyAt, after})
+			samples = append(samples, sample{workload(pod), podKey(pod), readyAt, after})
 		}
 	}
 	sort.SliceStable(samples, func(i, j int) bool { return samples[i].readyAt.Before(samples[j].readyAt) })
@@ -81,6 +88,13 @@ func (s *StartupObservations) Observe(pods []corev1.Pod, workload func(corev1.Po
 			w = &workloadStartups{}
 			s.workloads[item.workload] = w
 		}
+		if slices.Contains(w.pods, item.pod) {
+			continue
+		}
+		w.pods = append(w.pods, item.pod)
+		if len(w.pods) > startupPodsPerWorkload {
+			w.pods = w.pods[len(w.pods)-startupPodsPerWorkload:]
+		}
 		if !item.readyAt.After(w.lastReady) {
 			continue
 		}
@@ -90,6 +104,14 @@ func (s *StartupObservations) Observe(pods []corev1.Pod, workload func(corev1.Po
 			w.ready = w.ready[len(w.ready)-startupSamplesPerWorkload:]
 		}
 	}
+}
+
+// podKey names one pod instance: its UID, else its namespace and name.
+func podKey(pod corev1.Pod) string {
+	if pod.UID != "" {
+		return string(pod.UID)
+	}
+	return pod.Namespace + "/" + pod.Name
 }
 
 // podStartToReady is the time from a Running pod's first container start to
@@ -163,7 +185,7 @@ func (s *StartupObservations) contract() []*contracts.StartupObservation {
 	var out []*contracts.StartupObservation
 	for _, name := range slices.Sorted(maps.Keys(s.workloads)) {
 		w := s.workloads[name]
-		item := &contracts.StartupObservation{Workload: name, LastReadyAt: optionalTimestamp(w.lastReady)}
+		item := &contracts.StartupObservation{Workload: name, LastReadyAt: optionalTimestamp(w.lastReady), SampledPods: slices.Clone(w.pods)}
 		for _, d := range w.ready {
 			item.ReadyAfter = append(item.ReadyAfter, durationpb.New(d))
 		}
@@ -196,6 +218,16 @@ func (s *StartupObservations) restore(items []*contracts.StartupObservation) {
 		w.ready = append(ready, w.ready...)
 		if len(w.ready) > startupSamplesPerWorkload {
 			w.ready = w.ready[len(w.ready)-startupSamplesPerWorkload:]
+		}
+		var restored []string
+		for _, pod := range item.GetSampledPods() {
+			if !slices.Contains(w.pods, pod) {
+				restored = append(restored, pod)
+			}
+		}
+		w.pods = append(restored, w.pods...)
+		if len(w.pods) > startupPodsPerWorkload {
+			w.pods = w.pods[len(w.pods)-startupPodsPerWorkload:]
 		}
 		if at := controllerTime(item.GetLastReadyAt()); at.After(w.lastReady) {
 			w.lastReady = at

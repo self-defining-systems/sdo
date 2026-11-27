@@ -139,6 +139,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 				if stage := source.DeterministicResponseStage(); stage != nil {
 					if deterministic, ok := stage.(*DeterministicResponseStage); ok {
 						deterministic.StabilityWindow = c.config.ClosureStabilityWindow
+						deterministic.EstimateBound = c.config.AfterPlaybookWait
 						if c.config.AfterPlaybook == settings.AfterPlaybookWait {
 							deterministic.WaitBound = c.config.AfterPlaybookWait
 						}

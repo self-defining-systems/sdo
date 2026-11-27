@@ -199,7 +199,7 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	actionCtx, stop := context.WithTimeout(actionCtx, budget)
 	defer stop()
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), PriorStages: cloneStageReports(request.PriorStages)}
-	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, StabilityWindow: c.config.ClosureStabilityWindow}
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, StabilityWindow: c.config.ClosureStabilityWindow, EstimateBound: c.config.AfterPlaybookWait}
 	if c.config.AfterPlaybook == settings.AfterPlaybookWait {
 		stage.WaitBound = c.config.AfterPlaybookWait
 	}
