@@ -60,6 +60,11 @@ func NewStartupObservations() *StartupObservations {
 // while a dependency was down, and Ready again) is no start, and its distance
 // from the container start is the pod's age. workload names a pod's workload
 // (sdk.PodWorkload).
+//
+// A pod not remembered as sampled still counts its whole age as one start: one
+// first seen after a readiness flap, or one pushed out by the
+// startupPodsPerWorkload limit. response.after_playbook_wait caps the recovery
+// estimate such a sample inflates.
 func (s *StartupObservations) Observe(pods []corev1.Pod, workload func(corev1.Pod) string) {
 	if s == nil {
 		return

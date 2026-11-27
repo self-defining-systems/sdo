@@ -293,8 +293,8 @@ func memberFailing(window traffic.Window, scenario string) bool {
 // automatic stage cannot clear: no applied program targeted the alert, and no
 // component it reports on depends, over the accepted map, on a component the
 // stage wrote. A Kubernetes condition reports its object's component. A user
-// test reports the path components of the operations its scenario exercises,
-// and a request-error alert those of its operation, so a repair that is still
+// test reports the components of the operations its scenario exercises, and a
+// request-error alert those of its operation (see operationComponents), so a repair that is still
 // propagating to users along a written component's callers waits; a user test
 // also needs its newest sample failing. When any of that cannot be
 // established there is none, and the stage waits its bound.
@@ -340,7 +340,7 @@ func alertsBeyondStage(view sdk.DetectionContext, m appmap.Map, request Incident
 
 // alertComponents are the map components an alert reports on, or false when
 // the map does not tell: a Kubernetes condition's object, a failing user
-// test's operation paths, a request-error alert's operation path.
+// test's operations, a request-error alert's operation.
 func alertComponents(view sdk.DetectionContext, m appmap.Map, pm program.AppMap, request IncidentRequest, finding sdk.Finding) ([]string, bool) {
 	if slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID) {
 		component, ok := pm.ComponentOf(view, finding.PrimaryResource)
@@ -362,17 +362,51 @@ func alertComponents(view sdk.DetectionContext, m appmap.Map, pm program.AppMap,
 			operations = append(operations, id)
 		}
 	}
-	var components []string
-	for _, id := range operations {
+	return operationComponents(m, pm, operations)
+}
+
+// operationComponents are the components of the operations' paths and,
+// transitively, of the background work they trigger: the operations entering
+// internally at a triggered job class. No call edge reaches a queue worker
+// from the entry that enqueues for it, so a path alone leaves it out. False
+// when there are none, or the map does not hold an operation, a trigger or a
+// path component.
+func operationComponents(m appmap.Map, pm program.AppMap, ids []string) ([]string, bool) {
+	var queue []appmap.Operation
+	for _, id := range ids {
 		i := slices.IndexFunc(m.Operations, func(op appmap.Operation) bool { return op.ID == id })
-		if i < 0 || len(m.Operations[i].Path) == 0 {
+		if i < 0 {
 			return nil, false
 		}
-		for _, name := range m.Operations[i].Path {
+		queue = append(queue, m.Operations[i])
+	}
+	var components []string
+	resolved := map[string]bool{}
+	for next := 0; next < len(queue); next++ {
+		op := queue[next]
+		if len(op.Path) == 0 {
+			return nil, false
+		}
+		for _, name := range op.Path {
 			if _, ok := pm.Component(name); !ok {
 				return nil, false
 			}
 			components = append(components, name)
+		}
+		for _, class := range op.Triggers {
+			if resolved[class] {
+				continue
+			}
+			resolved[class] = true
+			known := len(queue)
+			for _, job := range m.Operations {
+				if m.Internal(job) && job.RouteValue() == class {
+					queue = append(queue, job)
+				}
+			}
+			if len(queue) == known {
+				return nil, false
+			}
 		}
 	}
 	return components, len(components) > 0
