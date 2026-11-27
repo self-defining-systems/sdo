@@ -338,3 +338,35 @@ jobs:
             exit 1
           fi
 
+
+  # A red nightly nobody sees is no check at all: a scheduled run keeps one open
+  # issue while any job fails (one comment per failing night) and closes it on
+  # the next green night.
+  report:
+    name: report the nightly result
+    needs: [go, controller-e2e, python, images]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULTS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly CI is failing"
+          failed="$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "- \(.key): \(.value.result)"' <<<"$RESULTS")"
+          issue="$(gh issue list --state open --search "in:title \"$title\"" --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n 1)"
+          if [[ -z "$failed" ]]; then
+            [[ -n "$issue" ]] && gh issue close "$issue" --comment "Green again on ${GITHUB_SHA::9}: $RUN_URL"
+            exit 0
+          fi
+          body="$(printf 'Nightly run on %s failed:\n\n%s\n\n%s\n' "${GITHUB_SHA::9}" "$failed" "$RUN_URL")"
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
