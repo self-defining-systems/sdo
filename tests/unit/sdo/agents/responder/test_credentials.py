@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -39,6 +41,52 @@ def test_prepare_claude_home_copies_credentials_into_writable_home(tmp_path: Pat
     copied = claude_home / ".credentials.json"
     assert copied.read_text(encoding="utf-8") == '{"token":"secret"}'
     assert copied.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("name", ["CODEX_API_KEY", "OPENAI_API_KEY"])
+def test_mounted_api_key_becomes_a_private_codex_login(tmp_path: Path, name: str) -> None:
+    (tmp_path / name).write_text("synthetic-key\n", encoding="utf-8")
+    prepare_codex_home(credentials_root=tmp_path, codex_home=tmp_path / "codex")
+    login = tmp_path / "codex" / "auth.json"
+    assert json.loads(login.read_text(encoding="utf-8"))["OPENAI_API_KEY"] == "synthetic-key"
+    assert login.stat().st_mode & 0o777 == 0o600
+
+
+def test_mounted_claude_token_becomes_a_private_login(tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE_CODE_OAUTH_TOKEN").write_text("synthetic-token\n", encoding="utf-8")
+    prepare_claude_home(credentials_root=tmp_path, claude_home=tmp_path / "claude")
+    login = tmp_path / "claude" / ".credentials.json"
+    assert json.loads(login.read_text(encoding="utf-8"))["claudeAiOauth"]["accessToken"] == "synthetic-token"
+    assert login.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("name", ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"])
+def test_mounted_claude_key_is_read_through_a_helper(tmp_path: Path, name: str) -> None:
+    (tmp_path / name).write_text("synthetic-key\n", encoding="utf-8")
+    prepare_claude_home(credentials_root=tmp_path, claude_home=tmp_path / "claude")
+    settings = (tmp_path / "claude" / "settings.json").read_text(encoding="utf-8")
+    key = tmp_path / "claude" / "api_key.credential"
+    assert json.loads(settings) == {"apiKeyHelper": f"cat {key}"}
+    assert key.read_text(encoding="utf-8") == "synthetic-key"
+    assert key.stat().st_mode & 0o777 == 0o600
+
+
+def test_client_settings_of_the_secret_reach_the_environment_and_credentials_do_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    (tmp_path / "ANTHROPIC_BASE_URL").write_text("https://gateway.example.test\n", encoding="utf-8")
+    (tmp_path / "CLOUD_ML_REGION").write_text("region-1", encoding="utf-8")
+    (tmp_path / "ANTHROPIC_AUTH_TOKEN").write_text("synthetic-token", encoding="utf-8")
+    prepare_claude_home(credentials_root=tmp_path, claude_home=tmp_path / "claude")
+    assert os.environ["ANTHROPIC_BASE_URL"] == "https://gateway.example.test"
+    assert os.environ["CLOUD_ML_REGION"] == "region-1"
+    assert "synthetic-token" not in os.environ.values()
+
+    del os.environ["ANTHROPIC_BASE_URL"]
+    (tmp_path / "ANTHROPIC_BASE_URL").write_text("https://user:synthetic@gateway.example.test", encoding="utf-8")
+    with pytest.raises(ValueError, match="must not embed a credential"):
+        prepare_claude_home(credentials_root=tmp_path, claude_home=tmp_path / "claude")
 
 
 def _skills(root: Path, *names: str) -> Path:

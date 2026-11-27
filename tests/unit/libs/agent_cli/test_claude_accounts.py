@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -15,7 +16,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from libs.agent_cli.claude_accounts import AccountRouter, prepare_accounts, sync_cswap
-from libs.agent_cli.errors import AccountExhausted
+from libs.agent_cli.errors import AccountExhausted, CapacityConfigurationError
 from libs.agent_cli.provider_capacity import ProviderCapacity
 from libs.agent_cli.structured import StructuredTurnError, run_structured_turn
 from tests.structured_turns import ScriptedAgent, failure, reply, write_stream_claude
@@ -26,6 +27,13 @@ AUTH = (
 )
 LIMIT = "You've hit your weekly limit · resets 8pm (UTC)"
 SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+
+def login_token(env: dict[str, str]) -> str:
+    """The account token the CLI gets: its login file, never its environment."""
+    login = Path(env["CLAUDE_CONFIG_DIR"]) / ".credentials.json"
+    assert login.stat().st_mode & 0o777 == 0o600
+    return json.loads(login.read_text())["claudeAiOauth"]["accessToken"]
 
 
 def bundle(root: Path, count: int = 2) -> dict[str, str]:
@@ -40,6 +48,7 @@ def bundle(root: Path, count: int = 2) -> dict[str, str]:
     prepare_accounts(secret, root / "pool", [], capacity=1)
     return {
         "SDO_CLAUDE_ACCOUNTS_DIR": str(secret),
+        "CLAUDE_CONFIG_DIR": str(root / "claude-home"),
         "SDO_CLAUDE_ACCOUNT_PRIMARY": "a01",
         "SDO_OPUS_POOL_DIR": str(root / "pool"),
         "SDO_OPUS_POOL_MODE": "per_account",
@@ -67,8 +76,9 @@ def test_failover_finishes_and_keeps_session_and_config_home(tmp_path: Path, dia
     seen: list[str] = []
 
     def respond(request):
-        token = request.env.get("CLAUDE_CODE_OAUTH_TOKEN")
+        token = login_token(request.env)
         alias = next(a for a in ("a01", "a02") if token == (tmp_path / "secret" / f"{a}.token").read_text())
+        assert token not in request.env.values()
         seen.append(alias)
         if alias == "a01":
             return failure(
@@ -255,7 +265,8 @@ def test_real_fake_cli_fails_over_then_reflection_resumes_on_another_account(
         script,
         f"""
         root = pathlib.Path({str(tmp_path / "secret")!r})
-        alias = next(p.stem for p in root.glob('*.token') if p.read_text() == os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'))
+        login = (pathlib.Path(os.environ['CLAUDE_CONFIG_DIR']) / '.credentials.json').read_text()
+        alias = next(p.stem for p in root.glob('*.token') if p.read_text() in login)
         sid = RESUME or 'session-lane'
         with pathlib.Path({str(audit)!r}).open('a') as out:
             row = {{'alias': alias, 'session_id': sid, 'resumed': RESUME is not None,
@@ -324,6 +335,11 @@ def test_account_environment_removes_proxy_headers_and_other_auth_routes(tmp_pat
     canary = uuid.uuid4().hex
     effective = router.environment(selected, {**env, **dict.fromkeys(excluded, canary)})
     selected.close()
+    token = (tmp_path / "secret" / "a01.token").read_text()
+    assert login_token(effective) == token
+    assert token not in effective.values()
+    with pytest.raises(CapacityConfigurationError, match="CLAUDE_CONFIG_DIR"):
+        router.environment(selected, {**env, "CLAUDE_CONFIG_DIR": ""})
     assert effective["ANTHROPIC_BASE_URL"] == "https://api.anthropic.com"
     assert all(not effective.get(name) for name in excluded if name != "ANTHROPIC_BASE_URL")
 
@@ -450,3 +466,26 @@ def test_unclassified_exit_keeps_a_redacted_stderr_tail_in_account_mode(tmp_path
     assert "unexpected failure" in text
     assert "last line" in text
     assert secret not in text
+
+
+def test_another_accounts_turn_waits_instead_of_replacing_a_login_in_use(tmp_path: Path) -> None:
+    env = bundle(tmp_path)
+    router = AccountRouter.from_environment(env)
+    first = router.acquire()
+    router.environment(first, env)
+    second = AccountRouter.from_environment(env).acquire()
+    assert second.alias != first.alias
+    done = threading.Event()
+
+    def switch() -> None:
+        router.environment(second, env)
+        done.set()
+
+    waiting = threading.Thread(target=switch, daemon=True)
+    waiting.start()
+    assert not done.wait(0.2)
+    assert login_token(env) == (tmp_path / "secret" / f"{first.alias}.token").read_text()
+    first.close()
+    assert done.wait(10)
+    assert login_token(env) == (tmp_path / "secret" / f"{second.alias}.token").read_text()
+    second.close()

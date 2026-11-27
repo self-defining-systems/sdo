@@ -71,8 +71,13 @@ type Mirror struct {
 	RuntimeRoot string
 	// LedgerRoot is the absolute native broker ledger directory; empty mirrors no ledgers.
 	LedgerRoot string
-	Sink       *Dir
-	Now        func() time.Time
+	// CredentialRoots are the mounted credential directories whose values are redacted from everything copied, and
+	// OptionalCredentialRoots those that may be absent.
+	CredentialRoots, OptionalCredentialRoots []string
+	Sink                                     *Dir
+	Now                                      func() time.Time
+
+	credentials Credentials
 
 	loaded  bool
 	sources map[string]sourceState // sink path -> last copied source state
@@ -111,6 +116,12 @@ func (m *Mirror) pass(final bool) error {
 		if err := m.load(); err != nil {
 			return err
 		}
+	}
+	known := m.credentials.Len()
+	m.credentials.Load(m.CredentialRoots, m.OptionalCredentialRoots, m.RuntimeRoot)
+	if m.credentials.Len() != known {
+		// Files copied before a login was refreshed are copied again.
+		clear(m.sources)
 	}
 	ledgers, ledgerErr := m.readLedgers()
 	copyErr := m.copyRuntime()
@@ -188,6 +199,7 @@ func (m *Mirror) copyRuntime() error {
 		return nil
 	}
 	var errs []error
+	var gaps []byte
 	walkErr := filepath.WalkDir(m.RuntimeRoot, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			if name == m.RuntimeRoot {
@@ -217,6 +229,11 @@ func (m *Mirror) copyRuntime() error {
 		if !ok {
 			return nil
 		}
+		if reason := m.credentials.Withheld(relative); reason != "" {
+			// Not recorded as copied: it is copied on the first pass that can read the credential.
+			gaps = append(gaps, GapLine(relative, reason)...)
+			return nil
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return nil
@@ -230,6 +247,10 @@ func (m *Mirror) copyRuntime() error {
 		}
 		return nil
 	})
+	// Written once there is a gap and kept current after, so a closed gap leaves an empty file.
+	if _, recorded := m.stored[GapFile]; recorded || len(gaps) > 0 {
+		errs = append(errs, m.put(GapFile, gaps))
+	}
 	return errors.Join(append(errs, walkErr)...)
 }
 
@@ -245,7 +266,7 @@ func (m *Mirror) copyFile(source, target string, state sourceState) error {
 	}
 	defer file.Close()
 	size := min(state.size, MaxFileBytes)
-	stored, err := m.Sink.Put(target, io.LimitReader(file, size))
+	stored, err := m.Sink.Put(target, m.credentials.Reader(io.LimitReader(file, size)))
 	if err != nil {
 		return fmt.Errorf("mirror %s: %w", target, err)
 	}
@@ -255,7 +276,7 @@ func (m *Mirror) copyFile(source, target string, state sourceState) error {
 }
 
 func (m *Mirror) put(target string, data []byte) error {
-	stored, err := m.Sink.Put(target, bytes.NewReader(data))
+	stored, err := m.Sink.Put(target, m.credentials.Reader(bytes.NewReader(data)))
 	if err != nil {
 		return fmt.Errorf("mirror %s: %w", target, err)
 	}

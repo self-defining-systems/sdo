@@ -1,6 +1,6 @@
 """Claude accounts by mounted reference, with host-wide health and admission.
 
-Credentials live only in the private bundle and the CLI child's environment.
+Credentials live only in the private bundle and the Claude home's private login file, never in an environment.
 Shared state and telemetry contain aliases, opaque registration IDs and reasons.
 The CLI config home is deliberately independent of the selected account.
 """
@@ -120,12 +120,15 @@ class AccountHealth:
 class AccountLease:
     account: Account
     handle: IO[str] = field(repr=False)
+    login: IO[str] | None = field(default=None, repr=False)
 
     @property
     def alias(self) -> str:
         return self.account.alias
 
     def close(self) -> None:
+        if self.login is not None:
+            self.login.close()
         self.handle.close()
 
 
@@ -284,10 +287,18 @@ class AccountRouter:
                 raise ValueError
         except (OSError, ValueError):
             raise AccountCredentialUnavailable("account credential reference unreadable") from None
+        # The CLI's shell tools inherit its environment, so the token reaches it as its login file. The home must be
+        # named: the default one may hold a person's own login.
+        home = base.get("CLAUDE_CONFIG_DIR", "")
+        if not home:
+            raise CapacityConfigurationError("per_account requires CLAUDE_CONFIG_DIR, a home dedicated to the agent")
+        if lease.login is not None:
+            lease.login.close()
+        lease.login = _hold_login(Path(home), token)
         # Explicitly blank competing authentication. Claude must use this lease.
         return {
             **base,
-            "CLAUDE_CODE_OAUTH_TOKEN": token,
+            "CLAUDE_CODE_OAUTH_TOKEN": "",
             "ANTHROPIC_API_KEY": "",
             "ANTHROPIC_AUTH_TOKEN": "",
             "CLAUDE_CODE_API_KEY": "",
@@ -347,6 +358,42 @@ def _private_write(path: Path, content: str) -> None:
         os.replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def _hold_login(home: Path, token: str) -> IO[str]:
+    """Make *token* the home's login and keep it until the returned handle closes.
+
+    Turns of one account share the login; a turn of another account waits for them instead of replacing the login
+    under a running CLI.
+    """
+    home.mkdir(parents=True, exist_ok=True)
+    handle = (home / ".account-login.lock").open("a")
+    try:
+        while True:
+            fcntl.flock(handle, fcntl.LOCK_SH)
+            if _login_token(home) == token:
+                return handle
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            if _login_token(home) != token:
+                write_claude_login(home, token)
+    except BaseException:
+        handle.close()
+        raise
+
+
+def _login_token(home: Path) -> str | None:
+    try:
+        return json.loads((home / ".credentials.json").read_text())["claudeAiOauth"]["accessToken"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def write_claude_login(home: Path, token: str) -> None:
+    """Make *token* the Claude login of *home*: an access token without refresh, as the CLI reads one from its
+    environment."""
+    home.mkdir(parents=True, exist_ok=True)
+    login = {"accessToken": token, "refreshToken": None, "expiresAt": None, "scopes": ["user:inference"]}
+    _private_write(home / ".credentials.json", json.dumps({"claudeAiOauth": {**login, "subscriptionType": None}}))
 
 
 def _cswap_token(source: Path) -> str | None:

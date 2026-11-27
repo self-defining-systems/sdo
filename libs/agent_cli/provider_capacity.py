@@ -41,8 +41,15 @@ _LIMIT = re.compile(
 )
 
 
+#: The private copy of a mounted API key in the Claude home; `apiKeyHelper` in its settings reads it.
+CLAUDE_API_KEY_FILE = "api_key.credential"
+
+
 def uses_metered_claude_backend(environment: Mapping[str, str]) -> bool:
     """Recognize explicit Claude Code cloud routing or Anthropic API credentials."""
+    home = environment.get("CLAUDE_CONFIG_DIR", "")
+    if home and (Path(home) / CLAUDE_API_KEY_FILE).is_file():
+        return True
     return bool(environment.get("ANTHROPIC_API_KEY", "").strip()) or any(
         environment.get(name, "").lower() in ("1", "true", "yes", "on")
         for name in ("CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_FOUNDRY")

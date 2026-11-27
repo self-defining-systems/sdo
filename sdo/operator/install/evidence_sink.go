@@ -88,16 +88,22 @@ func evidenceSinkSidecar(c Config, pod *corev1.PodSpec) error {
 	}
 	always := corev1.ContainerRestartPolicyAlways
 	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: evidenceSinkVolume, VolumeSource: sink.Volume})
+	args := []string{"evidence-sink", "--runtime-root", "/workspace/.sdo-runtime", "--ledger-root", "/workspace/worktrees/native-ledger",
+		"--sink-root", EvidenceSinkMountPath, "--run-id", sink.RunID}
+	if sink.Volume.HostPath != nil {
+		args = append(args, "--shared")
+	}
 	pod.InitContainers = append(pod.InitContainers, corev1.Container{
 		Name: "evidence-sink", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent,
-		RestartPolicy: &always,
-		Command:       []string{"/usr/local/bin/sdo-operator"},
-		Args: []string{"evidence-sink", "--runtime-root", "/workspace/.sdo-runtime", "--ledger-root", "/workspace/worktrees/native-ledger",
-			"--sink-root", EvidenceSinkMountPath, "--run-id", sink.RunID},
+		RestartPolicy:   &always,
+		Command:         []string{"/usr/local/bin/sdo-operator"},
+		Args:            args,
 		SecurityContext: containerSecurity(),
 		Resources:       limits("10m", "32Mi", "500m", "256Mi"),
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "repository", MountPath: "/workspace", ReadOnly: true},
+			// Read only to redact the credential values from what is mirrored.
+			{Name: "credentials", MountPath: "/sdo/credentials", ReadOnly: true},
 			{Name: evidenceSinkVolume, MountPath: EvidenceSinkMountPath},
 		},
 	})

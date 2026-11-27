@@ -53,9 +53,20 @@ func TestEvidenceSinkRunsBesideControllerAndOperate(t *testing.T) {
 		if got, ok := argValue(container.Args, "--run-id"); !ok || got != "run-1" {
 			t.Errorf("%s evidence sidecar args = %v", name, container.Args)
 		}
+		credentials := false
 		for _, mount := range container.VolumeMounts {
+			credentials = credentials || mount.Name == "credentials" && mount.ReadOnly
 			if mount.Name == "repository" && !mount.ReadOnly {
 				t.Errorf("%s evidence sidecar can write the repository volume", name)
+			}
+		}
+		if !credentials {
+			t.Errorf("%s evidence sidecar cannot read the credentials it must redact", name)
+		}
+		// No container gets a Secret as environment: a file mount is the only form.
+		for _, c := range append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...) {
+			if len(c.EnvFrom) != 0 {
+				t.Errorf("%s container %s has envFrom", name, c.Name)
 			}
 		}
 	}

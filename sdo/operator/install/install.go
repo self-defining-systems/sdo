@@ -167,7 +167,11 @@ func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, actio
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, i.finishClaimedSyncPod(cfg, reservation)) }()
-	if err := i.startClaimedSyncPod(ctx, cfg, reservation, syncPod(cfg)); err != nil {
+	pod := syncPod(cfg)
+	if err := i.projectInstall(ctx, pod); err != nil {
+		return err
+	}
+	if err := i.startClaimedSyncPod(ctx, cfg, reservation, pod); err != nil {
 		return err
 	}
 	if err := i.waitSync(ctx, cfg.controlNamespace()); err != nil {
