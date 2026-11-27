@@ -94,7 +94,7 @@ def _no_sregym_environment(
     """PR-tier tests never run SREGym's own uv environment.
 
     Its first use on a runner syncs about 250 packages (~30 s, not in any CI cache), and every test that needs
-    it waits on uv's lock for that (17-19 s each in merge_group 46046865190). Use a stand-in at the seam;
+    it waits on uv's lock for that (17-19 s each). Use a stand-in at the seam;
     a test of the real environment is marked ``sregym_env`` and its file runs nightly.
     """
     if _guarded_uv_dir is None or request.node.get_closest_marker("sregym_env"):
