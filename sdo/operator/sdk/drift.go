@@ -36,4 +36,7 @@ type DriftEvent struct {
 	InvestigationReason    string              `json:"investigation_reason,omitempty"`
 	InvestigationEvidence  []DriftEvidence     `json:"investigation_evidence,omitempty"`
 	InvestigationCaptureID string              `json:"investigation_capture_id,omitempty"`
+	// SeenHealthy: the change was present while the application then stayed
+	// healthy for a settle window, so it did not break it then.
+	SeenHealthy bool `json:"seen_healthy,omitempty"`
 }

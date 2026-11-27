@@ -221,7 +221,7 @@ type ResponderLoop struct {
 	// view; check and verify stay without detector authority.
 	ExternalClues bool
 	// BuiltinRestoreAuto lets the automatic stage apply the built-in
-	// source-restore playbook; off, the responder decides (response.builtin_restore_auto).
+	// source-restore playbook (response.builtin_restore_auto, on by default); off, the responder decides.
 	BuiltinRestoreAuto bool
 
 	stageProgress       map[string]responseStageProgress

@@ -154,7 +154,7 @@ type Response struct {
 	DispatchPrepareBound Duration `yaml:"dispatch_prepare_bound" doc:"how long a transient failure to prepare the responder's task (a Git, IO or Kubernetes API error) is retried with backoff before the incident escalates without an agent, capped by the response timeout; a permanent failure (unreadable operational memory, a task over budget) escalates at once"`
 	Standby              bool     `yaml:"standby" doc:"pre-start a responder worker; false forces cold Jobs"`
 	Menu                 bool     `yaml:"menu" doc:"offer the responder its tool menu"`
-	BuiltinRestoreAuto   bool     `yaml:"builtin_restore_auto" doc:"let the automatic stage apply the built-in source-restore playbook (put a component's non-SDO departures from accepted source back) when its diagnosis matches; off, it is only offered like any playbook and the responder decides"`
+	BuiltinRestoreAuto   bool     `yaml:"builtin_restore_auto" doc:"let the automatic stage apply the built-in source-restore playbook when its diagnosis matches: put back a non-SDO departure from accepted source, made before the onset and after the install was last seen healthy, on a component on a failing path or on the opening condition's own component at any path position, dependency hops included; off, it is only offered like any playbook and the responder decides"`
 	Permissive           bool     `yaml:"permissive" doc:"broad lane repair permissions excluding Secret and credential APIs"`
 	PermissiveNamespaces []string `yaml:"permissive_namespaces" doc:"additional lane namespaces the permissive responder may repair"`
 	CleanupTurns         int      `yaml:"cleanup_turns" doc:"how many times the responder's session is asked, after Recovered, to keep or remove the app-file edits it left uncaptured; edits still left after that are discarded and recorded as source_repair_uncaptured. 0 asks no cleanup turn"`
@@ -217,6 +217,7 @@ func Default() Config {
 			DiagnosisDeadline: Duration(10 * time.Second), StageBudget: Duration(45 * time.Second), RepairPolicy: "commit",
 			AfterPlaybook: AfterPlaybookAgent, AfterPlaybookWait: Duration(5 * time.Minute), DispatchPrepareBound: Duration(2 * time.Minute),
 			CleanupTurns: 2, InvestigatorDelay: Duration(60 * time.Second), Standby: true, Menu: true, StartupBound: Duration(30 * time.Minute),
+			BuiltinRestoreAuto: true,
 		},
 		Detection: Detection{
 			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second), RequestMetricsShadow: false,

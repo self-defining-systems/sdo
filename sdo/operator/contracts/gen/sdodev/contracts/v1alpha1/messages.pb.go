@@ -482,8 +482,11 @@ type DriftEvent struct {
 	InvestigationReason    string                 `protobuf:"bytes,12,opt,name=investigation_reason,json=investigationReason,proto3" json:"investigation_reason,omitempty"`
 	InvestigationEvidence  []*DriftEvidence       `protobuf:"bytes,13,rep,name=investigation_evidence,json=investigationEvidence,proto3" json:"investigation_evidence,omitempty"`
 	InvestigationCaptureId string                 `protobuf:"bytes,14,opt,name=investigation_capture_id,json=investigationCaptureId,proto3" json:"investigation_capture_id,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// The change was present while the application then stayed healthy for a
+	// settle window, so the automatic stage does not restore it.
+	SeenHealthy   bool `protobuf:"varint,15,opt,name=seen_healthy,json=seenHealthy,proto3" json:"seen_healthy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DriftEvent) Reset() {
@@ -612,6 +615,13 @@ func (x *DriftEvent) GetInvestigationCaptureId() string {
 		return x.InvestigationCaptureId
 	}
 	return ""
+}
+
+func (x *DriftEvent) GetSeenHealthy() bool {
+	if x != nil {
+		return x.SeenHealthy
+	}
+	return false
 }
 
 type DriftEvidence struct {
@@ -5517,7 +5527,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x10\n" +
 	"\x03old\x18\x02 \x01(\tR\x03old\x12\x10\n" +
 	"\x03new\x18\x03 \x01(\tR\x03new\x12\x16\n" +
-	"\x06source\x18\x04 \x01(\tR\x06source\"\xab\x06\n" +
+	"\x06source\x18\x04 \x01(\tR\x06source\"\xd4\x06\n" +
 	"\n" +
 	"DriftEvent\x126\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12=\n" +
@@ -5537,7 +5547,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x15investigation_verdict\x18\v \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x03bugR\x06benignR\x06unsureR\x14investigationVerdict\x121\n" +
 	"\x14investigation_reason\x18\f \x01(\tR\x13investigationReason\x12_\n" +
 	"\x16investigation_evidence\x18\r \x03(\v2(.sdodev.contracts.v1alpha1.DriftEvidenceR\x15investigationEvidence\x12>\n" +
-	"\x18investigation_capture_id\x18\x0e \x01(\tB\x04\xc8\xf3\x18\x01R\x16investigationCaptureId\"\x86\x01\n" +
+	"\x18investigation_capture_id\x18\x0e \x01(\tB\x04\xc8\xf3\x18\x01R\x16investigationCaptureId\x12'\n" +
+	"\fseen_healthy\x18\x0f \x01(\bB\x04\xc8\xf3\x18\x01R\vseenHealthy\"\x86\x01\n" +
 	"\rDriftEvidence\x12S\n" +
 	"\x04kind\x18\x01 \x01(\tB?\xbaH<r:R\x14source_contradictionR\x11violated_relationR\x0fobserved_impactR\x04kind\x12 \n" +
 	"\vobservation\x18\x02 \x01(\tR\vobservation\"\xcc\x02\n" +

@@ -2,14 +2,19 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/fake"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -99,18 +104,39 @@ func TestSourceRestoreIsListedLikeAPlaybookAndNeverBoundByFindings(t *testing.T)
 	}
 }
 
-func TestSourceRestoreCandidatesAreSuspectsOnEveryFailingPathOnly(t *testing.T) {
+func restoreCandidateNames(view program.ReadView, request IncidentRequest) []string {
+	var names []string
+	for _, candidate := range sourceRestoreCandidates(view, request, request.Findings) {
+		names = append(names, candidate.bindings.Values[SourceRestoreComponentParam].(string))
+	}
+	return names
+}
+
+// Every component on a failing path is a candidate, also one that a passing
+// path shares and one on only some failing paths: the departure from accepted
+// source is the evidence, the path only keeps components that cannot affect a
+// failing operation out. jobs is on no path.
+func TestSourceRestoreCandidatesAreTheComponentsOnAFailingPath(t *testing.T) {
 	request := restoreRequest("kubectl")
 	finding := probeFinding("create")
 	request.Findings, request.OpeningKeys = []sdk.Finding{finding}, []string{findingKey(finding)}
 	// front is also on the passing "list" path; api and db are only on the failing one.
 	view := restoreView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: detectApp("create").Snapshot}}
-	var names []string
-	for _, candidate := range sourceRestoreCandidates(view, request, request.Findings) {
-		names = append(names, candidate.bindings.Values[SourceRestoreComponentParam].(string))
+	if names := restoreCandidateNames(view, request); !slices.Equal(slices.Sorted(slices.Values(names)), []string{"api", "db", "front"}) {
+		t.Fatalf("candidates %v, want front, api and db", names)
 	}
-	if len(names) != 2 || names[0] != "api" || names[1] != "db" {
-		t.Fatalf("candidates %v, want api and db", names)
+	// Both tests failing: front is on every failing path, api and db on one.
+	both := restoreView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: detectApp("create", "list").Snapshot}}
+	list := probeFinding("list")
+	request.Findings, request.OpeningKeys = []sdk.Finding{finding, list}, []string{findingKey(finding), findingKey(list)}
+	names := restoreCandidateNames(both, request)
+	for _, want := range []string{"front", "api", "db"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("candidates %v, want %s among them", names, want)
+		}
+	}
+	if slices.Contains(names, "jobs") {
+		t.Fatalf("candidates %v: jobs is on no failing path", names)
 	}
 }
 
@@ -173,8 +199,16 @@ func restoreAttempt(report *contracts.StageReport) *contracts.StageMitigation {
 	return nil
 }
 
-// By default the agent decides: the stage lists the playbook as a match but never applies it.
-func TestStageLeavesTheBuiltInRestoreToTheResponderByDefault(t *testing.T) {
+// response.builtin_restore_auto is on by default: the stage applies the
+// built-in restore when its diagnosis matches, before any agent.
+func TestBuiltInRestoreIsAutomaticByDefault(t *testing.T) {
+	if !settings.Default().Response.BuiltinRestoreAuto {
+		t.Fatal("response.builtin_restore_auto must default to true")
+	}
+}
+
+// With the switch off the agent decides: the stage lists the playbook as a match but never applies it.
+func TestStageLeavesTheBuiltInRestoreToTheResponderWhenTheSwitchIsOff(t *testing.T) {
 	world, stage, state := restoreStage(t, false)
 	report, err := stage.Run(context.Background(), state)
 	if err != nil {
@@ -190,7 +224,7 @@ func TestStageLeavesTheBuiltInRestoreToTheResponderByDefault(t *testing.T) {
 }
 
 // With response.builtin_restore_auto the stage goes on to plan and apply it.
-func TestStageAppliesTheBuiltInRestoreOnlyWhenTheSwitchIsOn(t *testing.T) {
+func TestStageAppliesTheBuiltInRestoreWhenTheSwitchIsOn(t *testing.T) {
 	_, stage, state := restoreStage(t, true)
 	report, err := stage.Run(context.Background(), state)
 	if err != nil {
@@ -199,6 +233,146 @@ func TestStageAppliesTheBuiltInRestoreOnlyWhenTheSwitchIsOn(t *testing.T) {
 	attempt := restoreAttempt(report)
 	if attempt == nil || attempt.GetSkipReason() == stageBuiltinRestoreManual {
 		t.Fatalf("with the switch on the stage must not skip it as manual: %v", attempt)
+	}
+}
+
+// A change that was already there while the application then stayed healthy did
+// not break it: the automatic stage leaves it, the responder can still see and
+// restore it.
+func TestStageRestoresOnlyDeparturesNotSeenHealthy(t *testing.T) {
+	for name, seenHealthy := range map[string]bool{"seen healthy": true, "made since": false} {
+		t.Run(name, func(t *testing.T) {
+			_, stage, state := restoreStage(t, true)
+			state.Request.DriftEvents[0].SeenHealthy = seenHealthy
+			report, err := stage.Run(context.Background(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt := restoreAttempt(report)
+			planned := attempt != nil && attempt.GetSkipReason() == ""
+			if planned == seenHealthy {
+				t.Fatalf("automatic restore attempted=%t with seen_healthy=%t: %v", planned, seenHealthy, attempt)
+			}
+		})
+	}
+	request := restoreRequest("kubectl")
+	request.DriftEvents[0].SeenHealthy = true
+	manual := sourceRestoreProgram{evidence: newRestoreEvidence(request)}
+	view := restoreViewOf(map[string]sdk.SourceDiff{"Service/api": {Changed: true}})
+	if verdict, err := manual.Diagnose(context.Background(), view, restoreAPI()); err != nil || verdict.Result != program.Match {
+		t.Fatalf("outside the automatic stage the departure still matches: %+v, %v", verdict, err)
+	}
+}
+
+// The opening condition's own component is a candidate wherever it stands, also
+// as a dependency a hop away from the failing path; without the condition it is not.
+func TestSourceRestoreCandidatesIncludeADependencyThatOpenedTheIncident(t *testing.T) {
+	app := detectApp("create")
+	app.ApplicationMap.Edges = []program.AppEdge{{From: "api", To: "jobs"}}
+	view := restoreView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: app.Snapshot}}
+	request := restoreRequest("kubectl")
+	probe := probeFinding("create")
+	request.Findings, request.OpeningKeys = []sdk.Finding{probe}, []string{findingKey(probe)}
+	if names := restoreCandidateNames(view, request); slices.Contains(names, "jobs") {
+		t.Fatalf("candidates %v: a dependency off the failing path is not one by itself", names)
+	}
+	condition := sdk.Finding{DetectorID: "workload-health", RuleID: "crash-loop", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "jobs"}}
+	request.Findings, request.OpeningKeys = []sdk.Finding{probe, condition}, []string{findingKey(probe), findingKey(condition)}
+	set := buildSuspectSet(detectInput{Request: request, View: view, Findings: request.Findings})
+	if !slices.ContainsFunc(set.nodes, func(n *candidateNode) bool { return n.Name == "jobs" && n.Class == PositionDependency }) {
+		t.Fatal("jobs must be placed as a dependency of the failing path")
+	}
+	if names := restoreCandidateNames(view, request); !slices.Contains(names, "jobs") {
+		t.Fatalf("candidates %v, want the opening condition's component jobs", names)
+	}
+}
+
+// sharedRestoreWorld is front, on the failing create path and the passing list
+// path, whose Service and mounted ConfigMap were both edited by kubectl. The
+// create test fails while either differs from accepted source.
+type sharedRestoreWorld struct {
+	client *fake.Clientset
+	app    detectFake
+}
+
+func (w sharedRestoreWorld) live(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	return TypedPlanClient{Client: w.client}.Get(context.Background(), ref)
+}
+
+func (w sharedRestoreWorld) AcceptedManifest(_ context.Context, _ string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	var object kruntime.Object = &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "front"}, Ports: []corev1.ServicePort{{Port: 80}}}}
+	if ref.Kind == "ConfigMap" {
+		object = &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}, Data: map[string]string{"mode": "accepted"}}
+	}
+	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+	return &unstructured.Unstructured{Object: content}, err
+}
+
+func (w sharedRestoreWorld) Revision(context.Context, sdk.ObjectRef, string) (*unstructured.Unstructured, error) {
+	return nil, nil
+}
+
+func (w sharedRestoreWorld) departed() map[string]bool {
+	service, _ := w.client.CoreV1().Services("app").Get(context.Background(), "front", metav1.GetOptions{})
+	config, _ := w.client.CoreV1().ConfigMaps("app").Get(context.Background(), "front-config", metav1.GetOptions{})
+	return map[string]bool{
+		"Service/front":          len(service.Spec.Ports) != 1 || service.Spec.Ports[0].Port != 80,
+		"ConfigMap/front-config": config.Data["mode"] != "accepted",
+	}
+}
+
+func (w sharedRestoreWorld) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	return w.app.Snapshot, nil
+}
+
+func (w sharedRestoreWorld) Wait(context.Context, []sdk.ObjectRef) error { return nil }
+
+// With the default settings the stage puts both objects back at the page,
+// before any agent, although a passing path shares the component.
+func TestStageRestoresASharedComponentsServiceAndConfigMap(t *testing.T) {
+	app := detectApp("create")
+	for i := range app.DeploymentList {
+		if app.DeploymentList[i].Name == "front" {
+			app.DeploymentList[i].Spec.Template.Spec.Volumes = []corev1.Volume{{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "front-config"}}}}}
+		}
+	}
+	world := sharedRestoreWorld{app: app, client: fake.NewSimpleClientset(
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "front", Namespace: "app", UID: "synthetic-service", ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "front"}, Ports: []corev1.ServicePort{{Port: 81}}}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "front-config", Namespace: "app", UID: "synthetic-config", ResourceVersion: "1"}, Data: map[string]string{"mode": "edited"}})}
+	finding := probeFinding("create")
+	finding.Severity = sdk.SeverityCritical
+	request := detectRequest()
+	request.RepairPolicy, request.SourceCommit = "recorded-actions", "synthetic-accepted"
+	request.Findings, request.OpeningKeys = []sdk.Finding{finding}, []string{findingKey(finding)}
+	before := detectOnset.Add(-4 * time.Second)
+	request.DriftEvents = []sdk.DriftEvent{
+		departureEvent(dref("Service", "front"), "kubectl", before, "spec.ports"),
+		departureEvent(dref("ConfigMap", "front-config"), "kubectl", before, "data.mode"),
+	}
+	executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: passingVerifier{}}
+	loop := NewResponderLoop(request, nil, world, nil, executor, 5)
+	loop.BuiltinRestoreAuto = settings.Default().Response.BuiltinRestoreAuto
+	loop.ReadView = func(sdk.DetectionContext) program.ReadView {
+		diffs := map[string]sdk.SourceDiff{}
+		for key, changed := range world.departed() {
+			diffs[key] = sdk.SourceDiff{Changed: changed}
+		}
+		return restoreView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: app.Snapshot}, diffs: diffs}
+	}
+	loop.saveToolState = func(context.Context, []byte) error { return nil }
+	instant := newInstantRecoveryClock()
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, diagnoseWait: instant.wait}
+	report, err := stage.Run(context.Background(), &IncidentState{Request: request, Findings: request.Findings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, departed := range world.departed() {
+		if departed {
+			t.Errorf("%s was not restored", key)
+		}
+	}
+	if attempt := restoreAttempt(report); attempt == nil || !attempt.GetApplyReceipt().GetApplied() {
+		t.Fatalf("want an applied source-restore: %v", report)
 	}
 }
 

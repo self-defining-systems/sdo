@@ -92,6 +92,9 @@ type DriftEvent struct {
 	InvestigationReason    string              `json:"investigation_reason,omitempty"`
 	InvestigationEvidence  []DriftEvidence     `json:"investigation_evidence,omitempty"`
 	InvestigationCaptureID string              `json:"investigation_capture_id,omitempty"`
+	// SeenHealthy: the change was present while the application then stayed
+	// healthy for a settle window, so it did not break it then.
+	SeenHealthy bool `json:"seen_healthy,omitempty"`
 }
 
 type DriftEvidence struct {
@@ -265,17 +268,4 @@ type ObservationStatus struct {
 	State  string            `json:"state"`
 	Reason string            `json:"reason,omitempty"`
 }
-
-type ObservationTarget struct {
-	APIVersion string `json:"api_version" yaml:"api_version"`
-	Kind       string `json:"kind" yaml:"kind"`
-	Namespace  string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Name       string `json:"name,omitempty" yaml:"name,omitempty"`
-}
-    ObservationTarget is a qualified read grant. Cluster webhooks require one
-    explicit name per target; namespace targets cover only the declared kind.
-
-func (t ObservationTarget) Cluster() bool
-
-func (t ObservationTarget) Key() string
 ```

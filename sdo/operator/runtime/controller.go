@@ -155,11 +155,15 @@ type Controller struct {
 	responseStagesRunning bool
 	midStage              midIncidentStage
 	// tuneMidStage lets a test inject the stage's clock and waits.
-	tuneMidStage                func(*DeterministicResponseStage)
-	history                     []DetectorEvaluation
-	progress                    map[string]*evaluation.DetectorProgress
-	drift                       *DriftControllerConfig
-	driftEvents                 []sdk.DriftEvent
+	tuneMidStage func(*DeterministicResponseStage)
+	history      []DetectorEvaluation
+	progress     map[string]*evaluation.DetectorProgress
+	drift        *DriftControllerConfig
+	driftEvents  []sdk.DriftEvent
+	// healthy settles the evaluations' health; healthySince is when the last
+	// settled healthy stretch began (persisted). Guarded by mu.
+	healthy                     healthyStretch
+	healthySince                time.Time
 	sourceInventory             *SourceInventory
 	installEnvironment          *contracts.NamespaceOnboarding
 	pendingOnboarding           *contracts.NamespaceOnboarding
@@ -489,7 +493,7 @@ func NewController(
 	controller := &Controller{
 		signals: newIncidentSignals(),
 		config:  config, codePath: resolvedPath, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
-		tracker: tracker, startup: startup,
+		tracker: tracker, startup: startup, healthy: newHealthyStretch(DefaultStateSettle),
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
 		batcher: NewDebouncedBatcher(config.BatchDebounce), dispatcher: dispatcher,
 		results: make(chan dispatchCompletion, 1), healthDetectorIDs: healthDetectorIDs,
@@ -961,6 +965,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
 		c.promotePodReadBaseline(now, snapshot, c.storesHealthy(confirmationExpired, erroredIDs, onboardingCandidate))
 		c.observeAppState(now, healthy)
+		c.observeHealthySince(now, healthy)
 		c.promoteObservationBaselines(now, snapshot, healthy)
 		c.observeStartup(now, snapshot)
 	}
@@ -1599,7 +1604,7 @@ func (c *Controller) detectorOrigins() map[string]string {
 
 func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) IncidentRequest {
 	incidentID := fmt.Sprintf("%s-%d", c.config.Application, now.UnixNano())
-	driftEvents := driftEventsForFindings(c.driftEvents, findings)
+	driftEvents := c.driftEventsLocked(findings)
 	return IncidentRequest{Telemetry: c.config.Telemetry,
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
@@ -1617,6 +1622,27 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 		CancellationToken: "cancel-" + incidentID,
 		RepairPolicy:      c.config.RepairPolicy,
 	}
+}
+
+// observeHealthySince feeds one evaluation's health to the shared settle rule,
+// so a fault still below its firing threshold does not count as healthy.
+func (c *Controller) observeHealthySince(now time.Time, healthy bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if event, from := c.healthy.observe(now.UTC(), healthy); event == stretchSettled {
+		c.healthySince = from
+	}
+}
+
+// driftEventsLocked are the drift events behind findings, each marked when it
+// was already present as the last settled healthy stretch began. Caller holds
+// c.mu or is the only user of the history.
+func (c *Controller) driftEventsLocked(findings []sdk.Finding) []sdk.DriftEvent {
+	events := driftEventsForFindings(c.driftEvents, findings)
+	for i := range events {
+		events[i].SeenHealthy = !c.healthySince.IsZero() && !events[i].ObservedAt.After(c.healthySince)
+	}
+	return events
 }
 
 func driftEventsForFindings(history []sdk.DriftEvent, findings []sdk.Finding) []sdk.DriftEvent {
@@ -2628,8 +2654,9 @@ func (c *Controller) exportState(unencodable func(protoreflect.Name, error)) (*c
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
-		BusyUntil: optionalBusyUntil(c.busyUntilLocked(c.clock())),
-		Startup:   c.startup.contract(),
+		BusyUntil:    optionalBusyUntil(c.busyUntilLocked(c.clock())),
+		HealthySince: optionalTimestamp(c.healthySince),
+		Startup:      c.startup.contract(),
 
 		StartupObservations: c.config.StartupObservations.contract(),
 	}
@@ -2698,6 +2725,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 		c.currentIncidentResult = &result
 	}
 	c.driftEvents = append([]sdk.DriftEvent(nil), driftEventsState(state.GetDriftEvents())...)
+	c.healthySince = controllerTime(state.GetHealthySince())
 	c.acceptedSourceDrift = driftEventsState(state.GetAcceptedSourceDrift())
 	c.acceptedSourceDriftRevision = state.GetAcceptedSourceDriftRevision()
 	c.ownershipAdoption = adoptionState(state.GetOwnershipAdoption())

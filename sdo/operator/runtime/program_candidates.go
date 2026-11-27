@@ -101,7 +101,7 @@ type KeyedMatching struct {
 	// finding-bound candidates, so a playbook that matches a suspect it was not
 	// yet credited for can still be offered.
 	Stage bool
-	// Restore are the built-in source-restore candidates: suspects on every
+	// Restore are the built-in source-restore candidates: components on a
 	// failing path, bound by component name. They are offered like any playbook's
 	// candidates; whether the stage applies one is the loop's BuiltinRestoreAuto.
 	Restore   []sourceRestoreCandidate
