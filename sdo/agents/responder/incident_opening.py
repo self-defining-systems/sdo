@@ -168,7 +168,7 @@ def earlier_attempts_block(request: IncidentRequest) -> str:
     for number, attempt in enumerate(attempts, 1):
         done = attempt.completed_at.ToDatetime(tzinfo=UTC)
         age = f", {_age(now - done)} ago" if now is not None and now >= done else ""
-        changes = "; ".join(attempt.changes) or "none"
+        changes = "; ".join(attempt.changes) or "none recorded"
         learned = "".join(f"; learned playbook: {playbook_id}" for playbook_id in produced.get(attempt.incident_id, []))
         lines.append(
             f"Attempt {number}: incident {attempt.incident_id}{age}; outcome: {attempt.outcome}; changes: {changes}"
