@@ -98,6 +98,8 @@ def finish_turn(
     repo: Path,
     base: str,
     operator: str,
+    *,
+    allow_export_corrections: bool,
 ) -> tuple[str, str | None]:
     """Wait for a terminal result and drain registered background work, then validate.
 
@@ -148,6 +150,8 @@ def finish_turn(
         try:
             return check_export(repo, base, operator), session_id
         except ExportRejected as error:
+            if not allow_export_corrections:
+                raise
             print(f"Onboarding export rejected:\n{error}", file=sys.stderr)
             send_message(
                 stdin,
@@ -191,7 +195,15 @@ def run_session(
         assert process.stdout is not None
         try:
             send_message(process.stdin, prompt)
-            commit, session_id = finish_turn(process.stdin, process.stdout, transcript, repo, base, operator)
+            commit, session_id = finish_turn(
+                process.stdin,
+                process.stdout,
+                transcript,
+                repo,
+                base,
+                operator,
+                allow_export_corrections=resume is None,
+            )
         finally:
             process.stdin.close()
             try:
@@ -215,7 +227,7 @@ def main() -> int:
         "--operator", default="sdo-operator", help="pinned operator binary on PATH or at an absolute path"
     )
     parser.add_argument("--session-out", type=Path, help="write the session id and validated commit here as JSON")
-    parser.add_argument("--resume", help="session id to resume with the prompt as its one follow-up message")
+    parser.add_argument("--resume", help="session id for one follow-up; an invalid export ends the turn")
     parser.add_argument("prompt", type=Path)
     parser.add_argument("transcript", type=Path)
     parser.add_argument("repo", type=Path)
