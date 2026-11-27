@@ -1,95 +1,98 @@
 ---
 name: sdo-onboarding
-description: Onboard a deployed application as SDO's onboarding agent. Covers turning the given user journeys into probes, the map, request metrics, the request budget, the checks and the finish line.
+description: Turn a deployed application's goal journeys into probes, an application map and a health-objective playbook.
 ---
 
 # Onboarding an application
 
-Work alone. Author the application map, traffic probes (`.sdo/diagnostics/traffic/`) and health-objective playbook
-to detect broken journeys within seconds. Go adds generic detectors at publication. Preserve `.sdo/goal.md`.
-Commit only files the initial health judge owns. Edit `.sdo/arch.md` inside its application-map markers.
-Go owns the remaining architecture, schema, outcomes and lifecycle provenance.
+Work alone. Preserve `.sdo/goal.md`. Edit the application-map region of `.sdo/arch.md`, traffic probes and the
+health-objective playbook. Go owns the inventory, generic detectors, outcomes and lifecycle provenance.
 
-## The journey checklist is your to-do list
+1. Read the manifests, README and API. Find how users enter, get credentials and tell a result is correct.
+2. Run `sdo-operator onboarding init --repo DIR --namespace NS` in a fresh checkout. Check the selected entry,
+   then fill in routes, dependencies and exact assertions. Use the [worked example](references/example.md) for
+   fixture Setup, token identity and cleanup. Open the [map reference](../sdo-operations-map/references/map.md)
+   for fields you need.
+3. Schedule one scenario and check it with `onboarding journeys --only ID`, then work in batches.
+   Once memory validates, add `--quick` for the edit loop. Follow the
+   [probe design and cadence](references/probe-design.md) for coverage and request budget.
+4. If the app already has request counters by route, method and status, map them and confirm with
+   `onboarding check --metrics` (it supplies Prometheus by default). Record why unavailable metrics are absent.
 
-`onboarding journeys` starts with one line per journey of `.sdo/goal.md`, in the goal's order. Run it with `--plan`
-first: it needs no cluster and sends nothing. Work top to bottom, fixing the furthest-from-done state first:
-`missing-map` (map an operation with `journey: <id>`), then `missing-probe` (a scheduled probe; a write needs a
-read-back), then `failing`, then `unchecked` (judge it with `--only`). Every journey must reach `passed`. Never drop or
-rename a goal journey. A journey you cannot cover stays on the list, and your final line names it.
+`onboarding journeys --plan` sends nothing. Fix `missing-map`, `missing-probe`, then `failing` and `unchecked`.
+Keep every journey ID. Use the budget line and estimated detection times to prioritize earlier, more used journeys.
 
-Each line says how soon a full failure of the journey is noticed (about / at worst). This is computed from your
-workloads' schedule and SDO's confirmation, not measured. It also names the operation and probe that bound it and what
-sampling that probe at the 10 s floor would cost. Use it to spend the budget: make the earlier and more used journeys
-fast first, and stop when the budget line shows little left.
+<!-- probe-sdk:begin -->
+## Probe SDK
 
-## Order of work
-
-1. **Look once** (a few minutes): manifests, README, Services, the API's own description, the way a user gets an
-   account. Note what each journey calls and what a correct answer is.
-2. **Map**: start from Go's seed, then entries, operations with `journey: <id>` and `correct`, probes
-   using the example. Use `probe_identity` for ordinary accounts that require admin approval. For a token API,
-   use the example's provisioned-token option.
-3. **One probe first**, end to end through `onboarding journeys --only`, then the rest in batches of three or four.
-   Start with the [worked example](references/example.md). Open the [map](../sdo-operations-map/references/map.md)
-   or [traffic](../sdo-detectors/references/traffic.md) reference only for a missing field or signature.
-4. **Request metrics (optional)**: when the app already exposes a request counter by route, method and status,
-   map it and confirm in `onboarding check --metrics` that the mapped series distinguish the operations. Without
-   `--prometheus` the check runs SDO's own Prometheus. When the app has no such counter, probes alone are enough:
-   note the reason under `## Request metrics` and go on. Do not change application code or deploy a backend for it.
-5. **Check, fix the first red line, repeat.** Commit when a batch is green.
-
-## What a good probe is
-
-- A journey is what a user does: write something with a fresh unique name, then read it back exactly through the
-  route a user reads, including the background effect (poll it with `NotYet`). Read journeys check exact content of
-  fixtures Setup made, and one step lists records users already have.
-- Write values the size and shape users write, where users write them.
-- Cover each way in (API, other protocols, sign-in) and each store or component on its path, refused access as well
-  as granted access where the journey is about permissions.
-- Several journeys fit in one scenario only when they share data; a scenario has at most 8 steps. Prefer one request
-  that checks more over two.
-- Two probers may run it at once, beside real users: name every object per iteration, look up by id or marker,
-  never assume a list is yours or a fixture is the only one. Writers that contend share one identity per journey.
-- Clean up in the same iteration, in an order the application allows while its background work runs, and end the
-  cleanup with a read that shows the data gone (404, or absent from the list). A delete answered 2xx may only schedule
-  the removal (delayed deletion, trash, soft delete): use the application's remove-for-good path, and accept only
-  success or not-found, never a refusal. Data that cannot be deleted stays one fixed object, or is bounded and noted.
-- Probe data must never change what users see. The read of records users already have lists the way a user first
-  sees them (default order, first page, no filter that hides other people's records) by a member that shows names,
-  so probe records left behind show up there and the healthy run turns red.
-- Keep probe work small: few concurrent heavy writes, small objects, low-cost reads.
-
-## Budget and cadence
-
-When the human goal names a `Detection target: 30s` (for example), omit `sampleInterval` and `ratePerSecond`:
-Go budgets time for confirmation and samples each scenario once per remaining interval, within 10–120 s.
-Without a numeric target, set `sampleInterval` (start at 10 s) to get the same rate default. Explicit settings
-override defaults. In `onboarding journeys --plan`, check the worst detection time and the requests/s cap.
-Spend remaining budget on the most used journeys. Give each scenario one home workload, and add a fast workload
-for core paths only if their planned time is too long.
-- Set `maxLatency` to about three times the slowest healthy run, at least 1 s. A run over budget starts confirmation.
-
-## Checks
-
-| Command | When |
-|---|---|
-| `sdo-operator onboarding journeys --repo DIR --namespace NS --plan` | first, and after each map or workload edit (no cluster) |
-| `sdo-operator onboarding journeys --repo DIR --namespace NS --only ID` | while building out the first batch |
-| same with `--quick` | edit loop once memory can validate: check the checkout and run one scenario once, with a step trace |
-| same with `--alter` in place of `--quick` | after it passes: check repeatability, concurrency and wrong answers |
-| `sdo-operator onboarding check --metrics --repo DIR --namespace NS` | once, when a request counter is mapped |
-| `... onboarding journeys --alter --soak 5m` | initial scheduled run |
-| same with `--only ID` | after fixing a scenario or a dependency it uses |
-
-Reports give one line per scenario with details for failures. Use `--verbose` for every check. Run long checks in
-the background and write the next probe meanwhile.
+```go
+// Scenarios
+type Catalog []Scenario
+type FaultClass string
+const (FaultUnreachable FaultClass = "unreachable"; FaultErrorStatus FaultClass = "error-status"; FaultWrongBody FaultClass = "wrong-body"; FaultSlow FaultClass = "slow")
+type ProbeUser struct{Name string; As string; Token string; SSHKey string}
+type Scenario struct{ID string; Description string; Target Target; DependsOn []string; SideEffect SideEffect; Marker string; Setup []Step; Steps []Step; Cleanup []Step; Detects []FaultClass; Users []ProbeUser}
+type SideEffect string
+const (SideEffectRead SideEffect = "read"; SideEffectIdempotentWrite SideEffect = "idempotent-write"; SideEffectWriteWithCleanup SideEffect = "write-with-cleanup")
+type Step struct{Name string; Endpoint Endpoint; Target *Target}
+type Target struct{Service string; Port int; Scheme string; User string}
+// HTTP
+type HTTPEndpoint struct{Method string; Path string; Query Params; Form Params; JSON string; JSONParams Params; Headers map[string]string; ExpectStatus []int; ExpectBody []string; Saves map[string]string}
+func DELETE(path string, query Params) *HTTPEndpoint
+func GET(path string, query Params) *HTTPEndpoint
+func POST(path string, query Params) *HTTPEndpoint
+func PUT(path string, query Params) *HTTPEndpoint
+func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Request, error)
+func (e *HTTPEndpoint) Check(response Response, state State) Verdict
+func (e *HTTPEndpoint) ChecksContent() bool
+func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint
+func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndpoint
+func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTPEndpoint
+func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint
+func (e *HTTPEndpoint) MarksExistingRecords() bool
+func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint
+func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern string) *HTTPEndpoint
+func (e *HTTPEndpoint) SaveCookie(name string, key string) *HTTPEndpoint
+func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint
+func (e *HTTPEndpoint) Status(codes ...int) *HTTPEndpoint
+func (e *HTTPEndpoint) WithBasicAuth(user string, password string) *HTTPEndpoint
+func (e *HTTPEndpoint) WithForm(form Params) *HTTPEndpoint
+func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint
+func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint
+// Values
+const DateLayout = "2006-01-02"
+const StateNow = "sdo.now"
+const UniqueWidth = 16
+func FromSeedPair(key string, count int, first func(index int) string, second func(index int) string) (Param, Param)
+type Param interface{Value(rng *rand.Rand, state State, generated map[string]string) (string, error)}
+func Const(value string) Param
+func DateRange(from string, to string) Param
+func DaysAfter(param string, min int, max int) Param
+func FloatBetween(low float64, high float64, decimals int) Param
+func FromPrevious(key string) Param
+func FromSeed(count int, render func(index int) string) Param
+func IntBetween(low int, high int) Param
+func OneOf(values ...string) Param
+func Unique(prefix string) Param
+type Params map[string]Param
+func (p Params) Generate(rng *rand.Rand, state State) (map[string]string, error)
+type State map[string]string
+// Custom checks and SSH
+const MethodExec = "EXEC"
+type Endpoint interface{Build(ctx context.Context, rng *rand.Rand, state State) (Request, error); Check(response Response, state State) Verdict}
+type Request struct{Method string; Path string; Query map[string]string; Headers map[string]string; Body string}
+type Response struct{Status int; Header http.Header; Body []byte}
+type Verdict struct{OK bool; Reason string; Pending bool}
+func Fail(format string, args ...any) Verdict
+func NotYet(format string, args ...any) Verdict
+func Pass() Verdict
+```
+Generator imports (+ the local generator package): `archive/zip`, `bufio`, `bytes`, `compress/gzip`, `compress/zlib`, `context`, `crypto/md5`, `crypto/sha1`, `crypto/sha256`, `encoding/base64`, `encoding/binary`, `encoding/hex`, `encoding/json`, `encoding/xml`, `errors`, `fmt`, `hash/crc32`, `io`, `maps`, `math`, `math/rand/v2`, `net/url`, `regexp`, `sdo.dev/operator/sdk/traffic`, `slices`, `sort`, `strconv`, `strings`, `time`, `unicode`, `unicode/utf8`.
+Map evidence: `config`, `manifest`, `observed`. Use `config` for application source.
+<!-- probe-sdk:end -->
 
 ## Finish line
 
-Every journey passes and every scenario has a green healthy-run line. Re-soak only scenarios affected by a fix.
-Confirm mapped per-route counters and document unavailable metrics, traces or logs. Missing telemetry never blocks
-onboarding. As an ordinary user, confirm default list pages show no probe records.
-With ten minutes left, stop adding. Remove work that is still red and say what is uncovered. Commit all export edits
-and pass `sdo-operator memory check` on the committed tree. If the session rejects an export, fix the diagnostics
-and commit again. SDO keeps the validated export even when coverage is partial.
+Run the [checks](references/probe-design.md#checks). Re-soak only scenarios affected by a fix. As an ordinary user,
+check that default lists show no probe records. With ten minutes left, remove edits still red and report any
+uncovered journey. Commit the export and run `sdo-operator memory check`. Fix export rejections and commit again.

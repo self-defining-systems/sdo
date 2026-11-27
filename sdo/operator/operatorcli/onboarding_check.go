@@ -148,7 +148,19 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
 // RunOnboarding runs "sdo-operator onboarding <args>" and returns the exit code.
 func RunOnboarding(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(stdout, OnboardingJourneysUsage+"\n\n"+OnboardingUsage)
+		fmt.Fprintln(stdout, OnboardingInitUsage+"\n\n"+OnboardingJourneysUsage+"\n\n"+OnboardingUsage)
+		return exitClean
+	}
+	if args[0] == "init" {
+		err := onboardingInit(ctx, args[1:], stdout)
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(stdout, OnboardingInitUsage)
+			return exitClean
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, "sdo-operator onboarding init:", err)
+			return exitInfra
+		}
 		return exitClean
 	}
 	if args[0] == "journeys" {
