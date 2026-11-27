@@ -100,6 +100,10 @@ type ControllerConfig struct {
 	// StartupBound is how long a new install holds its openers until the
 	// application is seen healthy (startupPeriod). Zero runs no period.
 	StartupBound time.Duration
+	// OnboardingSoak is how long a new install's startup period samples the
+	// committed probes before it can be established (onboardingSoak). Zero
+	// soaks nothing.
+	OnboardingSoak time.Duration
 	// StartupWarmupSettled, when set, reports whether the traffic warm-up that
 	// runs beside start-up has concluded. The start-up period does not count a
 	// settle window as healthy before it has, so the period still waits for
@@ -293,6 +297,8 @@ type Controller struct {
 	// startup holds a new install's openers until the application is seen
 	// healthy or the bound passes; nil when the period is off.
 	startup *startupPeriod
+	// soak is the install's onboarding soak; nil when it is off.
+	soak *onboardingSoak
 
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.
@@ -372,6 +378,7 @@ func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig 
 	c.ClosureStabilityWindow = time.Duration(policy.Detection.StabilityWindow)
 	c.RepairPolicy = policy.Response.RepairPolicy
 	c.StartupBound = time.Duration(policy.Response.StartupBound)
+	c.OnboardingSoak = time.Duration(policy.Onboarding.Soak)
 	c.AfterPlaybook = policy.Response.AfterPlaybook
 	c.AfterPlaybookWait = time.Duration(policy.Response.AfterPlaybookWait)
 	c.DispatchPrepareBound = time.Duration(policy.Response.DispatchPrepareBound)
@@ -955,7 +962,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		c.promotePodReadBaseline(now, snapshot, c.storesHealthy(confirmationExpired, erroredIDs, onboardingCandidate))
 		c.observeAppState(now, healthy)
 		c.promoteObservationBaselines(now, snapshot, healthy)
-		c.observeStartup(now)
+		c.observeStartup(now, snapshot)
 	}
 	if c.adoptionNeeded {
 		c.mu.Lock()
@@ -2860,6 +2867,9 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	c.stateRevision = revision
 	if err := c.recordInstallStartup(actionCtx); err != nil && c.OnError != nil {
 		c.OnError(fmt.Errorf("record install start-up: %w", err))
+	}
+	if err := c.recordOnboardingSoak(actionCtx); err != nil && c.OnError != nil {
+		c.OnError(fmt.Errorf("record onboarding soak: %w", err))
 	}
 	c.releaseLifecycle(queued)
 	c.releaseStaleStagedTask(stagedIncident)

@@ -87,7 +87,8 @@ type Config struct {
 
 // Onboarding is what the people running the application owe SDO before it onboards.
 type Onboarding struct {
-	JourneysRequired bool `yaml:"journeys_required" doc:"whether onboarding requires the user journeys SDO must support, given by the people running the application as free text (host --journeys or --journeys-file, or a journeys: list in the goal file's front matter). On, a host or operate launch without them stops before any agent runs; off, the onboarding agent discovers the journeys itself"`
+	JourneysRequired bool     `yaml:"journeys_required" doc:"whether onboarding requires the user journeys SDO must support, given by the people running the application as free text (host --journeys or --journeys-file, or a journeys: list in the goal file's front matter). On, a host or operate launch without them stops before any agent runs; off, the onboarding agent discovers the journeys itself"`
+	Soak             Duration `yaml:"soak" doc:"how long a new install's controller runs the committed probes on their schedule, once every opener detector has been evaluated, before its start-up period can end: the onboarding healthy run, judged like onboarding journeys --soak and recorded once per install in the sdo-onboarding-soak ConfigMap. Its reds never open an incident; sdo-operator onboarding soak reads the record and, when red, prints the one follow-up turn for the onboarding session. 0s soaks nothing"`
 }
 
 // Source is the one branch of the application repository SDO commits to and deploys from.
@@ -227,7 +228,7 @@ func Default() Config {
 		},
 		Telemetry:  Telemetry{Profile: "prometheus-default"},
 		Source:     Source{PollInterval: Duration(30 * time.Second)},
-		Onboarding: Onboarding{JourneysRequired: true},
+		Onboarding: Onboarding{JourneysRequired: true, Soak: Duration(5 * time.Minute)},
 	}
 }
 
@@ -304,6 +305,9 @@ func (c Config) Validate() error {
 		bad("response.investigators", "%d must be between 0 and 4", c.Response.Investigators)
 	}
 	positive("response.investigator_delay", c.Response.InvestigatorDelay)
+	if c.Onboarding.Soak < 0 {
+		bad("onboarding.soak", "%s must not be negative", c.Onboarding.Soak)
+	}
 	if c.Response.StartupBound < 0 {
 		bad("response.startup_bound", "%s must not be negative", c.Response.StartupBound)
 	}

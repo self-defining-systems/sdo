@@ -185,3 +185,57 @@ if (root / '.sdo/detector').read_text() == 'bad':
         assert "Onboarding export validated:" not in run.stdout
         assert diagnostic in run.stderr
         assert not feedback.exists()
+
+
+def test_onboarding_session_can_be_resumed_for_one_follow_up(tmp_path: Path, checkout: tuple[Path, str]) -> None:
+    """The first run records its session; a resume sends that session one message and validates again."""
+    repo, base = checkout
+    executable(
+        tmp_path / "claude",
+        """
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+resumed = args[args.index('--resume') + 1] if '--resume' in args else None
+Path(os.environ['TEST_ARGS']).write_text(json.dumps(args))
+text = json.loads(sys.stdin.readline())['message']['content'][0]['text']
+print(json.dumps(dict(type='system', subtype='init', session_id=resumed or 'synthetic-session')), flush=True)
+Path('.sdo/detector').write_text(text)
+subprocess.run(['git', 'add', '-A'], check=True)
+subprocess.run(['git', 'commit', '-qm', 'agent changes'], check=True)
+print(json.dumps(dict(type='result', subtype='success', is_error=False, result='done')), flush=True)
+assert sys.stdin.read() == ''
+""",
+    )
+    executable(tmp_path / "operator", "import sys\nassert sys.argv[1:3] == ['memory', 'check']\n")
+    env = {**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}", "TEST_ARGS": str(tmp_path / "args")}
+
+    def launch(prompt_text: str, transcript: str, *extra: str) -> subprocess.CompletedProcess[str]:
+        prompt = tmp_path / f"{transcript}.prompt"
+        prompt.write_text(prompt_text)
+        return subprocess.run(
+            [sys.executable, str(LAUNCHER), "--base", base, "--operator", str(tmp_path / "operator"), *extra]
+            + [str(prompt), str(tmp_path / transcript), str(repo)],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+
+    session = tmp_path / "session.json"
+    first = launch("Set up monitoring.", "transcript.jsonl", "--session-out", str(session))
+    assert first.returncode == 0, first.stderr
+    recorded = json.loads(session.read_text())
+    assert recorded == {"session_id": "synthetic-session", "commit": git(repo, "rev-parse", "HEAD")}
+
+    follow_up = launch("Fix the red probe.", "follow-up.jsonl", "--resume", recorded["session_id"])
+    assert follow_up.returncode == 0, follow_up.stderr
+    assert "--resume" in json.loads((tmp_path / "args").read_text())
+    assert (repo / ".sdo/detector").read_text() == "Fix the red probe."
+    assert f"Onboarding export validated: {git(repo, 'rev-parse', 'HEAD')}" in follow_up.stdout
+    assert (tmp_path / "follow-up.jsonl").read_text().count('"type": "result"') == 1

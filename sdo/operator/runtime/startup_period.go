@@ -98,7 +98,7 @@ func (c *Controller) noteStartupEvaluation(detectorID string) {
 
 // observeStartup feeds one evaluation pass to the period's stretch. Only
 // openers count: detector errors, clues and onboarding do not hold it.
-func (c *Controller) observeStartup(now time.Time) {
+func (c *Controller) observeStartup(now time.Time, snapshot sdk.DetectionContext) {
 	c.mu.Lock()
 	holding := c.startup.holding(now)
 	c.mu.Unlock()
@@ -126,6 +126,10 @@ func (c *Controller) observeStartup(now time.Time) {
 	if len(unevaluated) > 0 {
 		slices.Sort(unevaluated)
 		holders = append(holders, "not yet evaluated: "+boundedLabels(unevaluated))
+	}
+	if soaking, holder := c.soakHoldsLocked(now, snapshot, len(unevaluated) == 0); soaking {
+		quiet = false
+		holders = append(holders, holder)
 	}
 	event, start := c.startup.stretch.observe(now, quiet)
 	switch {
