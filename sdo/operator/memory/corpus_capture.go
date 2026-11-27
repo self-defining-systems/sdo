@@ -32,7 +32,7 @@ func AppendCapturedRecordings(repositoryMount, incidentID, phase string, added [
 	releaseSessionStorage := SessionStorageUse()
 	defer releaseSessionStorage()
 
-	if phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
+	if !sdktest.IsOpenCapturePhase(phase) {
 		return fmt.Errorf("invalid corpus recording phase %q", phase)
 	}
 	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
@@ -222,12 +222,12 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 		if label.Provenance.OpenAt == sdktest.CapturedFixedNoMatchPhase && len(label.RootCauseProgramIDs) == 0 && len(label.NoMatchProgramIDs) > 0 {
 			openName = "fixed.json"
 		} else if label.Provenance.OpenAt != "" {
-			if label.Provenance.OpenAt != "detect" && label.Provenance.OpenAt != "settle" && label.Provenance.OpenAt != "pre-apply" {
+			if !sdktest.IsOpenCapturePhase("open@" + label.Provenance.OpenAt) {
 				return fmt.Errorf("invalid captured open phase %q", label.Provenance.OpenAt)
 			}
 			openName = "open@" + label.Provenance.OpenAt + ".json"
 		} else {
-			for _, phase := range []string{"open@pre-apply", "open@settle", "open@detect"} {
+			for _, phase := range sdktest.OpenCapturePhases() {
 				data, readErr := os.ReadFile(filepath.Join(trusted, phase+".json"))
 				if readErr == nil && sdktest.SnapshotMatchesDigest(data, label.Provenance.OpenSHA256) {
 					openName = phase + ".json"
@@ -294,7 +294,7 @@ func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk
 	releaseSessionStorage := SessionStorageUse()
 	defer releaseSessionStorage()
 
-	if phase != "open" && phase != "fixed" && phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
+	if phase != "open" && phase != "fixed" && !sdktest.IsOpenCapturePhase(phase) {
 		return fmt.Errorf("invalid corpus capture phase %q", phase)
 	}
 	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
@@ -380,7 +380,10 @@ func CaptureRepairedProgramReads(repositoryMount, incidentID string, view progra
 	if err != nil {
 		return err
 	}
-	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+	// Phases repeat the same reads (each boundary records the same source
+	// comparisons): each distinct read is asked once and its answer shared.
+	answered := map[string]sdktest.PrimitiveCall{}
+	for _, phase := range sdktest.OpenCapturePhases() {
 		raw, err := os.ReadFile(filepath.Join(dir, phase+"-recordings.json"))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -412,12 +415,25 @@ func CaptureRepairedProgramReads(repositoryMount, incidentID string, view progra
 		if len(open) == 0 {
 			continue
 		}
-		observed, err := sdktest.RecordPrimitiveCalls(view, open)
+		var ask []sdktest.PrimitiveCall
+		for _, call := range open {
+			if _, known := answered[recordedReadKey(call)]; !known {
+				ask = append(ask, call)
+			}
+		}
+		fresh, err := sdktest.RecordPrimitiveCalls(view, ask)
 		if err != nil {
 			return err
 		}
-		for i := range observed {
-			observed[i].Phase = "fixed"
+		for _, call := range fresh {
+			answered[recordedReadKey(call)] = call
+		}
+		var observed []sdktest.PrimitiveCall
+		for _, call := range open {
+			if answer, ok := answered[recordedReadKey(call)]; ok {
+				answer.Phase = "fixed"
+				observed = append(observed, answer)
+			}
 		}
 		if err := AppendCapturedRecordings(repositoryMount, incidentID, phase, observed); err != nil {
 			return err

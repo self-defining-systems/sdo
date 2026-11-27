@@ -25,6 +25,10 @@ const MaxCapturedSnapshotBytes = 4 << 20
     that fits here is recordable and publishable. Larger namespaces are trimmed
     to it (trimToBudget), not rejected.
 
+const MaxLateCaptures = 5
+    MaxLateCaptures bounds the open captures the controller takes after an
+    incident opened, when a new finding shows that something changed.
+
 const ObjectsOnlySnapshotVersion = 2
     ObjectsOnlySnapshotVersion stores every captured object once, in Objects.
     Loading rebuilds the typed lists from the namespace-local objects.
@@ -101,6 +105,20 @@ func HealthyBaselineViolations(detector sdk.Detector, snapshots []Snapshot) []st
     false positive that would open an incident before any fault exists.
     An error cannot prove quietness and is also a violation. Resolved findings
     are ignored.
+
+func IsLateCapture(name string) bool
+    IsLateCapture reports whether name (a phase or its file) is a later capture.
+
+func IsOpenCapturePhase(phase string) bool
+    IsOpenCapturePhase reports whether phase (with or without its .json suffix)
+    names one of the incident's open captures.
+
+func LateCapturePhases() []string
+    LateCapturePhases are the later open captures in the order they are taken.
+
+func OpenCapturePhases() []string
+    OpenCapturePhases are every open capture of an incident, opening ones first:
+    at detection, after settle, before the first plan application, then later.
 
 func ProjectCapturedObject(raw []byte) ([]byte, error)
     ProjectCapturedObject preserves arbitrary Kubernetes fields, including
@@ -195,26 +213,4 @@ type OwnIncidentOutcome string
     OwnIncidentOutcome is what running a new playbook's Diagnose on the incident
     it was written for says about it. There are exactly three: it recognises its
     fault, it provably does not, or the capture cannot say.
-
-const (
-	// OwnIncidentMatch: Diagnose returned Match on the captured open state.
-	OwnIncidentMatch OwnIncidentOutcome = "match"
-	// OwnIncidentFailed is a definite failure: Diagnose read everything it
-	// asked for and returned NoMatch, so it cannot recognise the fault it was
-	// written for. The only outcome that may block publication.
-	OwnIncidentFailed OwnIncidentOutcome = "failed"
-	// OwnIncidentUnverified: the capture cannot decide. A read it lacks or
-	// holds an error for, a binding it cannot supply, or no capture at all.
-	OwnIncidentUnverified OwnIncidentOutcome = "unverified"
-)
-type OwnIncidentResult struct {
-	ProgramID string             `json:"program_id"`
-	Outcome   OwnIncidentOutcome `json:"outcome"`
-	Capture   string             `json:"capture,omitempty"`
-	Reason    string             `json:"reason,omitempty"`
-	Recovered *RecoveredMatch    `json:"recovered_match,omitempty"`
-}
-    OwnIncidentResult is one playbook's own-incident replay verdict. Capture
-    names the open@* snapshot the outcome comes from; Reason says why a failed
-    or unverified outcome is one.
 ```

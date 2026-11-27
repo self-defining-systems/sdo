@@ -499,6 +499,7 @@ func TestNewProgramsDiagnoseTheirOwnIncident(t *testing.T){
   if ctx.Err()!=nil{break}
   d,_:=registry.Diagnoser(results[i].ProgramID)
   results[i].Recovered,_=sdktest.DiagnoseOnRecovered(ctx,d,"testdata/own-incident")
+  if reason:=results[i].LateMatchRefused();reason!=""{results[i].Outcome,results[i].Reason=sdktest.OwnIncidentFailed,reason;t.Errorf("` + OwnIncidentRule + `[%s]: %s",results[i].ProgramID,reason)}
  }
 }
 `)

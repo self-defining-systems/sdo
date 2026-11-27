@@ -40,3 +40,15 @@ func TestRecoveredMatchNoteBoundsObjectsAndText(t *testing.T) {
 		t.Fatalf("recovered note (%d bytes) = %+v", len(note.Message), note)
 	}
 }
+
+// The broker reads back which capture a new playbook matched from its note.
+func TestOwnIncidentMatchCaptureReadsTheNote(t *testing.T) {
+	note := ownIncidentNote(sdktest.OwnIncidentResult{ProgramID: "fresh", Outcome: sdktest.OwnIncidentMatch, Capture: "open@late-2.json"})
+	if got, ok := OwnIncidentMatchCapture(note.Rule, note.Message); !ok || got != "open@late-2.json" {
+		t.Fatalf("capture = %q, %v from %q", got, ok, note.Message)
+	}
+	unverified := ownIncidentNote(sdktest.OwnIncidentResult{ProgramID: "fresh", Outcome: sdktest.OwnIncidentUnverified, Capture: "open@late-2.json", Reason: "x (y)"})
+	if _, ok := OwnIncidentMatchCapture(unverified.Rule, unverified.Message); ok {
+		t.Fatal("an unverified note names no matched capture")
+	}
+}

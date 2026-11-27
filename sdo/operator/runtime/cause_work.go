@@ -224,8 +224,9 @@ func fixedCaptureVerdicts(ctx context.Context, outcome *contracts.OutcomeRecord,
 		calls []sdktest.PrimitiveCall
 	}
 	recordings := []capturedCalls{}
-	for _, phase := range []string{"detect", "pre-apply"} {
-		data, err := os.ReadFile(filepath.Join(captures, "open@"+phase+"-recordings.json"))
+	for _, open := range sdktest.OpenCapturePhases() {
+		phase := strings.TrimPrefix(open, "open@")
+		data, err := os.ReadFile(filepath.Join(captures, open+"-recordings.json"))
 		if os.IsNotExist(err) {
 			continue
 		}

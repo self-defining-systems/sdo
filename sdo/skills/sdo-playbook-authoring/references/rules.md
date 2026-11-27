@@ -78,7 +78,9 @@ Replay results are information only.
 - Diagnose compares typed fields (`diff.ContainerChanges`, `diff.Field`), never a substring of `diff.Text`;
   such programs still load but are noted for rewrite. Enforced by: `program.diff-text-match`.
 - A new playbook's Diagnose must Match the incident it was written for: the check runs it on the incident's captured
-  open state. `NoMatch` there is refused; a capture that cannot decide (a read it lacks or holds an error for) is
+  open states (the opening one, and later ones taken when a new finding appeared before recovery, so a second cause
+  that came later is there too). `NoMatch` on all of them is refused, and so is a match only on a later one that
+  also matches the recovered state; a capture that cannot decide (a read it lacks or holds an error for) is
   recorded as unverified and never refused. A capture withholds only ConfigMap values and objects over its budget, so a `NoMatch` is unverified only when Diagnose read such a kind; any other `NoMatch` is refused. `sdo-operator memory test <id>` prints the verdict first.
   Enforced by: `playbook.own-incident-replay`.
 
