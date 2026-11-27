@@ -835,6 +835,21 @@ var gateCompileRows = []gateCompileRow{
 	{name: "a pod read without a Pod watch", rule: RuleDetectorControllerStart, path: layout.DiagnosticsDir,
 		fake: testutil.GoRule{Verb: "test", Output: "detector.controller-start: the controller would refuse to start: detector \"missing-configmap\": pod reads require a v1 Pod watch"},
 		real: func(t *testing.T, root string) { gatePodRead(t, root) }},
+	// One store, two readers that declare its pod read differently: refused at
+	// publication, so the controller never meets it.
+	{name: "two readers declare one pod read differently", rule: RuleDetectorControllerStart, path: layout.DiagnosticsDir,
+		fake: testutil.GoRule{Verb: "test", Output: "detector.controller-start: the controller would refuse to start: pod read \"store-policy\" is declared differently by detectors \"copied-configmap\" and \"missing-configmap\"; keep one reader of it"},
+		real: func(t *testing.T, root string) {
+			gatePodRead(t, root)
+			edit(t, root, gateFixtureDetector, `{APIVersion: "v1", Kind: "ConfigMap"},`, `{APIVersion: "v1", Kind: "ConfigMap"}, {APIVersion: "v1", Kind: "Pod"},`)
+			edit(t, root, ".sdo/diagnostics/detectors/learned/missing-configmap/manifest.yaml", "      kind: ConfigMap\n", "      kind: ConfigMap\n    - apiVersion: v1\n      kind: Pod\n")
+			from := filepath.Join(root, filepath.Dir(gateFixtureDetector))
+			copyTree(t, from, filepath.Join(filepath.Dir(from), "copied-configmap"))
+			copied := ".sdo/diagnostics/detectors/learned/copied-configmap/"
+			edit(t, root, copied+"manifest.yaml", "id: missing-configmap", "id: copied-configmap")
+			edit(t, root, copied+"detector.go", `ID:                  "missing-configmap",`, `ID:                  "copied-configmap",`)
+			edit(t, root, copied+"detector.go", "Interval: time.Minute}", "Interval: 2 * time.Minute}")
+		}},
 }
 
 // gatePodRead makes the fixture detector declare a pod read.

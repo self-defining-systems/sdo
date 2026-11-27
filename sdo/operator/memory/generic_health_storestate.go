@@ -2,7 +2,13 @@ package memory
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,16 +38,19 @@ const MaxStoreStateDetectors = podread.MaxDeclaredQueries / 2
 // user operation depends on first (only they can explain a failing user
 // request; appmap.ComponentCoverage.Probed), then authoritative stores, then
 // by name. Their intervals fit StoreStateLoad with the probed stores read
-// most often. A missing or unreadable map plans none: the shared check reports
-// the map itself.
+// most often. A store a designer-written health detector already reads keeps
+// that one reader (designerReadStores): two readers would declare its pod read
+// differently and the controller would refuse both. A missing or unreadable
+// map plans none: the shared check reports the map itself.
 func plannedStoreStateDetectors(root string) []plannedDetector {
 	parsed, coverage, ok := acceptedMap(root)
 	if !ok {
 		return nil
 	}
+	designed := designerReadStores(root)
 	var stores []appmap.Component
 	for _, component := range parsed.Components {
-		if component.Data == nil || !layout.ValidDetectorID(StoreStateDetectorPrefix+component.Name) {
+		if component.Data == nil || designed[component.Name] || !layout.ValidDetectorID(StoreStateDetectorPrefix+component.Name) {
 			continue
 		}
 		if _, ok := storestate.AdapterFor(storestate.Engine(component.Data.Engine)); !ok {
@@ -140,6 +149,121 @@ func New() sdk.Detector {
 	return d
 }
 `, genericSpec(id), int(c.Spec.Interval.Seconds()), c.Component, string(c.Engine), c.Target.Workload, int(c.ReadInterval.Seconds()))
+}
+
+// designerReadStores lists the components that health detectors Go did not
+// install read through storestate: a storestate.Config literal's Component, or
+// a storestate.QueryID call's component, as a string literal in a non-test
+// file, however the package is imported. A reader that computes the name
+// escapes it; the shared check then refuses the two differing declarations
+// (podread.Queries) at publication.
+func designerReadStores(root string) map[string]bool {
+	stores := map[string]bool{}
+	base := filepath.Join(root, layout.DetectorDir(layout.ClassHealth, ""))
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return stores
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(base, entry.Name())
+		manifest, err := os.ReadFile(filepath.Join(dir, layout.ManifestFileName))
+		if err != nil {
+			continue
+		}
+		if parsed, err := layout.ParseDetectorManifest(manifest); err != nil || parsed.OriginatingCommit == "lifecycle-bootstrap" {
+			continue
+		}
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			name := file.Name()
+			if file.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			for _, component := range storeStateComponents(filepath.Join(dir, name)) {
+				stores[component] = true
+			}
+		}
+	}
+	return stores
+}
+
+const storeStatePackage = "sdo.dev/operator/sdk/storestate"
+
+// storeStateComponents returns the literal components file reads through
+// storestate.
+func storeStateComponents(file string) []string {
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return nil
+	}
+	alias := ""
+	for _, spec := range parsed.Imports {
+		if path, err := strconv.Unquote(spec.Path.Value); err != nil || path != storeStatePackage {
+			continue
+		}
+		alias = "storestate"
+		if spec.Name != nil {
+			alias = spec.Name.Name
+		}
+	}
+	if alias == "" || alias == "_" {
+		return nil
+	}
+	// A dot import names Config and QueryID bare.
+	named := func(expr ast.Expr, name string) bool {
+		if alias == "." {
+			ident, ok := expr.(*ast.Ident)
+			return ok && ident.Name == name
+		}
+		selector, ok := expr.(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+		pkg, ok := selector.X.(*ast.Ident)
+		return ok && pkg.Name == alias && selector.Sel.Name == name
+	}
+	literal := func(expr ast.Expr) (string, bool) {
+		lit, ok := expr.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return "", false
+		}
+		value, err := strconv.Unquote(lit.Value)
+		return value, err == nil && value != ""
+	}
+	var components []string
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.CompositeLit:
+			if n.Type == nil || !named(n.Type, "Config") {
+				return true
+			}
+			for _, element := range n.Elts {
+				field, ok := element.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				if key, ok := field.Key.(*ast.Ident); ok && key.Name == "Component" {
+					if value, ok := literal(field.Value); ok {
+						components = append(components, value)
+					}
+				}
+			}
+		case *ast.CallExpr:
+			if named(n.Fun, "QueryID") && len(n.Args) == 2 {
+				if value, ok := literal(n.Args[1]); ok {
+					components = append(components, value)
+				}
+			}
+		}
+		return true
+	})
+	return components
 }
 
 func isStoreStateDetector(id string) bool { return strings.HasPrefix(id, StoreStateDetectorPrefix) }

@@ -311,9 +311,11 @@ func ValidateDetector(d sdk.Detector) error {
 	return fmt.Errorf("pod reads require a v1 Pod watch")
 }
 
-// Queries merges identical query IDs and rejects conflicting definitions.
+// Queries merges identical query IDs and rejects conflicting definitions,
+// naming both declaring detectors.
 func Queries(ds []sdk.Detector) ([]Query, error) {
 	byID := map[string]Query{}
+	owner := map[string]string{}
 	for _, d := range ds {
 		if err := ValidateDetector(d); err != nil {
 			return nil, err
@@ -321,9 +323,14 @@ func Queries(ds []sdk.Detector) ([]Query, error) {
 		if c, ok := d.(Consumer); ok {
 			for _, q := range c.PodReads() {
 				if old, ok := byID[q.ID]; ok && !reflect.DeepEqual(old, q) {
-					return nil, fmt.Errorf("conflicting pod read %q", q.ID)
+					pair := []string{owner[q.ID], d.Spec().ID}
+					sort.Strings(pair)
+					return nil, fmt.Errorf("pod read %q is declared differently by detectors %q and %q; keep one reader of it", q.ID, pair[0], pair[1])
 				}
 				byID[q.ID] = q
+				if _, ok := owner[q.ID]; !ok {
+					owner[q.ID] = d.Spec().ID
+				}
 			}
 		}
 	}

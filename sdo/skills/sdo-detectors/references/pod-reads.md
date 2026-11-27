@@ -41,7 +41,9 @@ depends on (on its path, a knownBroken one included, or a registry or config ser
 mapped to use) read every 30 s while the budget allows, the others less often, but never more than four times less
 often (the first group slows down instead). A store it has never read healthy (no CLI
 in the image, credentials the container does not expose, a refused read) is a coverage note on the clear verdict, not
-a finding. Do not author a second reader for those stores. For another store, use `storestate.NewDetector` instead of
+a finding. Do not author a second reader for those stores; a store a health detector of yours already reads
+through `storestate` (a literal `Component`) gets no Go reader, and two readers that declare one pod read differently
+fail `memory check`. For another store, use `storestate.NewDetector` instead of
 writing the command: it reads write blocks, role, caps, principals and inventory counts in one bounded read, diffs them
 against the controller's promoted healthy readings, and names the changed item in each finding.
 

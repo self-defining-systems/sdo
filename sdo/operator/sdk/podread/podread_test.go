@@ -69,9 +69,11 @@ func TestDetectorDeclarations(t *testing.T) {
 	if err != nil || len(merged) != 1 {
 		t.Fatalf("identical queries merge: %v, %v", merged, err)
 	}
+	// A conflict names both declaring detectors, so the author knows which
+	// reader to keep.
 	other := query()
 	other.Args = []string{"other"}
-	if _, err := podread.Queries([]sdk.Detector{same, reader{id: "b", watches: podWatch, queries: []podread.Query{other}}}); err == nil || !strings.Contains(err.Error(), "conflicting") {
+	if _, err := podread.Queries([]sdk.Detector{same, reader{id: "b", watches: podWatch, queries: []podread.Query{other}}}); err == nil || !strings.Contains(err.Error(), `declared differently by detectors "a" and "b"`) {
 		t.Fatalf("conflicting definitions: %v", err)
 	}
 	many := make([]podread.Query, podread.MaxQueries+1)
