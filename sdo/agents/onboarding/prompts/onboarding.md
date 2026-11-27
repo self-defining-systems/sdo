@@ -11,4 +11,4 @@ can be done in code or by configuration (settings, exporters, sidecars).
 Commit, then iterate with `sdo-operator onboarding check --quick`, and incremental `--break` for break items (`--help` lists the flags); fix red items and recheck.
 Run `--full --break` once at the end: you are done when that report is clean.
 Tools: shell, git, docker, kind, kubectl and build tools.
-Start with ${skills_root}/sdo-onboarding/SKILL.md. Fix any export rejection before finishing. Reply with one line: done, or blocked and why.
+Start with ${skills_root}/sdo-onboarding/SKILL.md. Fix any export rejection before finishing. Reply with one line: done, or blocked and why. A committed export that passes validation is kept either way.
