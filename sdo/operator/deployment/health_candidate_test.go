@@ -196,6 +196,11 @@ func TestAcceptedDetectorProbePassesTheScopeToEvaluateOnce(t *testing.T) {
 			t.Fatalf("args %v lack %v", args, want)
 		}
 	}
+	// The warm-up ends before the evaluation's own limit, so a slow workload
+	// still yields a verdict.
+	if i := slices.Index(args, "--warmup-limit"); i < 0 || args[i+1] != "3m30s" {
+		t.Fatalf("args %v lack the warm-up limit within the 5m evaluation limit", args)
+	}
 	if args := (AcceptedDetectorProbe{}).evaluationArgs("/root", "ns", HealthScope{}, ""); slices.Contains(args, "--classes") || slices.Contains(args, "--image-pins") {
 		t.Fatalf("unscoped args = %v", args)
 	}

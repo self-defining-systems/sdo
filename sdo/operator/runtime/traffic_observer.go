@@ -52,7 +52,10 @@ const DefaultTrafficPollInterval = 500 * time.Millisecond
 // intervals. A healthy application causes no extra evaluations.
 type TrafficObserver struct {
 	// Clock controls polling and warmup; set it before Start. Nil uses production timers.
-	Clock     kclock.WithTicker
+	Clock kclock.WithTicker
+	// Ceiling, when positive, is the most AwaitWarm waits in all; set it
+	// before AwaitWarm.
+	Ceiling   time.Duration
 	api       ProberAPI
 	workloads []string
 	notify    func()
@@ -308,15 +311,30 @@ func (o *TrafficObserver) WaitWarm(ctx context.Context, timeout time.Duration) b
 // health failure: when the bound expires with such a wait pending, the wait is
 // extended once by the provisioning run's own declared timeout plus the
 // warm-up the samples then need.
+//
+// A Ceiling caps the whole wait: a bounded one-shot evaluation must answer
+// before its caller's limit, so it judges what it observed by then.
 func (o *TrafficObserver) AwaitWarm(ctx context.Context, floor time.Duration) bool {
 	o.Poll(ctx)
-	if o.WaitWarm(ctx, max(floor, o.WarmupBudget())) {
+	first := o.capped(max(floor, o.WarmupBudget()), 0)
+	if o.WaitWarm(ctx, first) {
 		return true
 	}
 	if wait := o.IdentityWait(); wait > 0 && ctx.Err() == nil {
-		return o.WaitWarm(ctx, wait+o.WarmupBudget())
+		if second := o.capped(wait+o.WarmupBudget(), first); second > 0 {
+			return o.WaitWarm(ctx, second)
+		}
 	}
 	return false
+}
+
+// capped is wait within what is left of the Ceiling after spent; with no
+// Ceiling it is wait.
+func (o *TrafficObserver) capped(wait, spent time.Duration) time.Duration {
+	if o.Ceiling <= 0 {
+		return wait
+	}
+	return min(wait, o.Ceiling-spent)
 }
 
 // IdentityWait is the longest probe-user provisioning run the consumed

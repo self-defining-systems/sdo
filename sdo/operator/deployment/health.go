@@ -86,18 +86,38 @@ type AcceptedDetectorProbe struct {
 	Limit                time.Duration
 }
 
-func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string, scope HealthScope) (HealthEvaluation, error) {
-	limit := probe.Limit
-	if limit <= 0 {
-		limit = 5 * time.Minute
+// evaluationJudgeMargin is the part of an evaluation's limit kept for judging
+// after the warm-up: the reachability rounds, the detectors and the verdict.
+const evaluationJudgeMargin = 90 * time.Second
+
+// limit is how long one evaluation may run, compiling apart.
+func (probe AcceptedDetectorProbe) limit() time.Duration {
+	if probe.Limit <= 0 {
+		return 5 * time.Minute
 	}
-	bounded, cancel := context.WithTimeout(ctx, limit)
-	defer cancel()
-	prepared, err := probe.Prepare(bounded, acceptedRoot, operatorRoot, namespace, scope)
+	return probe.Limit
+}
+
+// warmupLimit bounds the evaluation's wait for the probers, so a workload whose
+// declared warm-up is longer than the evaluation may run is judged on what was
+// observed (typed pending) instead of the evaluation being killed with no
+// verdict.
+func (probe AcceptedDetectorProbe) warmupLimit() time.Duration {
+	return max(probe.limit()-evaluationJudgeMargin, probe.limit()/2)
+}
+
+// Evaluate compiles the detectors of acceptedRoot and runs one evaluation of
+// them; each is bounded by the probe's limit.
+func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string, scope HealthScope) (HealthEvaluation, error) {
+	compiling, cancel := context.WithTimeout(ctx, probe.limit())
+	prepared, err := probe.Prepare(compiling, acceptedRoot, operatorRoot, namespace, scope)
+	cancel()
 	if err != nil {
 		return HealthEvaluation{}, err
 	}
 	defer prepared.Close()
+	bounded, cancel := context.WithTimeout(ctx, probe.limit())
+	defer cancel()
 	stdout, stderr, err := prepared.run(bounded)
 	if err != nil {
 		return HealthEvaluation{}, fmt.Errorf("evaluate accepted health detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
@@ -556,7 +576,7 @@ func (v IndependentHealthVerifier) Validate() error {
 }
 
 func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string, scope HealthScope, pinsFile string) []string {
-	args := []string{"--evaluate-once", "--namespace", namespace, "--app-root", acceptedRoot}
+	args := []string{"--evaluate-once", "--namespace", namespace, "--app-root", acceptedRoot, "--warmup-limit", probe.warmupLimit().String()}
 	if len(scope.Classes) > 0 {
 		args = append(args, "--classes", evaluation.FormatClasses(scope.Classes))
 	}
