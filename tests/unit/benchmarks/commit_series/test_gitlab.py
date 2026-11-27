@@ -176,3 +176,9 @@ def test_a_series_baseline_carries_the_base_jobs_and_names_every_job_of_the_seri
     vcs(clone, "checkout", "-q", "-b", "replay")
     vcs(clone, "fetch", "-q", str(repo), release)
     vcs(clone, "cherry-pick", release)
+
+
+def test_a_release_is_named_by_the_most_significant_version_field_it_changes() -> None:
+    assert gitlab.release_kind("9.11.4", "10.0.1") == "Major"
+    assert gitlab.release_kind("10.0.1", "10.1.1") == "Minor"
+    assert gitlab.release_kind("10.5.4", "10.5.5") == "Patch"

@@ -288,6 +288,14 @@ def archive_values(archive: Path) -> tuple[set[str], bool]:
         return flatten_keys(values), any(n.endswith("/values.schema.json") and n.count("/") == 1 for n in names)
 
 
+def release_kind(previous: str, version: str) -> str:
+    """``Major``, ``Minor`` or ``Patch``: the most significant version field that changes from ``previous``."""
+    before, after = previous.split("."), version.split(".")
+    if before[0] != after[0]:
+        return "Major"
+    return "Minor" if before[1] != after[1] else "Patch"
+
+
 def derive_list(index: Path, versions: list[str], base_version: str, pack: Path, cache: Path) -> dict[str, Any]:
     """A release list document for ``base_version`` then ``versions``: digests from the chart repository's ``index``,
     effects measured by rendering each release through the pack and comparing with the one before."""
@@ -322,7 +330,7 @@ def derive_list(index: Path, versions: list[str], base_version: str, pack: Path,
             assert previous is not None
             changes = derive_changes(previous[0], docs, previous[1], keys, schema)
             record["changes"] = changes
-            kind = "Minor" if version.split(".")[1] != out[-1]["version"].split(".")[1] else "Patch"
+            kind = release_kind(out[-1]["version"], version)
             record["note"] = (
                 f"{kind} release, app {out[-1]['app_version']} -> {entry['appVersion']}: "
                 f"{changes['images_changed']} image references change, "
