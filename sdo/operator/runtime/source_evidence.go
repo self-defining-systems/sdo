@@ -26,45 +26,77 @@ const acceptanceUnavailableReason = "acceptance_record_unavailable"
 // in it. The comparison is evidence or a typed reason, never absent: an object
 // with no acceptance record keeps its declared-field comparison and says why
 // the additions are unknown.
-func (l *ResponderLoop) recordSourceComparisons(ctx context.Context, phase string, refs ...sdk.ObjectRef) {
-	if l.CorpusSessionRoot == "" || l.ReadView == nil || l.Provider == nil {
+//
+// snapshot, when set, is the snapshot of the boundary being recorded; without
+// one the comparison takes its own.
+func (l *ResponderLoop) recordSourceComparisons(ctx context.Context, phase string, snapshot sdk.DetectionContext, refs ...sdk.ObjectRef) {
+	if l.CorpusSessionRoot == "" || l.ReadView == nil || snapshot == nil && l.Provider == nil {
 		return
 	}
 	defer l.phase("source_comparison")()
-	var view program.ReadView
+	pending := l.uncompared(phase, refs)
+	if len(pending) == 0 {
+		return
+	}
+	if snapshot == nil {
+		// Evidence never delays a write for longer than a diagnosis may take.
+		snapshotCtx, cancel := context.WithTimeout(ctx, l.deadline())
+		endSnapshot := l.phase("source_comparison_snapshot")
+		taken, err := l.Provider.Snapshot(snapshotCtx)
+		endSnapshot()
+		cancel()
+		if err != nil {
+			slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "error", err)
+			return
+		}
+		snapshot = taken
+	}
+	calls, compared := sourceComparisons(l.Request.IncidentID, l.ReadView(snapshot), pending)
+	if err := memory.AppendCapturedRecordings(l.CorpusSessionRoot, l.Request.IncidentID, phase, calls); err != nil {
+		slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "error", err)
+		return
+	}
+	l.markCompared(phase, compared)
+}
+
+// uncompared are the refs of phase whose comparison is not yet recorded.
+func (l *ResponderLoop) uncompared(phase string, refs []sdk.ObjectRef) []sdk.ObjectRef {
+	var pending []sdk.ObjectRef
+	seen := map[string]bool{}
 	for _, ref := range refs {
 		key := phase + "\x00" + fmt.Sprint(ref)
-		if !sourceComparable(ref) || l.sourceCompared[key] {
+		if !sourceComparable(ref) || l.sourceCompared[key] || seen[key] {
 			continue
 		}
-		if view == nil {
-			// Evidence never delays a write for longer than a diagnosis may take.
-			snapshotCtx, cancel := context.WithTimeout(ctx, l.deadline())
-			endSnapshot := l.phase("source_comparison_snapshot")
-			snapshot, err := l.Provider.Snapshot(snapshotCtx)
-			endSnapshot()
-			cancel()
-			if err != nil {
-				slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "error", err)
-				return
-			}
-			view = l.ReadView(snapshot)
-		}
+		seen[key] = true
+		pending = append(pending, ref)
+	}
+	return pending
+}
+
+func (l *ResponderLoop) markCompared(phase string, refs []sdk.ObjectRef) {
+	if l.sourceCompared == nil {
+		l.sourceCompared = map[string]bool{}
+	}
+	for _, ref := range refs {
+		l.sourceCompared[phase+"\x00"+fmt.Sprint(ref)] = true
+	}
+}
+
+// sourceComparisons compares each ref with accepted source on view. It reads
+// no loop state, so a boundary may run it beside its other reads.
+func sourceComparisons(incidentID string, view program.ReadView, refs []sdk.ObjectRef) (calls []sdktest.PrimitiveCall, compared []sdk.ObjectRef) {
+	for _, ref := range refs {
 		diff, err := view.DiffAgainstSource(ref)
 		call, err := sourceComparisonCall(ref, diff, err)
 		if err != nil {
-			slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "resource", ref.Kind+"/"+ref.Name, "error", err)
+			slog.Warn("source comparison evidence gap", "incident_id", incidentID, "resource", ref.Kind+"/"+ref.Name, "error", err)
 			continue
 		}
-		if err := memory.AppendCapturedRecording(l.CorpusSessionRoot, l.Request.IncidentID, phase, call); err != nil {
-			slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "resource", ref.Kind+"/"+ref.Name, "error", err)
-			continue
-		}
-		if l.sourceCompared == nil {
-			l.sourceCompared = map[string]bool{}
-		}
-		l.sourceCompared[key] = true
+		calls = append(calls, call)
+		compared = append(compared, ref)
 	}
+	return calls, compared
 }
 
 // sourceComparable excludes objects accepted source never declares and the

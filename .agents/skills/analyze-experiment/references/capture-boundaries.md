@@ -60,10 +60,17 @@ phase names. Controller step phases: `dispatch_completions`, `retire_expired`,
 `kubernetes_cache_scoped_read` inside it), `traffic`, `pod_admission`, `usage`, `logs`,
 `pod_reads`, `vantage` (and `vantage_lock_wait`), `app_state`, `metrics`,
 `onboarding_snapshot`, `read_view`. Responder tool phases: `snapshot`, `corpus_capture`
-(the disk write), `detectors`, `diagnose`, `preapply_capture` with `preapply_snapshot`,
-`preapply_capture_write` and `preapply_boundary_observations`, `checkout_state`,
+(the disk write), `detectors`, `diagnose`, `preapply_capture` with `preapply_snapshot` and
+`preapply_capture_write`, `checkout_state`,
 `persist_application`, `executor_apply`, `verify`, and `source_comparison` with its own
-`source_comparison_snapshot`; the source comparison is not part of `capture_ms`. A layer
+`source_comparison_snapshot`; the source comparison is not part of `capture_ms`.
+`preapply_capture_write` covers the object capture, the boundary observations and the
+planned objects' source comparisons, which run concurrently. All of them read live objects
+and stay before the write. An automatic-stage apply has no `preapply_snapshot`: it
+reuses the snapshot the stage diagnosed and planned on, since nothing is written in
+between. An agent's apply still takes a fresh one. A source comparison at a boundary
+reads that boundary's snapshot; `source_comparison_snapshot` appears only for a
+comparison that has none. A layer
 used by two snapshots in one call (for example the apply's verify snapshot and the
 source-comparison snapshot) reports their sum. Read the largest phase before changing
 locking.
