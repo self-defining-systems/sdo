@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"encoding/json"
 	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -10,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // A ConfigMap a container reads through a subPath mount, an env valueFrom or
@@ -158,16 +161,80 @@ func podContentLoadedAt(pod corev1.Pod, template corev1.PodTemplateSpec, name st
 	return latest
 }
 
-// lastWriteAt is when the object's declared content was last written, by
-// managedFields time across all managers; zero when nothing records it.
-func lastWriteAt(object *unstructured.Unstructured) time.Time {
+// dataPaths are the content fields (data.KEY, binaryData.KEY) a drift event changed.
+func dataPaths(event *sdk.DriftEvent) []sdk.DriftField {
+	var result []sdk.DriftField
+	for _, field := range event.Fields {
+		if strings.HasPrefix(field.Path, "data.") || strings.HasPrefix(field.Path, "binaryData.") {
+			result = append(result, field)
+		}
+	}
+	return result
+}
+
+// contentRestoredAt is when the ConfigMap's content stopped being what the
+// foreign change wrote: zero when no data key changed, when the live content
+// still equals what that change wrote (its value was adopted, so Pods started
+// since run it), or when no field manager owns a changed key. Otherwise it is
+// the latest write time among the managers that own a changed data key, so a
+// later write that touched no data key (a label) is not a restore.
+func contentRestoredAt(object *unstructured.Unstructured, event *sdk.DriftEvent) time.Time {
+	fields := dataPaths(event)
+	if len(fields) == 0 {
+		return time.Time{}
+	}
+	adopted := true
+	for _, field := range fields {
+		section, key, _ := strings.Cut(field.Path, ".")
+		value, found, _ := unstructured.NestedFieldNoCopy(object.Object, section, key)
+		live := ""
+		if found {
+			live = renderDriftValue(field.Path, value)
+		}
+		if live != field.New {
+			adopted = false
+		}
+	}
+	if adopted {
+		return time.Time{}
+	}
 	var at time.Time
 	for _, entry := range object.GetManagedFields() {
-		if entry.Time != nil && entry.Subresource != "status" && entry.Time.Time.After(at) {
-			at = entry.Time.Time
+		if entry.Time == nil || entry.Subresource == "status" || entry.FieldsV1 == nil || !entry.Time.Time.After(at) {
+			continue
+		}
+		var owned map[string]map[string]any
+		if json.Unmarshal(entry.FieldsV1.Raw, &owned) != nil {
+			continue
+		}
+		for _, field := range fields {
+			section, key, _ := strings.Cut(field.Path, ".")
+			if _, ok := owned["f:"+section]["f:"+key]; ok {
+				at = entry.Time.Time
+				break
+			}
 		}
 	}
 	return at
+}
+
+// splitDataStores separates the workloads of data stores (holds_data or a
+// data role in the application map) from the others.
+func splitDataStores(view sdk.DetectionContext, refs []sdk.ObjectRef) (others, data []sdk.ObjectRef) {
+	var m program.AppMap
+	if source, ok := view.(interface {
+		AppMap() (program.AppMap, error)
+	}); ok {
+		m, _ = source.AppMap()
+	}
+	for _, ref := range refs {
+		if holdsData(m, ref.Kind+"/"+ref.Name) {
+			data = append(data, ref)
+		} else {
+			others = append(others, ref)
+		}
+	}
+	return others, data
 }
 
 // latestForeignDriftEvent is the latest drift event for ref written by a

@@ -3,6 +3,7 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -50,6 +51,10 @@ type SourceDeparture struct {
 	// start and run a Pod that loaded the departed content: restoring the
 	// object alone does not change what they run, a rollout restart does.
 	Consumers []sdk.ObjectRef
+	// DataConsumers are such workloads of a data store (holds_data or a data
+	// role). They get no command and never make the built-in restore match:
+	// restarting a data store is the responder's call.
+	DataConsumers []sdk.ObjectRef
 }
 
 // Command is the responder command that puts the object back to accepted
@@ -76,6 +81,15 @@ func (d SourceDeparture) Command() string {
 	return ""
 }
 
+// dataConsumersNote says that restarting a data store still on the departed
+// content is the responder's decision; SDO gives no command for it.
+func dataConsumersNote(refs []sdk.ObjectRef) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	return "; " + refNames(refs) + " hold data: restarting a data store is the responder's call"
+}
+
 func refNames(refs []sdk.ObjectRef) string {
 	names := make([]string, 0, len(refs))
 	for _, ref := range refs {
@@ -94,7 +108,9 @@ func (d SourceDeparture) Text() string {
 		}
 		return fmt.Sprintf("%s was deleted at %s by %s (not sdo); accepted source declares it", name, hms(d.At), orQuestion(d.Manager))
 	case DepartureNotReloaded:
-		return fmt.Sprintf("%s changed at %s by %s (not sdo) and matches accepted source again, but %s still run Pods started with the changed content (read only at start: subPath, env or envFrom)", name, hms(d.At), orQuestion(d.Manager), refNames(d.Consumers))
+		readers := refNames(append(slices.Clone(d.Consumers), d.DataConsumers...))
+		text := fmt.Sprintf("%s changed at %s by %s (not sdo) and matches accepted source again, but %s still run Pods started with the changed content (read only at start: subPath, env or envFrom)", name, hms(d.At), orQuestion(d.Manager), readers)
+		return text + dataConsumersNote(d.DataConsumers)
 	}
 	what := "changed"
 	if len(d.Fields) > 0 {
@@ -221,8 +237,8 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 				departure.Fields = append(departure.Fields, redactDetectText(field.Path, 40))
 			}
 		}
-		if ref.Kind == "ConfigMap" && departure.Kind == DepartureChanged {
-			departure.Consumers = staleConsumers(in.View, ref, departure.At, time.Time{})
+		if ref.Kind == "ConfigMap" && departure.Kind == DepartureChanged && len(dataPaths(event)) > 0 {
+			departure.Consumers, departure.DataConsumers = splitDataStores(in.View, staleConsumers(in.View, ref, departure.At, time.Time{}))
 		}
 		result = append(result, departure)
 	}
@@ -238,8 +254,9 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 
 // notReloaded is the departure of a ConfigMap that matches accepted source
 // again while a workload that reads it only at start still runs a Pod started
-// after the foreign change and before the content was written back. Without a
-// readable object or a recorded write time it claims nothing.
+// after the foreign change and before its content was written back
+// (contentRestoredAt). Without a readable object or a recorded content write
+// it claims nothing.
 func notReloaded(in DepartureInput, ref sdk.ObjectRef, late func(time.Time) bool) (SourceDeparture, bool) {
 	if ref.Kind != "ConfigMap" {
 		return SourceDeparture{}, false
@@ -257,15 +274,16 @@ func notReloaded(in DepartureInput, ref sdk.ObjectRef, late func(time.Time) bool
 	if err != nil || object == nil {
 		return SourceDeparture{}, false
 	}
-	restored := lastWriteAt(object)
+	restored := contentRestoredAt(object, event)
 	if restored.IsZero() || !restored.After(at) {
 		return SourceDeparture{}, false
 	}
-	consumers := staleConsumers(in.View, ref, at, restored)
-	if len(consumers) == 0 {
+	stale := staleConsumers(in.View, ref, at, restored)
+	if len(stale) == 0 {
 		return SourceDeparture{}, false
 	}
-	return SourceDeparture{Ref: ref, Kind: DepartureNotReloaded, Manager: event.Manager, At: at, SeenHealthy: event.SeenHealthy, Consumers: consumers}, true
+	consumers, data := splitDataStores(in.View, stale)
+	return SourceDeparture{Ref: ref, Kind: DepartureNotReloaded, Manager: event.Manager, At: at, SeenHealthy: event.SeenHealthy, Consumers: consumers, DataConsumers: data}, true
 }
 
 // driftEventTime is when the manager wrote, else when the controller observed it.
