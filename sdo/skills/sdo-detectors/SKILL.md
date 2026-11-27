@@ -18,7 +18,7 @@ only if it has a scenario):
 
 | Kind | Workload | One scenario per | It checks |
 |---|---|---|---|
-| call | `probe-call` | read operation | status, latency and the exact content the healthy application returns |
+| call | `probe-call` | operation, writing ones too | status, latency and the exact content the healthy application returns |
 | write-read | `probe-write` | writing operation | a change the iteration just made, read back exactly |
 | read-later | `probe-read-later` | data-holding component on a write path | a fixture written once is still returned exactly |
 

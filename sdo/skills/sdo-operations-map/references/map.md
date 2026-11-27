@@ -47,6 +47,7 @@ operations:
     path: [web, orders, orders-cache, orders-db]
 probes:
   - {scenario: call-list-orders, kind: call, operations: [list-orders]}
+  - {scenario: call-place-order, kind: call, operations: [place-order]}
   - {scenario: write-place-order, kind: write-read, operations: [place-order, list-orders]}
   - {scenario: later-orders, kind: read-later, operations: [list-orders]}
 ```
@@ -76,7 +77,8 @@ Rules the memory check enforces:
 - Coverage: every component reachable from a user entry Service (exposed outside the cluster; else the entry
   Services of your operations) lies on the path of a probed operation that enters at a user entry Service, or the
   component carries `unprobed`, one line saying why no synthetic request can reach it (needing a login is not a
-  reason: a scenario signs in as a probe user); every operation is in a call or write-read probe; every writing operation is in a write-read probe;
+  reason: a scenario signs in as a probe user); every operation, writing ones too, is in a `call` probe (a
+  write-read probe does not count); every writing operation is also in a write-read probe;
   every data-holding component on a writing operation's path is on a read-later probe's path. An operation broken
   in the application as deployed is covered by a probe whose workload scenario is declared `knownBroken`
   (`knownBroken: {reason: <one line>, failsWith: ["404"]}`); at most half of the operations may be.

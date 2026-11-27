@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -178,5 +179,53 @@ func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Fatalf("missing skill files: %v", missing)
+	}
+}
+
+// map.uncovered-operation accepts only a call probe: a write-read probe that
+// also calls the operation does not cover it. Text that offers either kind
+// sends the designer into a refused commit.
+func TestCoverageTextRequiresACallProbeForEveryOperation(t *testing.T) {
+	either := regexp.MustCompile("(?i)\\bcall`? (or|and/or) `?write-read")
+	operationsMap := filepath.Join(skillsRoot, "sdo-operations-map", "references")
+	for _, file := range []string{
+		filepath.Join(operationsMap, "rules.md"),
+		filepath.Join(operationsMap, "map.md"),
+		filepath.Join(skillsRoot, "sdo-detectors", "SKILL.md"),
+		filepath.Join(skillsRoot, "..", "..", "docs", "design", "application-map.md"),
+	} {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := strings.Join(strings.Fields(string(data)), " ")
+		if found := either.FindString(text); found != "" {
+			t.Errorf("%s says %q covers an operation; only a call probe does", file, found)
+		}
+		if strings.Contains(text, "| read operation |") {
+			t.Errorf("%s limits call probes to read operations; every operation needs one", file)
+		}
+	}
+}
+
+// The example map a designer copies passes the operation coverage rules.
+func TestSkillExampleMapCoversItsOperations(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(skillsRoot, "sdo-operations-map", "references", "map.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, example, found := strings.Cut(string(data), "<!-- sdo:application-map:begin -->\n```yaml\n")
+	if !found {
+		t.Fatal("map.md has no example map")
+	}
+	example, _, _ = strings.Cut(example, "\n```")
+	parsed, err := appmap.Parse(example)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, finding := range parsed.Check(appmap.ParseInventory(""), nil) {
+		if finding.Rule == appmap.RuleUncoveredOp || finding.Rule == appmap.RuleUncoveredWrite {
+			t.Errorf("the example map is refused: %s", finding.Message)
+		}
 	}
 }
