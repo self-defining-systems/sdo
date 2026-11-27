@@ -11,6 +11,7 @@ import (
 // saves memory, the memory host activates it with no controller restart, and
 // the same fault repeated is cleared by the deterministic stage with no agent.
 func TestFirstIncidentLearnsThenRepeatIsDeterministic(t *testing.T) {
+	RequireTrustedScriptRunner(t)
 	w := NewWorld(t)
 	w.DeployToy()
 	w.InstallController()
