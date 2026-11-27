@@ -1037,11 +1037,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		trafficObserver.UseUserTests(controller.userTests)
 	}
 	// Promoted store baselines are controller state below the repository
-	// mount, bound to the accepted source inputs, so a restart keeps them.
-	podReadBaseline.Restore(&StoreBaselineState{
-		Path:         StoreBaselineStatePath(*repositoryMountPath),
-		SourceInputs: acceptedSourceInputs(ctx, resolvedRoot, controller.CurrentAcceptedCommit),
-	}, func(err error) { fmt.Fprintln(stderr, err) })
+	// mount, so a restart (an accepted upgrade among them) keeps them.
+	podReadBaseline.Restore(&StoreBaselineState{Path: StoreBaselineStatePath(*repositoryMountPath)}, func(err error) { fmt.Fprintln(stderr, err) })
 	controller.PodReadBaseline = podReadBaseline
 	controller.VantageBaseline = vantageBaseline
 	controller.AppState = appStateObserver.Store()

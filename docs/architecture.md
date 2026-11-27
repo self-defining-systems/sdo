@@ -334,12 +334,14 @@ matches the baseline. The promoted store-state baselines themselves (value-free 
 history, never other pod reads) survive a controller restart, upgrade or reschedule
 (`runtime/store_baseline_state.go`): each promotion writes them to per-cluster controller state at
 `<repository mount>/.sdo-runtime/store-baselines.json` (beside the reachability baseline, outside every
-memory tree and the evidence allowlist), bound to the accepted commit's source inputs
-(`memory.SourceInputs`: everything but operational memory, plus the effective deployment inputs). A
-restarted controller discards a record bound to other inputs and adopts each remaining store baseline on
-its first reading only when it reads the same query declaration over the same store Pods (names and UIDs),
-logging `store_baseline_promoted ... restored=true`; otherwise the store is baselined again by a settled
-healthy stretch. A
+memory tree and the evidence allowlist). A restarted controller keeps a record by the rule a running
+controller keeps its in-memory reference: it adopts each store baseline on its first reading of the same
+query declaration, whatever source was accepted or store Pods replaced since, logging
+`store_baseline_promoted ... restored=true`, and the next settled healthy stretch replaces it as usual, so a
+store detector is never blind right after an accepted change (what the change did to the store shows as
+clues against the earlier healthy reference meanwhile; restore text is captured from the Pods running now).
+A changed query declaration discards the record and the store is baselined again by a settled healthy
+stretch. A
 password is restored only from the store container's own environment. `CheckStoreCredential`
 (`runtime/store_credential_probe.go`) runs one short-lived Pod with the store's image on the store's node
 and the client container's env and envFrom references, authenticates once against the store Pod IP and
