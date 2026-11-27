@@ -1049,14 +1049,14 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseAcknowledged, RecordedAt: contractTimestamp(c.clock()), IncidentId: receipt.IncidentID, OutcomeCommit: receipt.OutcomeCommit})
 	if pending != nil {
 		states := c.tracker.Snapshot()
-		unverified := pending.HealthClearedAt == nil && len(pending.FinalDetectorStates) == 0
+		handedOver := handedOverClose(pending)
 		var acknowledged []string
 		for _, key := range findingKeys(pending.Request.Findings) {
 			state, ok := states[key]
 			// A new episode after this command's proof is residual work, even
-			// when its fingerprint is identical to the original finding. An
-			// unverified close left its active alerts for the next incident.
-			if ok && state.Active && (unverified || state.FirstSeenAt.After(pending.VerifiedAt)) {
+			// when its fingerprint is identical to the original finding. A
+			// handover left its active alerts for the next incident.
+			if ok && state.Active && (handedOver || state.FirstSeenAt.After(pending.VerifiedAt)) {
 				continue
 			}
 			acknowledged = append(acknowledged, key)
@@ -1064,6 +1064,16 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 		c.batcher.RemoveKeys(acknowledged)
 	}
 	c.mu.Unlock()
+}
+
+// handedOverClose reports a closure that handed its still-failing alerts to
+// the next incident: an alert-opened incident that escalated and closed
+// unverified because a new opener waited. Any other unverified close (a page,
+// an external incident) acknowledges its alerts, so the same symptoms never
+// re-prompt the agent at once.
+func handedOverClose(closure *IncidentClosure) bool {
+	return !closure.EscalatedAt.IsZero() && !pageOpened(&closure.Request) && closure.Request.ExternalMessage == "" &&
+		closure.HealthClearedAt == nil && len(closure.FinalDetectorStates) == 0
 }
 
 func (c *Controller) reportBrokerError(operation string, err error) {

@@ -379,7 +379,10 @@ not join: the incident closes on its own alert set (and learns when it succeeded
 and opens the next incident. An escalated incident with an opener waiting closes escalated, and every alert of it that
 still fails goes to the batcher with that opener, so the next incident opens on all of them. The next incident opens
 only after the previous closure and its queued reflection (closing and cleanup turns, source publication and deploy)
-finished (`priorIncidentWorkLocked`), so two incidents never write at once.
+finished (`priorIncidentWorkLocked`), so two incidents never write at once. A page or an external incident waits for
+the same work: it stays in the inbox and opens the next incident once that work finished. Only that handover keeps
+a closed incident's still-failing alerts in the batcher at acknowledgment; any other unverified close (a page, an
+external incident) acknowledges its alerts, so the same symptoms never re-prompt the agent at once.
 SDO dispatches the responder once and withholds learning credit on an escalated close. An applied learned
 playbook still receives a failure against its revision. Later episodes wait in the batcher for the next incident. A joined alert (or a clue) that a learned playbook can bind reopens the automatic stage for one more bounded pass
 (`maxMidIncidentPasses`; a symptom arriving while the first pipeline or a pass runs queues one more pass, and a pass diagnoses live detector findings, not the loop's last observation), so a playbook is judged against the fault's own symptom even when routine churn opened the incident. The verification grace
