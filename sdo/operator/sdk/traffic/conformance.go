@@ -81,7 +81,7 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
 	if err != nil {
 		return err
 	}
-	// A declared probe user gets a synthetic password: conformance judges the
+	// A declared probe user gets synthetic credentials: conformance judges the
 	// scenario's checks, never a provisioned identity.
 	engine.UsePasswords(syntheticPasswords{})
 	engine.UseExec(faultExecer{class: class})
@@ -123,4 +123,8 @@ func (syntheticPasswords) Password(context.Context, string) (string, error) {
 
 func (syntheticPasswords) SSHPublicKey(context.Context, string) (string, error) {
 	return "ssh-ed25519 AAAAconformance", nil
+}
+
+func (syntheticPasswords) Token(context.Context, string) (string, error) {
+	return "conformance-token", nil
 }

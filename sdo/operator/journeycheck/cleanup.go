@@ -51,7 +51,7 @@ func cleanupGaps(s traffic.Scenario) []string {
 			gaps = append(gaps, fmt.Sprintf("step %s accepts %s, so a %s the application refused counts as done", step.Name, strings.Join(refused, ", "), endpoint.Method))
 		}
 	}
-	return append(gaps, "no step reads the data back gone after the last cleanup write: an application that defers deletion keeps it, one more object every iteration")
+	return append(gaps, "no step reads the data back gone after the last cleanup write: end Cleanup with a GET or HEAD expecting 404/410, or a list assertion that checks the deleted data is absent")
 }
 
 func cleanupResult(s traffic.Scenario) (Result, bool) {

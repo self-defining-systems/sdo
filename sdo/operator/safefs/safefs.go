@@ -118,6 +118,15 @@ func WriteSyncedFile(root, rel string, data []byte, mode fs.FileMode) error {
 // CreateFile is WriteFile for write-once files: it syncs data and links it into
 // place, and an existing regular file keeps its content.
 func CreateFile(root, rel string, data []byte, mode fs.FileMode) error {
+	err := CreateNewFile(root, rel, data, mode)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	return err
+}
+
+// CreateNewFile publishes a new file atomically and reports an existing path.
+func CreateNewFile(root, rel string, data []byte, mode fs.FileMode) error {
 	return publish(root, rel, data, mode, true, true)
 }
 
@@ -181,10 +190,7 @@ func publish(root, rel string, data []byte, mode fs.FileMode, sync, once bool) e
 	}
 	if once {
 		// The deferred cleanup removes the temporary name.
-		if err := r.Link(tmp, rel); err != nil && !errors.Is(err, fs.ErrExist) {
-			return err
-		}
-		return nil
+		return r.Link(tmp, rel)
 	}
 	if err := r.Rename(tmp, rel); err != nil {
 		return err

@@ -1,12 +1,13 @@
 # Worked example
 
 A small order service: `web` (port 80, Deployment), `orders-db` (StatefulSet, postgres), `worker` (no Service). Users
-sign in with a password and place orders; a worker writes the receipt. Accounts are made by an admin CLI.
+use bearer tokens to place and read orders. A worker writes receipts and an admin CLI provisions ordinary users.
 
 ## Application map
 
 In the seeded map, keep the component and edge entries. Add the operation and its probe, using the goal's journey ID.
-This fragment maps the create operation; map the read operations the probe exercises too.
+This fragment maps the create, detail, private list and public list operations. Add the journey IDs from the goal.
+Evidence for edges read from source is `config`.
 
 ```yaml
 operations:
@@ -16,8 +17,25 @@ operations:
     writes: true
     entry: {service: web, port: 80, method: POST, path: /api/orders}
     path: [web, orders-db, worker]
+  - id: read-receipt
+    journey: place-and-track-order
+    correct: The receipt names the order.
+    entry: {service: web, port: 80, method: GET, path: '/api/orders/{id}'}
+    path: [web, orders-db]
+  - id: list-own-orders
+    journey: list-orders
+    correct: The user's own orders show their references and items.
+    entry: {service: web, port: 80, method: GET, path: /api/orders}
+    path: [web, orders-db]
+  - id: browse-orders
+    journey: list-orders
+    correct: The default page shows public orders with valid references.
+    entry: {service: web, port: 80, method: GET, path: /api/orders/public}
+    path: [web, orders-db]
 probes:
-  - {scenario: write-order, kind: write-read, operations: [place-order]}
+  - {scenario: write-order, kind: write-read, operations: [place-order, read-receipt, list-own-orders]}
+  - {scenario: call-orders, kind: call, operations: [list-own-orders, browse-orders]}
+  - {scenario: later-order, kind: read-later, operations: [list-own-orders]}
 procedures:
   - id: probe-user
     component: web
@@ -26,12 +44,14 @@ procedures:
     params: [{name: username, type: string, required: true}]
     effect: data
     probe_identity: true
+    returns_token: true
     source: docs/admin.md
 ```
 
-The procedure reads one password line from stdin and ensures an ordinary user without resetting a matching password.
-For an API token, set `returns_token: true` and return one token line on stdout. Return a valid token for the same user
-across restarts. Use `traffic.ProbeUser{Name: "sdoprobe-buyer", Token: "token"}` and omit the login step.
+The procedure reads one password line from stdin, ensures an ordinary account and prints one API token line on stdout.
+Return a valid token for the same account after restart. `Token: "token"` binds that credential to `{token}` before any
+request. For a password-only API, use `As: "pw"` and a login in Setup. Send the marked username and `{pw}` in its body,
+then use `SaveJSON("token", "token")` or `SaveCookie("session", "session")` to pass the credential to later steps.
 
 ## `.sdo/diagnostics/traffic/generators/generators.go`
 
@@ -51,25 +71,24 @@ var (
 	web  = traffic.Target{Service: "web", Port: 80}
 	path = []string{"web", "orders-db"} // Services of exactly the components on the operations' map paths
 
-	buyer  = traffic.ProbeUser{Name: "sdoprobe-buyer", As: "pw"}   // writes
-	reader = traffic.ProbeUser{Name: "sdoprobe-reader", As: "pw"}  // owns the fixtures reads check
-	keeper = traffic.ProbeUser{Name: "sdoprobe-keeper", As: "pw"}  // owns the read-later fixture
+	buyer  = traffic.ProbeUser{Name: "sdoprobe-buyer", Token: "token"}   // writes
+	reader = traffic.ProbeUser{Name: "sdoprobe-reader", Token: "token"}  // owns the fixtures reads check
+	keeper = traffic.ProbeUser{Name: "sdoprobe-keeper", Token: "token"}  // owns the read-later fixture
 )
 
 func step(name string, e traffic.Endpoint) traffic.Step { return traffic.Step{Name: name, Endpoint: e} }
 
-// auth sends the session that login saved.
-func auth(e *traffic.HTTPEndpoint) *traffic.HTTPEndpoint { return e.WithHeader("Authorization", "Bearer {token}") }
-
-func login(u traffic.ProbeUser) traffic.Step {
-	return step("login", traffic.POST("/api/login", nil).
-		WithJSON(`{"user":"`+u.Name+`","password":"{pw}"}`, nil).SaveJSON("token", "token"))
+// auth expands the provisioned token from State.
+func auth(e *traffic.HTTPEndpoint) *traffic.HTTPEndpoint {
+	return e.WithHeader("Authorization", "Bearer {token}")
 }
 
-func fixture(u traffic.ProbeUser) []traffic.Step { // Setup: ensure steps, safe to run again and from two probers
-	return []traffic.Step{login(u),
+// Setup seeds a fixed reference. Restarting the prober may find it already there.
+func fixture(u traffic.ProbeUser) []traffic.Step {
+	return []traffic.Step{
 		step("ensure-fixture", auth(traffic.POST("/api/orders", nil).
-			WithJSON(`{"ref":"sdoprobe-fixture-`+u.Name+`","item":"pen"}`, nil)).OrExisting(409, "exists"))}
+			WithJSON(`{"ref":"sdoprobe-fixture-`+u.Name+`","item":"pen"}`, nil)).OrExisting(409, "exists")),
+	}
 }
 
 // receipt waits for background work: a pending answer is sent again until the iteration times out.
@@ -95,7 +114,7 @@ func Scenarios() traffic.Catalog {
 		{
 			ID: "write-order", Description: "place an order, read it back, its receipt appears", Target: web,
 			DependsOn: path, SideEffect: traffic.SideEffectWriteWithCleanup, Marker: marker,
-			Users: []traffic.ProbeUser{buyer}, Setup: []traffic.Step{login(buyer)},
+			Users: []traffic.ProbeUser{buyer},
 			Steps: []traffic.Step{
 				step("create", auth(traffic.POST("/api/orders", nil).WithJSON(`{"ref":"{ref}","item":"pen"}`,
 					traffic.Params{"ref": traffic.Unique("sdoprobe-")})).Status(201).SaveJSON("id", "id").SaveJSON("ref", "ref")),
@@ -127,16 +146,19 @@ func Scenarios() traffic.Catalog {
 			DependsOn: path, SideEffect: traffic.SideEffectRead, Marker: marker,
 			Users: []traffic.ProbeUser{keeper}, Setup: fixture(keeper),
 			Steps: []traffic.Step{step("read", auth(traffic.GET("/api/orders", traffic.Params{"ref": traffic.Const("sdoprobe-fixture-" + keeper.Name)})).
-				ExactSet("items", "ref", "sdoprobe-fixture-"+keeper.Name))},
+				ExactSet("items", "ref", "sdoprobe-fixture-"+keeper.Name).JSONEquals("items.0.item", "pen"))},
 			Detects: []traffic.FaultClass{traffic.FaultWrongBody, traffic.FaultSlow},
 		},
 	}
 }
 ```
 
-An endpoint of your own implements `Build(ctx, *rand.Rand, State) (traffic.Request, error)` and
-`Check(Response, State) Verdict`; anything pure in the standard library's encoders and hashes may be imported. A step may
-set its own `Target`. `{key}` in paths, headers, JSON and wanted values is filled from State.
+`SaveJSON(path, key)` can save a string or numeric ID. Use `{key}` in a path, header, JSON body or expected value.
+In a query or form, use `traffic.FromPrevious("key")` as the `Param`. To choose among several seeded fixtures,
+use `FromSeed` to select an index, or `FromSeedPair` to keep two fields paired. The engine supplies the random
+source (`math/rand/v2`) and an RFC3339 iteration time in `state[traffic.StateNow]`.
+A plain read without Setup or Users leaves Marker empty. Cleanup reads carry the marker too. In this example
+the final GET checks that the order is absent. A 2xx delete response alone can mean deletion is still pending.
 
 ## `.sdo/diagnostics/traffic/workloads/`
 
@@ -166,8 +188,8 @@ scenarios:
     slo: {maxLatency: 2s}
 ```
 
-One file per workload. The map then has `probes: [{scenario: write-order, kind: write-read, operations: [place-order]}, ...]`
-with one entry per scenario, whatever workloads run it.
+Put each workload in its own file. Schedule `call-orders` in `probe-call.yaml` and `later-order` in
+`probe-read-later.yaml` using the home workload shape. Each scenario has one map entry even when several workloads run it.
 
 ## `.sdo/playbooks/health-objective/README.md`
 

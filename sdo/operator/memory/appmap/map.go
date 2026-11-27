@@ -102,7 +102,7 @@ const (
 
 var knownEvidence = map[string]bool{EvidenceConfig: true, EvidenceManifest: true, EvidenceObserved: true}
 
-const evidenceHint = "evidence is a non-empty subset of [config, manifest, observed]"
+const evidenceHint = "use config for application source or config files, manifest for rendered manifests, and observed for live evidence"
 
 // Engines a component's data role may name. Other is a store SDO has no
 // engine-specific reader for.
