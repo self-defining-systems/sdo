@@ -31,12 +31,13 @@ const (
     can neither load the application nor stall the controller's evaluation loop.
     MaxQueries is a load budget: the declared queries may make at most that
     many query runs per MinInterval on average (see Load), and the controller
-    starts at most that many queries in one cycle, lookups (Keys) included.
-    A due query beyond it keeps its last answer and runs in a later cycle,
-    least recently read first, so many queries on longer intervals rotate under
-    the same per-cycle load as MaxQueries at MinInterval. MaxDeclaredQueries
-    bounds the declarations themselves. MaxConcurrent and CollectionBudget apply
-    across every query of a cycle.
+    starts at most that many queries in one cycle, lookups (Keys) included,
+    so one query and its lookups may not number more. A due query beyond it
+    keeps its last answer and runs in a later cycle, least recently read first,
+    so many queries on longer intervals rotate under the same per-cycle load
+    as MaxQueries at MinInterval. MaxDeclaredQueries bounds the declarations
+    themselves. MaxConcurrent and CollectionBudget apply across every query of a
+    cycle.
 
 const HistoryPerPod = 8
     HistoryPerPod bounds the healthy readings Result.History keeps per Pod.

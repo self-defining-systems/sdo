@@ -45,7 +45,7 @@ Logs cap at 64 KiB/5 s, probes at 5 s. Read failures are errors/Unknown, never c
 a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.
 To judge state only a running process knows (a store's config, role or access list), even before users are affected,
 declare [pod reads](pod-reads.md). Go already dials every mapped edge from its client Pods (`client-links`, within
-half the vantage load, edges between components a probed operation depends on most often); for another edge use
+half the vantage load, edges between components a probed operation depends on most often, the others at most four times less often); for another edge use
 `vantage.NewClientLinkDetector` ([reference](sdk/vantage-01.md)), which shares the `vantage.MaxProbes` load budget
 (16 dials per 30 s; a longer interval costs less). `ctx.PodAdmission()` records `Latency`, the `Mutations` admission made to a template-built Pod and the
 `Webhooks` that select it.

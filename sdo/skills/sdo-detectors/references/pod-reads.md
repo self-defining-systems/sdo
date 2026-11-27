@@ -38,7 +38,8 @@ Go installs a `store-state-<component>` health detector for every map component 
 `storestate.AdapterFor` reads (redis, mongodb, postgres, mysql, memcached and consul), every one of them; it diffs
 against the promoted healthy readings. Together they use half of the pod-read load: stores a probed user operation
 depends on (on its path, a knownBroken one included, or a registry or config service such a path's components are
-mapped to use) read every 30 s while the budget allows, the others less often. A store it has never read healthy (no CLI
+mapped to use) read every 30 s while the budget allows, the others less often, but never more than four times less
+often (the first group slows down instead). A store it has never read healthy (no CLI
 in the image, credentials the container does not expose, a refused read) is a coverage note on the clear verdict, not
 a finding. Do not author a second reader for those stores. For another store, use `storestate.NewDetector` instead of
 writing the command: it reads write blocks, role, caps, principals and inventory counts in one bounded read, diffs them
@@ -46,6 +47,7 @@ against the controller's promoted healthy readings, and names the changed item i
 
 `podread.MaxQueries` (16) is a load budget, not a count: a query counts 30 s / its interval, so 32 queries every
 60 s fit, and the controller starts at most 16 queries a cycle, rotating the rest (each keeps its last answer until
-its turn). At most `podread.MaxDeclaredQueries` are declared.
+its turn). At most `podread.MaxDeclaredQueries` are declared. A read starts together with its lookups, so it can have at
+most 15.
 
 Test with `sdktest.Snapshot.PodReads`; a capture records the readings, so replay sees the same values.

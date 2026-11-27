@@ -73,6 +73,35 @@ func TestReadMultiplesFitTheBudgetProbedFirst(t *testing.T) {
 	}
 }
 
+// The reads off probed paths are never read more than four times less often
+// than the probed ones, which bounds how old their answers get. While the
+// others fit within that, the probed reads keep the shortest interval; once
+// they do not, the probed reads are read less often until they do.
+func TestReadMultiplesBoundTheUnprobedInterval(t *testing.T) {
+	const budget = 8
+	for _, c := range []struct{ p, u, kp, ku int }{
+		{p: 2, u: 8, kp: 1, ku: 2},  // within the bound: probed every base interval
+		{p: 7, u: 4, kp: 1, ku: 4},  // exactly at the bound
+		{p: 7, u: 25, kp: 2, ku: 6}, // 1,25 would fit the load but not the bound
+	} {
+		if kp, ku := readMultiples(c.p, c.u, budget); kp != c.kp || ku != c.ku {
+			t.Errorf("p=%d u=%d: multiples %d,%d, want %d,%d", c.p, c.u, kp, ku, c.kp, c.ku)
+		}
+	}
+	for p := 1; p <= 32; p++ {
+		for u := 1; u <= 32; u++ {
+			kp, ku := readMultiples(p, u, budget)
+			if ku > 4*kp {
+				t.Fatalf("p=%d u=%d: unprobed multiple %d is over four times the probed %d", p, u, ku, kp)
+			}
+			// No shorter probed interval fits both the load and the bound.
+			if shorter := kp - 1; shorter > 0 && float64(p)/float64(shorter)+float64(u)/float64(4*shorter) <= budget {
+				t.Fatalf("p=%d u=%d: probed multiple %d, but %d fits", p, u, kp, shorter)
+			}
+		}
+	}
+}
+
 // A store no user operation reaches cannot explain a failing user request, so
 // stores on a probed operation's path are read more often: a cache on that
 // path before an authoritative store off it. Every store still gets a reader,

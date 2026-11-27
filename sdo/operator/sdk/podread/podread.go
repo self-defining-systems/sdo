@@ -21,8 +21,8 @@ import (
 // neither load the application nor stall the controller's evaluation loop.
 // MaxQueries is a load budget: the declared queries may make at most that many
 // query runs per MinInterval on average (see Load), and the controller starts
-// at most that many queries in one cycle, lookups (Keys) included. A due query
-// beyond it keeps its last answer and runs in a later cycle, least recently
+// at most that many queries in one cycle, lookups (Keys) included, so one query
+// and its lookups may not number more. A due query beyond it keeps its last answer and runs in a later cycle, least recently
 // read first, so many queries on longer intervals rotate under the same
 // per-cycle load as MaxQueries at MinInterval. MaxDeclaredQueries bounds the
 // declarations themselves. MaxConcurrent and CollectionBudget apply across
@@ -277,6 +277,17 @@ func ValidateQueries(qs []Query) error {
 			return fmt.Errorf("pod read %q takes keys from %q, itself a lookup", q.ID, q.Keys.From)
 		case source.Interval != q.Interval:
 			return fmt.Errorf("pod read %q runs with its source %q, so its interval must be %s", q.ID, q.Keys.From, source.Interval)
+		}
+	}
+	lookups := map[string]int{}
+	for _, q := range qs {
+		if q.Keys != nil {
+			lookups[q.Keys.From]++
+		}
+	}
+	for _, q := range qs {
+		if n := lookups[q.ID]; 1+n > MaxQueries {
+			return fmt.Errorf("pod read %q and its %d lookups start in one cycle, over the limit of %d reads; give it at most %d lookups", q.ID, n, MaxQueries, MaxQueries-1)
 		}
 	}
 	return nil
