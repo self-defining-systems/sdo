@@ -19,6 +19,7 @@ from sdo.agents.responder import page_only
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.incident_opening import (
     earlier_attempts_block,
+    learned_playbooks_block,
     page_opened,
     symptom,
     unmatched_playbooks_block,
@@ -220,7 +221,10 @@ def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
         part="responder.instructions",
         incident_id=request.incident_id,
         namespace=request.namespace,
-        symptom=symptom(request) + earlier_attempts_block(request) + unmatched_playbooks_block(request),
+        symptom=symptom(request)
+        + earlier_attempts_block(request)
+        + learned_playbooks_block(request)
+        + unmatched_playbooks_block(request),
         recent_changes=recent_changes_block(request),
         skills_root=selected_skills_root(SKILLS_ROOT),
         branch_instruction=branch_instruction("incident_result"),

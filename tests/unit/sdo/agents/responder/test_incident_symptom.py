@@ -215,3 +215,13 @@ def test_earlier_attempts_render_labeled_with_outcome_and_how_each_conclusion_wa
     assert "incident inc-0, 3 h ago; outcome: escalated; changes: restart web" in block
     assert "- branch list differs (rails console)" in block
     assert "- cache down: refuted; not checked: keys; redis-cli ping" in block
+
+
+def test_an_earlier_attempt_without_repair_records_says_none_was_recorded_not_that_none_was_made() -> None:
+    from sdo.agents.responder.incident_opening import earlier_attempts_block
+    from sdo.contracts import EarlierAttempt
+
+    request = _request(_test_finding("a"))
+    request.memory_snapshot.earlier_attempts.append(EarlierAttempt(incident_id="inc-0", outcome="success"))
+
+    assert "outcome: success; changes: none recorded" in earlier_attempts_block(request)

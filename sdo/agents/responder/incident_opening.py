@@ -159,6 +159,7 @@ def earlier_attempts_block(request: IncidentRequest) -> str:
     if not attempts:
         return ""
     now = request.detected_at.ToDatetime(tzinfo=UTC) if request.HasField("detected_at") else None
+    produced = _produced_playbooks(request)
     lines = [
         "",
         "Earlier attempts on the same opening operation (an earlier attempt's own notes: not verified, not "
@@ -167,9 +168,11 @@ def earlier_attempts_block(request: IncidentRequest) -> str:
     for number, attempt in enumerate(attempts, 1):
         done = attempt.completed_at.ToDatetime(tzinfo=UTC)
         age = f", {_age(now - done)} ago" if now is not None and now >= done else ""
-        changes = "; ".join(attempt.changes) or "none"
+        changes = "; ".join(attempt.changes) or "none recorded"
+        learned = "".join(f"; learned playbook: {playbook_id}" for playbook_id in produced.get(attempt.incident_id, []))
         lines.append(
             f"Attempt {number}: incident {attempt.incident_id}{age}; outcome: {attempt.outcome}; changes: {changes}"
+            + learned
         )
         seen = [f for f in attempt.findings if f.kind == "observation"]
         ruled_out = [f for f in attempt.findings if f.kind == "ruled_out"]
@@ -180,6 +183,61 @@ def earlier_attempts_block(request: IncidentRequest) -> str:
             lines.append("  Explanations ruled out (verdict; why; how checked):")
             lines.extend(f"  - {f.statement}: {f.verdict}; {f.reasoning}; {f.seen_in}" for f in ruled_out)
     return "\n".join(lines)
+
+
+def _produced_playbooks(request: IncidentRequest) -> dict[str, list[str]]:
+    """The learned playbooks each incident produced, by the README's ``originating_incident``."""
+    produced: dict[str, list[str]] = {}
+    for playbook in request.memory_snapshot.playbooks:
+        incident = _front_matter(playbook.markdown, "originating_incident")
+        if incident:
+            produced.setdefault(incident, []).append(playbook.id)
+    return produced
+
+
+#: The generic playbook every user test names; it is the health objective, not a learned fix.
+_GENERIC_PLAYBOOKS = {"health-objective"}
+_MAX_LEARNED = 3
+_MAX_LEARNED_LINE = 220
+_MAX_LEARNED_CHARS = 800
+
+
+def learned_playbooks_block(request: IncidentRequest) -> str:
+    """Learned playbooks that fit this incident: those a firing detector names, then those an earlier attempt on
+    the same opening produced, each with its README and script paths. A playbook with no program (a README with
+    scripts) is never applied by SDO, so this is where the responder finds it. Empty when there is none."""
+    reasons: dict[str, list[str]] = {}
+    for finding in request.findings:
+        if finding.status != "active":
+            continue
+        for playbook_id in finding.playbook_ids:
+            if playbook_id not in _GENERIC_PLAYBOOKS and "its detector is firing" not in reasons.get(playbook_id, []):
+                reasons.setdefault(playbook_id, []).append("its detector is firing")
+    produced = _produced_playbooks(request)
+    for number, attempt in enumerate(request.memory_snapshot.earlier_attempts, 1):
+        for playbook_id in produced.get(attempt.incident_id, []):
+            reasons.setdefault(playbook_id, []).append(f"learned from attempt {number}")
+    playbooks = {playbook.id: playbook for playbook in request.memory_snapshot.playbooks}
+    listed = [playbook_id for playbook_id in reasons if playbook_id in playbooks]
+    if not listed:
+        return ""
+    lines = ["", "Learned playbooks for this incident (read the README; reuse its scripts where they fit):"]
+    for playbook_id in listed[:_MAX_LEARNED]:
+        root = f".sdo/playbooks/{playbook_id}/"
+        head = f"- {playbook_id}: {'; '.join(reasons[playbook_id])}; {root}README.md"
+        scripts = sorted(script.name for script in playbooks[playbook_id].scripts)
+        shown: list[str] = []
+        for name in scripts:
+            if len(head) + sum(len(n) + 2 for n in [*shown, name]) + 12 > _MAX_LEARNED_LINE:
+                break
+            shown.append(name)
+        line = head + "".join(f", {name}" for name in shown)
+        if len(shown) < len(scripts):
+            line += f" (+{len(scripts) - len(shown)} more)"
+        lines.append(line)
+    if len(listed) > _MAX_LEARNED:
+        lines.append(f"(+{len(listed) - _MAX_LEARNED} more under .sdo/playbooks/)")
+    return "\n".join(lines)[:_MAX_LEARNED_CHARS]
 
 
 def _age(delta: Any) -> str:
