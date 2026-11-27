@@ -26,7 +26,10 @@ const closingChangesBudget = 1536
 type ClosingChange struct {
 	Line    string
 	Restore bool
-	rank    int
+	// Reported marks a change the agent reported in its result rather than one SDO knows of. It counts toward the
+	// learning gate only with the recording off: on, the recording already holds the agent's writes.
+	Reported bool
+	rank     int
 }
 
 // ClosingChanges renders the incident's recorded changes, one line per change: what reached the cluster (the
@@ -61,7 +64,9 @@ func ClosingChanges(actions []RepairActionReceipt, mitigated []string) []Closing
 	return changes
 }
 
-// closingChangesOf is the change list of a closure: the recording's writes and the playbooks the agent applied.
+// closingChangesOf is the change list of a closure: the recording's writes, the playbooks applied (by the stage or
+// the agent) and the changes the agent reported. A reported change is a plain restore only when it names the built-in
+// source restore.
 func closingChangesOf(closure IncidentClosure) []ClosingChange {
 	if closure.Result == nil {
 		return nil
@@ -70,7 +75,22 @@ func closingChangesOf(closure IncidentClosure) []ClosingChange {
 	for _, playbook := range closure.Result.AppliedPlaybooks {
 		applied = append(applied, playbook.PlaybookID)
 	}
-	return ClosingChanges(closure.Result.RepairActions, applied)
+	changes := ClosingChanges(closure.Result.RepairActions, applied)
+	for _, change := range closure.Result.AgentChanges {
+		summary := change.GetSummary()
+		changes = append(changes, ClosingChange{
+			Line:     "reported: " + change.GetTarget() + ": " + summary,
+			Restore:  strings.Contains(summary, SourceRestoreID) || strings.Contains(summary, "ReconcileFromSource"),
+			Reported: true,
+		})
+	}
+	return changes
+}
+
+// closingLearnsFor is the learning gate of a closed incident as the broker applies it: ClosingLearns over the
+// closure's changes, with the outcome's recorded repair actions standing in when the worker's result carries none.
+func closingLearnsFor(classification string, closure IncidentClosure, derived *contracts.OutcomeRecord, recorded bool) bool {
+	return ClosingLearns(classification, closingChangesOf(closureWithRecordedActions(closure, derived)), recorded)
 }
 
 // closureWithRecordedActions is closure with the outcome's repair actions as the result's when the worker's own
@@ -184,21 +204,25 @@ func (n *NativeIncidentBroker) closingChangeLines(closure IncidentClosure) []str
 // ClosingLearns reports whether the closing turn may turn the fix into a playbook: the closure is a success, with a
 // responder session to ask and at least one change that is not a plain restore from accepted source. An escalated,
 // failed, unconfirmed or reset closure teaches nothing; its closing turn only cleans up. With the recording off
-// (agent.recording) the agent's own cluster changes are unknown, so a success closure learns unless every change
-// SDO does know of is a plain restore; the session is asked and may answer that nothing is worth a playbook.
+// (agent.recording) the agent's own cluster changes are known only from what it reported, so those reports count as
+// changes and a success closure learns unless every change SDO knows of or the agent reported is a plain restore;
+// the session is asked and may answer that nothing is worth a playbook. With the recording on, reports are ignored:
+// the recording holds the agent's writes.
 func ClosingLearns(classification string, changes []ClosingChange, recorded bool) bool {
 	if classification != outcome.Success {
 		return false
 	}
-	if !recorded && len(changes) == 0 {
-		return true
-	}
+	counted := 0
 	for _, change := range changes {
+		if change.Reported && recorded {
+			continue
+		}
+		counted++
 		if !change.Restore {
 			return true
 		}
 	}
-	return false
+	return !recorded && counted == 0
 }
 
 // ResolveLeftovers asks the agent, up to limit times, to keep or remove the app edits it left uncaptured. After each
