@@ -134,3 +134,33 @@ func TestCheckProbeLoadIgnoresTheDefaultRate(t *testing.T) {
 		t.Fatalf("three single-scenario probes at the default rate were rejected: %v", err)
 	}
 }
+
+func TestDetectionTargetDefaultsOnlyUnsetHealthProbeCadence(t *testing.T) {
+	workload := []byte(`{"apiVersion":"sdo.dev/v1alpha1","kind":"TrafficWorkload","name":"probe","purpose":"health-probe","scenarios":[{"id":"read"},{"id":"write"}]}`)
+	target := 45 * time.Second
+	w, err := ParseWorkloadJSONWithDetectionTarget(workload, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worst := w.ExpectedDetection("read", 0).Worst
+	if worst > target || target-worst > time.Second || w.RatePerSecond != 2/w.EffectiveSampleInterval().Seconds() {
+		t.Fatalf("target %s, worst %s, interval %s, rate %g", target, worst, w.EffectiveSampleInterval(), w.RatePerSecond)
+	}
+	explicit := []byte(`{"apiVersion":"sdo.dev/v1alpha1","kind":"TrafficWorkload","name":"probe","purpose":"health-probe","sampleInterval":"15s","ratePerSecond":1,"scenarios":[{"id":"read"}]}`)
+	w, err = ParseWorkloadJSONWithDetectionTarget(explicit, target)
+	if err != nil || w.EffectiveSampleInterval() != 15*time.Second || w.RatePerSecond != 1 {
+		t.Fatalf("explicit cadence changed: %+v %v", w, err)
+	}
+	w, err = ParseWorkloadJSONWithDetectionTarget(workload, time.Second)
+	if err != nil || w.EffectiveSampleInterval() != MinSampleInterval {
+		t.Fatalf("floor not preserved: %+v %v", w, err)
+	}
+	w, err = ParseWorkloadJSONWithDetectionTarget(workload, time.Hour)
+	if err != nil || w.EffectiveSampleInterval() != MaxSampleInterval {
+		t.Fatalf("ceiling not preserved: %+v %v", w, err)
+	}
+	w, err = ParseWorkloadJSON(workload)
+	if err != nil || w.EffectiveSampleInterval() != MinSampleInterval || w.RatePerSecond != DefaultRatePerSecond {
+		t.Fatalf("goal without a numeric target changed cadence: %+v %v", w, err)
+	}
+}

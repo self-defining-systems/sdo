@@ -54,3 +54,51 @@ func acceptedGit(t *testing.T, root string, args ...string) {
 		t.Fatalf("git %v: %v: %s", args, err, output)
 	}
 }
+
+func TestAcceptedDiagnosticsBindsTheGoalUsedByProbeDefaults(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	acceptedGit(t, root, "init", "-q")
+	commitGoal := func() {
+		acceptedGit(t, root, "add", "--", layout.GoalFile)
+		acceptedGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "synthetic goal")
+	}
+	if err := WriteGoal(root, "example", "Detection target: 30s", nil); err != nil {
+		t.Fatal(err)
+	}
+	commitGoal()
+	before, err := AcceptedDiagnostics(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteGoal(root, "example", "Detection target: 45s", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AcceptedDiagnostics(ctx, root); err == nil {
+		t.Error("an uncommitted goal must not change the accepted host's probe cadence")
+	}
+	commitGoal()
+	after, err := AcceptedDiagnostics(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Fingerprint == before.Fingerprint {
+		t.Error("a goal-only change must invalidate the accepted probe build")
+	}
+}
+
+func TestHumanGoalDoesNotEndAdoptedCodeBuildPolicy(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	acceptedGit(t, root, "init", "-q")
+	acceptedGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm",
+		"adopt supplied memory\n\nSDO-Origin: adopted-existing\nSDO-Validation: skipped\nSDO-Actor: human")
+	if err := WriteGoal(root, "example", "Detection target: 30s", nil); err != nil {
+		t.Fatal(err)
+	}
+	acceptedGit(t, root, "add", "--", layout.GoalFile)
+	acceptedGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "supply goal")
+	if adopted, err := AdoptedBuild(ctx, root, "HEAD"); !adopted || err != nil {
+		t.Fatalf("adopted code with a new human goal: %v, %v", adopted, err)
+	}
+}

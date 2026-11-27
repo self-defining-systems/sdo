@@ -14,7 +14,8 @@ health-objective playbook. Go owns the inventory, generic detectors, outcomes an
    fixture Setup, token identity and cleanup. Open the [map reference](../sdo-operations-map/references/map.md)
    for fields you need.
 3. Schedule one scenario and check it with `onboarding journeys --only ID`, then work in batches.
-   Follow the [probe design and cadence](references/probe-design.md) for coverage and request budget.
+   Once memory validates, add `--quick` for the edit loop. Follow the
+   [probe design and cadence](references/probe-design.md) for coverage and request budget.
 4. If the app already has request counters by route, method and status, map them and confirm with
    `onboarding check --metrics` (it supplies Prometheus by default). Record why unavailable metrics are absent.
 

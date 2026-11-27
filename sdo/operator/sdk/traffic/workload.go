@@ -175,11 +175,21 @@ type Workload struct {
 // ParseWorkloadJSON strictly decodes a workload, applies defaults, and
 // validates it on its own; ValidateAgainst checks it against a catalog.
 func ParseWorkloadJSON(data []byte) (Workload, error) {
+	return ParseWorkloadJSONWithDetectionTarget(data, 0)
+}
+
+// ParseWorkloadJSONWithDetectionTarget applies an optional human detection
+// target to health probes with no explicit sample interval. An unset rate
+// then follows the ordinary interval-based default.
+func ParseWorkloadJSONWithDetectionTarget(data []byte, target time.Duration) (Workload, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var workload Workload
 	if err := decoder.Decode(&workload); err != nil {
 		return Workload{}, fmt.Errorf("decode traffic workload: %w", err)
+	}
+	if target > 0 && workload.Purpose == PurposeHealthProbe && workload.SampleInterval == 0 {
+		workload.SampleInterval = Duration(workload.intervalForDetection(target))
 	}
 	workload = workload.WithDefaults()
 	if err := workload.Validate(); err != nil {

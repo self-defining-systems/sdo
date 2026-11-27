@@ -358,7 +358,11 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := os.WriteFile(filepath.Join(directory, "cmd", "controller", "main.go"), []byte(main), 0o644); err != nil {
 		return nil, err
 	}
-	_, err = generateTraffic(directory, module)
+	target, err := layout.ReadGoalDetectionTarget(config.ApplicationRoot)
+	if err != nil {
+		return nil, err
+	}
+	_, err = generateTraffic(directory, module, target)
 	if err != nil {
 		return nil, err
 	}

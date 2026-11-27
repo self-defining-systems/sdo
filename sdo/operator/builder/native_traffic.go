@@ -14,8 +14,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 var allowedGeneratorImports = map[string]bool{
@@ -35,13 +37,13 @@ var forbiddenTimeCalls = map[string]bool{
 
 var serviceNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
-func generateTraffic(root, module string) (bool, error) {
+func generateTraffic(root, module string, target time.Duration) (bool, error) {
 	base := filepath.Join(root, "traffic")
 	files, err := goSourceFiles(filepath.Join(base, "generators"))
 	if err != nil {
 		return false, err
 	}
-	workloads, err := loadTrafficWorkloads(filepath.Join(base, "workloads"))
+	workloads, err := loadTrafficWorkloads(filepath.Join(base, "workloads"), target)
 	if err != nil {
 		return false, err
 	}
@@ -109,7 +111,7 @@ func goSourceFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
-func loadTrafficWorkloads(dir string) (map[string]json.RawMessage, error) {
+func loadTrafficWorkloads(dir string, target time.Duration) (map[string]json.RawMessage, error) {
 	workloads := map[string]json.RawMessage{}
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -142,6 +144,16 @@ func loadTrafficWorkloads(dir string) (map[string]json.RawMessage, error) {
 		encoded, err := json.Marshal(value)
 		if err != nil {
 			return nil, fmt.Errorf("traffic workload %s: %w", name, err)
+		}
+		if target > 0 && value["purpose"] == string(traffic.PurposeHealthProbe) {
+			workload, err := traffic.ParseWorkloadJSONWithDetectionTarget(encoded, target)
+			if err != nil {
+				return nil, fmt.Errorf("traffic workload %s: %w", name, err)
+			}
+			encoded, err = json.Marshal(workload)
+			if err != nil {
+				return nil, fmt.Errorf("traffic workload %s: %w", name, err)
+			}
 		}
 		workloads[stem] = encoded
 	}
