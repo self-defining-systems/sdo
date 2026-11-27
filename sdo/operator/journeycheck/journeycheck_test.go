@@ -278,3 +278,12 @@ func TestJourneyTextShowsOneSummaryPerScenarioAndDetailsForRed(t *testing.T) {
 	}
 	t.Logf("terse %d bytes, verbose %d bytes", len(brief), len(verbose))
 }
+
+func TestCadenceThatMeetsTheHumanTargetDoesNotRequireSpendingTheWholeBudget(t *testing.T) {
+	c := config(&store{items: map[string]string{}}, scenario(true))
+	c.Plan, c.DetectionTarget = true, 70*time.Second
+	c.Workloads[0].SampleInterval, c.Workloads[0].RatePerSecond = traffic.Duration(time.Minute), 1.0/60
+	if r := Run(context.Background(), c); r.Red() {
+		t.Fatalf("a low-load plan that meets the target should pass: %+v", r.Results)
+	}
+}

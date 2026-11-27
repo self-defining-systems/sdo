@@ -266,7 +266,7 @@ func budget(c Config, report *Report) float64 {
 	status, detail := Green, fmt.Sprintf("%.2f of %.1f requests/s planned, %.2f left: %s", total, traffic.ProbeRateCap, traffic.ProbeRateCap-total, strings.Join(parts, ", "))
 	if total > traffic.ProbeRateCap {
 		status = Red
-		detail += "; merge steps or scenarios, lower ratePerSecond (unset is 4 iterations/s), or lengthen sampleInterval of the journeys that matter least"
+		detail += "; merge steps or scenarios, lower ratePerSecond if it exceeds the sampling floor, or lengthen sampleInterval for less used journeys"
 	}
 	// Unspent budget is slower notice: the slowest workload can take it. One
 	// tenth stays free for confirming samples and cleanup.
