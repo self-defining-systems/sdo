@@ -505,38 +505,6 @@ func (i Installer) waitSync(ctx context.Context, namespace string) error {
 	return i.waitPodReady(ctx, namespace, RepositorySyncPodName)
 }
 
-func (i Installer) waitPodReady(ctx context.Context, namespace, name string) error {
-	timeout := i.SyncTimeout
-	if timeout <= 0 {
-		timeout = 180 * time.Second
-	}
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	var last *corev1.Pod
-	for {
-		pod, err := i.Client.CoreV1().Pods(namespace).Get(waitCtx, name, metav1.GetOptions{})
-		if err == nil {
-			last = pod
-			for _, condition := range pod.Status.Conditions {
-				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-					return nil
-				}
-			}
-			if pod.Status.Phase == corev1.PodFailed {
-				return fmt.Errorf("%s Pod failed", name)
-			}
-			if refused := i.resourceRefusal(pod); refused != nil {
-				return refused
-			}
-		} else if !apierrors.IsNotFound(err) {
-			return err
-		}
-		if err := i.pause(waitCtx); err != nil {
-			return fmt.Errorf("%s Pod did not become ready: %w%s", name, err, i.podEvidence(ctx, namespace, name, last))
-		}
-	}
-}
-
 // podEvidence is what the cluster says about a pod that did not become ready: its phase, the conditions that are
 // not true (an unschedulable pod's reason names the node, memory or volume that refused it) and the latest warning
 // events. Empty when nothing was observed; it reads with a fresh short context, the wait's own having expired.
