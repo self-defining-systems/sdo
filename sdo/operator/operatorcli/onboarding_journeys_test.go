@@ -85,3 +85,23 @@ func TestQuickJourneysStopsAtTheSharedMemoryCheck(t *testing.T) {
 		t.Fatalf("got (%d, %q, %q), want (%d, %q, %q)", got, &quickErr, &quick, code, &checkErr, &check)
 	}
 }
+
+// Inside an onboarding session the installed controller soaks the export after
+// the session ends, so an in-session --soak is refused at once with that reason
+// before anything is built or sent. People outside a session keep --soak.
+func TestJourneysSoakInAnOnboardingSessionSaysTheControllerSoaks(t *testing.T) {
+	t.Setenv("SDO_ACTOR", "health_judge")
+	t.Setenv("SDO_PHASE", "initial")
+	repo := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := RunOnboarding(context.Background(), []string{"journeys", "--repo", repo, "--namespace", "example", "--alter", "--soak", "5m"}, &stdout, &stderr)
+	if code != exitInfra || stdout.Len() != 0 || !strings.Contains(stderr.String(), "after this session") || strings.Count(stderr.String(), "\n") > 1 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, &stdout, &stderr)
+	}
+	t.Setenv("SDO_ACTOR", "")
+	stderr.Reset()
+	RunOnboarding(context.Background(), []string{"journeys", "--repo", repo, "--namespace", "example", "--soak", "5m"}, io.Discard, &stderr)
+	if strings.Contains(stderr.String(), "after this session") {
+		t.Fatalf("outside a session --soak is not refused: %q", &stderr)
+	}
+}

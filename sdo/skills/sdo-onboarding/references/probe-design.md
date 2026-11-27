@@ -38,7 +38,6 @@ for core paths when their planned time is too long.
 | same with `--quick` | edit loop once memory validates: run memory check, then one iteration with a step trace |
 | same with `--alter` in place of `--quick` | after it passes: check repeatability, concurrency and wrong answers |
 | `sdo-operator onboarding check --metrics --repo DIR --namespace NS` | once, when a request counter is mapped |
-| `... onboarding journeys --alter --soak 5m --only ID` | in the background, after fixing a scenario that failed while healthy; stops once each scenario is decided |
 
 Reports give one line per scenario with details for failures. Use `--verbose` for every check. Run long checks in
 the background and write the next probe meanwhile.

@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/operatorcli/internal/processio"
 )
@@ -49,9 +50,10 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
     latency-bound    its maxLatency leaves room over the slowest healthy run
     altered-answers  (--alter) it fails when a read answers empty, short, changed or as in an
                      earlier run; the answers are altered on their way back, nothing is broken
-    healthy-run      (--soak) each selected scenario that passed its checks, sampled on a schedule.
-                     A red scenario leaves other scenarios running. It stops early once every
-                     scenario is red or has 10 samples, none failed. Re-soak a fix with --only ID.
+    healthy-run      (--soak, for people re-checking an installed fix) each selected scenario that
+                     passed its checks, sampled on a schedule. It stops early once every scenario
+                     is red or has 10 samples, none failed. An onboarding session refuses it: the
+                     installed controller soaks the export after the session.
   --only selects exact IDs or, for unmatched filters, ID substrings. --plan builds the probes and prints the
   checklist, schedule and budget without a cluster: nothing is sent.
   Probe cadence targets detection within 30s by default. Set a different target in the human
@@ -86,6 +88,9 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 	}
 	if flags.NArg() != 0 || *namespace == "" || !filepath.IsAbs(*repo) {
 		return 0, errors.New("journeys requires --repo (absolute path) and --namespace")
+	}
+	if *soak != 0 && onboardingSession(processio.Environment) {
+		return 0, errors.New("--soak is not needed in an onboarding session: after this session SDO installs the export, soaks its probes and sends one follow-up if one fails; commit and finish")
 	}
 	if *quick && (*only == "" || strings.Contains(*only, ",") || *plan || *alter || *soak != 0) {
 		return 0, errors.New("--quick requires --only with one exact scenario ID and cannot combine with --plan, --alter or --soak")
@@ -181,6 +186,13 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 		return exitDiagnostics, nil
 	}
 	return exitClean, nil
+}
+
+// onboardingSession reports whether the command runs in an onboarding
+// agent's session (the initial health-judge actor), where the installed
+// controller soaks the export after the session.
+func onboardingSession(getenv func(string) string) bool {
+	return getenv(memoryActorEnv) == string(validate.HealthJudge) && getenv(memoryPhaseEnv) == string(validate.InitialPhase)
 }
 
 // reportCompile prints a build failure of the probes as a red item.
