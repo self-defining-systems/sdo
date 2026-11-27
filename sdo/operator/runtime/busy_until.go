@@ -51,6 +51,7 @@ func (c *Controller) incidentWorkOpenLocked() (inFlight bool, reflections int) {
 	_, batched := c.batcher.Deadline()
 	// An escalated incident stays open until its alerts clear but is not work in
 	// flight: no agent runs for it, so a harness reads it as the fault's end state.
+	// A batched opener is work: it closes the escalated incident and opens the next.
 	inFlight = (c.incidentOpen || c.currentIncidentRequest != nil) && c.escalatedAt.IsZero() || c.closureBlocksNextLocked() || batched
 	return inFlight, reflections
 }

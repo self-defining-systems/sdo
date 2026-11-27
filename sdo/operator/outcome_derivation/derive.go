@@ -178,8 +178,8 @@ func difference(left, right []string) []string {
 // incident was reset (failed), the responder ended before Recovered held
 // (escalated), a verified repair whose closure recheck window never completed
 // (unconfirmed), health cleared with no repair mutation (cleared_without_action),
-// or anything else that cleared (success). A closure only freezes verified or
-// failed, so an escalated one closed when its opening alerts cleared.
+// or anything else that cleared (success). An escalated closure closed when its
+// alerts cleared or when a new opener waited for the next incident.
 func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified, recorded bool) string {
 	result := closure.GetResult()
 	if closure.GetStatePersistenceFailure() != nil || closure.GetRequest() == nil || closure.GetDispatchError() != "" || result == nil {

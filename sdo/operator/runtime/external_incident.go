@@ -67,7 +67,7 @@ func (c *Controller) openExternalIncident(now time.Time, alert ExternalIncident)
 		}
 		return nil
 	}
-	busy := c.incidentOpen || c.closureBlocksNextLocked()
+	busy := c.incidentOpen || c.closureBlocksNextLocked() || c.priorIncidentWorkLocked() != ""
 	c.mu.Unlock()
 	// Retain the alert in the caller's inbox until current work is acknowledged.
 	if busy {

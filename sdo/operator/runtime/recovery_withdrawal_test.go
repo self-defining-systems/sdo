@@ -10,7 +10,9 @@ import (
 
 	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // verifiedRunningSession is an incident SDO verified and fenced while the
@@ -59,9 +61,13 @@ func (w *closureRestartWorld) refail() {
 	w.healedAt = w.controller.clock().Add(10 * time.Second)
 }
 
-func joinedCondition() sdk.Finding {
-	return sdk.Finding{DetectorID: "workload-health", RuleID: "deployment-unready", Status: sdk.FindingActive, Severity: sdk.SeverityCritical,
-		PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "other"}, Summary: "other is unready", Evidence: "synthetic"}
+// joinedUserTest is a user test that starts failing: only user tests and
+// failing user traffic join an alert set.
+func joinedUserTest() sdk.Finding {
+	finding := sdk.Finding{DetectorID: memory.TrafficDetectorPrefix + "other", RuleID: traffic.RuleIDPrefix + "checkout", Status: sdk.FindingActive, Severity: sdk.SeverityCritical,
+		PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "other"}, Summary: "checkout fails", Evidence: "synthetic"}
+	finding.Fingerprint = FindingFingerprint(finding)
+	return finding
 }
 
 func requireOpenForWrites(t *testing.T, w *closureRestartWorld, gate *apihistory.MutationGate) {
@@ -93,7 +99,7 @@ func requireWrite(t *testing.T, gate *apihistory.MutationGate) {
 func TestJoinAfterVerificationReopensWritesForTheRunningSession(t *testing.T) {
 	w, gate := verifiedRunningSession(t)
 	c := w.controller
-	finding := joinedCondition()
+	finding := joinedUserTest()
 	before := len(c.pendingClosure.DetectorTimeline)
 	if !c.joinAlertSet(finding, c.clock()) {
 		t.Fatal("the alert did not join")
@@ -128,23 +134,28 @@ func TestRecoveryCanBeWithdrawnTwice(t *testing.T) {
 	}
 }
 
-// A session that returned is retired: the fence stays and the incident
-// escalates with no second dispatch.
-func TestJoinAfterTheSessionReturnedKeepsTheFence(t *testing.T) {
+// A session that returned is retired. A user test that starts failing after
+// it returned is a symptom nobody works on: it does not join, the incident
+// closes on its own alert set with the fence standing, and the test waits for
+// the next incident.
+func TestAUserTestAfterTheSessionReturnedWaitsForTheNextIncident(t *testing.T) {
 	w, gate := verifiedRunningSession(t)
 	c := w.controller
 	id := c.currentIncidentRequest.IncidentID
 	c.handleDispatchCompletion(dispatchCompletion{incidentID: id, result: completedResult(id)}, c.clock())
-	c.joinAlertSet(joinedCondition(), c.clock())
+	if c.joinAlertSet(joinedUserTest(), c.clock()) {
+		t.Fatal("a user test joined after the session returned")
+	}
 	c.finishEarlyReport(context.Background(), c.clock())
-	if !c.IncidentOpen() || !c.responderDone || c.escalatedAt.IsZero() {
-		t.Fatalf("open=%v done=%v escalated=%s", c.IncidentOpen(), c.responderDone, c.escalatedAt)
+	if c.IncidentOpen() || !c.escalatedAt.IsZero() || c.pendingClosure == nil || c.pendingClosure.Request.IncidentID != id ||
+		len(c.pendingClosure.Request.JoinedKeys) != 0 || !c.pendingClosure.EscalatedAt.IsZero() {
+		t.Fatalf("open=%v escalated=%s pending=%+v", c.IncidentOpen(), c.escalatedAt, c.pendingClosure)
 	}
 	if _, err := gate.Begin(); err == nil {
 		t.Fatal("a retired session may write")
 	}
 	if _, again := c.PendingDispatchEffect(); again {
-		t.Fatal("an escalated incident dispatched again")
+		t.Fatal("the closing incident dispatched again")
 	}
 }
 
@@ -159,7 +170,7 @@ func TestJoinWhileTheSessionIsRetiredDoesNotResumeIt(t *testing.T) {
 			w, gate := verifiedRunningSession(t)
 			c := w.controller
 			retire(c)
-			finding := joinedCondition()
+			finding := joinedUserTest()
 			if !c.joinAlertSet(finding, c.clock()) || !slices.Contains(c.currentIncidentRequest.JoinedKeys, findingKey(finding)) {
 				t.Fatal("the alert did not join")
 			}
@@ -194,8 +205,15 @@ func TestARestartKeepsAReturnedRespondersFence(t *testing.T) {
 	c := w.controller
 	id := c.currentIncidentRequest.IncidentID
 	c.handleDispatchCompletion(dispatchCompletion{incidentID: id, result: completedResult(id)}, c.clock())
-	c.joinAlertSet(joinedCondition(), c.clock())
 	c.finishEarlyReport(context.Background(), c.clock())
+	// The closure recheck saw an alert of the set fire again: the incident
+	// returns to observation with its responder retired.
+	c.mu.Lock()
+	if err := c.reobserveClosureLocked(c.clock(), &c.pendingClosure.Request); err != nil {
+		c.mu.Unlock()
+		t.Fatal(err)
+	}
+	c.mu.Unlock()
 	state, err := c.ExportState()
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +240,7 @@ func TestWithdrawalRejoinsASessionWhoseWatcherFailed(t *testing.T) {
 	if _, early := c.PendingDispatchEffect(); early {
 		t.Fatal("a verified incident dispatched")
 	}
-	c.joinAlertSet(joinedCondition(), c.clock())
+	c.joinAlertSet(joinedUserTest(), c.clock())
 	if _, rejoin := c.PendingDispatchEffect(); !rejoin {
 		t.Fatal("the session was not rejoined")
 	}
@@ -257,7 +275,7 @@ func TestTheFenceIsRemovedAfterABusyGateOrARestart(t *testing.T) {
 			if err != nil || observation == nil {
 				t.Fatal(err)
 			}
-			c.joinAlertSet(joinedCondition(), c.clock())
+			c.joinAlertSet(joinedUserTest(), c.clock())
 			if verified, _ := gate.Verified(); verified == nil || !c.IncidentOpen() {
 				t.Fatal("a busy gate must leave the fence and still open the incident")
 			}
@@ -281,7 +299,7 @@ func TestAnAlertAfterTheClosureFrozeDoesNotJoin(t *testing.T) {
 	c.mu.Lock()
 	c.currentIncidentRequest, c.pendingClosure.Frozen = nil, true
 	c.mu.Unlock()
-	if c.joinAlertSet(joinedCondition(), c.clock()) || c.IncidentOpen() {
+	if c.joinAlertSet(joinedUserTest(), c.clock()) || c.IncidentOpen() {
 		t.Fatal("a frozen closure was withdrawn")
 	}
 }
@@ -320,9 +338,9 @@ func TestCommandsTellAWithdrawnRecovery(t *testing.T) {
 	if err != nil || observation == nil {
 		t.Fatal(err)
 	}
-	c.joinAlertSet(joinedCondition(), c.clock())
+	c.joinAlertSet(joinedUserTest(), c.clock())
 	told := func(command string, response ToolResponse) {
-		if response.IncidentVerified != nil || !strings.Contains(response.RecoveryWithdrawn, "recovery withdrawn: deployment-unready Deployment/other fires") {
+		if response.IncidentVerified != nil || !strings.Contains(response.RecoveryWithdrawn, "recovery withdrawn: checkout fires") {
 			t.Errorf("%s: verified %v withdrawn %q", command, response.IncidentVerified, response.RecoveryWithdrawn)
 		}
 	}
@@ -330,7 +348,7 @@ func TestCommandsTellAWithdrawnRecovery(t *testing.T) {
 		told(command, loop.Handle(context.Background(), ToolRequest{Command: command}))
 	}
 	observation.Close()
-	c.tracker.Restore(map[string]FindingState{findingKey(joinedCondition()): {DetectorID: joinedCondition().DetectorID, Finding: joinedCondition(), Active: true}})
+	c.tracker.Restore(map[string]FindingState{findingKey(joinedUserTest()): {DetectorID: joinedUserTest().DetectorID, Finding: joinedUserTest(), Active: true}})
 	c.finishEarlyReport(context.Background(), c.clock())
 	all(told)
 	// A new verification replaces the notice.
