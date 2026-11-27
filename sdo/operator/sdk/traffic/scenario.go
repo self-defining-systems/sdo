@@ -255,12 +255,72 @@ func (s Scenario) Describe() Descriptor {
 	return descriptor
 }
 
+// EventualEndpoint is a read step that waits for the effect of an earlier
+// write, made by work the application does after it answered (a background
+// job, a queue consumer, a scheduled task). See Eventually.
+type EventualEndpoint struct {
+	Endpoint Endpoint
+}
+
+// Eventually wraps the read that observes a write's asynchronous effect (a
+// status that moves on, a result that becomes readable). While the read gets
+// an answer below 500 that its check rejects (a wrong body, a 404 while the
+// result does not exist yet), the check answers NotYet and the engine sends
+// it again until it passes or the iteration deadline nears, which fails the
+// step with the last reason: the effect did not arrive in time. A 5xx, a
+// 429, a transport error or a timeout fails at once. Only a GET or HEAD may
+// be wrapped. The time until the effect appeared is the sample's
+// Convergence; the workload's iterationTimeout is the deadline.
+func Eventually(endpoint Endpoint) *EventualEndpoint { return &EventualEndpoint{Endpoint: endpoint} }
+
+// Build builds the wrapped read and refuses anything but GET or HEAD, since a
+// repeated write could duplicate user-visible data.
+func (e *EventualEndpoint) Build(ctx context.Context, rng *rand.Rand, state State) (Request, error) {
+	if e == nil || e.Endpoint == nil {
+		return Request{}, fmt.Errorf("an eventual step needs the read it repeats")
+	}
+	request, err := e.Endpoint.Build(ctx, rng, state)
+	if err != nil {
+		return Request{}, err
+	}
+	if request.Method != "GET" && request.Method != "HEAD" {
+		return Request{}, fmt.Errorf("an eventual step repeats its request, so it must be a GET or HEAD, not %s", request.Method)
+	}
+	return request, nil
+}
+
+// Check passes what the wrapped check passes and answers NotYet for a
+// rejected answer below 500 other than 429.
+func (e *EventualEndpoint) Check(response Response, state State) Verdict {
+	verdict := e.Endpoint.Check(response, state)
+	if verdict.OK || verdict.Pending || response.Status >= 500 || response.Status == http.StatusTooManyRequests {
+		return verdict
+	}
+	return NotYet("%s", verdict.Reason)
+}
+
+// WaitsForEffect reports whether a step of the scenario waits for an
+// asynchronous effect (Eventually).
+func (s Scenario) WaitsForEffect() bool {
+	for _, step := range s.Steps {
+		if _, ok := step.Endpoint.(*EventualEndpoint); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // StatusOnly reports whether every step (setup excluded) is a declarative
 // HTTPEndpoint that checks nothing but the status, so the scenario cannot
-// tell a wrong or empty answer from a correct one.
+// tell a wrong or empty answer from a correct one. An eventual step is judged
+// by the read it wraps.
 func (s Scenario) StatusOnly() bool {
 	for _, step := range s.Steps {
-		endpoint, ok := step.Endpoint.(*HTTPEndpoint)
+		inner := step.Endpoint
+		if eventual, ok := inner.(*EventualEndpoint); ok {
+			inner = eventual.Endpoint
+		}
+		endpoint, ok := inner.(*HTTPEndpoint)
 		if !ok || endpoint.ChecksContent() {
 			return false
 		}

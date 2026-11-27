@@ -92,9 +92,8 @@ touched the affected records.
 
 ## Asynchronous effects and time
 
-- A read in `Setup` or `Steps` can return `NotYet` to retry within the iteration deadline. Completed setup steps
-  are reused. The wait is excluded from step latency.
-- The iteration's start time is in `State[StateNow]`; format dates from it instead of a clock or a far-future constant.
+Background work, `NotYet`, `traffic.Eventually`, sustained judgement and queue clues:
+[asynchronous effects](async-effects.md).
 
 ## What traffic cannot show
 

@@ -71,8 +71,10 @@ func TestNotYetFailsWhenTheEventIsNeverDelivered(t *testing.T) {
 	if len(got) != 1 || got[0].Converged || got[0].Attempts < 10 {
 		t.Fatalf("convergence not recorded as a failed wait: %+v", got)
 	}
-	if took := got[0].Took; took < 9*time.Second || took > 11*time.Second {
-		t.Fatalf("waited %s, want the 10 s iteration timeout", took)
+	// It keeps sending while a whole request still fits before the 10 s
+	// iteration deadline.
+	if took := got[0].Took; took < DefaultIterationTimeout-DefaultTimeout-time.Second || took > DefaultIterationTimeout {
+		t.Fatalf("waited %s, want until a request no longer fits before the 10 s iteration timeout", took)
 	}
 	if posts := strings.Count(strings.Join(server.requests(), "\n"), "POST"); posts != 1 {
 		t.Fatalf("the write was repeated %d times", posts)
@@ -165,8 +167,8 @@ func TestSetupNotYetRetriesWithinIterationAndKeepsProgress(t *testing.T) {
 				if _, sample := engine.Iterate(context.Background(), 1); sample.Outcome != OutcomeOK {
 					t.Fatalf("setup progress lost: %+v", sample)
 				}
-			} else if took := sample.Convergence[0].Took; took < 9*time.Second || took > 11*time.Second {
-				t.Fatalf("setup waited %s, want iteration's 10s budget", took)
+			} else if took := sample.Convergence[0].Took; took < DefaultIterationTimeout-DefaultTimeout-time.Second || took > DefaultIterationTimeout {
+				t.Fatalf("setup waited %s, want the iteration's 10s budget less one request", took)
 			}
 			if posts := strings.Count(strings.Join(server.requests(), "\n"), "POST"); posts != 1 {
 				t.Fatalf("setup repeated its write: %d POSTs", posts)

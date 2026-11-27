@@ -117,7 +117,7 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 	verdict := SLOVerdict{ScenarioID: scenarioID, Healthy: true, SLO: slo, StatusCounts: map[string]int{}}
 	recent := make([]Sample, 0, len(samples))
 	for _, sample := range samples {
-		if sample.Outcome != OutcomeInvalid && now.Sub(sample.At) <= slo.MaxAge.Duration() {
+		if sample.Outcome != OutcomeInvalid && now.Sub(sample.ObservedAt()) <= slo.MaxAge.Duration() {
 			recent = append(recent, sample)
 		}
 	}

@@ -111,6 +111,7 @@ func TestApplicationMapRuleIDsMatchTheParser(t *testing.T) {
 		RuleMapPossibleEdge:  appmap.RulePossibleEdge,
 		RuleMapUnprobedEntry: appmap.RuleUnprobedEntry, RuleMapUnprobedShare: appmap.RuleUnprobedShare,
 		RuleMapRecordsUnread: appmap.RuleRecordsUnread, RuleMapNoUserRecords: appmap.RuleNoUserRecords,
+		RuleMapEffectUnobserved: appmap.RuleEffectUnobserved,
 	} {
 		if got != want {
 			t.Errorf("rule %q != %q", got, want)

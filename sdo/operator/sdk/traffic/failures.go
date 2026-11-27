@@ -38,7 +38,7 @@ func MatchFailures(window Window, patterns ...logs.Pattern) ([]FailureMatch, err
 		slo := window.Workload.ScenarioSLO(id)
 		var recent []Sample
 		for _, sample := range observed.Samples {
-			if sample.Outcome != OutcomeInvalid && window.ObservedAt.Sub(sample.At) <= slo.MaxAge.Duration() {
+			if sample.Outcome != OutcomeInvalid && window.ObservedAt.Sub(sample.ObservedAt()) <= slo.MaxAge.Duration() {
 				recent = append(recent, sample)
 			}
 		}

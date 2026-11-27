@@ -59,6 +59,10 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
   list passes, a fresh install is healthy), checks every member's shape, and templates no key a write step of the
   scenario saved (open ids a list step saved). The one escape is the map-level `no_user_records: <why>`, recorded as a
   note. Enforced by: `map.records-unread`, `map.no-user-records`.
+- An operation that sets off background work (`triggers`, or an internal operation) has a probe that performs a
+  user operation and reads the work's effect in a step wrapped in `traffic.Eventually`. A synchronous read-back
+  passes while the worker is stopped or backed up, and a probe of an internal operation alone enters at no user
+  entry, so it opens no incident. Enforced by: `map.effect-unobserved`.
 - A map with an authoritative store and no health detector implementing `appstate.Reader` is noted, never
   rejected. Enforced by: `map.readers`.
 - A possible edge Go lists above the map (a Secret reference names the callee's Service; the address is unread) is

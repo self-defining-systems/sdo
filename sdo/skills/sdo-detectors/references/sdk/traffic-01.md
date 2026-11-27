@@ -84,6 +84,8 @@ type Duration time.Duration
 type Endpoint interface{ ... }
 type Engine struct{ ... }
     func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Target) string, ...) (*Engine, error)
+type EventualEndpoint struct{ ... }
+    func Eventually(endpoint Endpoint) *EventualEndpoint
 type Exec struct{ ... }
 type ExecResult struct{ ... }
 type Execer interface{ ... }

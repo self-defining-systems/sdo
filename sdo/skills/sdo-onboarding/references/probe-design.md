@@ -1,7 +1,7 @@
 # Probe design
 
 - A journey is what a user does: write something with a fresh unique name, then read it back exactly through the
-  route a user reads, including the background effect (poll it with `NotYet`). Read journeys check exact content of
+  route a user reads, including the background effect (wrap that read in `traffic.Eventually`, or return `NotYet`). Read journeys check exact content of
   fixtures Setup made, and one step lists records users already have.
 - Write values the size and shape users write, where users write them.
 - Cover each way in (API, other protocols, sign-in) and each store or component on its path, refused access as well

@@ -60,7 +60,7 @@ operations:
     triggers: [ReceiptJob]
     correct: "201 with an id; reading it back returns the same items; a receipt exists within 30 s"
 probes:
-  - {scenario: create-then-receipt, kind: read-later, operations: [create-order]}
+  - {scenario: create-then-receipt, kind: write-read, operations: [create-order]}  # reads the receipt with traffic.Eventually
 reasons:
   - {item: background-covered, subject: PruneJob, reason: "periodic maintenance"}
 ```
