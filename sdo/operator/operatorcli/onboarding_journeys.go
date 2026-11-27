@@ -13,11 +13,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/builder"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/journeycheck"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/operatorcli/internal/processio"
 )
@@ -61,6 +64,9 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
   of the exact scenario named by --only, including setup and cleanup, and prints its step trace.
   Use it to iterate on a probe before the full checks. A rejected memory check stops before any requests
   and prints its own diagnostics (MemoryCheckReport with --json).
+  Every other mode also runs memory check --replay off, so no separate memory check is needed: each
+  blocking error is a red memory-check line, notes are counted (--verbose lists them), and a rejection
+  does not stop the probes. Without SDO_ACTOR, SDO_PHASE and SDO_BASE_COMMIT it prints one line saying it was skipped.
   Exit 0 when nothing is red and
   no journey is missing or failing, 1 otherwise, 2 for usage or infrastructure errors.`
 
@@ -110,6 +116,11 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 		if *verbose && !*asJSON {
 			fmt.Fprint(stdout, checked.String())
 		}
+	}
+	var memoryResults []journeycheck.Result
+	var memoryCheck *journeycheck.MemoryCheck
+	if !*quick {
+		memoryResults, memoryCheck = journeysMemoryCheck(ctx, *repo, *operatorRoot)
 	}
 	if *seed == "" {
 		*seed = filepath.Join(*repo, ".git", "sdo-probe-identity", "seed")
@@ -164,6 +175,8 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 		if mapErr != "" {
 			report.Results = append([]journeycheck.Result{{Item: "application-map", Subject: "all", Status: journeycheck.Red, Detail: mapErr}}, report.Results...)
 		}
+		report.Results = append(memoryResults, report.Results...)
+		report.Memory = memoryCheck
 		report.AddChecklist(given, applicationMap)
 	}
 	if *asJSON {
@@ -181,6 +194,60 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 		return exitDiagnostics, nil
 	}
 	return exitClean, nil
+}
+
+// journeysMemoryCheck runs the shared memory check (replay off, as --quick
+// does) and returns its blocking errors as red results and the rest as a
+// MemoryCheck, so one journeys run reports both validators. A rejection never
+// stops the probes. Without the publication environment (SDO_ACTOR, SDO_PHASE
+// and SDO_BASE_COMMIT, set in an onboarding session) the check cannot run, as
+// under --quick; here that is one line saying so, not a failure.
+func journeysMemoryCheck(ctx context.Context, repo, operatorRoot string) ([]journeycheck.Result, *journeycheck.MemoryCheck) {
+	getenv := func(key string) string {
+		if key == "SDO_OPERATOR_ROOT" {
+			return operatorRoot
+		}
+		return processio.Environment(key)
+	}
+	var unset []string
+	for _, key := range []string{memoryActorEnv, memoryPhaseEnv, "SDO_BASE_COMMIT"} {
+		if getenv(key) == "" {
+			unset = append(unset, key)
+		}
+	}
+	if len(unset) > 0 {
+		return nil, &journeycheck.MemoryCheck{Skipped: strings.Join(unset, ", ") + " not set (they are set in an onboarding session)"}
+	}
+	var checked, failed bytes.Buffer
+	code := RunMemory(ctx, []string{"check", "--root", repo, "--replay", "off", "--json"}, getenv, &checked, &failed)
+	red := func(detail string) []journeycheck.Result {
+		return []journeycheck.Result{{Item: journeycheck.ItemMemoryCheck, Subject: "all", Status: journeycheck.Red, Detail: detail}}
+	}
+	report := &contracts.MemoryCheckReport{}
+	if code != exitClean && code != exitDiagnostics || protojson.Unmarshal(checked.Bytes(), report) != nil {
+		detail := strings.TrimSpace(failed.String())
+		if detail == "" {
+			detail = strings.TrimSpace(checked.String())
+		}
+		return red(fmt.Sprintf("memory check did not finish (exit %d): %s", code, detail)), nil
+	}
+	var results []journeycheck.Result
+	for _, d := range report.GetDiagnostics() {
+		results = append(results, red(protoDiagnosticLine(d))...)
+	}
+	notes := &journeycheck.MemoryCheck{}
+	for _, gap := range report.GetCoverageGaps() {
+		notes.Notes = append(notes.Notes, "coverage_gap "+protoDiagnosticLine(gap))
+	}
+	for _, note := range report.GetMitigationReplayNotes() {
+		notes.Notes = append(notes.Notes, "program "+note.GetProgramId()+strings.TrimPrefix(replayCaseLine(note), " "))
+	}
+	return results, notes
+}
+
+// protoDiagnosticLine is diagnosticLine of a MemoryCheckReport diagnostic.
+func protoDiagnosticLine(d *contracts.MemoryDiagnostic) string {
+	return diagnosticLine(validate.Diagnostic{Rule: d.GetRule(), Path: d.GetPath(), Line: int(d.GetLine()), Message: d.GetMessage(), Hint: d.GetHint()})
 }
 
 // reportCompile prints a build failure of the probes as a red item.

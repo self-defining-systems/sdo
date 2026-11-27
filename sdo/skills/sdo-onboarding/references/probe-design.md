@@ -40,5 +40,5 @@ for core paths when their planned time is too long.
 | `sdo-operator onboarding check --metrics --repo DIR --namespace NS` | once, when a request counter is mapped |
 | `... onboarding journeys --alter --soak 5m --only ID` | in the background, after fixing a scenario that failed while healthy; stops once each scenario is decided |
 
-Reports give one line per scenario with details for failures. Use `--verbose` for every check. Run long checks in
+Every run except `--quick` (which runs it first and stops on a rejection) also runs `memory check` and lists its errors as red `memory-check` lines, so a separate `memory check` is not needed. Reports give one line per scenario with details for failures. Use `--verbose` for every check. Run long checks in
 the background and write the next probe meanwhile.

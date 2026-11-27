@@ -96,4 +96,4 @@ Map evidence: `config`, `manifest`, `observed`. Use `config` for application sou
 Run the [checks](references/probe-design.md#checks); no healthy run is needed. After you finish, SDO installs the
 export and runs its probes on schedule for 5 minutes; if one fails, this session gets one short follow-up. As an ordinary user,
 check that default lists show no probe records. With ten minutes left, remove edits still red and report any
-uncovered journey. Commit the export and run `sdo-operator memory check`. Fix export rejections and commit again.
+uncovered journey. Commit the export and run `sdo-operator onboarding journeys ... --plan` (or a full run): it also runs `memory check`, so none is needed separately. Fix rejections and commit again.

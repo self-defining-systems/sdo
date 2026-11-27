@@ -31,9 +31,9 @@ func (r Report) Text() string {
 	var b strings.Builder
 	b.WriteString(r.checklistText())
 	for _, result := range r.Results {
-		if result.Subject == "all" && (result.Item == ItemBudget || result.Item == "application-map") {
+		if result.Subject == "all" && (result.Item == ItemBudget || result.Item == "application-map" || result.Item == ItemMemoryCheck) {
 			if result.Status == Red {
-				fmt.Fprintf(&b, "%s %s: %s\n", Red, result.Item, result.Detail)
+				fmt.Fprintf(&b, "%s %s: %s\n", Red, result.Item, strings.ReplaceAll(result.Detail, "\n", " "))
 			}
 			continue
 		}
@@ -76,6 +76,7 @@ func (r Report) Text() string {
 			fmt.Fprintf(&b, "green %s\n", id)
 		}
 	}
+	b.WriteString(r.memoryText(false))
 	b.WriteString(r.summary())
 	return b.String()
 }
