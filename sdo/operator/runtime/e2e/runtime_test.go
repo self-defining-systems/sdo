@@ -7,12 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -21,7 +19,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"sdo.dev/operator/sdk/podtext/podtexttest"
 )
 
 type ctrState struct {
@@ -215,15 +216,21 @@ func (r *Runtime) failPod(pod *corev1.Pod, reason, message string) {
 	r.setPhase(pod.UID, corev1.PodFailed)
 }
 
-var expansion = regexp.MustCompile(`\$\(([A-Za-z_][A-Za-z0-9_]*)\)`)
-
 func expand(value string, env map[string]string) string {
-	return expansion.ReplaceAllStringFunc(value, func(match string) string {
-		if v, ok := env[match[2:len(match)-1]]; ok {
-			return v
+	return podtexttest.Expand(value, env)
+}
+
+func TestPodTextExpansion(t *testing.T) {
+	env := map[string]string{"NAME": "value"}
+	for _, tc := range []struct{ input, want string }{
+		{`m=$$(printf ready); echo "$$m"`, `m=$(printf ready); echo "$m"`},
+		{`DO $$$$ BEGIN END $$$$;`, `DO $$ BEGIN END $$;`},
+		{`$(NAME) $$(NAME) $$$(NAME) $(UNKNOWN)`, `value $(NAME) $value $(UNKNOWN)`},
+	} {
+		if got := expand(tc.input, env); got != tc.want {
+			t.Errorf("expand(%q) = %q, want %q", tc.input, got, tc.want)
 		}
-		return match
-	})
+	}
 }
 
 func (r *Runtime) resolveEnv(ctx context.Context, pod *corev1.Pod, c corev1.Container) (map[string]string, error) {
