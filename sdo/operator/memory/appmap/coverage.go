@@ -8,8 +8,8 @@ import (
 
 // Coverage says, per component, whether a probed user operation observes it.
 // It is the one computation of probe coverage: the designer's install
-// obligation (map.coverage), the designer brief and the client-link ordering
-// all read it.
+// obligation (map.coverage), the designer brief and the ordering of Go's capped
+// store readers and client links all read it.
 type Coverage struct {
 	Components map[string]ComponentCoverage
 	// ExposedEntries is true when the entries are the Services the manifests
@@ -33,6 +33,9 @@ type ComponentCoverage struct {
 	// probed through the component.
 	Unprobed string
 }
+
+// Probed reports whether the component is on a probed user operation's path.
+func (c ComponentCoverage) Probed() bool { return len(c.Probes) > 0 }
 
 // Obligation reports whether the designer still owes the component a covering
 // probe or an unprobed reason.

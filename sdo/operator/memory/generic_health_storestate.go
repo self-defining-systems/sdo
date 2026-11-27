@@ -2,8 +2,6 @@ package memory
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -28,20 +26,14 @@ const MaxStoreStateDetectors = podread.MaxQueries / 2
 const storeStateInterval = podread.MinInterval
 
 // plannedStoreStateDetectors lists one store-state detector per application
-// map component whose data.engine has a storestate adapter, authoritative
-// stores first, then by name, capped at MaxStoreStateDetectors. A missing or
-// unreadable map plans none: the shared check reports the map itself.
+// map component whose data.engine has a storestate adapter, capped at
+// MaxStoreStateDetectors: stores on a probed user operation's path first (only
+// they can explain a failing user request), then authoritative stores, then by
+// name. A missing or unreadable map plans none: the shared check reports the
+// map itself.
 func plannedStoreStateDetectors(root string) []plannedDetector {
-	data, err := os.ReadFile(filepath.Join(root, layout.ArchitectureFile))
-	if err != nil {
-		return nil
-	}
-	region, found, err := appmap.Find(string(data))
-	if !found || err != nil {
-		return nil
-	}
-	parsed, err := appmap.Parse(region.YAML)
-	if err != nil {
+	parsed, coverage, ok := acceptedMap(root)
+	if !ok {
 		return nil
 	}
 	var stores []appmap.Component
@@ -58,6 +50,9 @@ func plannedStoreStateDetectors(root string) []plannedDetector {
 		stores = append(stores, component)
 	}
 	sort.SliceStable(stores, func(i, j int) bool {
+		if pi, pj := coverage.Components[stores[i].Name].Probed(), coverage.Components[stores[j].Name].Probed(); pi != pj {
+			return pi
+		}
 		ai, aj := stores[i].Data.Role == appmap.RoleAuthoritative, stores[j].Data.Role == appmap.RoleAuthoritative
 		if ai != aj {
 			return ai

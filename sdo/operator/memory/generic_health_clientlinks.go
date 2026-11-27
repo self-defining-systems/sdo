@@ -25,10 +25,11 @@ const ClientLinksDetectorID = "client-links"
 const MaxClientLinks = vantage.MaxProbes / 2
 
 // plannedClientLinks lists the links of the link-probe workloads whose
-// calling Service belongs to a map component with a workload, links from
-// entry components first, then by edge, capped at MaxClientLinks. The prober
-// dials those links from its own Pod; these dial them from the client, so a
-// loss or partition on the client's side of an edge is seen too.
+// calling Service belongs to a map component with a workload, capped at
+// MaxClientLinks: links whose two ends are on probed user operations' paths
+// first, then links from entry components, then by edge. The prober dials
+// those links from its own Pod; these dial them from the client, so a loss or
+// partition on the client's side of an edge is seen too.
 func plannedClientLinks(root string) []vantage.ClientLink {
 	parsed, coverage, ok := acceptedMap(root)
 	if !ok {
@@ -76,8 +77,13 @@ func plannedClientLinks(root string) []vantage.ClientLink {
 			links = append(links, vantage.ClientLink{ID: "client." + link.ID(), From: target, Link: link})
 		}
 	}
-	callerEntry := func(l vantage.ClientLink) bool { return coverage.Components[owner[l.Link.From].Name].Entry }
+	covered := func(service string) appmap.ComponentCoverage { return coverage.Components[owner[service].Name] }
+	probed := func(l vantage.ClientLink) bool { return covered(l.Link.From).Probed() && covered(l.Link.To).Probed() }
+	callerEntry := func(l vantage.ClientLink) bool { return covered(l.Link.From).Entry }
 	sort.SliceStable(links, func(i, j int) bool {
+		if a, b := probed(links[i]), probed(links[j]); a != b {
+			return a
+		}
 		if a, b := callerEntry(links[i]), callerEntry(links[j]); a != b {
 			return a
 		}
