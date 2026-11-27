@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -99,18 +101,39 @@ func TestSourceRestoreIsListedLikeAPlaybookAndNeverBoundByFindings(t *testing.T)
 	}
 }
 
-func TestSourceRestoreCandidatesAreSuspectsOnEveryFailingPathOnly(t *testing.T) {
+func restoreCandidateNames(view program.ReadView, request IncidentRequest) []string {
+	var names []string
+	for _, candidate := range sourceRestoreCandidates(view, request, request.Findings) {
+		names = append(names, candidate.bindings.Values[SourceRestoreComponentParam].(string))
+	}
+	return names
+}
+
+// Every component on a failing path is a candidate, also one that a passing
+// path shares and one on only some failing paths: the departure from accepted
+// source is the evidence, the path only keeps components that cannot affect a
+// failing operation out. jobs is on no path.
+func TestSourceRestoreCandidatesAreTheComponentsOnAFailingPath(t *testing.T) {
 	request := restoreRequest("kubectl")
 	finding := probeFinding("create")
 	request.Findings, request.OpeningKeys = []sdk.Finding{finding}, []string{findingKey(finding)}
 	// front is also on the passing "list" path; api and db are only on the failing one.
 	view := restoreView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: detectApp("create").Snapshot}}
-	var names []string
-	for _, candidate := range sourceRestoreCandidates(view, request, request.Findings) {
-		names = append(names, candidate.bindings.Values[SourceRestoreComponentParam].(string))
+	if names := restoreCandidateNames(view, request); !slices.Equal(slices.Sorted(slices.Values(names)), []string{"api", "db", "front"}) {
+		t.Fatalf("candidates %v, want front, api and db", names)
 	}
-	if len(names) != 2 || names[0] != "api" || names[1] != "db" {
-		t.Fatalf("candidates %v, want api and db", names)
+	// Both tests failing: front is on every failing path, api and db on one.
+	both := restoreView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: detectApp("create", "list").Snapshot}}
+	list := probeFinding("list")
+	request.Findings, request.OpeningKeys = []sdk.Finding{finding, list}, []string{findingKey(finding), findingKey(list)}
+	names := restoreCandidateNames(both, request)
+	for _, want := range []string{"front", "api", "db"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("candidates %v, want %s among them", names, want)
+		}
+	}
+	if slices.Contains(names, "jobs") {
+		t.Fatalf("candidates %v: jobs is on no failing path", names)
 	}
 }
 
@@ -173,8 +196,16 @@ func restoreAttempt(report *contracts.StageReport) *contracts.StageMitigation {
 	return nil
 }
 
-// By default the agent decides: the stage lists the playbook as a match but never applies it.
-func TestStageLeavesTheBuiltInRestoreToTheResponderByDefault(t *testing.T) {
+// response.builtin_restore_auto is on by default: the stage applies the
+// built-in restore when its diagnosis matches, before any agent.
+func TestBuiltInRestoreIsAutomaticByDefault(t *testing.T) {
+	if !settings.Default().Response.BuiltinRestoreAuto {
+		t.Fatal("response.builtin_restore_auto must default to true")
+	}
+}
+
+// With the switch off the agent decides: the stage lists the playbook as a match but never applies it.
+func TestStageLeavesTheBuiltInRestoreToTheResponderWhenTheSwitchIsOff(t *testing.T) {
 	world, stage, state := restoreStage(t, false)
 	report, err := stage.Run(context.Background(), state)
 	if err != nil {
@@ -190,7 +221,7 @@ func TestStageLeavesTheBuiltInRestoreToTheResponderByDefault(t *testing.T) {
 }
 
 // With response.builtin_restore_auto the stage goes on to plan and apply it.
-func TestStageAppliesTheBuiltInRestoreOnlyWhenTheSwitchIsOn(t *testing.T) {
+func TestStageAppliesTheBuiltInRestoreWhenTheSwitchIsOn(t *testing.T) {
 	_, stage, state := restoreStage(t, true)
 	report, err := stage.Run(context.Background(), state)
 	if err != nil {

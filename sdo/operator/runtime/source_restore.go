@@ -157,17 +157,18 @@ func (r sourceRestoreRegistry) Mitigator(id string) (program.Mitigator, bool) {
 	return r.ProgramRegistry.Mitigator(id)
 }
 
-// sourceRestoreCandidates binds the playbook to each suspect on every failing
-// path that is not also on a passing path, for the opening findings. Nothing
-// here decides to apply it.
+// sourceRestoreCandidates binds the playbook to each component on a failing
+// path (or the opening condition's own component), for the opening findings.
+// A passing path through the same component does not exclude it: Diagnose
+// matches only on a non-SDO departure from accepted source made before the
+// onset, and that departure is the evidence; the path only keeps components
+// that cannot affect a failing operation out. Nothing here decides to apply it.
 func sourceRestoreCandidates(view program.ReadView, request IncidentRequest, findings []sdk.Finding) []sourceRestoreCandidate {
 	set := buildSuspectSet(detectInput{Request: request, View: view, Findings: findings, Now: time.Time{}})
 	var result []sourceRestoreCandidate
 	for rank, node := range set.nodes {
-		// On every failing path (or the opening condition's own component) and
-		// on no passing one.
-		onEvery := node.Condition || node.OfN > 0 && node.OnK == node.OfN
-		if node.Class != PositionFailingOnly || !onEvery || len(node.Serves) > 0 || node.Component.Workload == "" {
+		onFailing := node.Class == PositionFailingOnly || node.Class == PositionShared
+		if !node.Condition && !onFailing || node.Component.Workload == "" {
 			continue
 		}
 		bindings := program.Bindings{Values: map[string]any{SourceRestoreComponentParam: node.Name}}
