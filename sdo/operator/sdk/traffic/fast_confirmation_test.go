@@ -155,3 +155,19 @@ func TestScenariosOfTwoWorkloadsConfirmEachOther(t *testing.T) {
 		})
 	}
 }
+
+func TestConfirmationUsesScenarioLatencyOverride(t *testing.T) {
+	window := failingWindow("probe-read", map[string][]failure{"list": {{0, time.Second}, {4 * time.Second, time.Second}}})
+	window.Workload.SLO.MaxLatency = Duration(2 * time.Second)
+	window.Workload.Scenarios[0].SLO = &SLO{MaxLatency: Duration(999 * time.Millisecond)}
+	observed := &window.Scenarios[0]
+	observed.Samples[len(observed.Samples)-1].Outcome = OutcomeOK
+	observed.Confirming[0].Outcome = OutcomeOK
+	if got := ConfirmedFailures(map[string]Window{"probe-read": window}); got["probe-read/list"] == "" {
+		t.Fatalf("slow samples did not confirm against the scenario override: %v", got)
+	}
+	observed.Confirming[0].Latency = 999 * time.Millisecond
+	if got := ConfirmedFailures(map[string]Window{"probe-read": window}); len(got) != 0 {
+		t.Fatalf("a sample at the latency limit confirmed a failure: %v", got)
+	}
+}

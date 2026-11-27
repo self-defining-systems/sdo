@@ -49,6 +49,8 @@ commands:
         Publish through the broker and its isolated Kubernetes validator.
   check [--replay on|off] [--root DIR] [--json] [--decision FILE]
         Run structural, semantic, ownership, compilation and provenance checks.
+        A scenario's ProbeUser.Token requires returns_token on the map's
+        probe_identity procedure. It prints one token line on stdout.
         --root defaults to the Git checkout containing the current directory,
         so run it from anywhere inside your checkout.
         Tests and replay run as information; their verdicts never block saving.

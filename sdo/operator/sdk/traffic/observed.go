@@ -43,6 +43,15 @@ func redactSecrets(text string) string {
 	})
 }
 
+// excerpt removes known credentials before clipping a response preview.
+func (r Response) excerpt(expected string) string {
+	body := r.Body
+	if len(r.credentials) > 0 {
+		body = []byte(redactCredentials(string(body), r.credentials))
+	}
+	return observedExcerpt(body, r.Status, redactCredentials(expected, r.credentials))
+}
+
 // observedExcerpt describes a response for an author whose assertion failed:
 // the page title and the visible text near the expected phrase (or its start),
 // with markup, scripts and secret-looking text removed, bounded by
