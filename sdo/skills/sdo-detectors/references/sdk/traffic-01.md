@@ -163,5 +163,6 @@ type Window struct{ ... }
 type WindowSet interface{ ... }
 type Workload struct{ ... }
     func ParseWorkloadJSON(data []byte) (Workload, error)
+    func ParseWorkloadJSONWithDetectionTarget(data []byte, target time.Duration) (Workload, error)
 type WorkloadScenario struct{ ... }
 ```

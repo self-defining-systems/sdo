@@ -479,7 +479,14 @@ func (e *Engine) PlanAt(ctx context.Context, iteration uint64, at time.Time) ([]
 // identity (the same requests, or the same probe user): its read-back must
 // see its own write, not one a concurrent sample made in between. The wait is
 // before the sample starts, so it is not part of the sample's time or latency.
-func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, result Sample) {
+func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample) {
+	return e.IterateWithTrace(ctx, iteration, nil)
+}
+
+// IterateWithTrace runs the same iteration as Iterate. When trace is set it
+// receives the name of every attempted setup, journey, and cleanup step,
+// in order. It receives no request, response, or state values.
+func (e *Engine) IterateWithTrace(ctx context.Context, iteration uint64, trace func(step string)) (_ string, result Sample) {
 	if ctx == nil {
 		// Agent-authored tests sometimes pass nil; treat it as "no deadline"
 		// instead of panicking inside the clock.
@@ -518,7 +525,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	deadline := sample.At.Add(e.workload.IterationTimeout.Duration())
 	// Setup draws from its own copy of the iteration's source, so the steps
 	// build the same requests whether or not setup ran first.
-	if failed := e.setup(iterationCtx, scenario, e.Rand(iteration), state, passwords, deadline, &sample); failed {
+	if failed := e.setup(iterationCtx, scenario, e.Rand(iteration), state, passwords, deadline, &sample, trace); failed {
 		return scenario.ID, sample
 	}
 	for _, values := range []State{passwords, keys} {
@@ -530,6 +537,9 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	started := e.clock.Now()
 	var waited time.Duration
 	for _, step := range scenario.Steps {
+		if trace != nil {
+			trace(step.Name)
+		}
 		result := e.untilNotPending(iterationCtx, scenario, step, rng, state, passwords, phaseStep, deadline)
 		waited += result.waited
 		sample.record(result)
@@ -550,6 +560,9 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 		cleanupCtx, cancelCleanup := e.withTimeout(context.WithoutCancel(ctx), e.workload.IterationTimeout.Duration())
 		defer cancelCleanup()
 		for _, step := range scenario.Cleanup {
+			if trace != nil {
+				trace(step.Name)
+			}
 			result := e.step(cleanupCtx, scenario, step, rng, state, passwords, phaseCleanup)
 			if result.outcome != OutcomeOK {
 				sample.CleanupError = step.Name + ": " + result.err
@@ -566,7 +579,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 // succeeded never runs again, so a write it made (a credential, a fixture) is
 // not repeated when a later step fails and the setup is retried. It reports
 // whether a setup step failed; the failure is then recorded in sample.
-func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, state State, passwords State, deadline time.Time, sample *Sample) bool {
+func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, state State, passwords State, deadline time.Time, sample *Sample, trace func(string)) bool {
 	if len(scenario.Setup) == 0 {
 		return false
 	}
@@ -584,6 +597,9 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 		}
 		for index := progress.done; index < len(scenario.Setup); index++ {
 			step := scenario.Setup[index]
+			if trace != nil {
+				trace(step.Name)
+			}
 			result := e.untilNotPending(ctx, scenario, step, rng, saved, passwords, phaseSetup, deadline)
 			sample.record(result)
 			if result.outcome != OutcomeOK {

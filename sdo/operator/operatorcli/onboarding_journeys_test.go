@@ -1,8 +1,12 @@
 package operatorcli
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 	"testing"
 )
@@ -47,5 +51,37 @@ func TestJourneysCheckReadsTheGoalInOrderAndTheWorkingTreeMap(t *testing.T) {
 	}
 	if _, err := goalJourneys(unreadable); err == nil {
 		t.Fatal("a goal that cannot be read is an error, not an empty list (the full check reads it the same way)")
+	}
+}
+
+func TestQuickJourneysRequiresOneExactScenario(t *testing.T) {
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"--quick"},
+		{"--quick", "--only", "read,write"},
+		{"--quick", "--only", "read", "--plan"},
+		{"--quick", "--only", "read", "--alter"},
+		{"--quick", "--only", "read", "--soak", "2s"},
+	} {
+		_, err := onboardingJourneys(context.Background(), append([]string{"--repo", repo, "--namespace", "example"}, args...), io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "--quick requires") {
+			t.Errorf("%v: got %v", args, err)
+		}
+	}
+}
+
+func TestQuickJourneysStopsAtTheSharedMemoryCheck(t *testing.T) {
+	repo := parityRepo(t)
+	t.Setenv("SDO_ACTOR", "invalid-actor")
+	t.Setenv("SDO_PHASE", "initial")
+	t.Setenv("SDO_BASE_COMMIT", "HEAD")
+	var check, quick, checkErr, quickErr bytes.Buffer
+	code := RunMemory(context.Background(), []string{"check", "--root", repo, "--replay", "off"}, processio.Environment, &check, &checkErr)
+	if code == exitClean {
+		t.Fatal("expected the shared check to reject an invalid actor")
+	}
+	got := RunOnboarding(context.Background(), []string{"journeys", "--repo", repo, "--namespace", "example", "--quick", "--only", "read"}, &quick, &quickErr)
+	if got != code || quickErr.String() != checkErr.String() || quick.String() != check.String() {
+		t.Fatalf("got (%d, %q, %q), want (%d, %q, %q)", got, &quickErr, &quick, code, &checkErr, &check)
 	}
 }

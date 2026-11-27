@@ -26,3 +26,20 @@ func TestProbeDetectionHorizonFollowsTheRepositoryWorkloads(t *testing.T) {
 		t.Fatalf("a repository without probes has horizon %s", got)
 	}
 }
+
+func TestProbeDetectionHorizonUsesTheHealthObjectiveTarget(t *testing.T) {
+	repo := t.TempDir()
+	workloads := filepath.Join(repo, ".sdo", "diagnostics", "traffic", "workloads")
+	if err := os.MkdirAll(workloads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("apiVersion: sdo.dev/v1alpha1\nkind: TrafficWorkload\nname: probe\npurpose: health-probe\nscenarios: [{id: read}]\n")
+	if err := os.WriteFile(filepath.Join(workloads, "probe.yaml"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacy := probeDetectionHorizon(repo)
+	writeSDO(t, repo, "goal.md", "---\nschema_version: 1\n---\n# Health objective\n\nDetection target: 60s\n")
+	if got := probeDetectionHorizon(repo); got <= legacy {
+		t.Fatalf("goal target did not inform the horizon: %s, legacy %s", got, legacy)
+	}
+}

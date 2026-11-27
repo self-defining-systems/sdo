@@ -27,6 +27,7 @@ const (
 	ItemConcurrent = "concurrent"
 	ItemLatency    = "latency-bound"
 	ItemAltered    = "altered-answers"
+	ItemSinglePass = "single-pass"
 )
 
 var itemOrder = map[string]int{ItemBudget: 0, ItemScheduled: 1, ItemPasses: 2, ItemCleanup: 3, ItemConcurrent: 4, ItemLatency: 5, ItemAltered: 6}
@@ -53,6 +54,7 @@ type Report struct {
 	Cap         float64 `json:"cap"`
 	// Plan says the run only read the schedule: nothing was sent or judged.
 	Plan bool `json:"plan,omitempty"`
+	Once bool `json:"once,omitempty"`
 	// Schedules are every scheduled scenario's cost and expected detection,
 	// selected by Only or not.
 	Schedules []Schedule `json:"schedules,omitempty"`
@@ -99,6 +101,10 @@ type Config struct {
 	Only []string
 	// Alter runs the altered-answers item.
 	Alter bool
+	// Once runs one iteration of the exact scenario named by Only.
+	Once bool
+	// DetectionTarget is the human objective's bound, when specified.
+	DetectionTarget time.Duration
 	// Plan only reads the schedule: budget and schedules, no request sent.
 	Plan      bool
 	Client    traffic.Doer
@@ -124,20 +130,13 @@ const (
 
 // Run judges the scenarios the workloads schedule.
 func Run(ctx context.Context, c Config) Report {
+	if c.Once {
+		return singlePass(ctx, c)
+	}
 	report := Report{Cap: traffic.ProbeRateCap, Plan: c.Plan}
 	load := budget(c, &report)
 	report.PlannedRate = load
-	scheduled := map[string]traffic.Workload{}
-	for _, w := range c.Workloads {
-		if w.Purpose != traffic.PurposeHealthProbe {
-			continue
-		}
-		for _, s := range w.Scenarios {
-			if prior, ok := scheduled[s.ID]; !ok || w.EffectiveSampleInterval() < prior.EffectiveSampleInterval() {
-				scheduled[s.ID] = w
-			}
-		}
-	}
+	scheduled := scenarioWorkloads(c.Workloads)
 	results := make([][]Result, len(c.Catalog))
 	slowest := make([]time.Duration, len(c.Catalog))
 	slots := make(chan struct{}, parallel)
@@ -194,6 +193,46 @@ func Run(ctx context.Context, c Config) Report {
 	return report
 }
 
+func scenarioWorkloads(workloads []traffic.Workload) map[string]traffic.Workload {
+	scheduled := map[string]traffic.Workload{}
+	for _, w := range workloads {
+		if w.Purpose != traffic.PurposeHealthProbe {
+			continue
+		}
+		for _, s := range w.Scenarios {
+			if prior, ok := scheduled[s.ID]; !ok || w.EffectiveSampleInterval() < prior.EffectiveSampleInterval() {
+				scheduled[s.ID] = w
+			}
+		}
+	}
+	return scheduled
+}
+
+func singlePass(ctx context.Context, c Config) Report {
+	report := Report{Once: true}
+	if len(c.Only) != 1 {
+		report.Results = []Result{{ItemSinglePass, "all", Red, "select one exact scenario ID"}}
+		return report
+	}
+	id := c.Only[0]
+	result := Result{Item: ItemSinglePass, Subject: id, Status: Red}
+	scenario, found := c.Catalog.Scenario(id)
+	if !found {
+		result.Detail = "no scenario with that exact ID"
+	} else {
+		// Use the same workload selection as the full runner for timeouts.
+		workload, found := scenarioWorkloads(c.Workloads)[id]
+		if !found {
+			result.Detail = "no health-probe workload schedules it"
+		} else {
+			j := judge{c: c, scenario: scenario, workload: workload, shared: &sharedSetup{}}
+			result = j.singlePass(ctx)
+		}
+	}
+	report.Results = []Result{result}
+	return report
+}
+
 func selected(id string, only []string, ids map[string]bool) bool {
 	for _, o := range only {
 		if id == o || (!ids[o] && strings.Contains(id, o)) {
@@ -219,7 +258,7 @@ func budget(c Config, report *Report) float64 {
 		}
 		load := traffic.MeasureProbeLoad([]traffic.Workload{w}, requests).RequestsPerSecond
 		total += load
-		if interval := w.EffectiveSampleInterval(); load > 0 && interval > slowInterval && interval > longest.EffectiveSampleInterval() {
+		if interval := w.EffectiveSampleInterval(); load > 0 && interval > slowInterval && interval > longest.EffectiveSampleInterval() && !meetsTarget(w, c.DetectionTarget) {
 			longest, longestLoad = w, load
 		}
 		parts = append(parts, fmt.Sprintf("%s %.2f (%d scenarios, %.2f iterations/s)", w.Name, load, len(w.Scenarios), w.SamplingPlan().Rate))
@@ -240,6 +279,18 @@ func budget(c Config, report *Report) float64 {
 	return total
 }
 
+func meetsTarget(w traffic.Workload, target time.Duration) bool {
+	if target == 0 {
+		return false
+	}
+	for _, scenario := range w.Scenarios {
+		if w.ExpectedDetection(scenario.ID, 0).Worst > target {
+			return false
+		}
+	}
+	return true
+}
+
 // sharedSetup makes one prober's engines share completed setup, as SDO's
 // prober does.
 type sharedSetup struct {
@@ -255,6 +306,7 @@ type judge struct {
 	next     uint64
 	// slowest is the slowest of the healthy runs, once they all passed.
 	slowest time.Duration
+	trace   func(string)
 }
 
 func (j *judge) engine(client traffic.Doer, shared *sharedSetup, iterationTimeout time.Duration) (*traffic.Engine, error) {
@@ -283,12 +335,38 @@ func (j *judge) iterate(ctx context.Context, e *traffic.Engine) traffic.Sample {
 	waited := time.Duration(0)
 	for {
 		j.next++
-		_, sample := e.Iterate(ctx, j.next)
+		_, sample := e.IterateWithTrace(ctx, j.next, j.trace)
 		if sample.IdentityWait == 0 || waited >= maxIdentityWait || j.c.Wait(ctx, identityPoll) != nil {
 			return sample
 		}
 		waited += identityPoll
 	}
+}
+
+func (j *judge) singlePass(ctx context.Context) Result {
+	result := Result{Item: ItemSinglePass, Subject: j.scenario.ID, Status: Red}
+	e, err := j.engine(j.c.Client, j.shared, 0)
+	if err != nil {
+		result.Detail = err.Error()
+		return result
+	}
+	var steps []string
+	j.trace = func(step string) { steps = append(steps, step) }
+	sample := j.iterate(ctx, e)
+	if sample.Outcome == traffic.OutcomeOK {
+		result.Status = Green
+		result.Detail = fmt.Sprintf("%s, %d requests%s", sample.Latency.Round(time.Millisecond), sample.Requests, pauses(sample))
+	} else {
+		result.Detail = describe(sample)
+	}
+	if sample.CleanupError != "" {
+		result.Status = Red
+		result.Detail += "; cleanup failed: " + sample.CleanupError
+	}
+	if len(steps) > 0 {
+		result.Detail += "; " + strings.Join(steps, " → ")
+	}
+	return result
 }
 
 func (j *judge) run(ctx context.Context) []Result {
@@ -455,9 +533,8 @@ func pauses(s traffic.Sample) string {
 	return text
 }
 
-// Text is the report for people and agents: the journey checklist, then the
-// red lines, then the rest.
-func (r Report) Text() string {
+// VerboseText includes every result in addition to the checklist.
+func (r Report) VerboseText() string {
 	var b strings.Builder
 	b.WriteString(r.checklistText())
 	for _, status := range []string{Red, Green} {
@@ -467,6 +544,14 @@ func (r Report) Text() string {
 			}
 		}
 	}
+	if !r.Once {
+		b.WriteString(r.summary())
+	}
+	return b.String()
+}
+
+func (r Report) summary() string {
+	var b strings.Builder
 	fmt.Fprintf(&b, "%d red", r.Reds())
 	if len(r.Journeys) > 0 {
 		counts := r.JourneyCounts()
