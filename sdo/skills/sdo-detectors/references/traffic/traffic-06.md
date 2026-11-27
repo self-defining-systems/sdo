@@ -229,7 +229,4 @@ type Verdict struct {
 	Pending bool
 }
     Verdict is an Endpoint's judgement of one response.
-
-func Fail(format string, args ...any) Verdict
-    Fail rejects a response with a reason that names what was wrong.
 ```

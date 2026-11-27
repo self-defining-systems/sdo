@@ -36,13 +36,14 @@ func TestConfirmationDelayIsWhatTheConfirmerAndThePredicateTake(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, first := engine.Iterate(context.Background(), 0)
-			if !first.failed() {
+			slo := workload.ScenarioSLO("read")
+			if !first.failed(slo) {
 				t.Fatalf("first sample did not fail: %+v", first)
 			}
 			var confirming []Sample
 			c := &confirmer{engine: engine, slots: make(chan struct{}, MaxInFlight), active: map[string]bool{}, next: 1 << 31,
 				emit: func(_ string, s Sample) { confirming = append(confirming, s) }}
-			c.run(context.Background(), "read", first)
+			c.run(context.Background(), "read", first, slo)
 
 			window := Window{Workload: workload}
 			observed := ScenarioObservations{Scenario: Descriptor{ID: "read", Target: catalog[0].Target}, Qualified: true, UserTest: true}
