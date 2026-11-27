@@ -202,6 +202,7 @@ def test_invalid_injection_is_terminal_infrastructure_without_response_or_learni
     assert summarize(records)[0].incidents == 0
 
 
+@pytest.mark.sregym_env
 @pytest.mark.requires_sregym
 def test_real_v2_worker_addresses_nested_components_and_reports_failed_cleanup(tmp_path):
     from pathlib import Path
@@ -233,6 +234,7 @@ def test_real_v2_worker_addresses_nested_components_and_reports_failed_cleanup(t
         assert "synthetic cleanup failure" not in str(error.value)
 
 
+@pytest.mark.sregym_env
 @pytest.mark.requires_sregym
 def test_real_v2_worker_removes_cluster_objects_the_injection_created(tmp_path):
     """LEAK2: a fault's leftover namespace made the next row's admission reject the lane."""
@@ -259,6 +261,7 @@ def test_real_v2_worker_removes_cluster_objects_the_injection_created(tmp_path):
         driver.inject("single")
 
 
+@pytest.mark.sregym_env
 @pytest.mark.requires_sregym
 def test_real_v2_worker_returns_the_app_namespace_to_its_pre_injection_inventory(tmp_path):
     """LEAK3: an HPA the fault ensured on recovery stayed in the app namespace for the next row.

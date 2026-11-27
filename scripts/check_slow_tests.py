@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 BUDGETS = Path(__file__).resolve().parents[1] / ".github" / "ci_budgets.json"
-PYTEST_DURATION = re.compile(r"^\s*(?P<seconds>\d+(?:\.\d+)?)s\s+(?:call|setup|teardown)\s+(?P<node>\S+)")
+PYTEST_DURATION = re.compile(r"^\s*(?P<seconds>\d+(?:\.\d+)?)s\s+(?:call|setup|teardown)\s+(?P<node>\S.*?)\s*$")
 
 
 # A shared runner varies a test's wall time by tens of percent, so a test just over the budget is a warning and only
@@ -51,12 +51,17 @@ def go_slow(lines: Iterable[str], limit: float) -> dict[str, float]:
 
 
 def pytest_slow(lines: Iterable[str], limit: float) -> dict[str, float]:
-    slow: dict[str, float] = {}
+    """Slowest case per test. A case costs its setup, call and teardown, as Go's elapsed time does."""
+    cases: dict[str, float] = {}
     for line in lines:
         match = PYTEST_DURATION.match(line)
-        if match and float(match["seconds"]) > limit:
-            node = match["node"].split("[")[0]
-            slow[node] = max(slow.get(node, 0.0), float(match["seconds"]))
+        if match:
+            cases[match["node"]] = cases.get(match["node"], 0.0) + float(match["seconds"])
+    slow: dict[str, float] = {}
+    for case, seconds in cases.items():
+        if seconds > limit:
+            node = case.split("[")[0]
+            slow[node] = max(slow.get(node, 0.0), seconds)
     return slow
 
 

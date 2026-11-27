@@ -63,6 +63,45 @@ def _no_real_kubectl(
     monkeypatch.delenv("KUBECONFIG", raising=False)
 
 
+_UV_SHIM = """#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        */third_party/sregym)
+            echo "uv: unit tests must not run SREGym's environment (or mark @pytest.mark.sregym_env, nightly only)" >&2
+            exit 97 ;;
+    esac
+done
+exec "{uv}" "$@"
+"""
+
+
+@pytest.fixture(scope="session")
+def _guarded_uv_dir(tmp_path_factory: pytest.TempPathFactory) -> Path | None:
+    uv = shutil.which("uv")
+    if uv is None:
+        return None
+    directory = tmp_path_factory.mktemp("guarded-uv")
+    shim = directory / "uv"
+    shim.write_text(_UV_SHIM.replace("{uv}", uv))
+    shim.chmod(0o755)
+    return directory
+
+
+@pytest.fixture(autouse=True)
+def _no_sregym_environment(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, _guarded_uv_dir: Path | None
+) -> None:
+    """PR-tier tests never run SREGym's own uv environment.
+
+    Its first use on a runner syncs about 250 packages (~30 s, not in any CI cache), and every test that needs
+    it waits on uv's lock for that (17-19 s each). Use a stand-in at the seam;
+    a test of the real environment is marked ``sregym_env`` and its file runs nightly.
+    """
+    if _guarded_uv_dir is None or request.node.get_closest_marker("sregym_env"):
+        return
+    monkeypatch.setenv("PATH", f"{_guarded_uv_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
 _GO_TOOL_CONSUMERS = ("tests/unit/benchmarks/sregym/", "tests/unit/sdo/operator/", "tests/unit/test_")
 
 

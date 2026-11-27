@@ -88,11 +88,14 @@ def worker_modules(code_root: Path) -> list[str]:
     return sorted(imported | {WORKER_MODULE})
 
 
-def worker_import_error(code_root: Path, modules: Sequence[str] | None = None) -> str | None:
+def worker_import_error(
+    code_root: Path, modules: Sequence[str] | None = None, *, python: Sequence[str] | None = None
+) -> str | None:
     """Why the worker's modules do not import in SREGym's own venv (None when they all do).
 
     The worker runs without SDO's dependencies, so a first-party import that pulls one in
     (h9.18: source deployment -> ``sdo.contracts`` -> protovalidate) fails every deploy.
+    ``python`` is the command that runs that interpreter; the default syncs and uses the real venv.
     """
 
     sregym_dir = code_root / "third_party" / "sregym"
@@ -103,7 +106,7 @@ def worker_import_error(code_root: Path, modules: Sequence[str] | None = None) -
     timeout = wait_for(WaitKind.OPERATION)
     try:
         result = subprocess.run(
-            ["uv", "run", "--directory", str(sregym_dir), "python", "-c", script, *names],
+            [*(python or ("uv", "run", "--directory", str(sregym_dir), "python")), "-c", script, *names],
             env={**os.environ, "PYTHONPATH": str(code_root)},
             capture_output=True,
             text=True,
