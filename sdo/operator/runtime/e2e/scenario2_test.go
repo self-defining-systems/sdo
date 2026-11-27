@@ -23,18 +23,19 @@ func TestControllerSurvivesFaults(t *testing.T) {
 	// The scripted agent repairs source drift on first sight; health faults need a learned program.
 	const drift, health, later = "toy_target_port_frontend", "toy_target_port_catalog", "toy_target_port_backend"
 
-	// Phase 1: a slow API plus a crashing agent. The incident ends failed; the fault stays.
+	// Phase 1: a slow API plus a crashing agent. The incident escalates and stays open; the fault stays.
 	latencyFrom := time.Now()
 	w.Proxy.Set(Faults{Latency: 250 * time.Millisecond})
 	w.SetAgentMode("crash")
 	w.Inject(drift)
 	// A responder that fails escalates: the incident stays open until its alerts clear, so the engineer repairs it.
 	w.waitFor(4*time.Minute, "the crashing agent's incident to end in escalation", func() bool {
-		return strings.Contains(w.ControllerLog(), "incident_terminal_dispatch_failure")
+		return strings.Contains(w.ControllerLog(), "incident_escalated")
 	})
 	w.EngineerRepair(drift)
-	w.waitFor(4*time.Minute, "a failed outcome from the crashing agent", func() bool { return w.hasOutcome("failed") })
-	t.Logf("phase 1: failed outcome after agent crash; %d API requests delayed", w.Proxy.Requests.Load())
+	// Once the engineer's repair clears the alerts, the escalated incident closes escalated.
+	w.waitFor(4*time.Minute, "an escalated outcome from the crashing agent", func() bool { return w.hasOutcome("escalated") })
+	t.Logf("phase 1: escalated outcome after agent crash; %d API requests delayed", w.Proxy.Requests.Load())
 
 	// Phase 2: faults stop, the agent works again, and the controller is killed in the middle of an incident.
 	w.Proxy.Clear()
@@ -69,7 +70,7 @@ func TestControllerSurvivesFaults(t *testing.T) {
 	// when the controller is killed before the worker has durably checkpointed; that failure escalates and the
 	// incident stays open until the engineer repairs the fault.
 	w.waitFor(3*time.Minute, "the interrupted incident to be repaired or escalated", func() bool {
-		return w.Repaired(health) || strings.Contains(w.ControllerLog(), "incident_terminal_dispatch_failure")
+		return w.Repaired(health) || strings.Contains(w.ControllerLog(), "incident_escalated")
 	})
 	if !w.Repaired(health) {
 		w.EngineerRepair(health)
