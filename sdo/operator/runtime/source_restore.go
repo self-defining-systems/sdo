@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,13 +107,25 @@ func (p sourceRestoreProgram) Diagnose(ctx context.Context, view program.ReadVie
 }
 
 // Mitigate restores each departed object with the built-in source actions:
-// ReconcileFromSource, CreateFromSource, or DeleteObject for a source-absent object.
+// ReconcileFromSource, CreateFromSource, or DeleteObject for a source-absent
+// object. Then it restarts, with RestartRollout, each workload that reads a
+// restored ConfigMap only at container start and runs a Pod that loaded the
+// departed content, because the restore alone does not change what that Pod
+// runs. A data store's workload is never restarted here: its departure stays
+// reported until its Pods run the restored content, for the responder.
 func (p sourceRestoreProgram) Mitigate(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Plan, error) {
 	departures, err := p.evidence.departures(ctx, view, restoreComponent(bindings))
 	if err != nil {
 		return program.Plan{}, err
 	}
+	m, err := view.AppMap()
+	if err != nil {
+		return program.Plan{}, err
+	}
 	plan := program.Plan{Rationale: "put objects changed outside SDO back to accepted source"}
+	var restarts []program.Action
+	restarting := map[string]bool{}
+	var heldData []string
 	for _, departure := range departures {
 		reason := "restore to accepted source"
 		switch departure.Kind {
@@ -123,11 +136,37 @@ func (p sourceRestoreProgram) Mitigate(ctx context.Context, view program.ReadVie
 		case DepartureExtra:
 			plan.Actions = append(plan.Actions, program.DeleteObject{Ref: departure.Ref, Reason: "remove an object accepted source does not declare"})
 		}
+		for _, consumer := range departure.Consumers {
+			key := consumer.Kind + "/" + consumer.Name
+			if restarting[key] {
+				continue
+			}
+			if holdsData(m, key) {
+				heldData = append(heldData, key)
+				continue
+			}
+			restarting[key] = true
+			restarts = append(restarts, program.RestartRollout{Ref: consumer, Reason: "load " + departure.Ref.Kind + "/" + departure.Ref.Name + " as accepted source declares it; it is read only at container start"})
+		}
 	}
+	plan.Actions = append(plan.Actions, restarts...)
 	if len(plan.Actions) == 0 {
+		if len(heldData) > 0 {
+			return program.Plan{}, fmt.Errorf("component %q: only data store workloads (%s) still run the departed content; the built-in restore does not restart a data store", restoreComponent(bindings), strings.Join(heldData, ","))
+		}
 		return program.Plan{}, fmt.Errorf("component %q has no departure from accepted source to restore", restoreComponent(bindings))
 	}
 	return plan, nil
+}
+
+// holdsData reports whether workload ("Kind/name") is a data store's in the map.
+func holdsData(m program.AppMap, workload string) bool {
+	for _, component := range m.Components {
+		if component.Workload == workload {
+			return component.HoldsData || component.Data != nil
+		}
+	}
+	return false
 }
 
 // withSourceRestore adds the built-in playbook to a registry. It lists beside

@@ -515,9 +515,13 @@ func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.T
 					continue
 				}
 				seen[key] = true
+				key = strings.Join(departure.Fields, ";")
+				if departure.Kind == DepartureNotReloaded {
+					key = refNames(departure.Consumers)
+				}
 				rows = append(rows, IncidentChange{
 					At: departure.At, Source: "kubernetes", Component: component.Name,
-					ReaderOrObject: departure.Ref.Kind + "/" + departure.Ref.Name, Key: strings.Join(departure.Fields, ";"),
+					ReaderOrObject: departure.Ref.Kind + "/" + departure.Ref.Name, Key: key,
 					Before: "accepted-source", After: string(departure.Kind), Writer: departure.Manager, Command: departure.Command(),
 				})
 			}

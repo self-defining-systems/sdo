@@ -23,6 +23,10 @@ const (
 	DepartureMissing DepartureKind = "missing"
 	// DepartureExtra: the object exists live and accepted source does not declare it.
 	DepartureExtra DepartureKind = "extra"
+	// DepartureNotReloaded: the ConfigMap matches accepted source again, but
+	// workloads that read it only at container start (subPath, env, envFrom)
+	// still run Pods that loaded the departed content (Consumers).
+	DepartureNotReloaded DepartureKind = "not_reloaded"
 )
 
 // SourceDeparture is one object that differs from accepted source because a
@@ -42,6 +46,10 @@ type SourceDeparture struct {
 	// Unattributed is a missing object no drift event explains: shown as plain
 	// information, with no claim about who removed it and no restore command.
 	Unattributed bool
+	// Consumers are the workloads that read this ConfigMap only at container
+	// start and run a Pod that loaded the departed content: restoring the
+	// object alone does not change what they run, a rollout restart does.
+	Consumers []sdk.ObjectRef
 }
 
 // Command is the responder command that puts the object back to accepted
@@ -58,8 +66,22 @@ func (d SourceDeparture) Command() string {
 		return "sdo mitigate CreateFromSource --bind ref=" + ref
 	case DepartureExtra:
 		return "sdo mitigate DeleteObject --bind ref=" + ref
+	case DepartureNotReloaded:
+		var commands []string
+		for _, consumer := range d.Consumers {
+			commands = append(commands, fmt.Sprintf("sdo mitigate RestartRollout --bind ref=%s/%s/%s", consumer.Kind, consumer.Namespace, consumer.Name))
+		}
+		return strings.Join(commands, "; ")
 	}
 	return ""
+}
+
+func refNames(refs []sdk.ObjectRef) string {
+	names := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		names = append(names, ref.Kind+"/"+ref.Name)
+	}
+	return strings.Join(names, ",")
 }
 
 // Text is the one-line description of the departure.
@@ -71,6 +93,8 @@ func (d SourceDeparture) Text() string {
 			return name + " is missing; accepted source declares it"
 		}
 		return fmt.Sprintf("%s was deleted at %s by %s (not sdo); accepted source declares it", name, hms(d.At), orQuestion(d.Manager))
+	case DepartureNotReloaded:
+		return fmt.Sprintf("%s changed at %s by %s (not sdo) and matches accepted source again, but %s still run Pods started with the changed content (read only at start: subPath, env or envFrom)", name, hms(d.At), orQuestion(d.Manager), refNames(d.Consumers))
 	}
 	what := "changed"
 	if len(d.Fields) > 0 {
@@ -143,7 +167,13 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 			continue
 		}
 		diff, err := in.View.DiffAgainstSource(ref)
-		if err != nil || !diff.Changed {
+		if err != nil {
+			continue
+		}
+		if !diff.Changed {
+			if departure, ok := notReloaded(in, ref, late); ok {
+				result = append(result, departure)
+			}
 			continue
 		}
 		departure := SourceDeparture{Ref: ref, Kind: DepartureChanged}
@@ -191,6 +221,9 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 				departure.Fields = append(departure.Fields, redactDetectText(field.Path, 40))
 			}
 		}
+		if ref.Kind == "ConfigMap" && departure.Kind == DepartureChanged {
+			departure.Consumers = staleConsumers(in.View, ref, departure.At, time.Time{})
+		}
 		result = append(result, departure)
 	}
 	sort.SliceStable(result, func(i, j int) bool {
@@ -201,6 +234,38 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 		return a.At.After(b.At)
 	})
 	return result
+}
+
+// notReloaded is the departure of a ConfigMap that matches accepted source
+// again while a workload that reads it only at start still runs a Pod started
+// after the foreign change and before the content was written back. Without a
+// readable object or a recorded write time it claims nothing.
+func notReloaded(in DepartureInput, ref sdk.ObjectRef, late func(time.Time) bool) (SourceDeparture, bool) {
+	if ref.Kind != "ConfigMap" {
+		return SourceDeparture{}, false
+	}
+	event := latestForeignDriftEvent(in.Events, ref)
+	reader, ok := in.View.(sdk.ObjectReader)
+	if event == nil || !ok {
+		return SourceDeparture{}, false
+	}
+	at := driftEventTime(event)
+	if late(at) {
+		return SourceDeparture{}, false
+	}
+	object, err := reader.Object(ref)
+	if err != nil || object == nil {
+		return SourceDeparture{}, false
+	}
+	restored := lastWriteAt(object)
+	if restored.IsZero() || !restored.After(at) {
+		return SourceDeparture{}, false
+	}
+	consumers := staleConsumers(in.View, ref, at, restored)
+	if len(consumers) == 0 {
+		return SourceDeparture{}, false
+	}
+	return SourceDeparture{Ref: ref, Kind: DepartureNotReloaded, Manager: event.Manager, At: at, SeenHealthy: event.SeenHealthy, Consumers: consumers}, true
 }
 
 // driftEventTime is when the manager wrote, else when the controller observed it.
