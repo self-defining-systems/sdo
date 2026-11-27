@@ -347,26 +347,23 @@ func (s *Server) readState(ctx context.Context, request *pb.ReadStateRequest) (a
 		values appstate.Values
 		err    error
 	}
-	done := make(chan outcome, 1)
-	go func() {
-		defer func() {
-			s.runMu.Lock()
-			delete(s.running, key)
-			s.runMu.Unlock()
-		}()
+	done := goThenRelease(func() (got outcome) {
 		defer func() {
 			if value := recover(); value != nil {
-				done <- outcome{err: fmt.Errorf("app-state reader panicked: %v", value)}
+				got = outcome{err: fmt.Errorf("app-state reader panicked: %v", value)}
 			}
 		}()
 		live, err := s.readFactory(ctx, snapshot)
 		if err != nil {
-			done <- outcome{err: err}
-			return
+			return outcome{err: err}
 		}
 		values, err := appstate.Run(ctx, reader, s.programObjects(live, snapshot))
-		done <- outcome{values, err}
-	}()
+		return outcome{values, err}
+	}, func() {
+		s.runMu.Lock()
+		delete(s.running, key)
+		s.runMu.Unlock()
+	})
 	select {
 	case got := <-done:
 		return got.values, got.err
@@ -455,17 +452,15 @@ func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.Detec
 		findings []*pb.Finding
 		failure  detectorFailure
 	}
-	done := make(chan outcome, 1)
-	go func() {
-		defer func() {
-			s.runMu.Lock()
-			delete(s.evaluating, id)
-			close(run.done)
-			s.runMu.Unlock()
-		}()
+	done := goThenRelease(func() outcome {
 		findings, failure := detect(ctx, d, view)
-		done <- outcome{findings, failure}
-	}()
+		return outcome{findings, failure}
+	}, func() {
+		s.runMu.Lock()
+		delete(s.evaluating, id)
+		close(run.done)
+		s.runMu.Unlock()
+	})
 	select {
 	case got := <-done:
 		return got.findings, got.failure
@@ -475,6 +470,19 @@ func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.Detec
 		s.runMu.Unlock()
 		return nil, detectorFailure{fmt.Sprintf("detector evaluation abandoned: %v", ctx.Err()), sdk.ReadClassUnavailable}
 	}
+}
+
+// goThenRelease runs work on its own goroutine and delivers its result after
+// release has returned, so a caller holding the result never finds the slot work
+// ran in still taken. work recovers its own panics.
+func goThenRelease[T any](work func() T, release func()) <-chan T {
+	done := make(chan T, 1)
+	go func() {
+		result := work()
+		release()
+		done <- result
+	}()
+	return done
 }
 
 // detectorFailure is why a detector produced no answer: its text and its read
