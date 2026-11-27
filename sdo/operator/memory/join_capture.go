@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 
+	"sdo.dev/operator/safefs"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -33,10 +35,16 @@ func CaptureJoinContext(repositoryMount, incidentID string, n int, record JoinCa
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	// The responder's pod mounts the session directory above dir writable, so
+	// the write is confined to the operator's mount and refuses links.
+	rel, err := safefs.Rel(repositoryMount, dir)
+	if err != nil {
 		return err
 	}
-	return writeCapturedFile(filepath.Join(dir, joinCaptureContextFile(n)), data)
+	if err := safefs.MkdirAll(repositoryMount, rel, 0700); err != nil {
+		return err
+	}
+	return safefs.CreateFile(repositoryMount, path.Join(rel, joinCaptureContextFile(n)), data, 0444)
 }
 
 // ReadJoinCaptureContext reads what Go knew at the nth join capture of an
