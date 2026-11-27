@@ -2,8 +2,10 @@ package journeycheck
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -55,17 +57,26 @@ func Soaked(windows map[string]traffic.Window) []Result {
 		for _, o := range window.Scenarios {
 			id := o.Scenario.ID
 			failed, worst := 0, ""
-			for _, s := range append(append([]traffic.Sample{}, o.Samples...), o.Confirming...) {
-				if s.Outcome != traffic.OutcomeOK {
-					failed++
+			budget := window.Workload.ScenarioSLO(id).MaxLatency.Duration()
+			samples := slices.Concat(o.Samples, o.Confirming)
+			for _, s := range samples {
+				switch {
+				case s.Outcome != traffic.OutcomeOK:
 					worst = describe(s)
+				case s.CleanupError != "":
+					worst = "cleanup: " + s.CleanupError
+				case budget > 0 && s.Latency > budget:
+					worst = fmt.Sprintf("iteration latency %s > %s", s.Latency.Round(time.Millisecond), budget)
+				default:
+					continue
 				}
+				failed++
 			}
 			r := Result{ItemSoak, name + "/" + id, Green, fmt.Sprintf("%d samples, none failed", len(o.Samples))}
 			first, last, listed := markedSpan(o.Samples)
 			switch {
 			case failed > 0:
-				r.Status, r.Detail = Red, fmt.Sprintf("%d of %d samples failed while healthy: %s", failed, len(o.Samples), worst)
+				r.Status, r.Detail = Red, fmt.Sprintf("%d of %d samples failed while healthy: %s", failed, len(samples), worst)
 			case !o.Qualified:
 				r.Status, r.Detail = Red, strings.TrimSpace("never qualified: too few usable samples in the run "+o.LastInvalid)
 			case listed && last-first > maxMarkedGrowth:

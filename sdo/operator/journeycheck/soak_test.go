@@ -3,6 +3,7 @@ package journeycheck
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -52,5 +53,31 @@ func TestSoakKeepsPassingScenariosWhenAnotherIsRedOrUnselected(t *testing.T) {
 	}
 	if len(w.Scenarios) != 3 {
 		t.Fatal("soak changed the original schedule")
+	}
+}
+
+func TestSoakReportsSlowAndLeakingScenariosIndependently(t *testing.T) {
+	workload := traffic.Workload{
+		SLO: traffic.SLO{MaxLatency: traffic.Duration(time.Second)},
+	}.WithDefaults()
+	window := traffic.Window{Workload: workload}
+	for id, sample := range map[string]traffic.Sample{
+		"fast":  {Outcome: traffic.OutcomeOK, Latency: time.Second},
+		"slow":  {Outcome: traffic.OutcomeOK, Latency: 2 * time.Second},
+		"leaks": {Outcome: traffic.OutcomeOK, CleanupError: "record is still visible"},
+	} {
+		window.Scenarios = append(window.Scenarios, traffic.ScenarioObservations{
+			Scenario: traffic.Descriptor{ID: id}, Qualified: true, Samples: []traffic.Sample{sample},
+		})
+	}
+	want := map[string]string{"probe/fast": Green, "probe/slow": Red, "probe/leaks": Red}
+	got := Soaked(map[string]traffic.Window{"probe": window})
+	if len(got) != len(want) {
+		t.Fatalf("expected one verdict per scenario: %+v", got)
+	}
+	for _, verdict := range got {
+		if verdict.Status != want[verdict.Subject] {
+			t.Errorf("unexpected verdict: %+v", verdict)
+		}
 	}
 }
