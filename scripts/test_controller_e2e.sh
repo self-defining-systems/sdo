@@ -14,11 +14,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$root/scripts/isolate_git_config.sh"
 scenario="${1:-all}"
 case "$scenario" in
-    scenario1) selection='^TestFirstIncidentLearnsThenRepeatIsDeterministic$' ;;
-    scenario2) selection='^TestControllerSurvivesFaults$' ;;
-    api-errors) selection='^TestControllerToleratesAPIErrors$' ;;
-    hung-agent) selection='^TestControllerEndsHungAgent$' ;;
-    all) selection='^(TestFirstIncidentLearnsThenRepeatIsDeterministic|TestControllerSurvivesFaults|TestControllerToleratesAPIErrors|TestControllerEndsHungAgent)$' ;;
+    scenario1) selection='TestFirstIncidentLearnsThenRepeatIsDeterministic' ;;
+    scenario2) selection='TestControllerSurvivesFaults' ;;
+    api-errors) selection='TestControllerToleratesAPIErrors' ;;
+    hung-agent) selection='TestControllerEndsHungAgent' ;;
+    all) selection='TestFirstIncidentLearnsThenRepeatIsDeterministic|TestControllerSurvivesFaults|TestControllerToleratesAPIErrors|TestControllerEndsHungAgent' ;;
     *) echo "usage: $0 [scenario1|scenario2|api-errors|hung-agent|all]" >&2; exit 2 ;;
 esac
 for tool in bwrap git kubectl go uv; do
@@ -45,4 +45,4 @@ bash "$root/scripts/prefetch_go_modules.sh"
 uv sync --extra test -q
 cd sdo/operator/runtime
 # The cluster, controller and agents are real processes: run in real time with a generous bound.
-exec go test -tags 'integration controller_e2e' ./e2e -run "$selection" -count=1 -timeout 25m -v
+exec go test -tags 'integration controller_e2e' ./e2e -run "^(${selection}|TestPodTextExpansion)$" -count=1 -timeout 25m -v
