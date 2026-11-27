@@ -211,7 +211,17 @@ print(json.dumps(dict(type='result', subtype='success', is_error=False, result='
 assert sys.stdin.read() == ''
 """,
     )
-    executable(tmp_path / "operator", "import sys\nassert sys.argv[1:3] == ['memory', 'check']\n")
+    executable(
+        tmp_path / "operator",
+        """
+import sys
+from pathlib import Path
+assert sys.argv[1:3] == ['memory', 'check']
+if Path('.sdo/detector').read_text() == 'Rejected follow-up.':
+    print('invalid follow-up detector')
+    sys.exit(1)
+""",
+    )
     env = {**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}", "TEST_ARGS": str(tmp_path / "args")}
 
     def launch(prompt_text: str, transcript: str, *extra: str) -> subprocess.CompletedProcess[str]:
@@ -239,3 +249,10 @@ assert sys.stdin.read() == ''
     assert (repo / ".sdo/detector").read_text() == "Fix the red probe."
     assert f"Onboarding export validated: {git(repo, 'rev-parse', 'HEAD')}" in follow_up.stdout
     assert (tmp_path / "follow-up.jsonl").read_text().count('"type": "result"') == 1
+
+    rejected = launch("Rejected follow-up.", "rejected.jsonl", "--resume", recorded["session_id"])
+    assert rejected.returncode == 1
+    assert "invalid follow-up detector" in rejected.stderr
+    assert "Onboarding export validated:" not in rejected.stdout
+    assert "Claude exited before" not in rejected.stderr
+    assert "AssertionError" not in rejected.stderr
