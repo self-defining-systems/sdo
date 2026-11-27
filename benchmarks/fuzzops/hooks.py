@@ -296,6 +296,11 @@ def write_baseline(root: Path, baseline: Baseline) -> Baseline:
     return written
 
 
+#: ``git`` for a repository this process removes. Git 2.47+ detaches the ``maintenance run --auto`` that a fetch or
+#: commit starts, and it keeps writing into ``.git/objects`` while the directory is being removed.
+SCRATCH_GIT = ("git", "-c", "maintenance.auto=false", "-c", "gc.auto=0")
+
+
 def bundle_problem(bundle: Path, branch: str, commit: str) -> str:
     """Why the bundle does not hold ``branch`` at ``commit`` ("" when it does)."""
     if not bundle.is_file():
@@ -326,8 +331,8 @@ def health_judged(bundle: Path, branch: str) -> bool:
     every install of it runs the health judge, an agent turn of minutes, before the controller finishes starting."""
     grep = [arg for trailer in JUDGE_TRAILERS for arg in ("--grep", f"^{trailer}$")]
     with tempfile.TemporaryDirectory() as tmp:
-        _run(["git", "init", "-q", tmp], "git init")
-        _run(["git", "-C", tmp, "fetch", "-q", str(bundle), f"refs/heads/{branch}"], "git fetch bundle")
+        _run([*SCRATCH_GIT, "init", "-q", tmp], "git init")
+        _run([*SCRATCH_GIT, "-C", tmp, "fetch", "-q", str(bundle), f"refs/heads/{branch}"], "git fetch bundle")
         found = _run(
             ["git", "-C", tmp, "log", "--first-parent", "-1", "--format=%H", "--all-match", *grep, "FETCH_HEAD"],
             "git log",
@@ -2979,8 +2984,8 @@ def rebranch_bundle(raw: Path, out: Path, branch: str, work: Path, expected: str
     refs = [line.partition(" ")[2].strip() for line in listed if line.strip()]
     if len(refs) != 1:
         raise HookError(f"the archived bundle has {len(refs)} heads ({', '.join(refs)}), expected one")
-    _run(["git", "init", "-q", str(work)], "git init")
-    _run(["git", "-C", str(work), "fetch", "-q", str(raw), f"{refs[0]}:refs/heads/{branch}"], "git fetch bundle")
+    _run([*SCRATCH_GIT, "init", "-q", str(work)], "git init")
+    _run([*SCRATCH_GIT, "-C", str(work), "fetch", "-q", str(raw), f"{refs[0]}:refs/heads/{branch}"], "git fetch bundle")
     commit = _run(["git", "-C", str(work), "rev-parse", f"refs/heads/{branch}"], "git rev-parse").stdout.strip()
     if expected and commit != expected:
         raise HookError(f"the bundled head {commit[:12]} is not the controller's HEAD {expected[:12]}")

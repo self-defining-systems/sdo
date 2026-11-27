@@ -26,15 +26,29 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
-from benchmarks.fuzzops.hooks import JUDGE_TRAILERS, Baseline, HookError, bundle_problem, sha256_file, write_baseline
+from benchmarks.fuzzops.hooks import (
+    JUDGE_TRAILERS,
+    SCRATCH_GIT,
+    Baseline,
+    HookError,
+    bundle_problem,
+    sha256_file,
+    write_baseline,
+)
 
 MEMORY_PREFIX = ".sdo/"
 _REQUIRED = JUDGE_TRAILERS[1:]
 _ACTORS = ("health_judge", "upkeep")
 
 
+def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [*SCRATCH_GIT, "-C", str(repo), *args], capture_output=True, text=True, timeout=120, check=False
+    )
+
+
 def _git(repo: Path, *args: str) -> str:
-    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=120, check=False)
+    proc = _run_git(repo, *args)
     if proc.returncode != 0:
         raise HookError(f"git {' '.join(args[:2])}: {proc.stderr.strip()[:300]}")
     return proc.stdout
@@ -56,7 +70,7 @@ def judge_commit(repo: Path, base: str, head: str) -> str:
     """The newest validated initial health_judge commit on ``head``'s first-parent line whose commits since ``base``
     are all install-time publications (health_judge or upkeep, one parent, memory files only). Raises when there is
     none: the memory was not collected after an install of ``base``, or something else committed first."""
-    if subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", base, head], check=False).returncode:
+    if _run_git(repo, "merge-base", "--is-ancestor", base, head).returncode:
         raise HookError(f"{base[:12]} is not an ancestor of {head[:12]}: the memory was not made from this baseline")
     line = _git(repo, "rev-list", "--first-parent", "--reverse", f"{base}..{head}").split()
     judged, parent = "", base

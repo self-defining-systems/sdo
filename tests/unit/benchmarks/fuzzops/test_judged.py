@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from benchmarks.fuzzops.hooks import Baseline, HookError, write_baseline
+from benchmarks.fuzzops.hooks import Baseline, HookError, health_judged, rebranch_bundle, write_baseline
 from benchmarks.fuzzops.judged import judged_baseline, main
 
 if TYPE_CHECKING:
@@ -20,7 +20,7 @@ REFLECTION = "SDO-Actor: responder\nSDO-Phase: reflection\nSDO-Validation: passe
 
 
 def _git(repo: Path, *args: str) -> str:
-    base = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@invalid"]
+    base = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@invalid", "-c", "maintenance.auto=false"]
     return subprocess.run([*base, *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
@@ -80,6 +80,26 @@ def test_the_judged_baseline_is_the_installs_judge_commit(tmp_path: Path, repo: 
     assert loaded.render_sha256 == base.render_sha256
     heads = _git(repo, "ls-remote", str(tmp_path / "judged" / "memory.bundle"))
     assert heads == f"{judge}\trefs/heads/judged"
+
+
+def test_no_scratch_repository_starts_background_git_maintenance(
+    tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Git 2.47+ detaches the maintenance a fetch starts, so it still writes while the directory is removed."""
+    baseline = _directory(tmp_path / "baseline", repo, "baseline")
+    _commit(repo, ".sdo/detectors/health/links.go", JUDGE)
+    collected = _directory(tmp_path / "learned", repo, "learned")
+    trace = tmp_path / "trace.jsonl"
+    monkeypatch.setenv("GIT_TRACE2_EVENT", str(trace))
+
+    judged_baseline(baseline, collected, tmp_path / "judged")
+    assert health_judged(collected / "memory.bundle", "learned")
+    rebranch_bundle(collected / "memory.bundle", tmp_path / "out.bundle", "baseline", tmp_path / "work")
+
+    events = [json.loads(line) for line in trace.read_text().splitlines()]
+    children = [event["argv"] for event in events if event["event"] == "child_start"]
+    assert children
+    assert [argv for argv in children if "maintenance" in argv or "gc" in argv] == []
 
 
 def test_an_upkeep_migration_before_the_judge_is_part_of_the_install(tmp_path: Path, repo: Path) -> None:
