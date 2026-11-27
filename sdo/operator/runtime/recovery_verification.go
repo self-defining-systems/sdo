@@ -43,6 +43,8 @@ type recoveryCheck struct {
 	observed bool
 	// beyondStage are the alerts the automatic stage's settled writes did not clear.
 	beyondStage []string
+	// uncoveredCauses are the active findings of causes the stage's settled writes did not address.
+	uncoveredCauses []string
 }
 
 // verificationInput is the live view, the incident alert set and SDO writes.
