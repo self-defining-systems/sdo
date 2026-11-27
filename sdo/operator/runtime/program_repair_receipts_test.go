@@ -182,3 +182,21 @@ func TestSourceResidualReconcileIsASuccessfulRepairReceipt(t *testing.T) {
 		t.Fatal("the residual detail must stay recorded")
 	}
 }
+
+// A rollout that had not finished when the apply returned is a pending
+// application, not a failed write; a different error still is one.
+func TestAPendingRolloutIsNotReportedAsAnApplicationError(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "app", Name: "store"}
+	action := program.ReconcileFromSource{Ref: ref}
+	pending := &contracts.RolloutPending{Reason: "StatefulSet/store rollout is pending"}
+	for text, want := range map[string]string{(&RolloutPendingError{Pending: pending}).Error(): "application_pending", "write refused": "application_error"} {
+		application := RecordedPlanApplication{ID: "a", Error: text, Pending: true, Result: PlanApplicationResult{
+			Plan: program.Plan{Actions: []program.Action{action}}, ActionsApplied: []program.Action{action}, Applied: true, RolloutPending: pending,
+			ActionReports: []PlanActionReport{{Status: "applied"}},
+		}}
+		receipts := ProgramRepairReceipts([]RecordedPlanApplication{application}, nil)
+		if len(receipts) != 1 || receipts[0].Success || receipts[0].FailureReason != want {
+			t.Errorf("%q: receipts = %+v, want one unsuccessful %s", text, receipts, want)
+		}
+	}
+}
