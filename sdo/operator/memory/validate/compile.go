@@ -94,7 +94,7 @@ func (s *run) compile(ctx context.Context) error {
 	}
 	workspace, err := builder.BuildWorkspace(ctx, builder.Config{
 		Replay: s.req.Replay, ApplicationRoot: s.req.Root, DiagnosticsRoot: diagnostics, OperatorRoot: s.req.OperatorRoot, HealthyBaseline: s.req.HealthyBaseline,
-		IncidentCapture: s.incidentCapture(), OwnIncidentCapture: s.ownIncidentCapture(),
+		IncidentCapture: s.ownIncidentCapture(), OwnIncidentCapture: s.ownIncidentCapture(),
 		Telemetry: &builder.TelemetryBindings{Sources: sources},
 	})
 	if err != nil {
@@ -293,7 +293,7 @@ func summarizeGoTest(output string) (message string, path string) {
 
 // incidentCapture is the controller's capture directory of the incident whose reflection this check judges: the agent's
 // closing turn and the broker see the incident's open state before Go writes any corpus case. Other checks have none.
-// ownIncidentCapture is the capture the own-incident replay reads: the one the
+// ownIncidentCapture is the capture the own-incident replay and the plan test read: the one the
 // caller supplied for a compile that runs apart from the reflection check, else
 // the reflection check's.
 func (s *run) ownIncidentCapture() string {

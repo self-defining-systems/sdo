@@ -20,14 +20,15 @@ typed readings into the snapshot. No exec occurs in detectors.
 CONSTANTS
 
 const (
-	MaxProbes        = 16
-	MaxTargets       = podread.MaxTargets
-	MaxIDBytes       = 128
-	LimitBytes       = 16 * 1024
-	MaxConcurrent    = 4
-	MinInterval      = 30 * time.Second
-	ExecTimeout      = 6 * time.Second
-	CollectionBudget = 8 * time.Second
+	MaxProbes         = 16
+	MaxDeclaredProbes = 64
+	MaxTargets        = podread.MaxTargets
+	MaxIDBytes        = 128
+	LimitBytes        = 16 * 1024
+	MaxConcurrent     = 4
+	MinInterval       = 30 * time.Second
+	ExecTimeout       = 6 * time.Second
+	CollectionBudget  = 8 * time.Second
 	// DialsPerProbe dials are made per probe run, each within DialTimeout.
 	DialsPerProbe = 4
 	DialTimeout   = time.Second
@@ -36,8 +37,12 @@ const (
 	MaxDialHistory = 20
 )
     Limits bound declarations, fan-out, retained output and the collection
-    cycle, like podread: a probe can neither load the application nor stall the
-    controller's evaluation loop.
+    cycle, like podread: a probe can neither load the application nor
+    stall the controller's evaluation loop. MaxProbes is a load budget as
+    podread.MaxQueries is: at most that many probe runs per MinInterval on
+    average (see Load) and at most that many probes started in one cycle;
+    a due probe beyond it keeps its last answer and runs in a later cycle,
+    least recently read first. MaxDeclaredProbes bounds the declarations.
 
 const FactStatus = "status"
     FactStatus is the HTTP status of a dialing probe's last answered request.
@@ -64,6 +69,10 @@ func ClientSetting(probe Probe, pod string, observedAt time.Time) traffic.LinkSe
 
 func Command(probe Probe) ([]string, error)
     Command returns the fixed argument vector the helper runs for a probe.
+
+func Load(probes []Probe) float64
+    Load is the probes' average runs per MinInterval: each counts
+    MinInterval/Interval.
 
 func LongestInterval(d sdk.Detector) time.Duration
     LongestInterval is how stale a declared probe can be at evaluation.
@@ -95,12 +104,14 @@ func ValidateProbes(probes []Probe) error
 TYPES
 
 type ClientLink struct {
-	ID   string
-	From podread.Target
-	Link traffic.Link
+	ID       string
+	From     podread.Target
+	Link     traffic.Link
+	Interval time.Duration
 }
     ClientLink is one edge a client-links detector dials from the Pods of its
-    calling role.
+    calling role. Interval, when set, is the link's own dial interval in place
+    of the detector's, so many links fit the MaxProbes load budget.
 
 type Consumer interface{ VantageProbes() []Probe }
     Consumer declares a detector's vantage probes. It must watch v1 Pod.

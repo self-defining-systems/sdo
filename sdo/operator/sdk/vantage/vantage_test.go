@@ -2,6 +2,7 @@ package vantage_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -180,5 +181,25 @@ func TestClientLinksDetectorDialsEachEdgeFromItsClient(t *testing.T) {
 	}
 	if len(findings) != 1 || !strings.Contains(findings[0].RuleID, db.ID()) || findings[0].Metadata["vantage"] != "client" {
 		t.Fatalf("findings = %+v", findings)
+	}
+}
+
+// The probe limit bounds load, not declarations, as podread's does.
+func TestProbeBudgetIsLoadPerBaseInterval(t *testing.T) {
+	declare := func(n int, interval time.Duration) []vantage.Probe {
+		probes := make([]vantage.Probe, n)
+		for i := range probes {
+			probes[i] = vantage.Probe{ID: fmt.Sprintf("p-%d", i), Kind: vantage.TCPConnect, From: podread.Target{Labels: map[string]string{"tier": "web"}}, To: &vantage.Peer{Host: "db", Port: 5432}, Interval: interval}
+		}
+		return probes
+	}
+	if err := vantage.ValidateProbes(declare(2*vantage.MaxProbes, 2*vantage.MinInterval)); err != nil {
+		t.Fatalf("twice the probes at twice the interval: %v", err)
+	}
+	if err := vantage.ValidateProbes(declare(vantage.MaxProbes+1, vantage.MinInterval)); err == nil {
+		t.Fatal("load above the budget accepted")
+	}
+	if err := vantage.ValidateProbes(declare(vantage.MaxDeclaredProbes+1, 10*vantage.MinInterval)); err == nil {
+		t.Fatal("declarations above the count bound accepted")
 	}
 }

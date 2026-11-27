@@ -37,6 +37,11 @@ takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound i
   repeat/first ratios per sequence, churn findings, false alarms from healthy runs and alarms while gating).
 - `hooks.py`: SDO's operator hooks for fuzzops-bench (below).
 - `cellevidence.py` / `capture.py`: the per-cell evidence manifest and validator (below); `capture.py` takes build identity, host load, the Prometheus/Jaeger stores for the window and all application and control pod logs at collect time.
+- `external.py`: the plain Claude arm (`vanilla.py`) around any agent command (`settings.external`: `command`, `label`, `model`), called with
+  the external-agent contract of `benchmarks/sregym/fastloop/README.md` (`--phase incident` only, never `--state-in`).
+  The command confines its own agent, stops it at `--deadline-epoch`, and adds `incident/transcript.jsonl` (Claude Code
+  JSONL, shell calls as `Bash`) and `incident/usage.json` to its result; a missing one makes the row's evidence
+  incomplete. Host setup: `hook_command` entry `external: ... python -m benchmarks.fuzzops.external`.
 - `view.py`: the dashboard view of a collected run (`operator/view.json`, below).
 
 ## fuzzops-bench hooks
@@ -163,6 +168,18 @@ observing and `sdo detect` serves the candidate view, but their findings never o
 responder's completion closes it (frozen memory). Page to first write and page to fixed are measured from the
 page time in `page.json`, comparable with B1.
 
+## AWS DevOps Agent baseline
+
+`devops_agent.py` is a lanes subject built on `vanilla.py`'s lane side (same page text, harm-onset wait, ServiceAccount,
+sandbox and 25-minute cap). The service only recommends, so a row has a diagnosis (`diagnosis.json`, `$FUZZOPS_REPORT`),
+a plan (`plan.json`) and the result of running the plan's `prepare` and `apply` commands unchanged (`apply.json`: stops
+at the first failed apply command; text steps are counted as `manual`). `task.json`, `executions.json`, `journal.jsonl`,
+`usage.json` (execution spans at list price, no tokens) and `space.json` (Agent Space assets, account counters) are the rest
+of the evidence. Settings: `window_seconds` and `devops_agent: {region, lanes: {<lane>: {agent_space_id, cluster}}}`, one
+Agent Space and EKS cluster per lane. `prepare` refuses a vcluster lane (the service reads EKS clusters only) and an Agent
+Space with directed actions on. The hooks never create or configure AWS resources; they start and cancel investigations,
+which are billed. A task the service linked or skipped, or that failed, is a problem (no row).
+
 ## Cell evidence manifest and validator
 
 `collect` writes `operator/build.json`, `host-load.json`, `observability.json` (receipt: `prometheus`, `jaeger`, `applogs`
@@ -237,12 +254,13 @@ since the start), and a lifecycle task sealed or written in the interval. `trans
 `{"incidents": [{"id", "outcome", "agents_ran", "rollouts"}], "rollouts", "missing": [ids with an outcome and an agent
 run but no rollout]}`.
 
-"No agent ran" (`sink.agents_ran` is false) is decided conservatively from the ledger: the incident has a closure whose
-responder result is absent because dispatch failed, or has no `responder_session_id`, a `resolution_path` other than
-`responder`, no usage and no response loop; the outcome document records no responder resolution, usage or loop; no
-reflection was dispatched (`reflection_dispatch_at` unset, phase not `DISPATCH`); and every reflection result has no
-usage and failed before its session started (`session_unavailable`, `session_handoff_invalid`, `request_too_large`).
-Anything else, including an incident with no closure yet, counts as an agent run that needs a rollout.
+An incident needs a rollout only with evidence that an agent task was dispatched for it (`sink.agents_ran`): the
+ledger records a `responder_session_id`, usage, a response loop or a closing turn (a reflection dispatch or result Go
+did not make without a turn), or the incident directory holds what a dispatched worker leaves (`startup/`,
+`startup-workers/`, `usage/`, `claude/`, `codex/`, `checkpoints/`, `model_io/`, `scratch/`, `*.jsonl`). Nothing else
+counts: an incident that is open, unclosed or ledger-less, and a closure's `resolution_path` or `dispatched_at`, which
+a watch-only controller also records. So a watch-only run owes no rollout, session or usage. With `frozen_memory` the
+outcome document is only in the ledger, and the cell manifest does not demand a committed one.
 
 For a manual `install`, pass `--evidence-sink-host-path <node dir> [--evidence-run-id <id>]` (set as
 `SDO_EVIDENCE_HOST_PATH` and `SDO_EVIDENCE_RUN_ID`) so SDO's trajectories, task records,

@@ -453,6 +453,20 @@ func TestEksLanePushPublishesUnderTheDeclaredName(t *testing.T) {
 	}
 }
 
+// A stand-in told to read stdin reads all of it, as the real tool does. One that exits first kills the script's writer with
+// SIGPIPE (exit 141 under pipefail) whenever the writer happens to be the slower of the two. The input here is larger than
+// a pipe buffer, so a stand-in that does not read fails every time.
+func TestEksStandInsReadTheStdinTheyAreHanded(t *testing.T) {
+	for _, call := range []string{"docker login --username AWS --password-stdin reg", "docker exec -i node sh", "kubectl apply -f -", "kubectl --kubeconfig kc apply -f -"} {
+		s := newEksScript(t)
+		cmd := exec.Command("bash", "-c", `set -o pipefail; head -c 1048576 /dev/zero | tr '\0' x | `+call+` >/dev/null`)
+		cmd.Env = s.env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("%s: %v\n%s", call, err, out)
+		}
+	}
+}
+
 // --- a plan item through the manager on an eks host ---
 
 // The eks host makes its lane with the platform script (sized from the footprint), the host-safety gates do not run,

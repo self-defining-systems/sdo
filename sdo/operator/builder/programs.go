@@ -77,13 +77,14 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 	if err != nil {
 		return err
 	}
-	if err := generatePrograms(workspace, module, programs, changedPrograms(ctx, config.ApplicationRoot, programs)); err != nil {
+	changed := changedPrograms(ctx, config.ApplicationRoot, programs)
+	if err := generatePrograms(workspace, module, programs, changed); err != nil {
 		return err
 	}
 	if config.Replay == "off" {
 		return os.Remove(filepath.Join(workspace, "generated", "programs_test.go"))
 	}
-	if err := generateIncidentPlanTest(config.IncidentCapture, workspace, programs); err != nil {
+	if err := generateIncidentPlanTest(config.IncidentCapture, workspace, programs, changed); err != nil {
 		return err
 	}
 	return generateOwnIncidentTest(config.OwnIncidentCapture, workspace, newPrograms(ctx, config.ApplicationRoot, programs))
@@ -142,9 +143,9 @@ func newPrograms(ctx context.Context, applicationRoot string, programs []program
 }
 
 // generateIncidentPlanTest stages the controller's captured open state of the incident under test and a test that runs
-// every program's Mitigate on it and validates the plan as the host will apply it. The capture exists before Go writes
+// the Mitigate of every program the change edits on it and validates the plan as the host will apply it. The capture exists before Go writes
 // a corpus case, so a program that is new in this incident is checked too. No capture, no test.
-func generateIncidentPlanTest(capture, workspace string, programs []programvalidation.Spec) error {
+func generateIncidentPlanTest(capture, workspace string, programs []programvalidation.Spec, changed []string) error {
 	if capture == "" {
 		return nil
 	}
@@ -165,7 +166,13 @@ func generateIncidentPlanTest(capture, workspace string, programs []programvalid
 			return err
 		}
 	}
-	return os.WriteFile(filepath.Join(workspace, "generated", "incident_plans_test.go"), []byte(programvalidation.IncidentPlanTests(programs)), 0o644)
+	var edited []programvalidation.Spec
+	for _, item := range programs {
+		if slices.Contains(changed, item.ID) {
+			edited = append(edited, item)
+		}
+	}
+	return os.WriteFile(filepath.Join(workspace, "generated", "incident_plans_test.go"), []byte(programvalidation.IncidentPlanTests(edited)), 0o644)
 }
 
 // changedPrograms names the playbooks the candidate edits: uncommitted changes

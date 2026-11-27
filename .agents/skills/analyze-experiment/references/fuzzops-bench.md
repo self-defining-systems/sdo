@@ -96,7 +96,8 @@ overlay files it passed are under the lane's `sdo-config/`.
   never average together. `--with` baselines (`noop`, `best-fix` builtin experiments) supply noop and best-fix cells.
 - Before trusting a run, check `operator/collect.json`: a failed part (memory, state, logs, evidence) means that
   run's SDO-side columns may be incomplete, not that the run is invalid. An `evidence` part failing with
-  `transcripts missing` names incidents whose outcome says an agent ran but whose rollouts never reached the host.
+  `transcripts missing` names incidents with evidence of a dispatched agent task (`sink.agents_ran`) whose rollouts
+  never reached the host; a watch-only run dispatches none.
 - Transcripts (responder and reflection rollouts) live only in `operator/evidence/incidents/*/` (copied from the host
   sink); `operator/transcripts.json` gives per-incident coverage. The lane timeline's `transcripts` check after each
   teardown records `transcripts missing: N` when the sink lost any. Older experiments have `operator/sdo_runtime/`
@@ -140,9 +141,13 @@ runs. Grader metrics come from `record.json`. Validity also honors the lanes sta
   found). The vanilla session end, which includes the agent's own verification after the fix,
   is `agent_wall_s`. For a recovered row, the tool searches calls issued through the final
   graded bad bucket. A database timestamp can place the exact write later than that bucket.
+- An `external` row (an agent command, `benchmarks/fuzzops/external.py`) is read like a vanilla row; `done.json` `label` and
+  `agent_version` name the agent and `session-dir/incident/` holds its own evidence.
 - `first_episode_end_s` is the inject to the last bad second of the first failure episode, which
   ends at the first clean gap of 30 s; read it beside `inject_to_last_bad_s`, which isolated
   later blips (churn, one failed request) can extend.
+- Arm `devops-agent` (AWS DevOps Agent, plan applied by a fixed applier) is measured like vanilla from its page; its
+  fixing writes come from `apply.json` (`applied_plan_tool_start`), its cost from `usage.json`, and it has no tokens.
 - When the transcript only brackets the write, the `*_tool_start` source gives the invocation's
   start as a lower bound and `last_write_tool_end_at` gives the result timestamp. The tool
   recognizes common Kubernetes and in-pod write commands. Shell scripts that hide their effects

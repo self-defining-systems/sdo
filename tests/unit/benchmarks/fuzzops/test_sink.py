@@ -89,12 +89,11 @@ def test_host_run_dir_joins_the_host_directory_and_run(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "ledger",
     [
-        {"incident_id": "i"},  # no closure yet: an agent may be running
-        {"closure": {"detected_at": "x"}},  # closure without result or dispatch error
         {"closure": _closure(responder_session_id="0199-abc")},
-        {"closure": _closure(resolution_path="responder")},
         {"closure": _closure(usage={"llm_calls": 2})},
+        {"closure": _closure(response_loops_used=1)},
         {"closure": _closure(resolution_path="deterministic"), "outcome_document": {"usage": {"input_tokens": "9"}}},
+        {"outcome_document": {"response_loops_used": 1}},
         {"closure": _closure(resolution_path="deterministic"), "reflection_dispatch_at": "2026-11-12T10:09:00Z"},
         {"closure": _closure(resolution_path="deterministic"), "reflection_phase": "REFLECTION_PHASE_DISPATCH"},
         {
@@ -102,18 +101,39 @@ def test_host_run_dir_joins_the_host_directory_and_run(tmp_path: Path) -> None:
             "reflection_decision": {"learning_decision": "no_change"},
         },
         {"closure": _closure(resolution_path="deterministic"), "reflectionResults": [{"usage": {"outputTokens": 3}}]},
-        {"closure": _closure(resolutionPath="responder")},
+        {"closure": _closure(responderSessionId="0199-abc")},
     ],
 )
-def test_agents_ran_unless_the_ledger_proves_otherwise(ledger: dict[str, Any]) -> None:
+def test_a_ledger_that_records_an_agent_task_means_agents_ran(ledger: dict[str, Any]) -> None:
     assert sink.agents_ran(ledger)
+
+
+#: What a watch-only controller writes: Go synthesizes a ``responder`` result at verification although no worker was
+#: ever dispatched, and frozen memory keeps the outcome in the ledger only.
+WATCH_ONLY_LEDGER: dict[str, Any] = {
+    "incident_id": "i-watch",
+    "frozen_memory": True,
+    "closure": {
+        "detected_at": "2026-11-12T10:01:00Z",
+        "dispatched_at": "2026-11-12T10:01:02Z",
+        "verified_while_responder_running": True,
+        "result": {"resolution_path": "responder", "status": "completed", "usage": {}},
+    },
+    "outcome_document": {"classification": "cleared_without_action"},
+    "reflection_skipped_reason": "frozen_memory",
+}
 
 
 @pytest.mark.parametrize(
     "ledger",
     [
+        {},
+        {"incident_id": "i"},  # open or cut off: being unclosed says nothing about a dispatch
+        {"closure": {"detected_at": "x"}},
+        {"closure": _closure(resolution_path="responder")},  # a path name is not a dispatched task
         {"closure": _closure(resolution_path="deterministic", usage={})},
         {"closure": {"detected_at": "x", "dispatch_error": "no worker"}},
+        WATCH_ONLY_LEDGER,
         {
             "closure": _closure(resolution_path="deterministic"),
             "outcome_document": {"resolution_path": "deterministic", "reflection_skip_reason": "no_session"},
@@ -122,8 +142,51 @@ def test_agents_ran_unless_the_ledger_proves_otherwise(ledger: dict[str, Any]) -
         },
     ],
 )
-def test_no_agent_ran(ledger: dict[str, Any]) -> None:
+def test_no_agent_ran_without_dispatch_evidence(ledger: dict[str, Any]) -> None:
     assert not sink.agents_ran(ledger)
+
+
+def _touch(directory: Path, name: str) -> None:
+    path = directory / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}\n")
+
+
+@pytest.mark.parametrize(
+    "trace",
+    [
+        "startup/startup-dispatch.json",
+        "startup-workers/w1/startup-worker.json",
+        "usage/0123456789abcdef0123456789abcdef.json",
+        "claude-turns.jsonl",
+        "agent-resolved.jsonl",
+        "reflection-usage.jsonl",
+        "claude/projects/p/s.jsonl",
+        "codex/sessions/rollout-1.jsonl",
+        "checkpoints/c/request.json",
+        "model_io/m/1.json",
+        "scratch/sdo-reports/i/0001-mitigate.json",
+    ],
+)
+@pytest.mark.parametrize("ledger", [None, WATCH_ONLY_LEDGER])
+def test_files_a_dispatched_worker_leaves_mean_agents_ran(
+    tmp_path: Path, ledger: dict[str, Any] | None, trace: str
+) -> None:
+    directory = _incident(_run(tmp_path), "a" * 32, ledger)
+    _touch(directory, trace)
+    assert sink.incident_coverage(directory).agents_ran
+
+
+@pytest.mark.parametrize("ledger", [None, WATCH_ONLY_LEDGER])
+def test_a_directory_only_the_controller_wrote_ran_no_agent(tmp_path: Path, ledger: dict[str, Any] | None) -> None:
+    run = _run(tmp_path)
+    directory = _incident(run, "a" * 32, ledger)
+    for name in ("incident.json", "seal.json", "corpus/fixed.json", "corpus/open@detect.json"):
+        _touch(directory, name)
+    coverage = sink.incident_coverage(directory)
+    assert not coverage.agents_ran
+    assert not coverage.needs_rollout
+    assert sink.transcripts_verdict(run) == ""
 
 
 # ---- transcripts verdict -------------------------------------------------------------------------------------
@@ -142,7 +205,8 @@ def test_verdict_checks_every_incident_with_a_ledger(tmp_path: Path) -> None:
     _incident(run, "c" * 32, {"closure": _closure(resolution_path="deterministic")})  # no agent ran
     assert sink.transcripts_verdict(run) == ""
     _incident(run, "d" * 32, responded)
-    _incident(run, "e" * 32, {"incident_id": "open"})
+    dispatched = _incident(run, "e" * 32, {"incident_id": "open"})
+    _touch(dispatched, "startup/startup-dispatch.json")  # a worker was dispatched and left no transcript
     assert sink.transcripts_verdict(run) == f"transcripts missing: 2 ({'d' * 8}, {'e' * 8})"
 
 

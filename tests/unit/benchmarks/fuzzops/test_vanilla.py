@@ -2,11 +2,14 @@
 
 import json
 import os
+import re
 import select
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pytest
 
 from benchmarks.fuzzops import vanilla
 from benchmarks.fuzzops.cellevidence import cell_problems
@@ -252,3 +255,92 @@ def test_watch_reports_missing_traffic_on_stderr(tmp_path, capsys):
     assert captured.out == ""
     assert "requires a FuzzOps pin that publishes FUZZOPS_TRAFFIC" in captured.err
     assert json.loads((tmp_path / "vanilla" / "proof" / "done.json").read_text())["error"] in captured.err
+
+
+USER = {"type": "authorized_user", "client_id": "public", "client_secret": "synth-cs", "refresh_token": "synth-rt"}
+
+
+@pytest.mark.parametrize(
+    ("auth", "secrets"),
+    [
+        (USER, ["synth-cs", "synth-rt"]),
+        ({"type": "impersonated_service_account", "source_credentials": USER}, ["synth-cs", "synth-rt"]),
+        ({"type": "service_account", "private_key": "synth-k1\nsynth-k2\n"}, ["synth-k1", "synth-k2"]),
+    ],
+)
+def test_every_auth_secret_is_redacted_from_kept_logs(tmp_path, auth, secrets):
+    path, log, kept = (tmp_path / name for name in ("auth.json", "log", "kept"))
+    path.write_text(json.dumps(auth))
+    text = json.dumps({"output": path.read_text()}) + "\n" + " ".join(secrets) + "\n"
+    log.write_text(text)
+    found = vanilla.auth_secrets(path)
+    assert found == secrets
+    vanilla.copy_log(log, kept, found)
+    assert not [secret for secret in secrets if secret in kept.read_text()]
+
+
+#: What a full EKS lane carries before any subject runs (benchmarks/lanes/deploy/eks-lane.sh).
+LANE_PLATFORM_NAMES = (
+    "clusterrolebinding.rbac.authorization.k8s.io/sdo-lane-admin",
+    "daemonset.apps/sdo-lane-node-agent\npod/sdo-lane-node-agent-6rxmh\nserviceaccount/sdo-lane-admin\n"
+    "configmap/sdo-lane-prepull",
+)
+
+
+def _listing(extra_cluster: str = "", extra_workloads: str = ""):
+    def kube(env, config, *args, stdin=None):
+        base_cluster, base_workloads = LANE_PLATFORM_NAMES
+        if "-A" in args:
+            return "\n".join(x for x in ("pod/gitlab-webservice-0", base_workloads, extra_workloads) if x)
+        return "\n".join(x for x in ("namespace/fg1", base_cluster, extra_cluster) if x)
+
+    return kube
+
+
+def test_full_eks_lane_platform_objects_are_not_sdo(monkeypatch):
+    monkeypatch.setattr(vanilla, "kubectl", _listing())
+    assert vanilla.prove_no_sdo({})["result"] == "SDO absent"
+
+
+@pytest.mark.parametrize(
+    ("cluster", "workloads"),
+    [
+        ("namespace/sdo-system", ""),
+        ("", "deployment.apps/sdo-controller"),
+        ("", "pod/sdo-lane-node-agent-6rxmh-extra"),
+        ("", "serviceaccount/sdo-lane-admin-shadow"),
+        ("", "configmap/sdo-lane-prepull-extra"),
+    ],
+)
+def test_sdo_objects_beside_the_lane_platform_are_refused_by_name(monkeypatch, cluster, workloads):
+    monkeypatch.setattr(vanilla, "kubectl", _listing(cluster, workloads))
+    with pytest.raises(vanilla.HookError, match=(cluster or workloads).split("/", 1)[1]):
+        vanilla.prove_no_sdo({})
+
+
+DEPLOY = Path(__file__).resolve().parents[4] / "benchmarks" / "lanes" / "deploy"
+#: How `kubectl get -o name` names each kind the full-lane script makes.
+LISTED_AS = {
+    "serviceaccount": "serviceaccount",
+    "clusterrolebinding": "clusterrolebinding.rbac.authorization.k8s.io",
+    "configmap": "configmap",
+    "DaemonSet": "daemonset.apps",
+}
+
+
+def full_lane_platform_objects() -> list[str]:
+    """Every object named sdo-* that a full EKS lane's own setup creates and the SDO check lists (Secrets are not)."""
+    script = (DEPLOY / "eks-lane.sh").read_text()
+    made = re.findall(r"create (\w+) (sdo-[a-z0-9-]+)", script)
+    agent = (DEPLOY / "eks" / "node-agent.yaml").read_text()
+    made += re.findall(r"^kind: (\w+)\nmetadata:\n  name: (sdo-[a-z0-9-]+)", agent, re.MULTILINE)
+    return [f"{LISTED_AS[kind]}/{name}" for kind, name in made if kind != "secret"]
+
+
+def test_every_object_the_full_lane_setup_makes_is_known_lane_platform():
+    """A platform object added to or renamed in the lane scripts must not make every full lane refuse the subject."""
+    found = full_lane_platform_objects()
+    assert {"serviceaccount/sdo-lane-admin", "daemonset.apps/sdo-lane-node-agent", "configmap/sdo-lane-prepull"} <= set(
+        found
+    )
+    assert [name for name in found if not vanilla.LANE_PLATFORM.fullmatch(name)] == []

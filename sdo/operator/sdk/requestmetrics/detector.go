@@ -80,6 +80,18 @@ type Rule struct {
 	// MinHealthy is the fewest requests, all healthy, that confirm recovery in
 	// one window; zero means MinFailed.
 	MinHealthy float64
+	// History is how far back the baseline query reaches, as a range query of
+	// HistoryStep; its newest point is the baseline the raise rule uses. A
+	// finding that holds an open incident is judged against the route's
+	// typical shares over the whole history (typicalShares), which a failure
+	// moves only once it fills most of it. Zero keeps the baseline one instant.
+	History time.Duration
+	// HistoryStep is the spacing of the history's points; it should match the
+	// baseline expression's own window so the points do not overlap.
+	HistoryStep time.Duration
+	// MinHistorySteps is the fewest history points, each with
+	// MinBaselineRequests requests, that make the typical shares believable.
+	MinHistorySteps int
 }
 
 func (r Rule) lookback() time.Duration {
@@ -98,9 +110,12 @@ func (r Rule) minHealthy() float64 {
 
 // DefaultRule is the rule the prototype replayed: at least 5 failed requests
 // and 5% of the requests and 5 times the healthy share over 30 s, on two
-// consecutive 5 s steps, healthy share floored at 1%.
+// consecutive 5 s steps, healthy share floored at 1%. A held finding's
+// typical shares come from six hours of ten-minute baseline windows, of
+// which at least an hour must carry traffic.
 func DefaultRule() Rule {
-	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20, ThinBaselineShare: 0.5, ThinMinFailed: 8, Lookback: 5 * time.Minute, MinHealthy: 5}
+	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20, ThinBaselineShare: 0.5, ThinMinFailed: 8, Lookback: 5 * time.Minute, MinHealthy: 5,
+		History: 6 * time.Hour, HistoryStep: 10 * time.Minute, MinHistorySteps: 6}
 }
 
 // Entry is the request metric of one entry service, with the PromQL the
@@ -119,7 +134,8 @@ type Entry struct {
 	// range query of Rule.Window ending now at Rule.Step.
 	Recent string
 	// Baseline returns the same increase over a healthy period before the
-	// window, as an instant query.
+	// window. The detector evaluates it over Rule.History at Rule.HistoryStep;
+	// its newest point is the healthy period the raise rule compares against.
 	Baseline string
 	// Presence returns every series of the metric (zero or not).
 	Presence string
@@ -204,7 +220,8 @@ func (d *detector) build() error {
 	switch {
 	case d.cfg.Spec.ID == "":
 		return errors.New("request-metrics detector needs a spec ID")
-	case r.Window <= 0 || r.Step <= 0 || r.Consecutive < 1 || r.MinFailed < 1 || r.MinShare <= 0 || r.MinRatio < 1 || r.ShareFloor < 0 || r.Lookback < 0 || r.MinHealthy < 0:
+	case r.Window <= 0 || r.Step <= 0 || r.Consecutive < 1 || r.MinFailed < 1 || r.MinShare <= 0 || r.MinRatio < 1 || r.ShareFloor < 0 || r.Lookback < 0 || r.MinHealthy < 0 ||
+		r.History < 0 || r.MinHistorySteps < 0 || (r.History > 0 && (r.HistoryStep <= 0 || r.HistoryStep > r.History)):
 		return fmt.Errorf("request-metrics rule %+v is not valid", r)
 	}
 	for _, e := range d.cfg.Entries {
@@ -224,7 +241,7 @@ func (d *detector) build() error {
 		}
 		plan := entryPlan{Entry: e, errors: re,
 			recent: metrics.Query{ID: queryID(e.Service, "recent"), Expr: e.Recent, Range: r.lookback(), Step: r.Step},
-			base:   metrics.Query{ID: queryID(e.Service, "baseline"), Expr: e.Baseline},
+			base:   metrics.Query{ID: queryID(e.Service, "baseline"), Expr: e.Baseline, Range: r.History, Step: r.HistoryStep},
 			pres:   metrics.Query{ID: queryID(e.Service, "presence"), Expr: e.Presence},
 		}
 		d.entries[e.Service] = plan
@@ -542,9 +559,17 @@ func (p entryPlan) perStep(op Operation, series []metrics.Series) map[time.Time]
 // enough is false when the baseline holds fewer than minRequests requests: the
 // shares are then zero and a client-error jump cannot be judged.
 func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests float64) (server, client float64, enough bool, observed counts) {
+	// The baseline is the newest history point: a series whose last sample is
+	// older (a route not called lately) is not part of it.
+	var newest time.Time
+	for _, s := range series {
+		if v, ok := s.Last(); ok && v.At.After(newest) {
+			newest = v.At
+		}
+	}
 	var sum counts
 	for _, s := range series {
-		if v, ok := s.Last(); ok && p.matches(op, s.Labels) {
+		if v, ok := s.Last(); ok && v.At.Equal(newest) && p.matches(op, s.Labels) {
 			sum = sum.add(p.classify(s.Labels, v.Value))
 		}
 	}
@@ -552,6 +577,33 @@ func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests fl
 		return 0, 0, false, sum
 	}
 	return sum.server / sum.total, sum.client / sum.total, true, sum
+}
+
+// typicalShares is the operation's usual server and client-error shares: the
+// lower quartile, per class, of its shares in each history point with at least
+// minRequests requests. A failure becomes its own typical share only once it
+// fills three quarters of the history, so a held finding is judged against
+// what the route answers when healthy, routine errors included. ok is false
+// with fewer than minSteps such points.
+func (p entryPlan) typicalShares(op Operation, series []metrics.Series, minRequests float64, minSteps int) (server, client float64, ok bool) {
+	var servers, clients []float64
+	for _, c := range p.perStep(op, series) {
+		if c.total < max(minRequests, 1) {
+			continue
+		}
+		servers, clients = append(servers, c.server/c.total), append(clients, c.client/c.total)
+	}
+	if len(servers) == 0 || len(servers) < minSteps {
+		return 0, 0, false
+	}
+	return lowerQuartile(servers), lowerQuartile(clients), true
+}
+
+// lowerQuartile is the value a quarter of the way up the sorted values.
+func lowerQuartile(values []float64) float64 {
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	return sorted[(len(sorted)-1)/4]
 }
 
 type verdict struct {
@@ -589,29 +641,36 @@ func (r Rule) thinAll(steps map[time.Time]counts, run []time.Time, thinClient fl
 	return true
 }
 
-// confirmsRecovery is a window with enough requests, none of them failed.
-func (r Rule) confirmsRecovery(c counts, healthyClient float64) bool {
-	return c.total >= r.minHealthy() && c.server == 0 && c.client-healthyClient*c.total < 1
+// confirmsRecovery is a window with enough requests, none of them failed:
+// server and client errors each within the route's healthy share of them.
+func (r Rule) confirmsRecovery(c counts, healthyServer, healthyClient float64) bool {
+	return c.total >= r.minHealthy() && c.server-healthyServer*c.total < 1 && c.client-healthyClient*c.total < 1
+}
+
+// heldClientShare is the client-error share a held finding's recovery
+// tolerates when the route has too little history for typical shares: the
+// least share the rule calls a client-error jump when no healthy share is
+// trusted. Healthy traffic carries routine client errors; asking for none
+// would hold the incident for as long as the route lives.
+func (r Rule) heldClientShare() float64 {
+	return math.Max(r.MinShare, r.MinRatio*r.ShareFloor)
 }
 
 // lookbackFailureFree reports that the steps cover the whole lookback, carry
-// requests, and not one of them failed. A route with too few requests per
-// window never reaches confirmsRecovery's volume and never goes quiet; without
-// this a finding held by an incident would outlive its fault for as long as
-// the route lives.
-func (r Rule) lookbackFailureFree(steps map[time.Time]counts, times []time.Time) bool {
+// requests, and none failed: server and client errors each within the
+// route's healthy share over the whole lookback. A route with too few requests
+// per window never reaches confirmsRecovery's volume and never goes quiet;
+// without this a finding held by an incident would outlive its fault for as
+// long as the route lives.
+func (r Rule) lookbackFailureFree(steps map[time.Time]counts, times []time.Time, healthyServer, healthyClient float64) bool {
 	if len(times) < int(r.lookback()/r.Step) {
 		return false
 	}
-	requests := 0.0
+	var sum counts
 	for _, t := range times {
-		c := steps[t]
-		if c.server != 0 || c.client != 0 {
-			return false
-		}
-		requests += c.total
+		sum = sum.add(steps[t])
 	}
-	return requests > 0
+	return sum.total > 0 && sum.server-healthyServer*sum.total < 1 && sum.client-healthyClient*sum.total < 1
 }
 
 // quietNewest reports that the newest evaluation window saw no requests at
@@ -651,8 +710,14 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	if !enough && observed.total > 0 {
 		thinClient = observed.client / observed.total
 	}
+	// A held finding is judged against the route's typical shares over its
+	// history; a route with too little history is judged against none.
+	typical := false
 	if held {
 		healthyServer, healthyClient, enough = 0, 0, true
+		if server, client, ok := plan.typicalShares(op, results[plan.base.ID].Series, r.MinBaselineRequests, r.MinHistorySteps); ok {
+			healthyServer, healthyClient, typical = server, client, true
+		}
 	}
 	// The newest step at which the rule held on Consecutive steps in a row.
 	var best *verdict
@@ -700,16 +765,23 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		if quiet {
 			return sdk.Finding{}, false
 		}
+		// Recovery is a step back at the route's typical shares; without
+		// history, no server error and client errors only above a share the
+		// rule could call a jump.
+		serverAllowance, clientAllowance := 0.0, r.heldClientShare()
+		if typical {
+			serverAllowance, clientAllowance = healthyServer, healthyClient
+		}
 		for _, t := range times {
-			if r.confirmsRecovery(steps[t], 0) {
+			if r.confirmsRecovery(steps[t], serverAllowance, clientAllowance) {
 				return sdk.Finding{}, false
 			}
 		}
-		if r.lookbackFailureFree(steps, times) {
+		if r.lookbackFailureFree(steps, times, serverAllowance, clientAllowance) {
 			return sdk.Finding{}, false
 		}
 		best, raisedAt, onset = &verdict{class: ClassServer}, len(times)-1, recent.ObservedAt
-		heldUnconfirmed = " The incident this finding holds is open and no recent step had enough requests with none failed, so recovery is not confirmed."
+		heldUnconfirmed = fmt.Sprintf(" The incident this finding holds is open and no recent step had enough requests with server errors under %.1f%% and client errors under %.1f%%, so recovery is not confirmed.", serverAllowance*100, clientAllowance*100)
 	}
 	if best == nil {
 		return sdk.Finding{}, false
@@ -723,7 +795,7 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 			return sdk.Finding{}, false
 		}
 		for _, t := range times[raisedAt+1:] {
-			if r.confirmsRecovery(steps[t], healthyClient) {
+			if r.confirmsRecovery(steps[t], healthyServer, healthyClient) {
 				return sdk.Finding{}, false
 			}
 		}
@@ -731,7 +803,7 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		if newest.total < r.minHealthy() {
 			unconfirmed = fmt.Sprintf(" Insufficient recent traffic to confirm recovery: %.0f requests in the newest window, at least %.0f healthy ones are needed.", newest.total, r.minHealthy())
 		} else {
-			unconfirmed = fmt.Sprintf(" Recovery is not confirmed: the newest window still has failed requests (%.0f of %.0f).", newest.server+math.Max(0, newest.client-healthyClient*newest.total), newest.total)
+			unconfirmed = fmt.Sprintf(" Recovery is not confirmed: the newest window still has failed requests (%.0f of %.0f).", math.Max(0, newest.server-healthyServer*newest.total)+math.Max(0, newest.client-healthyClient*newest.total), newest.total)
 		}
 	}
 	method := op.Method
@@ -748,7 +820,7 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	meta["samples"] = samples.metadata()
 	if op.undeclared {
 		fingerprint = "requestmetrics/errors/undeclared/" + op.Service + "/" + op.Route
-		note = " This is an undeclared route: the application map declares no operation for it."
+		note += " This is an undeclared route: the application map declares no operation for it."
 		meta["undeclared_route"] = true
 		if op.truncated != "" {
 			note += " Truncated: " + op.truncated + "."

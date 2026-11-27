@@ -111,16 +111,91 @@ until cur == '0'
 return 'sdo-affected ' .. n
 `
 
+// redisArity is the number of arguments after the key a command takes; a max
+// of -1 is any number.
+type redisArity struct{ min, max int }
+
 // redisWriteCommands are the single-key writes a redis repair may apply; the
-// key is always the matched key.
-var redisWriteCommands = map[string]bool{
-	"DEL": true, "UNLINK": true, "SET": true, "APPEND": true, "INCRBY": true, "DECRBY": true,
-	"EXPIRE": true, "PEXPIRE": true, "EXPIREAT": true, "PEXPIREAT": true, "PERSIST": true,
-	"HDEL": true, "HSET": true, "HSETNX": true, "HINCRBY": true,
-	"SREM": true, "SADD": true,
-	"ZREM": true, "ZADD": true, "ZREMRANGEBYSCORE": true, "ZREMRANGEBYRANK": true, "ZREMRANGEBYLEX": true,
-	"LREM": true, "LPUSH": true, "RPUSH": true, "LSET": true, "LTRIM": true,
-	"XDEL": true, "XTRIM": true,
+// key is always the matched key, so DEL and UNLINK take no argument (it would
+// be a second key).
+var redisWriteCommands = map[string]redisArity{
+	"DEL": {0, 0}, "UNLINK": {0, 0}, "SET": {1, -1}, "APPEND": {1, 1}, "INCRBY": {1, 1}, "DECRBY": {1, 1},
+	"EXPIRE": {1, 2}, "PEXPIRE": {1, 2}, "EXPIREAT": {1, 2}, "PEXPIREAT": {1, 2}, "PERSIST": {0, 0},
+	"HDEL": {1, -1}, "HSET": {2, -1}, "HSETNX": {2, 2}, "HINCRBY": {2, 2},
+	"SREM": {1, -1}, "SADD": {1, -1},
+	"ZREM": {1, -1}, "ZADD": {2, -1}, "ZREMRANGEBYSCORE": {2, 2}, "ZREMRANGEBYRANK": {2, 2}, "ZREMRANGEBYLEX": {2, 2},
+	"LREM": {2, 2}, "LPUSH": {1, -1}, "RPUSH": {1, -1}, "LSET": {2, 2}, "LTRIM": {2, 2},
+	"XDEL": {1, -1}, "XTRIM": {2, -1},
+}
+
+// redisWords splits a statement as redis-cli does: at whitespace, except that
+// an argument may be quoted. "..." reads the escapes \n \r \t \b \a \xHH and a
+// backslash before any other byte as that byte; '...' reads only \'. Unlike
+// redis-cli, a quote inside an unquoted argument is itself, so a JSON member
+// such as {"a":1} needs no quoting.
+func redisWords(statement string) ([]string, error) {
+	var words []string
+	space := func(c byte) bool { return strings.IndexByte(" \t\n\r\v\f", c) >= 0 }
+	for i := 0; i < len(statement); {
+		if space(statement[i]) {
+			i++
+			continue
+		}
+		var word strings.Builder
+		for i < len(statement) && !space(statement[i]) {
+			if word.Len() > 0 || statement[i] != '"' && statement[i] != '\'' {
+				word.WriteByte(statement[i])
+				i++
+				continue
+			}
+			value, end, err := redisQuoted(statement, i)
+			if err != nil {
+				return nil, err
+			}
+			if end < len(statement) && !space(statement[end]) {
+				return nil, fmt.Errorf("redis repair statement needs a space after the quoted argument %s", clip(statement[i:end]))
+			}
+			word.WriteString(value)
+			i = end
+			break
+		}
+		words = append(words, word.String())
+	}
+	return words, nil
+}
+
+// redisQuoted reads the quoted argument that starts at start and returns its
+// value and the index after it.
+func redisQuoted(statement string, start int) (string, int, error) {
+	quote := statement[start]
+	var value strings.Builder
+	for i := start + 1; i < len(statement); i++ {
+		c := statement[i]
+		switch {
+		case c == quote:
+			return value.String(), i + 1, nil
+		case c == '\\' && i+1 < len(statement) && quote == '"':
+			i++
+			if statement[i] == 'x' && i+2 < len(statement) {
+				if b, err := strconv.ParseUint(statement[i+1:i+3], 16, 8); err == nil {
+					value.WriteByte(byte(b))
+					i += 2
+					continue
+				}
+			}
+			if at := strings.IndexByte("nrtba", statement[i]); at >= 0 {
+				value.WriteByte("\n\r\t\b\a"[at])
+			} else {
+				value.WriteByte(statement[i])
+			}
+		case c == '\\' && i+1 < len(statement) && statement[i+1] == quote:
+			i++
+			value.WriteByte(quote)
+		default:
+			value.WriteByte(c)
+		}
+	}
+	return "", 0, fmt.Errorf("redis repair statement has a quote that never ends (%s)", clip(statement[start:]))
 }
 
 // redisWriteCommandNames lists redisWriteCommands for an error message.
@@ -159,27 +234,50 @@ func (e redis) ValidateScope(s Scope) error {
 	if s.Collection != "" {
 		return fmt.Errorf("redis scope has no collection; select keys with a glob")
 	}
-	if strings.ContainsAny(s.Selector, "\n\r\x00") || len(s.Selector) > 512 {
-		return fmt.Errorf("redis key glob must be one line of at most 512 bytes")
+	if strings.IndexByte(s.Selector, 0) >= 0 || len(s.Selector) > 512 {
+		return fmt.Errorf("redis key glob must be at most 512 bytes without NUL")
 	}
 	return validateLimit(s)
 }
 
 // ValidateStatement accepts one single-key write command, applied to each
-// matched key: "SREM member", "HDEL field", "DEL". Arguments are split on
-// whitespace and follow the key.
+// matched key: "SREM member", "HDEL field", "DEL". Arguments follow the key;
+// they are split on whitespace, and quoted as in redis-cli to hold any.
 func (redis) ValidateStatement(statement string) error {
-	words := strings.Fields(statement)
+	words, err := redisWords(statement)
+	if err != nil {
+		return err
+	}
 	if len(words) == 0 {
 		return fmt.Errorf("redis repair statement is empty")
 	}
-	if !redisWriteCommands[strings.ToUpper(words[0])] {
+	arity, ok := redisWriteCommands[strings.ToUpper(words[0])]
+	if !ok {
 		return fmt.Errorf("redis repair command %q is not a single-key write SDO applies per matched key (%s)", words[0], redisWriteCommandNames())
 	}
-	if len(words) > 17 {
+	arguments := len(words) - 1
+	if arguments < arity.min || arity.max >= 0 && arguments > arity.max {
+		return fmt.Errorf("redis repair command %s takes %s after the key, got %d", words[0], arity, arguments)
+	}
+	if arguments > 16 {
 		return fmt.Errorf("redis repair statement has more than 16 arguments")
 	}
+	for _, word := range words {
+		if strings.IndexByte(word, 0) >= 0 {
+			return fmt.Errorf("redis repair statement may not contain NUL")
+		}
+	}
 	return nil
+}
+
+func (a redisArity) String() string {
+	switch {
+	case a.max < 0:
+		return fmt.Sprintf("at least %d arguments", a.min)
+	case a.min == a.max:
+		return fmt.Sprintf("%d arguments", a.min)
+	}
+	return fmt.Sprintf("%d to %d arguments", a.min, a.max)
 }
 
 func (e redis) eval(port int, s Scope, script, lua string, args ...string) Command {
@@ -202,7 +300,7 @@ func (e redis) Backup(port int, s Scope) Command {
 
 func (e redis) Write(port int, s Scope, statement string, min, max int) Command {
 	s = e.Normalize(s)
-	words := strings.Fields(statement)
+	words, _ := redisWords(statement)
 	words[0] = strings.ToUpper(words[0])
 	args := append([]string{s.Selector, strconv.Itoa(min), strconv.Itoa(max), strconv.Itoa(s.limit())}, words...)
 	return e.eval(port, s, `L="$1";shift

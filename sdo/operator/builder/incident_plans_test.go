@@ -11,7 +11,7 @@ import (
 
 // The incident's captured open state reaches the generated tests before Go writes a corpus case, so a program that
 // is new in this incident has its plan built and validated on real state.
-func TestIncidentCaptureStagesAPlanTestForEveryMitigator(t *testing.T) {
+func TestIncidentCaptureStagesAPlanTestForEveryEditedMitigator(t *testing.T) {
 	capture, workspace := t.TempDir(), t.TempDir()
 	for name, data := range map[string]string{"open@detect.json": "{}", "open@detect-recordings.json": "[]", "fixed.json": "{}"} {
 		if err := os.WriteFile(filepath.Join(capture, name), []byte(data), 0o600); err != nil {
@@ -21,9 +21,9 @@ func TestIncidentCaptureStagesAPlanTestForEveryMitigator(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(workspace, "generated"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	programs := []programvalidation.Spec{{ID: "fix", Diagnoser: "Program", Mitigator: "Program"}, {ID: "diag-only", Diagnoser: "Program"}}
+	programs := []programvalidation.Spec{{ID: "fix", Diagnoser: "Program", Mitigator: "Program"}, {ID: "diag-only", Diagnoser: "Program"}, {ID: "accepted", Diagnoser: "Program", Mitigator: "Program"}}
 
-	if err := generateIncidentPlanTest(capture, workspace, programs); err != nil {
+	if err := generateIncidentPlanTest(capture, workspace, programs, []string{"fix", "diag-only"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -35,17 +35,17 @@ func TestIncidentCaptureStagesAPlanTestForEveryMitigator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(source), `check("fix")`) || strings.Contains(string(source), "diag-only") {
+	if !strings.Contains(string(source), `check("fix")`) || strings.Contains(string(source), "diag-only") || strings.Contains(string(source), "accepted") {
 		t.Fatalf("generated test = %s", source)
 	}
 }
 
 func TestNoIncidentCaptureStagesNothing(t *testing.T) {
 	workspace := t.TempDir()
-	if err := generateIncidentPlanTest("", workspace, nil); err != nil {
+	if err := generateIncidentPlanTest("", workspace, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := generateIncidentPlanTest(t.TempDir(), workspace, nil); err != nil {
+	if err := generateIncidentPlanTest(t.TempDir(), workspace, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, "generated")); !os.IsNotExist(err) {

@@ -12,6 +12,7 @@
 package storeops
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -234,20 +235,11 @@ func dumpWrapper(tool string) string {
 END { if (over || rc == "` + strconv.Itoa(ExitLimit) + `") exit ` + strconv.Itoa(ExitLimit) + `; if (bad || rc != "0") exit 3; print "#sdo-end " (n + 0) }'`
 }
 
-// jsString renders s as a JavaScript string literal.
+// jsString renders s as a JavaScript string literal: JSON's escapes are
+// JavaScript's, Go's are not all.
 func jsString(s string) string {
-	return strconv.Quote(s)
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`)
-
-// sqlText refuses text that could leave the clause it fills: a statement
-// separator, a comment, a psql meta-command or a line break.
-func sqlText(what, text string) error {
-	for _, bad := range []string{";", "--", "/*", "\\", "\n", "\r", "\x00"} {
-		if strings.Contains(text, bad) {
-			return fmt.Errorf("%s may not contain %q", what, bad)
-		}
-	}
-	return nil
-}

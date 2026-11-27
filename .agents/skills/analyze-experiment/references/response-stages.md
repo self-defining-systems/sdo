@@ -62,7 +62,7 @@ observations never replace independent controller closure/classification.
 
 The deterministic stage requires a fresh Match, exactly one mitigation entry
 point, and all parameters bound from covered findings. It has no trust gate and
-never automatically undoes a completed apply. Controller closure observes recovery against the fixed deadline after the stage publishes its receipts. Exit reason `UNCOVERED` with a handoff before that deadline means a condition the settled writes cannot clear started the agent. Interrupted apply intent survives in the incident tool checkpoint;
+never automatically undoes a completed apply. Controller closure observes recovery against the fixed deadline after the stage publishes its receipts. Exit reason `UNCOVERED` with a handoff before that deadline means a condition the settled writes cannot clear, or a user test still failing over its own full window after they settled, started the agent. A `DEADLINE` away from `recovery_deadline` means the rollout settled later (the wait counts from the settle, at most 10 minutes) or Kubernetes gave up on it (earlier). Interrupted apply intent survives in the incident tool checkpoint;
 a retry reports uncertainty instead of repeating a potentially landed mutation.
 
 `resolution_path: deterministic` means the incident needed no responder worker;

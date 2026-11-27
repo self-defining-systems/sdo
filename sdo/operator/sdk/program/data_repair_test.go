@@ -28,6 +28,7 @@ func TestStoreActionsValidate(t *testing.T) {
 		"backup ID with a path":     {program.StoreBackup{ID: "../x", Target: syntheticStore, Scope: scope}, false},
 		"engine without operations": {program.StoreBackup{ID: "b", Target: program.StoreTarget{Component: "c", Engine: "consul", Pod: syntheticStore.Pod, Container: "c"}}, false},
 		"memcached flush":           {program.InvalidateDerived{Target: memcachedStore, Reason: "flush"}, true},
+		"postgres flush":            {program.InvalidateDerived{Target: program.StoreTarget{Component: "db", Engine: "postgres", Pod: memcachedStore.Pod, Container: memcachedStore.Container}, Scope: program.DataScope{Collection: "items"}}, false},
 		"memcached key delete":      {program.RepairData{Target: memcachedStore, Scope: program.DataScope{Selector: "*_cap"}, Statement: "delete", ExpectMin: 1, ExpectMax: 80}, true},
 		"memcached update":          {program.RepairData{Target: memcachedStore, Statement: "set 1", ExpectMin: 1, ExpectMax: 1}, false},
 		"mysql repair":              {program.RepairData{Target: mysqlStore, Scope: program.DataScope{Collection: "orders", Selector: "status = 'x'"}, Statement: "SET status = 'open'", ExpectMin: 1, ExpectMax: 9}, true},

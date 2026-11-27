@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 func writeLinks(t *testing.T, root, links string) {
@@ -61,9 +62,10 @@ func TestPrepareHealthDialsMappedLinksFromTheClient(t *testing.T) {
 	}
 }
 
-// Client dials share the vantage budget with the designer's probes: Go takes
-// at most half, links from entry components (the exposed web) first.
-func TestClientLinksAreCappedEntryFirst(t *testing.T) {
+// Client dials share the vantage load budget with the designer's probes: Go
+// dials every link within half of it, links from entry components (the
+// exposed web) first.
+func TestClientLinksDialEveryLinkEntryFirst(t *testing.T) {
 	root := t.TempDir()
 	components := []string{syntheticStore, syntheticNoData}
 	var links string
@@ -85,7 +87,12 @@ func TestClientLinksAreCappedEntryFirst(t *testing.T) {
 	}
 	writeLinks(t, root, links)
 	planned := plannedClientLinks(root)
-	if len(planned) != MaxClientLinks || planned[0].Link.From != "web" {
+	if len(planned) != 10 || planned[0].Link.From != "web" {
 		t.Fatalf("planned %d links, first %+v", len(planned), planned[0])
+	}
+	for _, l := range planned {
+		if l.Interval != 2*vantage.MinInterval {
+			t.Fatalf("ten links in a budget of %d dial every %s, got %+v", ClientLinkLoad, 2*vantage.MinInterval, l)
+		}
 	}
 }

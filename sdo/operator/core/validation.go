@@ -45,16 +45,22 @@ func ValidateDetectors(detectors []sdk.Detector) error {
 	if _, err := logs.Queries(detectors); err != nil {
 		return err
 	}
-	// App-state readers collect their pod reads on their own budget, so the cap
-	// of podread.MaxQueries applies to the detection cycle's reads and to each
-	// reader separately, never to their sum.
+	// App-state readers collect their pod reads on their own budget, so the
+	// podread.MaxQueries load budget applies to the detection cycle's reads and
+	// to each reader separately, never to their sum.
 	readers, others := appstate.Split(detectors)
 	if _, err := podread.Queries(others); err != nil {
 		return err
 	}
 	for _, reader := range readers {
-		if _, err := podread.Queries([]sdk.Detector{reader}); err != nil {
+		queries, err := podread.Queries([]sdk.Detector{reader})
+		if err != nil {
 			return fmt.Errorf("detector %q: %w", reader.Spec().ID, err)
+		}
+		// A reader reads every query fresh each run, so its count, not its
+		// load, must fit one cycle.
+		if len(queries) > podread.MaxQueries {
+			return fmt.Errorf("detector %q: app-state reader declares %d pod reads, over the %d one cycle starts", reader.Spec().ID, len(queries), podread.MaxQueries)
 		}
 	}
 	_, err := vantage.Probes(detectors)

@@ -98,8 +98,8 @@ func TestPrepareHealthRemovesStoreStateOfAComponentNoLongerInTheMap(t *testing.T
 	}
 }
 
-// Store reads share the pod-read budget with the designer's own reads, so Go
-// installs at most MaxStoreStateDetectors, authoritative stores first.
+// Go declares at most MaxStoreStateDetectors store readers; past that bound
+// the ranking decides which exist, authoritative stores first.
 func TestPrepareHealthCapsStoreStateDetectors(t *testing.T) {
 	root := t.TempDir()
 	var components []string

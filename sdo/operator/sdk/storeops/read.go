@@ -195,28 +195,18 @@ func validateSQLSelector(engine, selector string) error {
 	for i := 0; i < len(text); {
 		c := text[i]
 		switch {
-		case c == ' ' || c == '\t':
+		case strings.IndexByte(" \t\n\r", c) >= 0:
 			i++
 		case c == '\'':
-			j := i + 1
-			for {
-				if j >= len(text) {
-					return bad("unterminated string")
-				}
-				if text[j] == '\'' {
-					if j+1 < len(text) && text[j+1] == '\'' {
-						j += 2
-						continue
-					}
-					break
-				}
-				j++
+			end := stringEnd(text, i, engine == "mysql", engine == "postgres")
+			if end < 0 {
+				return bad("unterminated string")
 			}
 			if previous == operand || previous == closeParen {
 				return bad("two values in a row")
 			}
 			previous = operand
-			i = j + 1
+			i = end
 		case c >= '0' && c <= '9':
 			j := i
 			for j < len(text) && (text[j] >= '0' && text[j] <= '9' || text[j] == '.') {
@@ -353,7 +343,7 @@ func (e postgres) Read(port int, s Scope, fields []string) (Command, error) {
 	columns := readColumns(fields, func(f string) string { return `"` + f + `"` })
 	count := "SELECT 'sdo-count ' || count(*) FROM " + table + " WHERE (" + s.Selector + ")"
 	rows := "SELECT row_to_json(r) FROM (SELECT " + columns + " FROM " + table + " WHERE (" + s.Selector + ") LIMIT " + strconv.Itoa(MaxReadRows) + ") r"
-	return e.run(port, s, `export PGOPTIONS="-c default_transaction_read_only=on -c statement_timeout=`+strconv.Itoa(ReadTimeoutMillis)+`"
+	return e.run(port, s, `export PGOPTIONS="$PGOPTIONS -c default_transaction_read_only=on -c statement_timeout=`+strconv.Itoa(ReadTimeoutMillis)+`"
 q -c "$1" || exit 1
 L=`+strconv.Itoa(MaxReadRows)+`
 `+dumpWrapper(`q -c "$2"`), count, rows), nil
@@ -364,6 +354,7 @@ func (e mysql) Read(port int, s Scope, fields []string) (Command, error) {
 		return Command{}, err
 	}
 	s = e.Normalize(s)
+	s.Selector = mysqlWire(s.Selector)
 	table := mysqlTable(s.Collection)
 	pairs := make([]string, 0, 2*len(fields))
 	for _, f := range fields {

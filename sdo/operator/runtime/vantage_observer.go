@@ -45,7 +45,9 @@ var errVantageHelperStarting = errors.New("vantage helper is starting")
 // shares the Pod's network namespace. It runs each probe on its interval, at
 // most vantage.MaxConcurrent commands at once, each within
 // vantage.ExecTimeout, and gives up after vantage.CollectionBudget. A Pod
-// whose helper is still starting answers with an error and stays due.
+// whose helper is still starting answers with an error and stays due. A cycle
+// starts at most vantage.MaxProbes probes; the due probes beyond it rotate into
+// later cycles (rotate) and keep their last answer until then.
 type VantageObserver struct {
 	mu        sync.Mutex
 	probes    []vantage.Probe
@@ -116,7 +118,10 @@ func (r vantageResults) VantageResults() map[string]vantage.Result {
 	return out
 }
 
-const vantageNotStarted = "not read within the collection budget"
+const (
+	vantageNotStarted = "not read within the collection budget"
+	vantageDeferred   = "not read yet: the probes due this cycle exceed vantage.MaxProbes; it runs in a later cycle"
+)
 
 type vantageJob struct {
 	probe     vantage.Probe
@@ -136,9 +141,10 @@ func (o *VantageObserver) collect(ctx context.Context, base sdk.DetectionContext
 	sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
 	ctx, cancel := context.WithTimeout(ctx, vantage.CollectionBudget)
 	defer cancel()
-	due := map[string]bool{}
-	var jobs []vantageJob
-	for _, probe := range o.probes {
+	selection := make([][]vantageJob, len(o.probes))
+	retainedOf := make([]vantageRun, len(o.probes))
+	var candidates []dueRead
+	for i, probe := range o.probes {
 		var selected []vantageJob
 		for _, pod := range pods {
 			if pod.Namespace != base.Namespace() {
@@ -152,6 +158,20 @@ func (o *VantageObserver) collect(ctx context.Context, base sdk.DetectionContext
 		retained.result.Readings = slices.DeleteFunc(slices.Clone(retained.result.Readings), func(r vantage.Reading) bool {
 			return !slices.ContainsFunc(selected, func(job vantageJob) bool { return string(job.pod.UID) == r.UID })
 		})
+		selection[i], retainedOf[i] = selected, retained
+		if ran && now.Sub(retained.at) < probe.Interval && len(retained.result.Readings) > 0 {
+			continue
+		}
+		if len(selected) > 0 && len(selected) <= vantage.MaxTargets {
+			candidates = append(candidates, dueRead{index: i, last: retained.at, cost: 1})
+		}
+	}
+	start := rotate(candidates, vantage.MaxProbes)
+	due := map[string]bool{}
+	var jobs []vantageJob
+	for i, probe := range o.probes {
+		selected, retained := selection[i], retainedOf[i]
+		_, ran := o.last[probe.ID]
 		if ran && now.Sub(retained.at) < probe.Interval && len(retained.result.Readings) > 0 {
 			results[probe.ID] = retained.result
 			continue
@@ -162,6 +182,11 @@ func (o *VantageObserver) collect(ctx context.Context, base sdk.DetectionContext
 			result.Error = "no running Pod holds the probe's role"
 		case len(selected) > vantage.MaxTargets:
 			result.Error = fmt.Sprintf("%d Pods hold the probe's role, over the limit of %d; narrow the role", len(selected), vantage.MaxTargets)
+		case !start[i] && len(retained.result.Readings) > 0:
+			// Due beyond this cycle's budget: keep the last answer until its turn.
+			result = retained.result
+		case !start[i]:
+			result.Error = vantageDeferred
 		default:
 			due[probe.ID] = true
 			result.Readings = make([]vantage.Reading, len(selected))

@@ -4,6 +4,10 @@
 tool=$1; shift
 S=${FAKE_STATE:?}
 echo "$tool $*" >> "$S/eks.log"
+# A tool told to read stdin reads it all, as the real one does: exiting first kills the writer of the script's pipeline
+# with SIGPIPE (exit 141 under pipefail) whenever the writer is the slower of the two.
+stdin=
+case " $* " in *" --password-stdin "*|*" -f - "*|*" exec -i "*) stdin=$(cat);; esac
 name_of() { sed -n 's/^  name: //p' "$1" | head -1; }
 val() { k=$1; shift; while [ $# -gt 0 ]; do [ "$1" = "$k" ] && { echo "$2"; return; }; shift; done; }
 nodes_of() {
@@ -124,7 +128,7 @@ kubectl)
   *"create configmap sdo-lane-prepull --from-file="*) f=$(echo "$*" | sed 's/.*--from-file=images=\([^ ]*\).*/\1/'); cp "$f" "$S/prepull-images"
     printf 'kind: ConfigMap\nname: sdo-lane-prepull\n'; cat "$f"; exit 0;;
   *" apply -f - "*)
-    y=$(cat); printf '%s\n' "$y" >> "$S/applied.yaml"
+    y=$stdin; printf '%s\n' "$y" >> "$S/applied.yaml"
     # Karpenter: a NodePool named lane-X plus the capacity deployment of replicas N brings N nodes
     for np in $(printf '%s\n' "$y" | sed -n 's/^metadata: {name: lane-\([^,}]*\),.*/\1/p'); do
       touch "$S/nodepool-$np"; n=$(printf '%s\n' "$y" | sed -n 's/^  replicas: //p' | head -1); echo "${n:-0}" > "$S/lane-nodes-$np"
@@ -143,7 +147,6 @@ kubectl)
   *" get namespace kube-system"*) echo 0b1c-uid;;
   *" get pods -l app.kubernetes.io/name=sdo-lane-node-agent"*) echo "agent-1 agent-2";;
   *"create configmap sdo-lane-prepull"*) printf 'kind: ConfigMap\nname: sdo-lane-prepull\n%s\n' "$*" ;;
-  *" apply -f -"*) cat >> "$S/applied.yaml";;
   esac;;
 docker) :;;
 esac

@@ -439,14 +439,16 @@ func IncidentPlanTests(programs []Spec) string {
 	}
 	var test strings.Builder
 	test.WriteString(`package generated
-import("encoding/json";"os";"testing";"sdo.dev/operator/sdk/sdktest")
+import("encoding/json";"os";"testing";"sdo.dev/operator/memory/appmap";"sdo.dev/operator/sdk/program";"sdo.dev/operator/sdk/sdktest")
 func TestProgramPlansOnTheIncidentOpenState(t *testing.T){
  registry,err:=Programs();if err!=nil{t.Fatal(err)}
  gaps:=[]string{}
  defer func(){data,err:=json.Marshal(gaps);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("incident-plan-gaps.json",data,0600);err!=nil{t.Fatal(err)}}()
+ var applicationMap *program.AppMap
+ if ApplicationMapYAML!=""{parsed,err:=appmap.Parse(ApplicationMapYAML);if err!=nil{t.Fatal(err)};m:=parsed.Program();applicationMap=&m}
  check:=func(id string){
   m,ok:=registry.Mitigator(id);if !ok{return}
-  unverified,err:=sdktest.CheckPlansOnIncident(m,"testdata/incident-open")
+  unverified,err:=sdktest.CheckPlansOnIncident(m,"testdata/incident-open",applicationMap)
   if err!=nil{t.Errorf("%s: %v",id,err)}
   for _,why:=range unverified{gaps=append(gaps,"program "+id+" is not verified on its own incident ("+why+")")}
  }

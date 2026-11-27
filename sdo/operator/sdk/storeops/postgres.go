@@ -10,14 +10,16 @@ import (
 // postgresPrelude sets the role and password from the container's environment
 // and defines q, psql against the store's own port and database over the local
 // socket. Positional arguments: $1 port, $2 database ("" is the container's
-// default); they are shifted away.
+// default); they are shifted away. PGOPTIONS pins how a plain literal is read
+// to what scanSQL assumes: a backslash is itself.
 const postgresPrelude = `export PGUSER="${PGUSER:-${POSTGRES_USER:-postgres}}"
 if [ -z "${PGPASSWORD:-}" ] && [ -n "${POSTGRES_PASSWORD:-}" ]; then export PGPASSWORD="$POSTGRES_PASSWORD"; fi
 P="$1";D="$2";shift 2;[ -n "$D" ] || D="${POSTGRES_DB:-$PGUSER}"
+export PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c standard_conforming_strings=on"
 q(){ psql -X -q -At -v ON_ERROR_STOP=1 -p "$P" -d "$D" "$@";}
 `
 
-var postgresClause = regexp.MustCompile(`(?i)\b(where|returning)\b`)
+var sqlClause = regexp.MustCompile(`(?i)\b(where|returning)\b`)
 
 var postgresDatabase = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$`)
 
@@ -42,7 +44,7 @@ func (e postgres) ValidateScope(s Scope) error {
 	if _, err := postgresTable(s.Collection); err != nil {
 		return err
 	}
-	if err := sqlText("postgres selector", s.Selector); err != nil {
+	if _, err := scanSQL("postgres selector", s.Selector, postgresDialect); err != nil {
 		return err
 	}
 	return validateLimit(s)
@@ -70,62 +72,34 @@ func (postgres) ValidateStatement(statement string) error {
 	if statement == "delete" {
 		return nil
 	}
-	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(statement)), "SET ") {
-		return fmt.Errorf("postgres repair statement must be \"delete\" or a SET clause")
+	return validateSQLRepair("postgres", statement, postgresDialect)
+}
+
+// validateSQLRepair accepts a SET clause that stays in the UPDATE it fills.
+func validateSQLRepair(engine, statement string, d sqlDialect) error {
+	if !sqlSet.MatchString(statement) {
+		return fmt.Errorf("%s repair statement must be \"delete\" or a SET clause", engine)
 	}
-	if err := sqlText("postgres repair statement", statement); err != nil {
+	scanned, err := scanSQL(engine+" repair statement", statement, d)
+	if err != nil {
 		return err
 	}
-	if postgresClause.MatchString(topLevelSQL(statement)) {
-		return fmt.Errorf("postgres repair statement may not carry its own top-level WHERE or RETURNING; the scope selects the rows (a subquery in parentheses may use them)")
+	if sqlClause.MatchString(scanned.top) {
+		return fmt.Errorf("%s repair statement may not carry its own top-level WHERE or RETURNING; the scope selects the rows (a subquery in parentheses may use them)", engine)
 	}
 	return nil
 }
 
-var bareSQLAssignment = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]+"|` + "`[^`]+`" + `)[ \t]*=`)
+var (
+	sqlSet            = regexp.MustCompile(`(?i)^\s*set\s`)
+	bareSQLAssignment = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]+"|` + "`[^`]+`" + `)\s*=`)
+)
 
 func normalizeSQLRepair(statement string) string {
-	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(statement)), "SET ") && bareSQLAssignment.MatchString(strings.TrimSpace(statement)) {
+	if !sqlSet.MatchString(statement) && bareSQLAssignment.MatchString(strings.TrimSpace(statement)) {
 		return "SET " + strings.TrimSpace(statement)
 	}
 	return statement
-}
-
-// topLevelSQL blanks the text inside parentheses and quotes, so a check sees
-// only the clause's own keywords: a correlated subquery such as
-// "SET total = (SELECT sum(n) FROM lines WHERE lines.id = orders.id)" keeps its
-// WHERE. An unbalanced statement is returned whole and fails at the server.
-func topLevelSQL(statement string) string {
-	var out strings.Builder
-	depth, quote := 0, byte(0)
-	for i := 0; i < len(statement); i++ {
-		c := statement[i]
-		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			}
-			out.WriteByte(' ')
-			continue
-		case c == '\'' || c == '"':
-			quote = c
-		case c == '(':
-			depth++
-		case c == ')':
-			if depth == 0 {
-				return statement
-			}
-			depth--
-			out.WriteByte(' ')
-			continue
-		}
-		if depth > 0 || quote != 0 {
-			out.WriteByte(' ')
-			continue
-		}
-		out.WriteByte(c)
-	}
-	return out.String()
 }
 
 func (e postgres) run(port int, s Scope, script string, args ...string) Command {

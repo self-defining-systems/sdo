@@ -18,7 +18,7 @@ only if it has a scenario):
 
 | Kind | Workload | One scenario per | It checks |
 |---|---|---|---|
-| call | `probe-call` | read operation | status, latency and the exact content the healthy application returns |
+| call | `probe-call` | operation, writing ones too | status, latency and the exact content the healthy application returns |
 | write-read | `probe-write` | writing operation | a change the iteration just made, read back exactly |
 | read-later | `probe-read-later` | data-holding component on a write path | a fixture written once is still returned exactly |
 
@@ -37,7 +37,7 @@ only if it has a scenario):
   `no_user_records: <why>` ([Users' own records](references/probes.md#users-own-records)).
 - Clean up what a write creates when a delete route exists (`SideEffectWriteWithCleanup`); else bound its growth.
 - Every scenario is sampled at least every 10 s; keep probe requests under 5% of the app's request rate, else
-  under 3 per second. Signatures and options: [traffic reference](references/traffic.md).
+  under 4 per second. Signatures and options: [traffic reference](references/traffic.md).
 
 ## Prove each probe
 

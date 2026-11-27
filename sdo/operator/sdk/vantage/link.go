@@ -94,11 +94,13 @@ func (d clientLinkDetector) Detect(_ context.Context, view sdk.DetectionContext)
 }
 
 // ClientLink is one edge a client-links detector dials from the Pods of its
-// calling role.
+// calling role. Interval, when set, is the link's own dial interval in place
+// of the detector's, so many links fit the MaxProbes load budget.
 type ClientLink struct {
-	ID   string
-	From podread.Target
-	Link traffic.Link
+	ID       string
+	From     podread.Target
+	Link     traffic.Link
+	Interval time.Duration
 }
 
 type clientLinksDetector struct {
@@ -113,7 +115,11 @@ type clientLinksDetector struct {
 func NewClientLinksDetector(spec sdk.DetectorSpec, links []ClientLink, interval time.Duration) (sdk.Detector, error) {
 	d := clientLinksDetector{spec: spec}
 	for _, l := range links {
-		single, err := NewClientLinkDetector(spec, l.ID, l.From, l.Link, interval)
+		every := interval
+		if l.Interval > 0 {
+			every = l.Interval
+		}
+		single, err := NewClientLinkDetector(spec, l.ID, l.From, l.Link, every)
 		if err != nil {
 			return nil, err
 		}

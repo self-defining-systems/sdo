@@ -17,10 +17,11 @@ var mysqlTags = []string{"MYSQL", "MARIADB"}
 // prelude (P password, U user), that defines q: the image's mysql or mariadb
 // client against 127.0.0.1:$PORT as U (default root), in database $DB, with
 // batch output and no column names. The password reaches the client through
-// an option file on a here-document descriptor, never argv or output.
+// an option file on a here-document descriptor, never argv or output. The
+// session is utf8mb4 and reads backslash escapes, as scanSQL assumes.
 const MySQLClient = `U=${U:-root};W=$(printf '%s' "$P"|sed 's/[\\"]/\\&/g')
 c=mysql;command -v mysql >/dev/null 2>&1||c=mariadb
-q(){ $c --defaults-extra-file=/dev/fd/3 --protocol=TCP -h 127.0.0.1 -P "$PORT" -u "$U" --connect-timeout=2 -N -B ${DB:+-D "$DB"} "$@" 3<<SDOEOF
+q(){ $c --defaults-extra-file=/dev/fd/3 --protocol=TCP -h 127.0.0.1 -P "$PORT" -u "$U" --connect-timeout=2 --default-character-set=utf8mb4 --init-command="SET SESSION sql_mode=REPLACE(@@sql_mode,'NO_BACKSLASH_ESCAPES','')" -N -B ${DB:+-D "$DB"} "$@" 3<<SDOEOF
 [client]
 password="$W"
 SDOEOF
@@ -71,22 +72,10 @@ func (e mysql) ValidateScope(s Scope) error {
 	if !identifier.MatchString(s.Collection) {
 		return fmt.Errorf("mysql scope collection %q is not a table name", s.Collection)
 	}
-	if err := mysqlText("mysql selector", s.Selector); err != nil {
+	if _, err := scanSQL("mysql selector", s.Selector, mysqlDialect); err != nil {
 		return err
 	}
 	return validateLimit(s)
-}
-
-// mysqlText refuses SQL text that could leave its clause; MySQL also reads
-// "#" as a comment.
-func mysqlText(what, text string) error {
-	if err := sqlText(what, text); err != nil {
-		return err
-	}
-	if strings.Contains(text, "#") {
-		return fmt.Errorf("%s may not contain %q", what, "#")
-	}
-	return nil
 }
 
 // ValidateStatement accepts "delete" or a SET clause, applied to the rows the
@@ -96,22 +85,13 @@ func (mysql) ValidateStatement(statement string) error {
 	if statement == "delete" {
 		return nil
 	}
-	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(statement)), "SET ") {
-		return fmt.Errorf("mysql repair statement must be \"delete\" or a SET clause")
-	}
-	if err := mysqlText("mysql repair statement", statement); err != nil {
-		return err
-	}
-	if postgresClause.MatchString(topLevelSQL(statement)) {
-		return fmt.Errorf("mysql repair statement may not carry its own top-level WHERE or RETURNING; the scope selects the rows (a subquery in parentheses may use them)")
-	}
-	return nil
+	return validateSQLRepair("mysql", statement, mysqlDialect)
 }
 
 func mysqlTable(name string) string { return "`" + name + "`" }
 
 func mysqlString(s string) string {
-	return "'" + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), "'", "''") + "'"
+	return "'" + strings.NewReplacer(`\`, `\\`, "'", "''", "\r", `\r`).Replace(s) + "'"
 }
 
 func (e mysql) run(port int, s Scope, script string, args ...string) Command {
@@ -120,7 +100,7 @@ func (e mysql) run(port int, s Scope, script string, args ...string) Command {
 
 func (e mysql) Count(port int, s Scope) Command {
 	s = e.Normalize(s)
-	return e.run(port, s, `q -e "$1"`, "SELECT CONCAT('sdo-count ',COUNT(*)) FROM "+mysqlTable(s.Collection)+" WHERE ("+s.Selector+")")
+	return e.run(port, s, `q -e "$1"`, "SELECT CONCAT('sdo-count ',COUNT(*)) FROM "+mysqlTable(s.Collection)+" WHERE ("+mysqlWire(s.Selector)+")")
 }
 
 // Backup prints one VALUES list per row: each stored column as NULL or a hex
@@ -129,14 +109,14 @@ func (e mysql) Backup(port int, s Scope) Command {
 	s = e.Normalize(s)
 	return e.run(port, s, `L="$4";cols=$(q -e "$1")||exit 1;case "$cols" in ''|NULL) echo "table $2 not found" >&2;exit 1;;esac
 `+dumpWrapper(`q -e "SELECT CONCAT_WS(',',$cols) FROM $2 WHERE ($3)"`),
-		fmt.Sprintf(mysqlColumns, mysqlString(s.Collection)), mysqlTable(s.Collection), s.Selector, strconv.Itoa(s.limit()))
+		fmt.Sprintf(mysqlColumns, mysqlString(s.Collection)), mysqlTable(s.Collection), mysqlWire(s.Selector), strconv.Itoa(s.limit()))
 }
 
 // Write counts the rows under a lock and changes them in one transaction,
 // only when their number is within [min, max].
 func (e mysql) Write(port int, s Scope, statement string, min, max int) Command {
 	s = e.Normalize(s)
-	statement = normalizeSQLRepair(statement)
+	statement, s.Selector = mysqlWire(normalizeSQLRepair(statement)), mysqlWire(s.Selector)
 	table := mysqlTable(s.Collection)
 	inBounds := fmt.Sprintf("@sdo_n BETWEEN %d AND %d", min, max)
 	change := "UPDATE " + table + " " + statement + " WHERE (" + s.Selector + ") AND " + inBounds
@@ -187,7 +167,7 @@ func (e mysql) Copy(port int, from, into Scope, min, max int) (Command, error) {
 		intoDB = mysqlString(into.Database)
 	}
 	c := e.run(port, Scope{Database: from.Database}, `q`)
-	c.Stdin = "SET SESSION group_concat_max_len=1048576;\nSTART TRANSACTION;\nSELECT COUNT(*) INTO @sdo_n FROM " + source + " WHERE (" + from.Selector + ") FOR UPDATE;\n" +
+	c.Stdin = "SET SESSION group_concat_max_len=1048576;\nSTART TRANSACTION;\nSELECT COUNT(*) INTO @sdo_n FROM " + source + " WHERE (" + mysqlWire(from.Selector) + ") FOR UPDATE;\n" +
 		"SELECT GROUP_CONCAT(CONCAT('`',REPLACE(column_name,'`','``'),'`') ORDER BY ordinal_position SEPARATOR ',') INTO @sdo_c FROM information_schema.columns WHERE table_schema=" + intoDB + " AND table_name=" + mysqlString(into.Collection) + " AND generation_expression='';\n" +
 		"SET @sdo_q=CONCAT('INSERT IGNORE INTO " + strings.ReplaceAll(target, "'", "''") + " (',@sdo_c,') SELECT ',@sdo_c,' FROM " + strings.ReplaceAll(source, "'", "''") + " WHERE (', " + mysqlString(from.Selector) + ", ') AND " + inBounds + "');\n" +
 		"PREPARE sdo_s FROM @sdo_q;\nEXECUTE sdo_s;\n" +
