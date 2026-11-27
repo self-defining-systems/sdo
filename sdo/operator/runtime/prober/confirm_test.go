@@ -305,6 +305,8 @@ func TestOneConfirmationPerScenarioAtATime(t *testing.T) {
 // Restarts and stalls of 3 s or less report nothing, as the SLO and hold alone
 // report nothing, whichever scenario they hit and in whatever phase. A longer
 // outage may be reported, and is never reported later than the SLO does.
+// Each cell simulates minutes of probing, so -short (PR CI) runs the boundary
+// cells of the matrix and nightly runs all of it.
 func TestShortOutagesReportNothing(t *testing.T) {
 	ids := strings.Split("a b c d e f g h i j k l m", " ")
 	outages := map[string]func(left time.Duration) (int, time.Duration, error){
@@ -314,10 +316,17 @@ func TestShortOutagesReportNothing(t *testing.T) {
 		"late answer": func(left time.Duration) (int, time.Duration, error) { return 200, left, nil },
 	}
 	const phases = 3
+	counts := []int{1, 13}
+	// The longest outage that must report nothing, one around the confirmation span and a long one.
+	lengths := []time.Duration{3 * time.Second, 5 * time.Second, 8 * time.Second}
+	if !testing.Short() {
+		counts = []int{1, 5, 13}
+		lengths = []time.Duration{1500 * time.Millisecond, 2 * time.Second, 3 * time.Second, 5 * time.Second, 8 * time.Second}
+	}
 	for kind, answer := range outages {
 		t.Run(kind, func(t *testing.T) {
-			for _, count := range []int{1, 5, 13} {
-				for _, length := range []time.Duration{1500 * time.Millisecond, 2 * time.Second, 3 * time.Second, 5 * time.Second, 8 * time.Second} {
+			for _, count := range counts {
+				for _, length := range lengths {
 					paged, slo := 0, 0
 					for phase := range phases {
 						start := onset + time.Duration(phase)*10*time.Second/phases + 130*time.Millisecond

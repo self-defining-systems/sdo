@@ -1325,7 +1325,10 @@ injected instant. Run `go vet ./...` with and without `-tags=integration` after 
 PR CI runs `go test -short`; nightly runs the same packages with `-race`, without `-short`, and with full
 simulation seeds (`SDO_SIM_FULL=1`). A test that takes 10 s or more skips itself under `testing.Short()`
 and says that nightly runs it. Today: `TestAssuranceSeedsPassHealthJudgeCheck`,
-`TestWorkedExamplesPassTheReflectionMemoryCheck`, `TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests`.
+`TestWorkedExamplesPassTheReflectionMemoryCheck`, `TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests`,
+`TestMemoryHostBuildsWithTheAcceptedTelemetrySources` (a real host build costs a few seconds warm and several times
+that when the change under test invalidates the cache). A simulated-time matrix runs its boundary cells on PRs and
+all of them without `-short`; simulated time still costs CPU per step.
 There are no name lists.
 
 A test over about 2 s, or one that builds, spawns or connects for real, stays only if it catches a

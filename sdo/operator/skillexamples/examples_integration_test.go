@@ -99,30 +99,32 @@ func TestExamplesDiagnoseNoMatchOffTheirFault(t *testing.T) {
 		t.Fatalf("examples: %v", err)
 	}
 	pkg := regexp.MustCompile(`(?m)^package \w+`)
+	var packages []string
 	for _, entry := range entries {
-		t.Run(entry.Name(), func(t *testing.T) {
-			dir, err := os.MkdirTemp(".", "_example-")
+		dir, err := os.MkdirTemp(".", "_example-"+entry.Name()+"-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		for _, name := range []string{"diagnose.go", "mitigate.go"} {
+			data, err := os.ReadFile(filepath.Join(examplesDir, entry.Name(), name))
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = os.RemoveAll(dir) })
-			for _, name := range []string{"diagnose.go", "mitigate.go"} {
-				data, err := os.ReadFile(filepath.Join(examplesDir, entry.Name(), name))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(dir, name), pkg.ReplaceAll(data, []byte("package example")), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err := os.WriteFile(filepath.Join(dir, "driver_test.go"), []byte(driver), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, name), pkg.ReplaceAll(data, []byte("package example")), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			out, err := exec.Command("go", "test", "-v", "-count=1", "./"+filepath.Base(dir)).CombinedOutput()
-			t.Log(strings.TrimSpace(string(out)))
-			if err != nil {
-				t.Fatalf("go test: %v", err)
-			}
-		})
+		}
+		if err := os.WriteFile(filepath.Join(dir, "driver_test.go"), []byte(driver), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		packages = append(packages, "./"+filepath.Base(dir))
+	}
+	// One go command for every example: it builds their dependencies once and builds, links and runs the test
+	// binaries in parallel. A failing package's path names its example.
+	out, err := exec.Command("go", append([]string{"test", "-v", "-count=1"}, packages...)...).CombinedOutput()
+	t.Log(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatalf("go test: %v", err)
 	}
 }

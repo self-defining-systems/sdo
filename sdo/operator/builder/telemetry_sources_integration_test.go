@@ -13,6 +13,11 @@ import (
 // host binary builds with them, through the same workspace the controller
 // stages for an accepted revision.
 func TestMemoryHostBuildsWithTheAcceptedTelemetrySources(t *testing.T) {
+	// A real host build compiles whatever the build cache lacks, so its time grows with the change under test.
+	// PR CI checks the staged sources in TestAcceptedTelemetrySourcesAreCompiledIntoTheHostByteForByte.
+	if testing.Short() {
+		t.Skip("builds a real memory host with the Go toolchain; nightly CI runs it without -short")
+	}
 	app := t.TempDir()
 	diagnostics := filepath.Join(app, ".sdo", "diagnostics")
 	if err := os.MkdirAll(filepath.Join(diagnostics, "telemetry"), 0o755); err != nil {
