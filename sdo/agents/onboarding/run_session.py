@@ -2,8 +2,9 @@
 """Run standalone onboarding against a bootstrapped SDO checkout.
 
 Keep the conversation open until its committed export passes the broker's
-initial health-judge memory check. A successful exit identifies the commit to
-export. This launcher uses only the standard library so it can run in a kit.
+initial health-judge memory check. The agent's final reply is a report, never
+a gate: a committed export that validates is kept whatever the reply says. A
+successful exit identifies the commit to export. This launcher uses only the standard library so it can run in a kit.
 """
 
 from __future__ import annotations
@@ -91,7 +92,11 @@ def finish_turn(
     base: str,
     operator: str,
 ) -> str:
-    """Wait for a terminal result and drain registered background work before checking."""
+    """Wait for a terminal result and drain registered background work, then validate.
+
+    The reply is printed on stderr and never decides the outcome; only
+    `check_export` does. An unsuccessful result event still raises.
+    """
     state = None
     pending: set[str] = set()
     reported_tasks = False
@@ -128,8 +133,8 @@ def finish_turn(
             continue
 
         answer = result.get("result")
-        if isinstance(answer, str) and answer.lstrip().lower().startswith("blocked:"):
-            raise RuntimeError(answer)
+        if isinstance(answer, str) and answer.strip():
+            print(f"Onboarding reply: {answer.strip().splitlines()[0]}", file=sys.stderr)
         try:
             return check_export(repo, base, operator)
         except ExportRejected as error:

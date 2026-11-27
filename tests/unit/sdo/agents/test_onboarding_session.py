@@ -48,6 +48,7 @@ def executable(path: Path, code: str) -> None:
         ("infra", "toolchain unavailable", False),
         ("truncated", "", False),
         ("clean", "", True),
+        ("blocked", "", True),
     ],
 )
 def test_onboarding_checks_completion_inside_existing_conversation(
@@ -85,10 +86,11 @@ def commit():
     subprocess.run(['git', 'add', '-A'], check=True)
     subprocess.run(['git', 'commit', '-qm', 'agent changes'], check=True)
 
+reply = 'blocked: the app exports no request metrics' if mode == 'blocked' else None
 event('system', subtype='task_started', task_id='setup')
 if mode == 'scope':
     event('system', subtype='session_state_changed', state='running')
-event('result', subtype='success', is_error=False)
+event('result', subtype='success', is_error=False, result=reply)
 if mode == 'goal':
     Path('.sdo/goal.md').write_text('changed goal')
 elif mode == 'scope':
@@ -99,7 +101,7 @@ Path('.sdo/detector').write_text('bad' if mode == 'memory' else 'good')
 if mode != 'dirty':
     commit()
 event('system', subtype='task_notification', task_id='setup')
-event('result', subtype='success', is_error=False)
+event('result', subtype='success', is_error=False, result=reply)
 if mode == 'scope':
     event('system', subtype='session_state_changed', state='idle')
 correction = sys.stdin.readline()
@@ -111,7 +113,7 @@ Path('.sdo/detector').write_text('good')
 for path in ('outside', 'scratch'):
     Path(path).unlink(missing_ok=True)
 commit()
-event('result', subtype='success', is_error=False)
+event('result', subtype='success', is_error=False, result=reply)
 assert sys.stdin.read() == ''
 """,
     )
@@ -176,6 +178,8 @@ if (root / '.sdo/detector').read_text() == 'bad':
         else:
             assert not feedback.exists()
         assert not git(repo, "status", "--porcelain")
+        if defect == "blocked":
+            assert "Onboarding reply: blocked: the app exports no request metrics" in run.stderr
     else:
         assert run.returncode != 0
         assert "Onboarding export validated:" not in run.stdout
