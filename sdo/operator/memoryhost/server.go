@@ -52,6 +52,15 @@ type Server struct {
 
 	runMu   sync.Mutex
 	running map[string]bool
+	// evaluating is each detector's evaluation in flight.
+	evaluating map[string]*detectorRun
+}
+
+// detectorRun is one detector evaluation in flight. done closes when it ends;
+// abandoned is set (under runMu) when its caller stopped waiting for it.
+type detectorRun struct {
+	done      chan struct{}
+	abandoned bool
 }
 
 // mirrorHistory is how many applied mirror sequences the host keeps readable.
@@ -413,19 +422,34 @@ func withinTransportBudget(ctx context.Context) (context.Context, context.Cancel
 }
 
 // runDetector runs one detector, abandoning it when it outlives ctx. A detector
-// that ignores its context keeps its goroutine, so it is never started twice
-// concurrently: the leak is bounded by the number of detectors.
+// is never run twice concurrently: an evaluation that arrives while another of
+// the same detector runs waits for it to end and then runs on its own view
+// (a scheduled run and an on-demand read coalesce; neither fails as busy).
+// A run its caller abandoned (a detector that ignores its context keeps its
+// goroutine) is not waited for: the next caller is told it is still running,
+// so the leak is bounded by the number of detectors.
 func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.DetectionContext) ([]*pb.Finding, detectorFailure) {
 	id := d.Spec().ID
 	s.runMu.Lock()
-	if s.running[id] {
+	for s.evaluating[id] != nil {
+		running := s.evaluating[id]
+		if running.abandoned {
+			s.runMu.Unlock()
+			return nil, detectorFailure{"detector is still running a previous evaluation", sdk.ReadClassUnavailable}
+		}
 		s.runMu.Unlock()
-		return nil, detectorFailure{"detector is still running a previous evaluation", sdk.ReadClassUnavailable}
+		select {
+		case <-running.done:
+		case <-ctx.Done():
+			return nil, detectorFailure{fmt.Sprintf("detector evaluation abandoned: %v", ctx.Err()), sdk.ReadClassUnavailable}
+		}
+		s.runMu.Lock()
 	}
-	if s.running == nil {
-		s.running = map[string]bool{}
+	if s.evaluating == nil {
+		s.evaluating = map[string]*detectorRun{}
 	}
-	s.running[id] = true
+	run := &detectorRun{done: make(chan struct{})}
+	s.evaluating[id] = run
 	s.runMu.Unlock()
 	type outcome struct {
 		findings []*pb.Finding
@@ -435,7 +459,8 @@ func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.Detec
 	go func() {
 		defer func() {
 			s.runMu.Lock()
-			delete(s.running, id)
+			delete(s.evaluating, id)
+			close(run.done)
 			s.runMu.Unlock()
 		}()
 		findings, failure := detect(ctx, d, view)
@@ -445,6 +470,9 @@ func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.Detec
 	case got := <-done:
 		return got.findings, got.failure
 	case <-ctx.Done():
+		s.runMu.Lock()
+		run.abandoned = true
+		s.runMu.Unlock()
 		return nil, detectorFailure{fmt.Sprintf("detector evaluation abandoned: %v", ctx.Err()), sdk.ReadClassUnavailable}
 	}
 }

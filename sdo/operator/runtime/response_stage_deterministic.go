@@ -18,7 +18,9 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/storestate"
 	"sdo.dev/operator/sdk/workloadhealth"
 )
 
@@ -238,6 +240,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if state.Coverage == nil {
 		var runs []ProgramRun
 		var err error
+		// openCtx and until bound the opening diagnosis and its re-asks; zero
+		// until is no bound beyond ctx.
+		openCtx, until := ctx, time.Time{}
 		if state.Refresh {
 			// A later pass diagnoses live state: the loop's findings are the ones
 			// it last observed, which predate whatever joined the incident since.
@@ -267,12 +272,21 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 		} else {
-			stage.readPlaybookDetectors(ctx, loop, state)
-			runs = loop.InitialDiagnose(ctx)
+			// The opening read of playbook detectors and the opening diagnosis
+			// share one diagnosis deadline, so the responder's dispatch slips by
+			// at most that bound in all. The read takes at most half of it,
+			// leaving the diagnosis the rest.
+			bound := loop.deadline()
+			until = loop.clock().Add(bound)
+			var cancelOpen context.CancelFunc
+			openCtx, cancelOpen = context.WithTimeout(ctx, bound)
+			defer cancelOpen()
+			stage.readPlaybookDetectors(openCtx, loop, state, loop.clock().Add(bound/2))
+			runs = loop.InitialDiagnose(openCtx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 		}
 		if !state.Refresh {
-			if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
+			if runs, err = stage.reaskUnanswered(openCtx, loop, state, runs, until); err != nil && (ctx.Err() != nil || openCtx.Err() == nil) {
 				return report, err
 			}
 		}
@@ -1034,9 +1048,9 @@ func (stage *DeterministicResponseStage) diagnoseBackoff(ctx context.Context) er
 // capture) would otherwise leave the stage nothing to apply for the whole
 // incident. An Unknown the program answered itself is final. Only the failed
 // programs are diagnosed again; the failed runs stay as evidence and an answer
-// is appended after them.
-func (stage *DeterministicResponseStage) reaskUnanswered(ctx context.Context, loop *ResponderLoop, state *IncidentState, runs []ProgramRun) ([]ProgramRun, error) {
-	for try := 1; try < stageDiagnoseTries; try++ {
+// is appended after them. No re-ask starts once until (non-zero) has passed.
+func (stage *DeterministicResponseStage) reaskUnanswered(ctx context.Context, loop *ResponderLoop, state *IncidentState, runs []ProgramRun, until time.Time) ([]ProgramRun, error) {
+	for try := 1; try < stageDiagnoseTries && (until.IsZero() || loop.clock().Before(until)); try++ {
 		unanswered := unansweredRuns(runs)
 		if len(unanswered) == 0 {
 			return runs, nil
@@ -1104,35 +1118,34 @@ func diagnosisFailure(v program.Verdict) string {
 	return "diagnosis unavailable"
 }
 
-// readPlaybookDetectors gives the opening diagnosis a current reading of every
-// detector that names a learned playbook. Such a finding is what binds that
-// playbook, and the incident opens on whichever detector fired first: a slower
-// detector (a store read, a long interval) may not have evaluated since the
-// fault began, so without this read its playbook could never match a fresh
-// incident. Each detector not already firing is evaluated on demand; one still
-// busy with an earlier evaluation, or failing, is asked again after a backoff.
-// All of it ends within the diagnosis deadline (response.diagnosis_deadline,
-// the bound the stage already gives one diagnosis): a detector with no answer
-// by then keeps the findings the incident opened with. With no learned
-// playbook, or none a detector names, nothing is read and nothing waits.
-func (stage *DeterministicResponseStage) readPlaybookDetectors(ctx context.Context, loop *ResponderLoop, state *IncidentState) {
+// readPlaybookDetectors gives the opening diagnosis, and the responder's task,
+// a current reading of every detector that names a learned playbook. Such a
+// finding is what binds that playbook (or, for one with no program, shows it to
+// the responder), and the incident opens on whichever detector fired first: a
+// slower detector (a store read, a long interval) may not have evaluated since
+// the fault began. Each one not already firing is evaluated on demand against
+// a fresh read of the pod reads it may use (freshPodReads): its own, and the
+// store-state reads every detector shares. A detector whose reads did not all
+// answer, or that failed, is asked again after a backoff. All of it ends by
+// until; a detector with no answer by then keeps the findings the incident
+// opened with. With no detector that names a learned playbook, nothing is read
+// and nothing waits.
+func (stage *DeterministicResponseStage) readPlaybookDetectors(ctx context.Context, loop *ResponderLoop, state *IncidentState, until time.Time) {
 	pending := loop.playbookDetectors(state.Findings)
 	if len(pending) == 0 {
 		return
 	}
-	bound := loop.deadline()
-	ctx, cancel := context.WithTimeout(ctx, bound)
+	ctx, cancel := context.WithTimeout(ctx, until.Sub(loop.clock()))
 	defer cancel()
-	deadline := loop.clock().Add(bound)
 	response := ToolResponse{Findings: []sdk.Finding{}}
 	for {
 		pending = loop.readDetectorsOnce(ctx, pending, &response)
-		if len(pending) == 0 || ctx.Err() != nil || !loop.clock().Before(deadline) || stage.diagnoseBackoff(ctx) != nil {
+		if len(pending) == 0 || ctx.Err() != nil || !loop.clock().Before(until) || stage.diagnoseBackoff(ctx) != nil {
 			break
 		}
 	}
 	for _, detector := range pending {
-		slog.Info("stage_playbook_detector_unanswered", "incident_id", state.Request.IncidentID, "detector_id", detector.Spec().ID, "bound", bound)
+		slog.Info("stage_playbook_detector_unanswered", "incident_id", state.Request.IncidentID, "detector_id", detector.Spec().ID)
 	}
 	if len(response.DetectorStates) == 0 {
 		return
@@ -1156,19 +1169,18 @@ func (stage *DeterministicResponseStage) readPlaybookDetectors(ctx context.Conte
 	})
 }
 
-// playbookDetectors are the loop's detectors that name a registered learned
-// playbook and have no active finding among findings.
+// playbookDetectors are the loop's detectors that name a learned playbook and
+// have no active finding among findings. A learned playbook is a registered
+// program, or any playbook a learned detector names (one with no program, a
+// README with scripts, is still the responder's best lead). The generic
+// health-objective playbook is not one.
 func (l *ResponderLoop) playbookDetectors(findings []sdk.Finding) []sdk.Detector {
-	if l.Programs == nil {
-		return nil
-	}
-	learned := map[string]bool{}
-	for _, spec := range l.Programs.List() {
-		if spec.ID == SourceRestoreID {
-			continue
-		}
-		if _, ok := l.Programs.Diagnoser(spec.ID); ok {
-			learned[spec.ID] = true
+	programs := map[string]bool{}
+	if l.Programs != nil {
+		for _, spec := range l.Programs.List() {
+			if spec.ID != SourceRestoreID {
+				programs[spec.ID] = true
+			}
 		}
 	}
 	firing := map[string]bool{}
@@ -1184,7 +1196,11 @@ func (l *ResponderLoop) playbookDetectors(findings []sdk.Finding) []sdk.Detector
 			continue
 		}
 		for _, reference := range spec.Playbooks {
-			if id, err := layout.PlaybookID(reference); err == nil && learned[id] {
+			id, err := layout.PlaybookID(reference)
+			if err != nil || id == layout.HealthObjectivePlaybook || id == SourceRestoreID {
+				continue
+			}
+			if programs[id] || spec.Class == sdk.DetectorClassLearned {
 				detectors = append(detectors, detector)
 				break
 			}
@@ -1193,24 +1209,55 @@ func (l *ResponderLoop) playbookDetectors(findings []sdk.Finding) []sdk.Detector
 	return detectors
 }
 
-// readDetectorsOnce evaluates detectors against one fresh snapshot and adds
-// each answer to response. It returns the detectors that did not answer.
+// detectorPodReads reports whether a pod read may feed detector: one it
+// declares, or a store-state read, which every detector may consult through
+// storestate.Changes.
+func detectorPodReads(detector sdk.Detector) func(podread.Query) bool {
+	declared := map[string]bool{}
+	if consumer, ok := detector.(podread.Consumer); ok {
+		for _, query := range consumer.PodReads() {
+			declared[query.ID] = true
+		}
+	}
+	return func(query podread.Query) bool {
+		_, _, store := storestate.ParseQueryID(query.ID)
+		return store || declared[query.ID]
+	}
+}
+
+// readDetectorsOnce evaluates detectors against one snapshot whose pod reads
+// they may use are read now, and adds each answer to response. It returns the
+// detectors that did not answer: failed, or with a read left unread this time.
 // It holds both loop locks, as the opening diagnosis does, so it runs between
 // tool calls and never beside a write.
 func (l *ResponderLoop) readDetectorsOnce(ctx context.Context, detectors []sdk.Detector, response *ToolResponse) []sdk.Detector {
 	ctx, closeMemory := withMemoryScope(ctx)
 	defer closeMemory()
+	wants := make([]func(podread.Query) bool, len(detectors))
+	for i, detector := range detectors {
+		wants[i] = detectorPodReads(detector)
+	}
+	fresh := &freshPodReads{want: func(query podread.Query) bool {
+		return slices.ContainsFunc(wants, func(want func(podread.Query) bool) bool { return want(query) })
+	}}
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	view, err := l.snapshotView(ctx)
+	view, err := l.snapshotView(withFreshPodReads(ctx, fresh))
 	if err != nil {
 		return detectors
 	}
-	results := evaluateDetectors(ctx, detectors, view)
-	var unanswered []sdk.Detector
-	for _, detector := range detectors {
+	var unanswered, answering []sdk.Detector
+	for i, detector := range detectors {
+		if fresh.unreadAny(wants[i]) {
+			unanswered = append(unanswered, detector)
+		} else {
+			answering = append(answering, detector)
+		}
+	}
+	results := evaluateDetectors(ctx, answering, view)
+	for _, detector := range answering {
 		id := detector.Spec().ID
 		result := results[id]
 		if result.err != nil {

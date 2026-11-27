@@ -6,7 +6,7 @@ import pytest
 from google.protobuf import timestamp_pb2
 
 from sdo.agents.responder.codex import _responder_prompt, recent_changes_block
-from sdo.agents.responder.incident_opening import symptom
+from sdo.agents.responder.incident_opening import learned_playbooks_block, symptom
 from tests.proto_messages import evolve
 from tests.unit.sdo.agents.prompts.cases import incident
 
@@ -46,7 +46,7 @@ def test_the_fixed_part_of_the_first_message_cannot_grow_back() -> None:
     """Everything the responder is told besides the page (symptom, candidates) and the branch line."""
     request = _opened_by_a_test("login")
     full = str(_responder_prompt(request))
-    page = symptom(request) + recent_changes_block(request)
+    page = symptom(request) + learned_playbooks_block(request) + recent_changes_block(request)
 
     fixed = len(full.replace(page, "").encode())
     assert fixed <= FIXED_BYTES, f"{fixed} > {FIXED_BYTES}: the first-try prompt grew; cut text or justify the raise"
