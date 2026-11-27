@@ -594,12 +594,12 @@ func (e *HTTPEndpoint) Check(response Response, state State) Verdict {
 		}
 	}
 	if !statusAccepted(e.ExpectStatus, response.Status) {
-		return Fail("HTTP %d: observed %s", response.Status, observedExcerpt(response.Body, response.Status, ""))
+		return Fail("HTTP %d: observed %s", response.Status, response.excerpt(""))
 	}
 	body := string(response.Body)
 	for _, text := range e.ExpectBody {
 		if !strings.Contains(body, text) {
-			return Fail("HTTP %d body lacks %q: observed %s", response.Status, text, observedExcerpt(response.Body, response.Status, text))
+			return Fail("HTTP %d body lacks %q: observed %s", response.Status, text, response.excerpt(text))
 		}
 	}
 	if len(e.cookies) > 0 {

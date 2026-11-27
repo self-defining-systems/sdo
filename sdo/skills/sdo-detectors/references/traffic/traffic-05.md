@@ -133,9 +133,16 @@ func (l ProbeLoad) Message() string
 func (l ProbeLoad) OverCap() bool
     OverCap reports that the probes send more than the cap.
 
+type ProbeTokens interface {
+	Token(ctx context.Context, user string) (string, error)
+}
+    ProbeTokens returns the API token of a provisioned probe user. A Passwords
+    source that also implements ProbeTokens serves users that declare Token.
+
 type ProbeUser struct {
 	Name   string `json:"name"`
-	As     string `json:"as"`
+	As     string `json:"as,omitempty"`
+	Token  string `json:"token,omitempty"`
 	SSHKey string `json:"sshKey,omitempty"`
 }
     ProbeUser names a test user a scenario signs in as. SDO provisions the
@@ -147,6 +154,10 @@ type ProbeUser struct {
     the session or token the steps send. Name contains the scenario's Marker.
     Operational memory and agents hold the name, never the password, and no
     sample carries it.
+
+    Token, when set, names the State key for the token returned by the identity
+    procedure. Use it directly (for example "{token}" in a header). Declare As
+    for a password, Token for a token, or both. Both values are secret.
 
     SSHKey, when set, names the State key under which the engine puts the
     user's SSH public key as an authorized-keys line ("ssh-ed25519 AAAA..."),
@@ -186,6 +197,7 @@ type Response struct {
 	Status int
 	Header http.Header
 	Body   []byte
+	// Has unexported fields.
 }
     Response is what the engine received for a Request. Body is bounded.
 
@@ -243,8 +255,4 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
     samples and samples older than the SLO's maxAge are ignored, only the
     latest window samples count, and fewer than minSamples leaves the scenario
     unevaluated, which is healthy.
-
-func Judge(window Window) []SLOVerdict
-    Judge evaluates every qualified scenario of window at its ObservedAt,
-    except those the workload declares KnownBroken: they never gate health.
 ```

@@ -132,6 +132,7 @@ type Passwords interface{ ... }
 type ProbeKeys interface{ ... }
 type ProbeLoad struct{ ... }
     func MeasureProbeLoad(workloads []Workload, requestsPerIteration map[string]int) ProbeLoad
+type ProbeTokens interface{ ... }
 type ProbeUser struct{ ... }
 type Purpose string
     const PurposeHealthProbe Purpose = "health-probe" ...

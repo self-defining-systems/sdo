@@ -75,6 +75,10 @@ type Procedure struct {
 	// leaves a user whose password already matches untouched. At most one
 	// procedure of a map is the probe identity.
 	ProbeIdentity bool `json:"probe_identity,omitempty"`
+	// ReturnsToken requires the probe identity procedure to print one API token
+	// on stdout. The procedure must reuse a valid token for the same user on
+	// subsequent runs, including across prober restarts.
+	ReturnsToken bool `json:"returns_token,omitempty"`
 }
 
 // DefaultProbeIdentityTimeout bounds a probe-identity procedure that declares
@@ -122,6 +126,9 @@ func (p Procedure) Validate() error {
 	}
 	if (p.Component == "") == (p.Job == "") {
 		return fmt.Errorf("procedure %s runs either in a component (component, container, command) or as a Job (job: Job/<name>)", p.ID)
+	}
+	if p.ReturnsToken && !p.ProbeIdentity {
+		return fmt.Errorf("procedure %s: returns_token requires probe_identity", p.ID)
 	}
 	if p.ProbeIdentity {
 		if err := p.validateProbeIdentity(); err != nil {

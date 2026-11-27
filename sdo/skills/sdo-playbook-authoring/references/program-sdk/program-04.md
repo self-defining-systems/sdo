@@ -169,6 +169,10 @@ type Procedure struct {
 	// leaves a user whose password already matches untouched. At most one
 	// procedure of a map is the probe identity.
 	ProbeIdentity bool `json:"probe_identity,omitempty"`
+	// ReturnsToken requires the probe identity procedure to print one API token
+	// on stdout. The procedure must reuse a valid token for the same user on
+	// subsequent runs, including across prober restarts.
+	ReturnsToken bool `json:"returns_token,omitempty"`
 }
     Procedure is one operations procedure the application itself ships:
     a self-check, a repair task, a data task or a long job, recorded under
@@ -242,19 +246,4 @@ func SourceChangeAction(action Action) (ProposeSourceChange, bool)
     SourceChangeAction returns a ProposeSourceChange given by value or pointer.
 
 func (a ProposeSourceChange) Validate() error
-
-type Query struct {
-	Store *StoreQuery `json:"store,omitempty"`
-	Probe *ProbeQuery `json:"probe,omitempty"`
-}
-    Query is one structured read; exactly one kind is set.
-
-    A Diagnose gets typed rows instead of exit codes: the records of a store the
-    accepted application map grounds, or named fields of an unauthenticated HTTP
-    status response. A read never returns a credential: credential catalogs and
-    string values under credential-named fields are refused, and a password hash
-    counts as a credential.
-
-func (q Query) Validate() error
-    Validate requires exactly one kind and checks it.
 ```

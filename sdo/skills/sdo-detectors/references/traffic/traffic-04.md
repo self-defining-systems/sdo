@@ -67,11 +67,11 @@ type IdentityPendingError struct {
 	Reason string
 	Wait   time.Duration
 }
-    IdentityPendingError is what a Passwords or ProbeKeys source returns
-    while the user's provisioning is under way. It is an environment wait,
-    not a measurement of the application: Wait is how long one provisioning run
-    may take, so a one-shot evaluation can wait for it instead of reporting a
-    health failure.
+    IdentityPendingError is what a probe identity source returns while
+    the user's provisioning is under way. It is an environment wait, not a
+    measurement of the application: Wait is how long one provisioning run may
+    take, so a one-shot evaluation can wait for it instead of reporting a health
+    failure.
 
 func (e *IdentityPendingError) Error() string
 

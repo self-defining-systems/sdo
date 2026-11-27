@@ -147,6 +147,9 @@ a probe first needs it, and gives the password to the probe; it never reads an a
     source: docs/admin.md
 ```
 
+- For token APIs, set `returns_token: true` and print only the user's API token on stdout (one line).
+  Return the same valid token on repeated calls, including after a prober restart. In the scenario use
+  `traffic.ProbeUser{Name: "sdoprobe-reader", Token: "token"}` and send `{token}` directly in a header.
 - Exactly one parameter, a required string `username`; never a password parameter (argv reaches audit logs).
 - Idempotent: create the user when absent, approve or unblock it, set the password, never grant admin. Leave a
   user whose password already matches untouched (some frameworks end every session on a password reset), and

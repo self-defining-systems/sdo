@@ -141,3 +141,36 @@ func TestNotYetWaitIsNotLatency(t *testing.T) {
 		t.Fatalf("converging step violates the objective: %+v", verdict)
 	}
 }
+
+func TestSetupNotYetRetriesWithinIterationAndKeepsProgress(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		deliverAfter time.Duration
+		outcome      Outcome
+	}{
+		{"eventually ready", 2 * time.Second, OutcomeOK},
+		{"never ready", -1, OutcomeError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := readModelServer(test.deliverAfter)
+			scenario := registerScenario(readModelCheck{notYet: true})
+			scenario.Setup = scenario.Steps
+			scenario.Steps = []Step{{Name: "after", Endpoint: stateGate{}}}
+			engine := simEngine(t, probeWorkload(scenario.ID), Catalog{scenario}, server)
+			_, sample := engine.Iterate(context.Background(), 0)
+			if sample.Outcome != test.outcome || len(sample.Convergence) != 1 || sample.Convergence[0].Attempts < 2 {
+				t.Fatalf("setup did not retry: %+v", sample)
+			}
+			if test.outcome == OutcomeOK {
+				if _, sample := engine.Iterate(context.Background(), 1); sample.Outcome != OutcomeOK {
+					t.Fatalf("setup progress lost: %+v", sample)
+				}
+			} else if took := sample.Convergence[0].Took; took < 9*time.Second || took > 11*time.Second {
+				t.Fatalf("setup waited %s, want iteration's 10s budget", took)
+			}
+			if posts := strings.Count(strings.Join(server.requests(), "\n"), "POST"); posts != 1 {
+				t.Fatalf("setup repeated its write: %d POSTs", posts)
+			}
+		})
+	}
+}

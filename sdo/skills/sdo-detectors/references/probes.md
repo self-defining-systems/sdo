@@ -92,8 +92,8 @@ touched the affected records.
 
 ## Asynchronous effects and time
 
-- A check that cannot yet tell pass from fail returns `NotYet`; the step is sent again until it passes or the
-  iteration times out (a fail), so an effect that never arrives fails; the wait is not step latency.
+- A read in `Setup` or `Steps` can return `NotYet` to retry within the iteration deadline. Completed setup steps
+  are reused. The wait is excluded from step latency.
 - The iteration's start time is in `State[StateNow]`; format dates from it instead of a clock or a far-future constant.
 
 ## What traffic cannot show
