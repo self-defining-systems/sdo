@@ -3,6 +3,7 @@ package operatorcli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,5 +68,55 @@ func TestOnboardingInitHelpAndAmbiguousEntry(t *testing.T) {
 	}
 	if entry, err := selectInitEntry(ports, "api:8080"); err != nil || entry != ports[1] {
 		t.Fatalf("selected %v, error = %v", entry, err)
+	}
+}
+
+func TestOnboardingInitKeepsTheMapCompact(t *testing.T) {
+	root := t.TempDir()
+	const header = "# Seeded header comment\n# second line\n"
+	var components strings.Builder
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&components, "  - {name: c%d, workload: Deployment/c%d, services: [front], holds_data: false, evidence: [manifest]}\n", i, i)
+	}
+	arch := "# Notes\n\n" + appmap.BeginMarker + "\n```yaml\n" + header + "version: 1\ncomponents:\n" + components.String() +
+		"edges:\n  - {from: c0, to: c1, evidence: [manifest], source: \"env X\"}\noperations: []\nprobes: []\n```\n" + appmap.EndMarker + "\n\nTrailing text.\n"
+	goal := "---\nschema_version: 1\njourneys:\n  - {id: browse, what: Browse items}\n---\nKeep it healthy.\n"
+	for path, content := range map[string]string{".sdo/arch.md": arch, ".sdo/goal.md": goal} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writeOnboardingScaffold(root, []initEntry{{service: "front", port: 80}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(filepath.Join(root, ".sdo/arch.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	region, _, err := appmap.Find(string(written))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(region.YAML, header) {
+		t.Fatalf("seeded header lost:\n%s", region.YAML)
+	}
+	if n := strings.Count(region.YAML, "name: c"); n != 20 || strings.Count(region.YAML, "\n") > 40 {
+		t.Fatalf("components on %d lines, %d lines in all:\n%s", n, strings.Count(region.YAML, "\n"), region.YAML)
+	}
+	for _, line := range strings.Split(region.YAML, "\n") {
+		if strings.HasPrefix(line, "  - ") && !strings.HasPrefix(line, "  - {") {
+			t.Fatalf("list entry is not on one flow line: %q", line)
+		}
+	}
+	m, err := appmap.Parse(region.YAML)
+	if err != nil || len(m.Components) != 20 || len(m.Edges) != 1 || m.Edges[0].Source != "env X" || len(m.Operations) != 1 || len(m.Probes) != 1 {
+		t.Fatalf("parsed map = %+v, %v", m, err)
+	}
+	if !strings.HasPrefix(string(written), "# Notes\n\n") || !strings.HasSuffix(string(written), appmap.EndMarker+"\n\nTrailing text.\n") {
+		t.Fatalf("text outside the region changed:\n%s", written)
 	}
 }
