@@ -46,14 +46,19 @@ func (c Coordinator) mode(cfg Config) operability.Mode {
 // deployment checks, the memory checks of what the shared validator accepted at
 // staging, and the independent detector evaluation of the staged checkout. The
 // detector evaluation is skipped, never passed, when a deployment check failed.
+// A seeded install has no recorded deployment to check: its deployment items
+// are skipped and its detectors are evaluated against the live application.
 //
 // A verdict still pending at the bound is not an error here: it is the O4 check
 // pending, so the gate can return it to the designer whose probe never passed.
 // The second result is the bounded-window error for the case nobody can correct.
 func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate broker.Candidate, deployment DeploymentReceipt) (operability.Report, *PendingVerificationError, error) {
-	live, err := c.Readiness.CheckLive(ctx, candidate.Path, &contracts.DeploymentPlan{Source: deployment.Source}, deployment, nil)
-	if err != nil {
-		return operability.Report{}, nil, fmt.Errorf("live deployment checks: %w", err)
+	live := seededDeploymentChecks()
+	if !deployment.Seeded {
+		var err error
+		if live, err = c.Readiness.CheckLive(ctx, candidate.Path, &contracts.DeploymentPlan{Source: deployment.Source}, deployment, nil); err != nil {
+			return operability.Report{}, nil, fmt.Errorf("live deployment checks: %w", err)
+		}
 	}
 	gaps := make([]offline.Finding, 0, len(candidate.CoverageGaps))
 	for _, gap := range candidate.CoverageGaps {
@@ -63,6 +68,7 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 	checks := append(live, offline.CheckMemory(offline.Memory{Notes: gaps, OwnershipChecked: true})...)
 	var applyChecks []operability.Check
 	var pending *PendingVerificationError
+	var err error
 	if !failing(live) {
 		if applyChecks, err = c.applyTelemetry(ctx, candidate.Path); err != nil {
 			return operability.Report{}, nil, err
@@ -95,6 +101,17 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 	}
 	report, err := operability.New(operability.StageComplete, subject).With(checks...)
 	return report, pending, err
+}
+
+// seededDeploymentChecks are the deployment items of a seeded install: there
+// is no recorded deployment to check, so they are skipped, never passed.
+func seededDeploymentChecks() []operability.Check {
+	const detail = "not run: no recorded deployment describes the accepted head (a seeded install)"
+	var checks []operability.Check
+	for _, item := range operability.StageItems(operability.StageDeployment) {
+		checks = append(checks, operability.Check{ID: string(item) + ".deployment", Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: detail})
+	}
+	return checks
 }
 
 func failing(checks []operability.Check) bool {
@@ -281,13 +298,18 @@ type gateOutcome struct {
 	rejected []*contracts.MemoryDiagnostic
 }
 
-// publishUnverified is the health refresh of an install SDO never deployed (a
-// seeded application): there is no recorded deployment to verify the judge's
-// candidate against, so the broker's own validation is the only gate. It is
-// logged, never silent, and only RefreshHealth can reach it: a Run always has a
-// deployment receipt.
-func (c Coordinator) publishUnverified(ctx context.Context, id string) (gateOutcome, error) {
-	slog.Warn("health_refresh_published_unverified", "proposal", id, "reason", "no recorded deployment describes the accepted head")
+// publishUnverified publishes a health refresh no live verdict can judge: the
+// accepted head is ahead of its recorded deployment, or a seeded application
+// is itself unhealthy (a detector Go wrote fires), so the broker's own
+// validation is the only gate. It is logged with the reason, never silent, and
+// only RefreshHealth can reach it: a Run always has a deployment receipt.
+func (c Coordinator) publishUnverified(ctx context.Context, id, reason string) (gateOutcome, error) {
+	slog.Warn("health_refresh_published_unverified", "proposal", id, "reason", reason)
+	return c.publish(ctx, id)
+}
+
+// publish publishes the judge's proposal through the broker's validation.
+func (c Coordinator) publish(ctx context.Context, id string) (gateOutcome, error) {
 	receipt, err := c.Broker.Publish(ctx, id, broker.HealthJudge, broker.InitialPhase)
 	if err != nil {
 		if diagnostics, typed := broker.RejectionDiagnostics(err); typed {
@@ -305,9 +327,16 @@ func (c Coordinator) publishUnverified(ctx context.Context, id string) (gateOutc
 // into the operational branch, return a typed correction to the designer or
 // the deployer, or end the run. A candidate whose base moved is staged and
 // verified again.
+//
+// A seeded install's candidate goes through the same gate against the live
+// application, so a designer probe that never passes there is returned to the
+// designer and never published. Its failures are never re-attributed to the
+// application: a designer probe that keeps failing ends the bounded judge
+// loop instead. Only a failing application (no designer fault) publishes
+// unverified, since then nothing can judge the new detectors.
 func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, deployment DeploymentReceipt, log *contracts.ProposalRejectionLog) (gateOutcome, error) {
-	if !deployment.Ready {
-		return c.publishUnverified(ctx, id)
+	if !deployment.Ready && !deployment.Seeded {
+		return c.publishUnverified(ctx, id, "the accepted head is ahead of its recorded deployment")
 	}
 	mode := c.mode(cfg)
 	attempts := orDefault(cfg.DesignerAttempts, defaultDesignerAttempts)
@@ -332,7 +361,9 @@ func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, d
 			if report, pending, err = c.candidateReport(ctx, cfg, candidate, deployment); err != nil {
 				return err
 			}
-			report = reattribute(report, log, attempts)
+			if !deployment.Seeded {
+				report = reattribute(report, log, attempts)
+			}
 			decision = report.DecideIn(mode, operability.StageItems(operability.StageComplete)...)
 			if decision.Kind == operability.Retry {
 				return &retryChecks{decision}
@@ -345,6 +376,14 @@ func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, d
 		}
 		switch decision.Kind {
 		case operability.Accepted:
+			if deployment.Seeded {
+				// The broker binds a report only to recorded deployment
+				// evidence, which a seeded install has none of: publish the
+				// proposal whose staged tree was just verified.
+				_ = c.Broker.DiscardCandidate(id, broker.InitialPhase)
+				slog.Info("health_refresh_published_seeded", "proposal", id, "commit", candidate.Commit, "detectors", "verified against the live application")
+				return c.publish(ctx, id)
+			}
 			receipt, err := c.Broker.Accept(ctx, candidate, broker.CandidateEvidence{Commit: candidate.Commit, Tree: candidate.Tree, EffectiveTree: deployment.EffectiveTree, PatchesDigest: deployment.PatchesDigest, Operability: &report})
 			if errors.Is(err, broker.ErrCandidateStale) && restage < maxCandidateRestages {
 				continue
@@ -358,6 +397,9 @@ func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, d
 			_ = c.Broker.DiscardCandidate(id, broker.InitialPhase)
 			if decision.Owner == operability.OwnerDesigner {
 				return gateOutcome{rejected: operabilityDiagnostics(decision.Checks)}, nil
+			}
+			if deployment.Seeded && decision.Cause == operability.CauseSourceFault {
+				return c.publishUnverified(ctx, id, "the seeded application fails its own checks: "+decision.Feedback())
 			}
 			_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 			return gateOutcome{feedback: decision.Feedback()}, nil
