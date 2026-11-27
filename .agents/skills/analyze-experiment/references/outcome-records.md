@@ -146,7 +146,7 @@ shell notes. Script timeouts/crashes are detector errors, never repaired faults.
 
 With `agent.recording` off (the default) there is no recording: the outcome's repair actions hold only plan applications and
 menu repairs, no `sdo-api-*` receipt exists, `unbound_write` items come only from those, and the closing turn carried no change
-list (a `success` closure learns unless every known change is a plain restore). Below describes the recording on.
+list (a `success` closure learns unless every known change, the agent's reported `agent_changes` included, is a plain restore). Below describes the recording on.
 
 The agent's writes are derived by Go from the recording of its Kubernetes calls (`memory.AgentWrites`, the one reader;
 settle detection, the closure guard, the outcome's repair records and reflection's change list all use it, never an
