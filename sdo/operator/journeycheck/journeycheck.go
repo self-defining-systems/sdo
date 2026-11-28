@@ -28,6 +28,9 @@ const (
 	ItemLatency    = "latency-bound"
 	ItemAltered    = "altered-answers"
 	ItemSinglePass = "single-pass"
+	// ItemJourneyCheck is the installed run of every probe's checks as a
+	// whole: why it did not run or finish.
+	ItemJourneyCheck = "journey-check"
 )
 
 var itemOrder = map[string]int{ItemBudget: 0, ItemScheduled: 1, ItemPasses: 2, ItemCleanup: 3, ItemConcurrent: 4, ItemLatency: 5, ItemAltered: 6}
@@ -36,6 +39,8 @@ var itemOrder = map[string]int{ItemBudget: 0, ItemScheduled: 1, ItemPasses: 2, I
 const (
 	Green = "green"
 	Red   = "red"
+	// Skipped is a check SDO could not run; it is never the agent's to fix.
+	Skipped = "skipped"
 )
 
 // Result is one item's verdict on one scenario (or on the whole set).

@@ -22,7 +22,8 @@ PY
 sdo-operator onboarding journeys --repo /work --namespace "$GATE_NAMESPACE" --plan
 # step quick
 sdo-operator onboarding journeys --repo /work --namespace "$GATE_NAMESPACE" --quick --only write-note
-# step journeys
-sdo-operator onboarding journeys --repo /work --namespace "$GATE_NAMESPACE"
+# step quick-rest
+sdo-operator onboarding journeys --repo /work --namespace "$GATE_NAMESPACE" --quick --only call-sign-in
+sdo-operator onboarding journeys --repo /work --namespace "$GATE_NAMESPACE" --quick --only call-notes
 # step commit
 git add -A .sdo && git commit -qm "Onboard the synthetic notes app" && git status --short

@@ -13,7 +13,7 @@ the [worked example](references/example.md), [probe design](references/probe-des
 1. Read the manifests, README and API: how users enter, sign in and tell a result is correct. Try requests with curl.
 2. Run `sdo-operator onboarding init --repo DIR --namespace NS`; fill in routes, paths and exact assertions.
 3. Write one scenario at a time; run `onboarding journeys --only ID --quick` after each edit (one pass, every
-   request and answer). Run the full `journeys` once all pass; after a fix rerun only that ID.
+   request and answer). SDO runs the full checks after the session.
 4. Map a request counter by route, method and status if the app has one (`onboarding check --metrics`,
    [example](../sdo-operations-map/references/request-metrics.md)).
 
@@ -94,6 +94,6 @@ Map evidence: `config`, `manifest`, `observed`. Use `config` for application sou
 
 ## Finish line
 
-Do not soak: SDO runs the installed probes for 5 minutes after you finish and sends one follow-up if one fails.
+Do not soak or run the full set: SDO runs both after you finish and sends one follow-up if a probe fails.
 As an ordinary user, check default lists show no probe records. With ten minutes left, remove edits still red and
 report uncovered journeys. Commit, run `onboarding journeys --plan`, fix rejections and commit again.

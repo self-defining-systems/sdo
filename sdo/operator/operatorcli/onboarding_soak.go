@@ -20,7 +20,8 @@ const OnboardingSoakUsage = `usage: sdo-operator onboarding soak --control-names
 
   Reads the installed controller's onboarding soak: once every opener detector has been evaluated,
   a new install runs the committed probes on their schedule for onboarding.soak (5m) and judges
-  them like onboarding journeys --soak. Its reds never open an incident. An install soaks once.
+  them like onboarding journeys --soak, and runs every probe's full checks once beside it, like
+  onboarding journeys --alter. Its reds never open an incident. An install soaks once.
   Waits up to --wait for the record. Green: one line, exit 0. Red: prints the one follow-up turn
   for the onboarding session that authored the probes, exit 1. No record within --wait, or an
   infrastructure error: exit 2.`

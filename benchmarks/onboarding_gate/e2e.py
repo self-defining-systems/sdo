@@ -9,7 +9,8 @@ kit is built from an SDO checkout's working tree. The session is the production 
 run, with a cheap model and a dollar cap. ``--scripted`` replaces the model with a fixed script
 (``synthetic/scripted_agent.sh``) that writes known-good probes, for plumbing checks without a model.
 
-After the session the exported commit is judged once with a full live ``onboarding journeys``.
+After the session the exported commit is judged once with a full live ``onboarding journeys --alter``,
+the checks SDO runs on the installed export after a live session.
 Metrics: model requests, weighted tokens (input + 1.25 cache write 5m + 2 cache write 1h
 + 0.05 cache read + 5 output), cost, validator rejections the agent saw, journeys runs, export
 rejections, wall time, and the journeys that passed.
@@ -376,7 +377,16 @@ def evaluate(config: E2EConfig, sandbox: Sandbox, result: E2EResult) -> None:
     measure(scratch / "transcript.jsonl", result)
     if result.validated:
         checked = sandbox.run(
-            ["/kit/bin/sdo-operator", "onboarding", "journeys", "--repo", "/work", "--namespace", config.namespace],
+            [
+                "/kit/bin/sdo-operator",
+                "onboarding",
+                "journeys",
+                "--repo",
+                "/work",
+                "--namespace",
+                config.namespace,
+                "--alter",
+            ],
             timeout=300,
         )
         tail = [line for line in checked.stdout.splitlines() if line.strip()][-3:]

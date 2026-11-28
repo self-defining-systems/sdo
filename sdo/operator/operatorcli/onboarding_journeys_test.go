@@ -104,6 +104,30 @@ func TestJourneysSoakInAnOnboardingSessionSaysTheControllerSoaks(t *testing.T) {
 	}
 }
 
+// Inside an onboarding session SDO runs every probe's full checks (three
+// passes, a second prober, altered answers) after the session, beside the
+// soak, so an in-session run over the whole set is refused at once with that
+// reason. --plan, --quick and a re-check of named scenarios (--only) stay.
+func TestJourneysFullRunInAnOnboardingSessionSaysSDORunsItAfterTheSession(t *testing.T) {
+	t.Setenv("SDO_ACTOR", "health_judge")
+	t.Setenv("SDO_PHASE", "initial")
+	repo := t.TempDir()
+	for _, args := range [][]string{{}, {"--alter"}} {
+		var stdout, stderr bytes.Buffer
+		code := RunOnboarding(context.Background(), append([]string{"journeys", "--repo", repo, "--namespace", "example"}, args...), &stdout, &stderr)
+		if code != exitInfra || stdout.Len() != 0 || !strings.Contains(stderr.String(), "after this session") || strings.Count(stderr.String(), "\n") > 1 {
+			t.Fatalf("%v: code=%d stdout=%q stderr=%q", args, code, &stdout, &stderr)
+		}
+	}
+	for _, args := range [][]string{{"--plan"}, {"--only", "a", "--alter"}, {"--only", "a", "--quick"}} {
+		var stderr bytes.Buffer
+		RunOnboarding(context.Background(), append([]string{"journeys", "--repo", repo, "--namespace", "example"}, args...), io.Discard, &stderr)
+		if strings.Contains(stderr.String(), "after this session") {
+			t.Fatalf("%v is refused in a session: %q", args, &stderr)
+		}
+	}
+}
+
 // journeysRepo is parityRepo with the one generator its workload names, so the
 // probes compile.
 func journeysRepo(t *testing.T) string {
