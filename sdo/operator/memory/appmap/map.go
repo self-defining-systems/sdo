@@ -163,7 +163,9 @@ type Entry struct {
 
 // Operation is one user-facing operation.
 type Operation struct {
-	ID     string   `yaml:"id"`
+	ID string `yaml:"id"`
+	// Writes defaults, when the map omits it, to whether the entry method
+	// writes (POST, PUT, PATCH, DELETE).
 	Writes bool     `yaml:"writes"`
 	Entry  Entry    `yaml:"entry"`
 	Path   []string `yaml:"path"`
@@ -209,8 +211,22 @@ func Parse(text string) (Map, error) {
 	if err := decoder.Decode(&m); err != nil {
 		return Map{}, err
 	}
+	// An operation that omits writes writes when its entry method does.
+	var stated struct {
+		Operations []map[string]any `yaml:"operations"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &stated); err == nil && len(stated.Operations) == len(m.Operations) {
+		for i, fields := range stated.Operations {
+			if _, ok := fields["writes"]; !ok {
+				m.Operations[i].Writes = writeMethod[m.Operations[i].Entry.Method]
+			}
+		}
+	}
 	return m, nil
 }
+
+// writeMethod are the HTTP methods whose operations write unless the map says otherwise.
+var writeMethod = map[string]bool{"POST": true, "PUT": true, "PATCH": true, "DELETE": true}
 
 // Inventory is the accepted source inventory: the workloads and Services the
 // Go upkeep lists in the architecture text, how each Service is exposed

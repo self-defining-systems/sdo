@@ -68,3 +68,25 @@ func TestAMissingKindWorkloadNamesTheFileToCreate(t *testing.T) {
 		t.Fatalf("hint %q", hint)
 	}
 }
+
+// An operation that omits `writes` writes when its entry method does (POST,
+// PUT, PATCH, DELETE), so leaving the field out never drops a write from the
+// write-read and read-later coverage rules. A stated value always wins.
+func TestOperationWritesDefaultsFromItsEntryMethod(t *testing.T) {
+	text := strings.Replace(shopYAML, "    writes: true\n    entry: {service: web, port: 80, method: POST, path: /items}", "    entry: {service: web, port: 80, method: POST, path: /items}", 1)
+	text = strings.Replace(text, "    writes: false\n    entry: {service: web, port: 80, method: GET, path: /items}", "    entry: {service: web, port: 80, method: GET, path: /items}", 1)
+	m := mustParse(t, text)
+	byID := map[string]Operation{}
+	for _, op := range m.Operations {
+		byID[op.ID] = op
+	}
+	if !byID["add-item"].Writes || byID["list-items"].Writes {
+		t.Fatalf("defaults: add-item %v, list-items %v", byID["add-item"].Writes, byID["list-items"].Writes)
+	}
+	stated := mustParse(t, strings.Replace(shopYAML, "    writes: true\n    entry: {service: web, port: 80, method: POST", "    writes: false\n    entry: {service: web, port: 80, method: POST", 1))
+	for _, op := range stated.Operations {
+		if op.ID == "add-item" && op.Writes {
+			t.Fatal("a stated writes: false is kept")
+		}
+	}
+}
