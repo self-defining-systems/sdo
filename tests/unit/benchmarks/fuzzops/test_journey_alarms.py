@@ -16,6 +16,7 @@ from benchmarks.fuzzops.journey_alarms import (
     Tail,
     Webhook,
     alarm_page,
+    batches,
     parse_time,
     relay_once,
     render,
@@ -72,7 +73,11 @@ def test_one_alarm_per_journey_on_its_failure_ratio_and_a_rule_for_exactly_those
     ratio = [m for m in write["Metrics"] if m["ReturnData"]]
     assert ratio == [{**ratio[0], "Expression": "IF(requests > 0, failed / requests)"}]
     dims = write["Metrics"][0]["MetricStat"]["Metric"]["Dimensions"]
-    assert dims == [{"Name": "Lane", "Value": "z9"}, {"Name": "Journey", "Value": "write-thing"}]
+    assert dims == [{"Name": "Service", "Value": "gitlab-write-thing"}]
+    namespaces = {
+        m["MetricStat"]["Metric"]["Namespace"] for a in out["alarms"] for m in a["Metrics"] if "MetricStat" in m
+    }
+    assert namespaces == {"gitlab-read-thing", "gitlab-write-thing", "gitlab-write-thing-readback"}
     pattern = out["rule"]["EventPattern"]
     assert pattern["resources"] == [cfg.alarm_arn(j) for j in cfg.journeys]
     assert pattern["detail"] == {"state": {"value": ["ALARM", "OK"]}}
@@ -106,17 +111,32 @@ def test_closed_periods_count_every_journey_and_skip_unknown_or_malformed_lines(
     start = parse_time("2026-01-01T00:00:00Z").timestamp()
     assert agg.closed(start + 14) == []  # the first period is still open for late finishers
     data = agg.closed(start + 15)
-    counts = {(d["Dimensions"][1]["Value"], d["MetricName"]): d.get("Value") for d in data}
+    counts = {(d["Namespace"].removeprefix("gitlab-"), d["MetricName"]): d.get("Value") for d in data}
     assert counts[("read-thing", "Requests")] == 2
     assert counts[("read-thing", "Failed")] == 1
     assert counts[("write-thing", "Requests")] == 0
     assert ("write-thing", "Latency") not in counts
     assert counts[("write-thing-readback", "Failed")] == 1
-    latency = next(d for d in data if d["MetricName"] == "Latency" and d["Dimensions"][1]["Value"] == "read-thing")
+    latency = next(d for d in data if d["MetricName"] == "Latency" and d["Namespace"] == "gitlab-read-thing")
     assert latency["StatisticValues"]["Maximum"] == 3000
     assert {d["Timestamp"] for d in data} == {"2026-01-01T00:00:00+00:00"}
     assert agg.closed(start + 15) == []  # a period is published once
     assert len(agg.closed(start + 30)) == 2 * 3 + 1  # the 00:00:10 period
+
+
+def test_each_journey_is_its_own_service_namespace_and_page_identity() -> None:
+    cfg = config()
+    agg = Aggregator(cfg)
+    agg.add(outcome("2026-01-01T00:00:01Z", "read-thing", False))
+    data = agg.closed(parse_time("2026-01-01T00:00:00Z").timestamp() + 15)
+    sent = batches(data)
+    assert {ns for ns, _ in sent} == {"gitlab-read-thing", "gitlab-write-thing", "gitlab-write-thing-readback"}
+    assert all("Namespace" not in d for _, items in sent for d in items)
+    page = alarm_page(cfg, alarm_event(cfg, "write-thing"))
+    assert page is not None
+    assert page["service"] == "gitlab-write-thing"
+    assert "UserJourneys" not in json.dumps(page)
+    assert "Lane=" not in json.dumps(page)
 
 
 def test_a_lane_alarm_entering_alarm_pages_once_with_trusted_fields_only() -> None:

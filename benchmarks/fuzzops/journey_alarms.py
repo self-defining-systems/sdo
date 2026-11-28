@@ -14,7 +14,9 @@ The baseline operator's own monitoring of the app's users, on the lane host:
     sha256(alarm ARN, transition time), so a replayed delivery is the same incident; the relay's ledger also skips it.
 
 Nothing on these paths names a fault, a schedule position or a grade: metric names, dimensions, alarm descriptions
-and webhook payloads carry only the lane, the journey and CloudWatch's own alarm fields.
+and webhook payloads carry only the journey, its service identity (``gitlab-<journey>``: one namespace, one metric
+family and one ``service`` per journey, as a setup that watches several services would have) and CloudWatch's own
+alarm fields. No shared service or metric namespace groups the journeys.
 """
 
 from __future__ import annotations
@@ -37,7 +39,6 @@ from typing import IO, TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
-NAMESPACE = "UserJourneys"
 ALARM_EVENT = "CloudWatch Alarm State Change"
 #: A bucket is published once every request that started in it has had time to finish (FuzzOps' 3 s request timeout,
 #: plus margin).
@@ -112,8 +113,15 @@ class Config:
     def alarm_arn(self, journey: str) -> str:
         return f"arn:aws:cloudwatch:{self.region}:{self.account}:alarm:{self.alarm_name(journey)}"
 
+    def service(self, journey: str) -> str:
+        """The service identity of a journey, as an on-call setup names what it watches: one per journey."""
+        return f"gitlab-{journey}"
+
+    def namespace(self, journey: str) -> str:
+        return self.service(journey)
+
     def dimensions(self, journey: str) -> list[dict[str, str]]:
-        return [{"Name": "Lane", "Value": self.lane}, {"Name": "Journey", "Value": journey}]
+        return [{"Name": "Service", "Value": self.service(journey)}]
 
 
 def render(config: Config) -> dict[str, Any]:
@@ -125,7 +133,11 @@ def render(config: Config) -> dict[str, Any]:
             return {
                 "Id": ident,
                 "MetricStat": {
-                    "Metric": {"Namespace": NAMESPACE, "MetricName": metric, "Dimensions": config.dimensions(journey)},
+                    "Metric": {
+                        "Namespace": config.namespace(journey),
+                        "MetricName": metric,
+                        "Dimensions": config.dimensions(journey),
+                    },
                     "Period": policy.period_seconds,
                     "Stat": "Sum",
                 },
@@ -136,7 +148,7 @@ def render(config: Config) -> dict[str, Any]:
             {
                 "AlarmName": config.alarm_name(journey),
                 "AlarmDescription": (
-                    f"Users of journey {journey} on {config.lane}: at least {policy.threshold:.0%} of requests failed "
+                    f"Users of {config.service(journey)}: at least {policy.threshold:.0%} of {journey} requests failed "
                     f"in {policy.datapoints} of {policy.evaluation_periods} {policy.period_seconds}-second periods."
                 ),
                 "Metrics": [
@@ -154,7 +166,7 @@ def render(config: Config) -> dict[str, Any]:
                 "EvaluationPeriods": policy.evaluation_periods,
                 "DatapointsToAlarm": policy.datapoints,
                 "TreatMissingData": "missing",
-                "Tags": [{"Key": "Lane", "Value": config.lane}],
+                "Tags": [{"Key": "Service", "Value": config.service(journey)}],
             }
         )
     pattern = {
@@ -228,6 +240,7 @@ class Aggregator:
                 for name, value in (("Requests", bucket.requests), ("Failed", bucket.failed)):
                     data.append(
                         {
+                            "Namespace": self.config.namespace(journey),
                             "MetricName": name,
                             "Dimensions": dims,
                             "Timestamp": stamp,
@@ -239,6 +252,7 @@ class Aggregator:
                 if bucket.latencies:
                     data.append(
                         {
+                            "Namespace": self.config.namespace(journey),
                             "MetricName": "Latency",
                             "Dimensions": dims,
                             "Timestamp": stamp,
@@ -255,9 +269,12 @@ class Aggregator:
         return data
 
 
-def batches(data: Sequence[dict[str, Any]], size: int = 500) -> list[list[dict[str, Any]]]:
-    """PutMetricData takes at most 1000 datums per call; stay well under its 1 MB body."""
-    return [list(data[i : i + size]) for i in range(0, len(data), size)]
+def batches(data: Sequence[dict[str, Any]], size: int = 500) -> list[tuple[str, list[dict[str, Any]]]]:
+    """(namespace, datums) per PutMetricData call: one namespace per call, at most 1000 datums, well under 1 MB."""
+    by_namespace: dict[str, list[dict[str, Any]]] = {}
+    for datum in data:
+        by_namespace.setdefault(datum["Namespace"], []).append({k: v for k, v in datum.items() if k != "Namespace"})
+    return [(ns, items[i : i + size]) for ns, items in by_namespace.items() for i in range(0, len(items), size)]
 
 
 @dataclass
@@ -312,9 +329,9 @@ def publish(config: Config, outcomes: Path, aws: Callable[..., dict[str, Any]], 
     while True:
         for line in tail.read():
             agg.add(line)
-        for batch in batches(agg.closed(time.time())):
+        for namespace, batch in batches(agg.closed(time.time())):
             try:
-                aws("cloudwatch", "put-metric-data", "--namespace", NAMESPACE, "--metric-data", json.dumps(batch))
+                aws("cloudwatch", "put-metric-data", "--namespace", namespace, "--metric-data", json.dumps(batch))
             except RuntimeError as exc:
                 print(f"publish: {exc}", file=sys.stderr, flush=True)
         time.sleep(every)
@@ -422,14 +439,15 @@ def alarm_page(
         if resources != [arn]:
             continue
         transition = str(state["timestamp"])
-        metrics = f"metrics {NAMESPACE} Failed/Requests/Latency, dimensions Lane={config.lane}, Journey={journey}"
+        service = config.service(journey)
+        metrics = f"metrics {config.namespace(journey)} Failed/Requests/Latency, dimension Service={service}"
         if value == "ALARM":
             return {
                 "eventType": "incident",
                 "incidentId": incident_id(arn, transition),
                 "action": "created",
                 "priority": "HIGH",
-                "title": f"User journey failing: {journey}",
+                "title": f"{service}: {journey} requests failing",
                 "description": (
                     f"CloudWatch alarm {config.alarm_name(journey)} entered ALARM at {transition}: at least "
                     f"{policy.threshold:.0%} of the {journey} requests of the app's users failed in "
@@ -437,7 +455,7 @@ def alarm_page(
                     f"({metrics})."
                 ),
                 "timestamp": transition,
-                "service": config.lane,
+                "service": service,
             }
         previous = detail.get("previousState") or {}
         open_id = (opened or {}).get(arn)
@@ -450,13 +468,13 @@ def alarm_page(
             "incidentId": open_id,
             "action": "resolved",
             "priority": "HIGH",
-            "title": f"User journey failing: {journey}",
+            "title": f"{service}: {journey} requests failing",
             "description": (
                 f"CloudWatch alarm {config.alarm_name(journey)} returned to OK at {transition}: fewer than "
                 f"{policy.threshold:.0%} of the {journey} requests of the app's users failed ({metrics})."
             ),
             "timestamp": transition,
-            "service": config.lane,
+            "service": service,
         }
     return None
 
