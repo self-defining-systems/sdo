@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from sdo.agents.prompt_templates import named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
-from sdo.agents.provider import ResolvedAgent, resolve_agent
+from sdo.agents.provider import ResolvedAgent, lifecycle_timeout_seconds, resolve_agent
 from sdo.agents.responder import (
     AGENT_SKILLS,
     KubernetesResultPublisher,
@@ -81,7 +81,8 @@ def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDe
         access="danger-full-access",
         model=agent.model,
         reasoning_effort=agent.effort,
-        timeout_seconds=1800,
+        # A lifecycle session like the designer; builds run inside the turn.
+        timeout_seconds=lifecycle_timeout_seconds(),
     )
     draft = SourceProposalDraft.model_validate_json(turn.output_json)
     return SourceDeploymentResult(proposed=draft.proposed, summary=draft.summary, agent_session_id=turn.session_id)
