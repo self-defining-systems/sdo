@@ -388,17 +388,24 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		cancel()
 		return err
 	}
+	var noop error
 	if unconfirmed != "" {
 		_, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Unconfirmed, At: c.clock(), Error: unconfirmed, UnconfirmedReason: unconfirmedReason, UnconfirmedStates: evaluationsContract(unconfirmedStates), Verification: verification})
-		c.mu.Unlock()
-		cancel()
-		c.clearClosureRecheckWait()
-		if stepErr != nil {
-			return stepErr
+		if errors.Is(stepErr, errUnconfirmedNoop) {
+			// Deciding again on the next pass would change nothing either:
+			// report it once and commit the closure as recorded below.
+			noop, unconfirmed = stepErr, ""
+		} else {
+			c.mu.Unlock()
+			cancel()
+			c.clearClosureRecheckWait()
+			if stepErr != nil {
+				return stepErr
+			}
+			slog.Warn("closure_unconfirmed", "incident_id", effect.Closure.Request.IncidentID, "reason", unconfirmed)
+			// The next driver pass processes the unverified closure durably.
+			return c.PersistState(ctx)
 		}
-		slog.Warn("closure_unconfirmed", "incident_id", effect.Closure.Request.IncidentID, "reason", unconfirmed)
-		// The next driver pass processes the unverified closure durably.
-		return c.PersistState(ctx)
 	}
 	if verificationErr != nil || denied != "" {
 		// Retirement uses the existing durable archive path. Do not reopen the
@@ -445,6 +452,9 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	// frozen closure, never a copy the driver rewrote.
 	closure := incidentClosureState(effects[0].Closure)
 	c.mu.Unlock()
+	if noop != nil {
+		c.reportBrokerError("unconfirm closure", noop)
+	}
 	slog.Info("closure_handoff", "incident_id", closure.Request.IncidentID, "verified_to_handoff_ms", c.clock().Sub(closure.VerifiedAt).Milliseconds())
 	c.goBackground(func() {
 		defer cancel()

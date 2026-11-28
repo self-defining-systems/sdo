@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -85,9 +86,9 @@ func newUserTestLateWorld(t *testing.T) *lateWorld {
 }
 
 // An unconfirmed decision on a closure that makes no health claim changes
-// nothing in the reducer. The driver reports that as an error instead of
-// persisting the unchanged closure as decided, so a recheck that cannot
-// transition is loud rather than repeated on every pass.
+// nothing in the reducer. The driver reports that as an error and commits the
+// closure as recorded, so a recheck that cannot transition is loud once
+// rather than repeated on every pass.
 func TestAnUnconfirmedDecisionThatChangesNothingIsAnError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := newUserTestLateWorld(t)
@@ -101,7 +102,7 @@ func TestAnUnconfirmedDecisionThatChangesNothingIsAnError(t *testing.T) {
 		}
 		_, err := w.c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Unconfirmed, At: w.now, Error: "synthetic",
 			UnconfirmedReason: contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE})
-		if err == nil || !strings.Contains(err.Error(), w.c.pendingClosure.Request.IncidentID) {
+		if !errors.Is(err, errUnconfirmedNoop) || !strings.Contains(err.Error(), w.c.pendingClosure.Request.IncidentID) {
 			t.Fatalf("an unconfirmed decision that changed nothing returned %v", err)
 		}
 	})
