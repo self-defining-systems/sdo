@@ -1,11 +1,14 @@
 """``check-input`` upgrades an old baseline with no human step: SDO's schema upgrade owns its own rewrites.
 
-Builds this checkout's ``sdo-operator`` and runs the real ``memory migrate`` that ``check-input`` runs.
+Runs this checkout's ``sdo-operator`` (the prebuilt test binary) through the real ``memory migrate`` that
+``check-input`` runs, which compiles the migrated memory. It runs nightly; the PR-tier ownership rows of the Go
+gate table (``memory/validate/gate_table_test.go``, "upkeep migration ...") pin the same rule in milliseconds.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any
 
@@ -82,8 +85,10 @@ def _old_baseline(tmp: Path) -> Path:
 
 
 def test_check_input_upgrades_a_baseline_from_before_the_deployment_refactor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any, operator_binary: Path
 ) -> None:
+    # check-input builds the checkout's operator; the session's verified build is that binary.
+    monkeypatch.setattr(hooks, "build_operator", lambda root, out: shutil.copy2(operator_binary, out))
     monkeypatch.setenv("BENCH_INPUT_KIND", "baseline")
     monkeypatch.setenv("BENCH_INPUT_PATH", str(_old_baseline(tmp_path)))
     monkeypatch.setenv("BENCH_INPUT_PHASE", "add")
