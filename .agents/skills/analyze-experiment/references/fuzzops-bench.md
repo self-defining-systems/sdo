@@ -69,7 +69,14 @@ overlay files it passed are under the lane's `sdo-config/`.
   `page_source` (`own` or `fallback`), and `fallback_page_at` (inbox write acknowledgement, or observed opening
   if the write acknowledgement is lost) in `operator/collect.json`. Fields with no observed event are null.
   `fallback_id` correlates the inbox write with its controller acknowledgement. The watch copy is
-  `exec/*/sdo-page.json`. The 120 s default delay starts at `FUZZOPS_TRAFFIC`'s `inject_at`.
+  `exec/*/sdo-page.json`. The 120 s default delay starts at the first harmed user second in `FUZZOPS_TRAFFIC`.
+  These fields describe the row's first page. `episodes` lists every harm episode (the plain arm's rule,
+  `repage.py`): `at` (first bad second), `sdo_page_at` (SDO opened its own incident for it: self-detected),
+  `fallback_id`/`fallback_page_at` (the harness paged it 120 s after `at` because SDO had not), and `open_incident`
+  (`own` or `fallback`: an SDO incident was already open in that episode before the page). `page_limit` is
+  faults + 1, SDO's own pages included. `row_metrics` gives `harm_episodes`, `self_paged_episodes`,
+  `external_pages`, `external_page_at` and `external_pages_after_open_incident`; vanilla rows give
+  `external_pages` and `external_page_at` from `pages.jsonl`. Rows from before this record have them null.
 - Vanilla Claude rows on a pin that exports `FUZZOPS_TRAFFIC` include `operator/onset-probes.jsonl`,
   the live samples of the run's own journey workload through the first bad bucket or window deadline.
   Use `operator/onset.json` for the hook's trigger time (`at`), the workload's `first_bad.Start`,

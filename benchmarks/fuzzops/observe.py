@@ -8,7 +8,10 @@ nor stops it. This watcher polls the controller state ConfigMap and
 * writes ``$FUZZOPS_REPORT`` (fuzzops' diagnosis vocabulary) from the detector findings as soon as an incident
   opens, and again from the responder's confirmed root causes once it has them;
 * keeps every distinct state snapshot under ``$FUZZOPS_OUT`` for later analysis;
-* exits once the incident it saw is closed (or keeps watching until fuzzops ends the window).
+* with ``--fallback-page-after``, pages SDO through its external-incident inbox for every harm episode it has not
+  paged itself for (:class:`FallbackPaging`, the plain arm's episode rule from :mod:`benchmarks.fuzzops.repage`);
+* exits once the incident it saw is closed (or keeps watching until fuzzops ends the window); a fallback-paging
+  watch stays for later episodes and stands by (``FUZZOPS_STANDBY``) while it only waits.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from benchmarks.fuzzops import repage
 from benchmarks.fuzzops.cellevidence import atomic_write_json
 from benchmarks.fuzzops.evidence import EvidenceError, EvidenceTarget, snapshot, snapshot_id_for
 from benchmarks.fuzzops.page import (
@@ -39,7 +43,6 @@ from benchmarks.fuzzops.page import (
     inbox_manifest,
     kubectl_apply,
 )
-from benchmarks.fuzzops.repage import traffic_first_bad
 from benchmarks.fuzzops.sink import incident_id_time
 from benchmarks.fuzzops.window import concerns, fault_targets
 
@@ -49,14 +52,39 @@ PAGE_EVIDENCE = "sdo-page.json"
 
 
 @dataclass
+class Episode:
+    """One harm episode of the run (:class:`repage.Harm`) and how SDO heard of it."""
+
+    #: The episode's first bad user second.
+    at: str
+    #: SDO opened its own incident for this episode (at or after ``since``): self-detected.
+    sdo_page_at: str | None = None
+    #: The harness's page for it: the inbox id, the time the inbox write was acknowledged (or the page's incident was
+    #: seen opening when that acknowledgement was lost), and the source of an SDO incident that was already open in
+    #: the episode before the page (``own`` or ``fallback``; None: none was).
+    fallback_id: str | None = None
+    fallback_page_at: str | None = None
+    open_incident: str | None = None
+    #: An own SDO incident opened at or after this time covers the episode: the run's inject for the first episode,
+    #: the second after the previous episode's last bad second for a later one.
+    since: str | None = None
+
+
+@dataclass
 class PageEvidence:
-    """First incident opened in this run and the harness's inbox submission, if any."""
+    """First incident opened in this run and the harness's inbox submission, if any; every harm episode."""
 
     inject_at: str | None = None
     sdo_page_at: str | None = None
     page_source: str | None = None
     fallback_page_at: str | None = None
     fallback_id: str | None = None
+    #: The fallback rule's harm episodes (:class:`FallbackPaging`) and its page limit (faults + 1).
+    episodes: list[Episode] = field(default_factory=list)
+    page_limit: int | None = None
+
+    def __post_init__(self) -> None:
+        self.episodes = [e if isinstance(e, Episode) else Episode(**e) for e in self.episodes]
 
     def observe(self, state: dict[str, Any]) -> bool:
         if self.sdo_page_at or (inject := _parse_time(self.inject_at)) is None:
@@ -83,6 +111,121 @@ class PageEvidence:
             # The API write can succeed even when kubectl times out waiting.
             self.fallback_page_at = self.sdo_page_at
         return True
+
+
+def live_incident(state: dict[str, Any], fallback_ids: set[str]) -> tuple[datetime, str] | None:
+    """The SDO incident open or awaiting closure in a state: its detection time and ``own`` or ``fallback`` (a page
+    incident, with no opening alerts, once the harness has sent a page)."""
+    closure = _get(state, "pending_closure") or {}
+    if not (_get(state, "incident_open") or closure):
+        return None
+    request = _get(state, "incident_request") or _get(closure, "request") or {}
+    opened = _parse_time(_get(state, "incident_detected_at") or _get(closure, "detected_at"))
+    if opened is None:
+        return None
+    paged = bool(_get(request, "page") and not _get(request, "opening_keys"))
+    return opened, "fallback" if paged and fallback_ids else "own"
+
+
+@dataclass
+class FallbackPaging:
+    """Which harm episodes the harness pages SDO for: the plain arm's rule with SDO's own pages first.
+
+    Episodes are :class:`repage.Harm`'s: a bad user second after :data:`repage.QUIET_SECONDS` without one starts a new
+    one. An episode SDO has paged itself for (an own incident opened at or after the episode's ``since``) gets no page.
+    Otherwise the harness pages it ``delay`` seconds after its first bad second, once no SDO incident is open: the first
+    episode as the plain arm's first page (whether or not it still goes on), a later one only while it still goes on
+    and the traffic stream is live, as the plain arm's re-page. At most ``limit`` episodes are paged, SDO's own pages
+    included. Pure: the caller feeds traffic samples and controller states and sends the page."""
+
+    inject: datetime
+    delay: float
+    limit: int
+    episodes: list[Episode] = field(default_factory=list)
+    harm: repage.Harm = field(default_factory=repage.Harm)
+    #: The newest traffic sample's ``observed_at``, and own SDO incident openings seen so far.
+    observed: datetime | None = None
+    own: set[datetime] = field(default_factory=set)
+
+    def traffic(self, sample: dict[str, Any]) -> None:
+        previous, last_bad = self.harm.episode, self.harm.last_bad
+        self.harm.observe(sample)
+        if (seen := _parse_time(sample.get("observed_at"))) is not None:
+            self.observed = seen
+        if self.harm.unsupported:
+            # An older FuzzOps pin publishes only the first bad second: one episode, as the plain arm's one page.
+            if not self.episodes and (first := repage.first_bad_start(sample)) is not None:
+                self._start(first, self.inject)
+            return
+        if self.harm.episode is not None and self.harm.episode != previous:
+            since = self.inject if last_bad is None else last_bad + timedelta(seconds=1)
+            self._start(self.harm.episode, since)
+
+    def _start(self, at: datetime, since: datetime) -> None:
+        self.episodes.append(Episode(at=_stamp(at), since=_stamp(since)))
+        self._cover()
+
+    def sdo(self, state: dict[str, Any], now: datetime) -> None:
+        """A controller state read at ``now``."""
+        live = live_incident(state, {e.fallback_id for e in self.episodes if e.fallback_id})
+        if live is None:
+            return
+        opened, source = live
+        if source == "own":
+            self.own.add(opened)
+        episode = self.episodes[-1] if self.episodes else None
+        if episode is None:
+            return
+        if episode.fallback_id and source == "fallback" and episode.fallback_page_at is None:
+            # The inbox write can succeed even when kubectl timed out waiting.
+            episode.fallback_page_at = _stamp(opened)
+        if not episode.fallback_id and not episode.sdo_page_at and now >= _when(episode.at):
+            episode.open_incident = episode.open_incident or source
+        self._cover()
+
+    def _cover(self) -> None:
+        episode = self.episodes[-1] if self.episodes else None
+        if episode is None or episode.fallback_id or episode.sdo_page_at:
+            return
+        covering = [at for at in self.own if at >= _when(episode.since)]
+        if covering:
+            episode.sdo_page_at = _stamp(min(covering))
+
+    def paged(self) -> int:
+        return sum(1 for e in self.episodes if e.fallback_id or e.sdo_page_at)
+
+    def pending(self, now: datetime) -> Episode | None:
+        """The newest episode while the harness will page it once its delay has passed and SDO is not busy."""
+        episode = self.episodes[-1] if self.episodes else None
+        if episode is None or episode.fallback_id or episode.sdo_page_at or self.paged() >= self.limit:
+            return None
+        if len(self.episodes) == 1:
+            return episode
+        live = self.observed is not None and (now - self.observed).total_seconds() < repage.STALL_SECONDS
+        return episode if self.harm.harmed and live else None
+
+    def due(self, now: datetime, busy: bool) -> Episode | None:
+        """The episode to page now: pending, past its delay, and no SDO incident is open (``busy``)."""
+        episode = self.pending(now)
+        if episode is None or busy or now < _when(episode.at) + timedelta(seconds=self.delay):
+            return None
+        return episode
+
+    def due_at(self, now: datetime) -> datetime | None:
+        episode = self.pending(now)
+        return None if episode is None else _when(episode.at) + timedelta(seconds=self.delay)
+
+    def exhausted(self) -> bool:
+        """No later episode can be paged: the limit is reached, or the stream cannot show a later onset."""
+        # On such a pin any own SDO incident since the inject covers the one episode it can show.
+        return self.paged() >= self.limit or (self.harm.unsupported and bool(self.episodes or self.own))
+
+
+def _when(value: str | None) -> datetime:
+    at = _parse_time(value)
+    if at is None:
+        raise ValueError(f"invalid episode time {value!r}")
+    return at
 
 
 def traffic_inject_at(path: Path) -> str | None:
@@ -508,14 +651,20 @@ def start_pager(a: argparse.Namespace, context: str, out: Path) -> threading.Thr
     return thread
 
 
-def submit_fallback(paging: PageEvidence, receipt: Path, args: argparse.Namespace, context: str) -> None:
-    if paging.fallback_id is None:
-        paging.fallback_id = f"fallback-{uuid.uuid4().hex}"
+def submit_fallback(
+    paging: PageEvidence, episode: Episode, receipt: Path, args: argparse.Namespace, context: str
+) -> None:
+    """Page SDO for one harm episode through its external-incident inbox (a new inbox id per episode)."""
+    first = paging.sdo_page_at is None and paging.fallback_id in (None, episode.fallback_id)
+    if episode.fallback_id is None:
+        episode.fallback_id = f"fallback-{uuid.uuid4().hex}"
+        if first:
+            paging.fallback_id = episode.fallback_id
         atomic_write_json(receipt, asdict(paging))
     try:
         message = fallback_message(args.page_namespace)
         kubectl_apply(
-            inbox_manifest(args.control_namespace, paging.fallback_id, args.page_namespace, message),
+            inbox_manifest(args.control_namespace, episode.fallback_id, args.page_namespace, message),
             args.kubeconfig,
             context,
         )
@@ -523,9 +672,21 @@ def submit_fallback(paging: PageEvidence, receipt: Path, args: argparse.Namespac
         # Retry the same id if the write timed out. The controller accepts an id once.
         print(f"fallback page failed: {exc}", file=sys.stderr, flush=True)
         return
-    paging.fallback_page_at = _stamp(datetime.fromtimestamp(time.time(), UTC))
+    episode.fallback_page_at = _stamp(datetime.fromtimestamp(time.time(), UTC))
+    if first:
+        paging.fallback_page_at = episode.fallback_page_at
     atomic_write_json(receipt, asdict(paging))
-    print("sdo: fallback page sent", file=sys.stderr, flush=True)
+    print(f"sdo: fallback page sent (harm episode from {episode.at})", file=sys.stderr, flush=True)
+
+
+def set_standby(path: str, on: bool) -> None:
+    """While ``FUZZOPS_STANDBY`` exists FuzzOps counts this command as not running, so its early stop applies."""
+    if not path:
+        return
+    if on:
+        Path(path).touch()
+    else:
+        Path(path).unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -581,42 +742,49 @@ def main(argv: list[str] | None = None) -> int:
         start_pager(a, context, out)
     paging = PageEvidence()
     receipt = out / PAGE_EVIDENCE
-    deadline: float | None = None
+    episodes: FallbackPaging | None = None
+    samples = repage.Traffic(Path(traffic)) if traffic else None
+    window_end = _parse_time(os.environ.get("FUZZOPS_DEADLINE"))
+    standby = os.environ.get("FUZZOPS_STANDBY", "")
+    heard: float | None = None
     watcher = Watcher(started=datetime.now(UTC) - timedelta(seconds=a.lookback), targets=fault_targets(a.fault))
     last_raw = ""
     closed_at: float | None = None
     n = 0
-    while closed_at is None or time.monotonic() - closed_at < a.linger:
+    while True:
         if traffic and paging.inject_at is None and (injected := traffic_inject_at(Path(traffic))):
             paging.inject_at = injected
             inject = datetime.fromisoformat(injected)
             watcher.started = inject
+            if a.fallback_page_after is not None:
+                limit = repage.page_limit(a.fault)
+                episodes = FallbackPaging(inject, a.fallback_page_after, limit, episodes=paging.episodes)
+                paging.page_limit = limit
             atomic_write_json(receipt, asdict(paging))
-        if (
-            a.fallback_page_after is not None
-            and deadline is None
-            and paging.inject_at is not None
-            and (harmed := traffic_first_bad(Path(traffic))) is not None
-        ):
-            deadline = harmed.timestamp() + a.fallback_page_after
+        if episodes is not None and samples is not None:
+            new = samples.drain()
+            for sample in new:
+                episodes.traffic(sample)
+            if new:
+                heard = time.time()
+                atomic_write_json(receipt, asdict(paging))
         read_started = time.time()
         try:
             state = read_state(context, a.control_namespace, a.kubeconfig)
         except (subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
             print(f"state read failed: {exc}", file=sys.stderr, flush=True)
             state = None
+        busy = True
         if state is not None:
+            busy = bool(_get(state, "incident_open") or _get(state, "pending_closure"))
             if paging.observe(state):
                 atomic_write_json(receipt, asdict(paging))
-            if (
-                deadline is not None
-                and read_started >= deadline
-                and paging.sdo_page_at is None
-                and paging.fallback_page_at is None
-                and not _get(state, "incident_open")
-                and not _get(state, "pending_closure")
-            ):
-                submit_fallback(paging, receipt, a, context)
+            if episodes is not None:
+                now = datetime.fromtimestamp(read_started, UTC)
+                episodes.sdo(state, now)
+                if (episode := episodes.due(now, busy)) is not None:
+                    submit_fallback(paging, episode, receipt, a, context)
+                    busy = True
             raw = json.dumps(state, sort_keys=True)
             if raw != last_raw:
                 last_raw = raw
@@ -641,11 +809,21 @@ def main(argv: list[str] | None = None) -> int:
                 closed_at = time.monotonic()
                 if evidence is not None:
                     seal_boundary(evidence, watcher.incident)
-        # Poll at the deadline even when it falls between two normal reads.
-        sleep = a.interval
-        if deadline is not None and read_started < deadline and paging.sdo_page_at is None:
-            sleep = min(sleep, max(0.0, deadline - time.time()))
-        time.sleep(sleep)
+        if closed_at is not None and time.monotonic() - closed_at >= a.linger:
+            # The watched incident is over. A fallback-paging watch stays for later harm episodes until none can be
+            # paged or the window is over, and stands by while SDO is idle and no page is pending.
+            now = datetime.fromtimestamp(time.time(), UTC)
+            over = (window_end is not None and now >= window_end) or (
+                heard is not None and time.time() - heard >= repage.STALL_SECONDS
+            )
+            if episodes is None or over or (episodes.exhausted() and not busy):
+                set_standby(standby, False)
+                break
+            set_standby(standby, not busy and episodes.pending(now) is None)
+        # Poll at the next page time even when it falls between two normal reads.
+        due = episodes.due_at(datetime.fromtimestamp(time.time(), UTC)) if episodes is not None else None
+        wait = due.timestamp() - time.time() if due is not None else 0.0
+        time.sleep(min(a.interval, wait) if wait > 0 else a.interval)
     return 0
 
 
