@@ -45,6 +45,13 @@ receipts. A new playbook's first corpus case comes from the capture its
 own-incident replay matched (`open_at: join-<n>` for a later fault), else the
 opening capture.
 
+A reflection work item's `capture_open_phase` (broker ledger and outcome
+`reflection_eligibility`) names the open capture its origin evidence is in:
+`detect`, `pre-apply`, `join-<n>`, or empty (`settle` only in older captures).
+Runs before the schema allowed `join-<n>` failed every closure attempt of such
+an incident with `capture_open_phase: must be in list` and ended
+`CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED`: no outcome, learning or closing turn.
+
 Phase timing attributes slow calls. `responder_tool_timing` and the controller's
 `observation_lock_held` warning (a hold of 1 s or more; `holder` names the pass) carry a
 `phase_ms` group and `unattributed_ms`, always on. Each phase is charged only its own time

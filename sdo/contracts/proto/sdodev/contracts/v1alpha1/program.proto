@@ -473,7 +473,10 @@ message ReflectionWorkItem {
   repeated ObjectRef resources = 6;
   string evidence_phase = 7 [(buf.validate.field).string = {in: ["", "open", "fixed"]}];
   string program_revision = 8;
-  string capture_open_phase = 9 [(buf.validate.field).string = {in: ["", "detect", "pre-apply"]}];
+  // The open capture (open@<phase>) the item's origin evidence is in, or empty:
+  // detect, pre-apply, join-<n> (the nth alert-join capture), or settle, which
+  // only older captures hold.
+  string capture_open_phase = 9 [(buf.validate.field).string = {pattern: "^(detect|settle|pre-apply|join-[1-9][0-9]*)?$"}];
   // The observed abstention motivating a program_refinement question. This is
   // evidence for review, not a settled positive corpus case or success credit.
   ProgramRun evaluation = 10;

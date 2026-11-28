@@ -3678,16 +3678,19 @@ func (x *ReflectionCauseWork) GetLearningBasis() string {
 }
 
 type ReflectionWorkItem struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	ProgramId        string                 `protobuf:"bytes,1,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
-	Bindings         []*Binding             `protobuf:"bytes,2,rep,name=bindings,proto3" json:"bindings,omitempty"`
-	Disposition      string                 `protobuf:"bytes,3,opt,name=disposition,proto3" json:"disposition,omitempty"`
-	Question         string                 `protobuf:"bytes,4,opt,name=question,proto3" json:"question,omitempty"`
-	Reason           string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
-	Resources        []*ObjectRef           `protobuf:"bytes,6,rep,name=resources,proto3" json:"resources,omitempty"`
-	EvidencePhase    string                 `protobuf:"bytes,7,opt,name=evidence_phase,json=evidencePhase,proto3" json:"evidence_phase,omitempty"`
-	ProgramRevision  string                 `protobuf:"bytes,8,opt,name=program_revision,json=programRevision,proto3" json:"program_revision,omitempty"`
-	CaptureOpenPhase string                 `protobuf:"bytes,9,opt,name=capture_open_phase,json=captureOpenPhase,proto3" json:"capture_open_phase,omitempty"`
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ProgramId       string                 `protobuf:"bytes,1,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
+	Bindings        []*Binding             `protobuf:"bytes,2,rep,name=bindings,proto3" json:"bindings,omitempty"`
+	Disposition     string                 `protobuf:"bytes,3,opt,name=disposition,proto3" json:"disposition,omitempty"`
+	Question        string                 `protobuf:"bytes,4,opt,name=question,proto3" json:"question,omitempty"`
+	Reason          string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	Resources       []*ObjectRef           `protobuf:"bytes,6,rep,name=resources,proto3" json:"resources,omitempty"`
+	EvidencePhase   string                 `protobuf:"bytes,7,opt,name=evidence_phase,json=evidencePhase,proto3" json:"evidence_phase,omitempty"`
+	ProgramRevision string                 `protobuf:"bytes,8,opt,name=program_revision,json=programRevision,proto3" json:"program_revision,omitempty"`
+	// The open capture (open@<phase>) the item's origin evidence is in, or empty:
+	// detect, pre-apply, join-<n> (the nth alert-join capture), or settle, which
+	// only older captures hold.
+	CaptureOpenPhase string `protobuf:"bytes,9,opt,name=capture_open_phase,json=captureOpenPhase,proto3" json:"capture_open_phase,omitempty"`
 	// The observed abstention motivating a program_refinement question. This is
 	// evidence for review, not a settled positive corpus case or success credit.
 	Evaluation    *ProgramRun `protobuf:"bytes,10,opt,name=evaluation,proto3" json:"evaluation,omitempty"`
@@ -6591,7 +6594,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"causeIndex\x12B\n" +
 	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12C\n" +
 	"\x05items\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x05items\x12C\n" +
-	"\x0elearning_basis\x18\x04 \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x13observed_transitionR\rlearningBasis\"\xdd\x05\n" +
+	"\x0elearning_basis\x18\x04 \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x13observed_transitionR\rlearningBasis\"\xf7\x05\n" +
 	"\x12ReflectionWorkItem\x12\x1d\n" +
 	"\n" +
 	"program_id\x18\x01 \x01(\tR\tprogramId\x12>\n" +
@@ -6601,8 +6604,8 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x06reason\x18\x05 \x01(\tB\xac\x01\xbaH\xa8\x01r\xa5\x01R\x1averified_equivalent_repairR\x13fixed_capture_matchR\x13binding_not_writtenR\x1brepair_equivalence_questionR\runbound_writeR\tuncertainR\x12no_recorded_repairR\x12program_refinementR\x06reason\x12B\n" +
 	"\tresources\x18\x06 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12;\n" +
 	"\x0eevidence_phase\x18\a \x01(\tB\x14\xbaH\x11r\x0fR\x00R\x04openR\x05fixedR\revidencePhase\x12)\n" +
-	"\x10program_revision\x18\b \x01(\tR\x0fprogramRevision\x12H\n" +
-	"\x12capture_open_phase\x18\t \x01(\tB\x1a\xbaH\x17r\x15R\x00R\x06detectR\tpre-applyR\x10captureOpenPhase\x12E\n" +
+	"\x10program_revision\x18\b \x01(\tR\x0fprogramRevision\x12b\n" +
+	"\x12capture_open_phase\x18\t \x01(\tB4\xbaH1r/2-^(detect|settle|pre-apply|join-[1-9][0-9]*)?$R\x10captureOpenPhase\x12E\n" +
 	"\n" +
 	"evaluation\x18\n" +
 	" \x01(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\n" +
