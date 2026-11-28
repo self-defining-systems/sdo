@@ -75,7 +75,7 @@ def test_one_alarm_per_journey_on_its_failure_ratio_and_a_rule_for_exactly_those
     assert dims == [{"Name": "Lane", "Value": "z9"}, {"Name": "Journey", "Value": "write-thing"}]
     pattern = out["rule"]["EventPattern"]
     assert pattern["resources"] == [cfg.alarm_arn(j) for j in cfg.journeys]
-    assert pattern["detail"] == {"state": {"value": ["ALARM"]}}
+    assert pattern["detail"] == {"state": {"value": ["ALARM", "OK"]}}
 
 
 def test_config_refuses_bad_policies_and_names() -> None:
@@ -134,6 +134,56 @@ def test_a_lane_alarm_entering_alarm_pages_once_with_trusted_fields_only() -> No
     assert alarm_page(cfg, {**event, "account": "111111111111"}) is None
 
 
+def test_return_to_ok_resolves_the_incident_the_alarm_opened() -> None:
+    cfg = config()
+    alarm = alarm_event(cfg, "write-thing", at="2026-01-01T00:00:10.123+0000")
+    ok = alarm_event(cfg, "write-thing", state="OK", at="2026-01-01T00:05:00.000+0000")
+    created = alarm_page(cfg, alarm)
+    assert created is not None
+    assert created["action"] == "created"
+    # no ledger: the id comes from the previous ALARM state the OK event reports
+    assert alarm_page(cfg, ok) is None
+    ok["detail"]["previousState"] = {"value": "ALARM", "timestamp": "2026-01-01T00:00:10.123+0000"}
+    resolved = alarm_page(cfg, ok)
+    assert resolved is not None
+    assert (resolved["action"], resolved["incidentId"]) == ("resolved", created["incidentId"])
+    assert resolved["timestamp"] == "2026-01-01T00:05:00.000+0000"
+    # the relay's own record of what is open wins
+    arn = cfg.alarm_arn("write-thing")
+    assert alarm_page(cfg, ok, {arn: "open-id"})["incidentId"] == "open-id"  # type: ignore[index]
+
+
+def test_relay_resolves_an_episode_before_the_next_one_opens_a_new_incident() -> None:
+    cfg = config()
+    msgs = [
+        {"Body": json.dumps(alarm_event(cfg, "read-thing", at="2026-01-01T00:00:10.000+0000")), "ReceiptHandle": "a"},
+        {
+            "Body": json.dumps(alarm_event(cfg, "read-thing", state="OK", at="2026-01-01T00:02:00.000+0000")),
+            "ReceiptHandle": "b",
+        },
+        {"Body": json.dumps(alarm_event(cfg, "read-thing", at="2026-01-01T00:20:00.000+0000")), "ReceiptHandle": "c"},
+        {
+            "Body": json.dumps(alarm_event(cfg, "read-thing", state="OK", at="2026-01-01T00:02:00.000+0000")),
+            "ReceiptHandle": "d",
+        },
+    ]
+    sent: list[dict] = []
+    ledger = io.StringIO()
+    keys: set[str] = set()
+    opened: dict[str, str] = {}
+    done = relay_once(cfg, msgs, lambda p: sent.append(dict(p)) or 200, keys, ledger, lambda: 0.0, opened)
+    assert done == ["a", "b", "c", "d"]
+    assert [p["action"] for p in sent] == ["created", "resolved", "created", "resolved"]
+    assert sent[0]["incidentId"] == sent[1]["incidentId"] != sent[2]["incidentId"] == sent[3]["incidentId"]
+    assert opened == {}
+    assert [json.loads(line)["action"] for line in ledger.getvalue().splitlines()] == [
+        "created",
+        "resolved",
+        "created",
+        "resolved",
+    ]
+
+
 def test_relay_sends_each_transition_once_and_keeps_failed_sends_on_the_queue() -> None:
     cfg = config()
     first = {"Body": json.dumps(alarm_event(cfg, "read-thing")), "ReceiptHandle": "h1"}
@@ -153,7 +203,7 @@ def test_relay_sends_each_transition_once_and_keeps_failed_sends_on_the_queue() 
     assert len(sent) == 2
     records = [json.loads(line) for line in ledger.getvalue().splitlines()]
     assert [r["alarm_name"] for r in records] == ["z9-journey-read-thing"] * 2
-    assert {r["incident_id"] for r in records} == {p["incidentId"] for p in sent} == ids
+    assert {r["incident_id"] for r in records} == {p["incidentId"] for p in sent} == {k.split(":")[0] for k in ids}
 
     def down(_: object) -> int:
         raise OSError("unreachable")
