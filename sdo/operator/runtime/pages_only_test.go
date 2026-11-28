@@ -123,19 +123,36 @@ func TestPagesOnlyNoDetectorFindingOpensAndAPageCarriesItAsAClue(t *testing.T) {
 	}
 }
 
-// Under pages_only a page that finds no health finding active waits
-// (unaccepted) until one is active, so its incident carries the evidence a
-// detector-opened incident would; with none it opens once every health
-// detector had time to confirm one.
-func TestPagesOnlyPageWaitsForHealthEvidence(t *testing.T) {
-	for _, appears := range []bool{true, false} {
-		t.Run(map[bool]string{true: "a user test fails", false: "nothing fails"}[appears], func(t *testing.T) {
+// Under pages_only a page that finds nothing active waits (unaccepted) until a
+// finding of any kind is active, health finding or clue, so its incident has
+// something the automatic stage can match; with nothing at all it opens once
+// every health detector had time to confirm one. A page that finds a finding
+// already active is accepted at once, and without the setting a page never
+// waits.
+func TestPagesOnlyPageWaitsOnlyWhileNothingIsActive(t *testing.T) {
+	cases := []struct {
+		name      string
+		pagesOnly bool
+		// active fires before the page is read, appears after the page has waited.
+		active, appears string
+	}{
+		{name: "a clue is already active", pagesOnly: true, active: "clue"},
+		{name: "a user test is already failing", pagesOnly: true, active: "user test"},
+		{name: "a clue appears", pagesOnly: true, appears: "clue"},
+		{name: "a user test fails", pagesOnly: true, appears: "user test"},
+		{name: "nothing ever fires", pagesOnly: true},
+		{name: "setting off, nothing fires"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			now := time.Unix(1000, 0).UTC()
 			probe := &switchedProbe{id: memory.TrafficDetectorPrefix + "web", scenario: "browse"}
 			slow := &switchedProbe{id: memory.TrafficDetectorPrefix + "slow", scenario: "checkout"}
+			clue := &switchedProbe{id: "synthetic-drift", scenario: "drifted"}
+			switches := map[string]*switchedProbe{"user test": probe, "clue": clue}
 			cfg := testControllerConfig()
-			cfg.PagesOnly = true
-			c, err := NewController(cfg, []sdk.Detector{probe, slowProbe{slow}}, staticProvider{}, &recordingDispatcher{requests: make(chan IncidentRequest, 4)}, now)
+			cfg.PagesOnly = tc.pagesOnly
+			c, err := NewController(cfg, []sdk.Detector{probe, slowProbe{slow}, learnedClue{clue}}, staticProvider{}, &recordingDispatcher{requests: make(chan IncidentRequest, 4)}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,20 +160,40 @@ func TestPagesOnlyPageWaitsForHealthEvidence(t *testing.T) {
 			if wait := c.pageEvidenceWait(); wait != 30*time.Second {
 				t.Fatalf("page evidence wait %s, want the slowest health detector's confirmation time 30s", wait)
 			}
-			c.ExternalIncidents = func(context.Context) (*ExternalIncident, error) {
-				return &ExternalIncident{ID: "page-1", Namespace: cfg.Namespace, Message: syntheticPage}, nil
-			}
-			stepFor(t, c, &now, 3)
-			if c.incidentOpen || c.lastPageID != "" {
-				t.Fatal("the page opened before any health evidence and before the wait")
-			}
-			if appears {
-				probe.failing.Store(true)
-				stepFor(t, c, &now, 1)
-				request := c.currentIncidentRequest
-				if !c.incidentOpen || request == nil || request.Page != syntheticPage || len(request.Findings) != 1 {
-					t.Fatalf("the page did not open with the failing user test as its clue: %+v", request)
+			var page *ExternalIncident
+			c.ExternalIncidents = func(context.Context) (*ExternalIncident, error) { return page, nil }
+			if tc.active != "" {
+				switches[tc.active].failing.Store(true)
+				stepFor(t, c, &now, 3)
+				if c.incidentOpen {
+					t.Fatalf("the %s opened an incident without a page", tc.active)
 				}
+			}
+			page = &ExternalIncident{ID: "page-1", Namespace: cfg.Namespace, Message: syntheticPage}
+			opened := func(findings int) {
+				t.Helper()
+				request := c.currentIncidentRequest
+				if !c.incidentOpen || request == nil || request.Page != syntheticPage || len(request.Findings) != findings {
+					t.Fatalf("the page did not open with %d findings: %+v", findings, request)
+				}
+			}
+			stepFor(t, c, &now, 1)
+			switch {
+			case tc.active != "":
+				opened(1)
+				return
+			case !tc.pagesOnly:
+				opened(0)
+				return
+			}
+			stepFor(t, c, &now, 2)
+			if c.incidentOpen || c.lastPageID != "" {
+				t.Fatal("the page opened with nothing active and before the wait")
+			}
+			if tc.appears != "" {
+				switches[tc.appears].failing.Store(true)
+				stepFor(t, c, &now, 1)
+				opened(1)
 				return
 			}
 			stepFor(t, c, &now, 26)
@@ -164,9 +201,7 @@ func TestPagesOnlyPageWaitsForHealthEvidence(t *testing.T) {
 				t.Fatal("the page opened before the evidence wait passed")
 			}
 			stepFor(t, c, &now, 2)
-			if !c.incidentOpen || c.currentIncidentRequest.Page != syntheticPage || len(c.currentIncidentRequest.Findings) != 0 {
-				t.Fatalf("the page did not open alone once the evidence wait passed: %+v", c.currentIncidentRequest)
-			}
+			opened(0)
 		})
 	}
 }
@@ -177,6 +212,16 @@ type slowProbe struct{ *switchedProbe }
 func (d slowProbe) Spec() sdk.DetectorSpec {
 	spec := d.switchedProbe.Spec()
 	spec.Interval, spec.Persistence.Firing = 10*time.Second, 2
+	return spec
+}
+
+// learnedClue is a learned detector: a finding of its own is a clue, not a
+// health finding.
+type learnedClue struct{ *switchedProbe }
+
+func (d learnedClue) Spec() sdk.DetectorSpec {
+	spec := d.switchedProbe.Spec()
+	spec.Class, spec.Owner, spec.OriginatingIncident = sdk.DetectorClassLearned, sdk.DetectorOwnerResponder, "synthetic"
 	return spec
 }
 

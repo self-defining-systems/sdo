@@ -139,18 +139,18 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 }
 
 // pageEvidenceReady decides when a page may open its incident under
-// PagesOnly. Someone else pages, often seconds before SDO's own health
-// detectors confirmed the symptom; a page admitted then carries no clue, and
-// the automatic stage has nothing to match. So the page waits, unaccepted,
-// until a health finding is active (it then rides in the request as a clue,
-// as in a detector-opened incident) or until every health detector had the
-// time it needs to confirm one (pageEvidenceWait); then it opens with what is
-// active, possibly nothing.
+// PagesOnly. Someone else pages, often seconds before SDO's own detectors
+// confirmed anything; a page admitted then carries no finding, and the
+// automatic stage has nothing to match. So a page that finds nothing active
+// waits, unaccepted, until a finding of any kind is active (it then rides in
+// the request as a clue) or until every health detector had the time it needs
+// to confirm one (pageEvidenceWait); then it opens with nothing. A finding
+// already active is something to match, so it ends the wait at once.
 func (c *Controller) pageEvidenceReady(now time.Time, id string) bool {
 	if c.pageWaitID != id {
 		c.pageWaitID, c.pageWaitSince = id, now
 	}
-	if len(c.tracker.ActiveFindings(c.healthDetectorIDs, nil)) > 0 {
+	if len(c.activeClues(nil)) > 0 {
 		return true
 	}
 	return !now.Before(c.pageWaitSince.Add(c.pageEvidenceWait()))

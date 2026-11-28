@@ -327,7 +327,7 @@ type Controller struct {
 	// must return a value in [0, 1). Nil defaults to a real random source.
 	dispatchJitter func() float64
 
-	// pageWait is the page waiting for health evidence under PagesOnly
+	// pageWait is the page waiting for an active finding under PagesOnly
 	// (pageEvidenceReady): its ID and when the controller first read it.
 	pageWaitID    string
 	pageWaitSince time.Time
