@@ -481,6 +481,11 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 				es.attributed[r.Subject] = true
 			}
 		}
+		// An excluded route is one users never call: the route reds name it as a fix.
+		for _, route := range cfg.Map.ExcludedRouteValues() {
+			es.declared[route] = true
+			es.attributed[route] = true
+		}
 	}
 
 	// Baseline.
