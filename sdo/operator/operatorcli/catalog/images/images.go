@@ -48,7 +48,7 @@ func Catalog(cfg Config) (*imagesrc.Catalog, error) {
 	if err := imagesrc.Register[*v1alpha1.PrebuiltImageConfig](c, prebuilt.ID, pre, imagesrc.Options{Budget: ResolveBudget}, imagesrc.WithDoc(prebuilt.Doc)); err != nil {
 		return nil, fmt.Errorf("images: register %s: %w", prebuilt.ID, err)
 	}
-	if err := imagesrc.Register[*v1alpha1.BuildKitImageConfig](c, buildkit.ID, cfg.Builder, imagesrc.Options{Budget: cfg.BuildBudget, SameRepository: true}, imagesrc.WithDoc(buildkit.Doc)); err != nil {
+	if err := imagesrc.Register[*v1alpha1.BuildKitImageConfig](c, buildkit.ID, cfg.Builder, imagesrc.Options{Budget: cfg.BuildBudget, SameRepository: true, Concurrency: BuildConcurrency}, imagesrc.WithDoc(buildkit.Doc)); err != nil {
 		return nil, fmt.Errorf("images: register %s: %w", buildkit.ID, err)
 	}
 	if err := c.SetDefault(prebuilt.ID); err != nil {
@@ -62,6 +62,12 @@ func Catalog(cfg Config) (*imagesrc.Catalog, error) {
 	c.SetBuildDerivation(buildkit.ID, buildkit.DerivedConfig)
 	return c, nil
 }
+
+// BuildConcurrency is how many image builds one deploy runs at once. Each
+// build is its own BuildKit Job, so independent images need not wait for one
+// another; four keeps a lane-sized node (8 vCPU) from running more compilers
+// than it has room for while a many-image app builds about four times faster.
+const BuildConcurrency = 4
 
 // PrebuiltOnly returns a catalog holding only the prebuilt source, for
 // operations that have no registry to push builds to.

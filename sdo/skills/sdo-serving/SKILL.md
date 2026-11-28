@@ -27,7 +27,8 @@ The same tree serves every render, build, drift read and repair.
 - Third-party images use the `prebuilt` source; the operator pins tags to digests. Never write digests.
 - Run the databases, caches and queues the source is written for: its engine, and its version where the source
   pins one. Use another engine only when the goal says `Infrastructure: compatible`, and name the swap.
-- Builds are cached by layer, so a later deploy of the same tree to another environment is fast.
+- Builds are cached by layer, so a later deploy of the same tree to another environment is fast. Independent
+  images build in parallel (a few at a time), so splitting one slow image into several does not add build time.
 
 ## The override `.sdo/deployment/plan.yaml`
 

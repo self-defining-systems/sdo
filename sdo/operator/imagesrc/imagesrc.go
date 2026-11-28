@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"regexp"
 	"slices"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -136,16 +137,18 @@ func (e *TimeoutError) InfrastructureOutcome() bool { return true }
 var digestReference = regexp.MustCompile(`^[^@\s]+@sha256:[a-f0-9]{64}$`)
 
 // ResolveAll resolves every distinct image once, using its declared source or
-// the catalog default. Images are resolved sequentially in the order given, so
-// the result and any error do not depend on scheduling. An image that fails as
+// the catalog default. Images of a one-at-a-time source are resolved in the
+// order given; images of a source registered with Options.Concurrency above
+// one are resolved after them, up to that many at once. An image that fails as
 // a plan fault (a build or a bad reference) does not stop the others: the error
-// joins every such failure, so one correction round sees them all. A timeout,
-// a cancellation or an infrastructure outcome stops at once and is returned
-// alone, so the coordinator's retry still recognizes it. It derives one context
-// per source from that source's Budget, started at the source's first image,
-// and verifies every Ref: a digest reference, and for a source registered with
-// Options.SameRepository, in the repository of the requested image. The result
-// maps each requested image to its Resolved.
+// joins every such failure in the order the images were given, so one
+// correction round sees them all. A timeout, a cancellation or an
+// infrastructure outcome stops at once (cancelling resolutions in flight) and
+// is returned alone, so the coordinator's retry still recognizes it. It derives
+// one context per source from that source's Budget, started when the source's
+// first image starts, and verifies every Ref: a digest reference, and for a
+// source registered with Options.SameRepository, in the repository of the
+// requested image. The result maps each requested image to its Resolved.
 //
 // base supplies Tree, FS and Checkout; its Image is ignored. Declared entries
 // must name distinct images that appear in images and registered sources.
@@ -162,20 +165,15 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 	if err != nil {
 		return nil, err
 	}
-
-	budgets := map[string]context.Context{}
-	var stops []context.CancelFunc
-	defer func() {
-		for _, stop := range stops {
-			stop()
-		}
-	}()
-	out := make(map[string]Resolved, len(images))
-	var failed []error
+	run := &resolution{catalog: c, caller: ctx, base: base, out: make(map[string]Resolved, len(images)), budgets: map[string]context.Context{}}
+	defer run.stopBudgets()
+	var sequential, concurrent []job
+	seen := map[string]bool{}
 	for _, image := range images {
-		if _, done := out[image]; done {
+		if seen[image] {
 			continue
 		}
+		seen[image] = true
 		d, ok := choice[image]
 		if !ok {
 			if UnderTarget(image, c.pushHost) {
@@ -186,50 +184,186 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 			}
 			d = Declared{Image: image, SourceID: c.defaultID}
 		}
-		e := c.entries[d.SourceID]
-		config, err := c.Decode(d.SourceID, d.Config)
-		if err != nil {
-			failed = append(failed, &Error{Image: image, SourceID: d.SourceID, Err: err})
-			continue
+		j := job{index: len(seen) - 1, image: image, declared: d}
+		if c.entries[d.SourceID].concurrency > 1 {
+			concurrent = append(concurrent, j)
+		} else {
+			sequential = append(sequential, j)
 		}
-		sourceCtx, started := budgets[d.SourceID]
-		if !started {
-			sourceCtx = ctx
-			if e.budget > 0 {
-				var stop context.CancelFunc
-				sourceCtx, stop = context.WithTimeout(ctx, e.budget)
-				stops = append(stops, stop)
-			}
-			budgets[d.SourceID] = sourceCtx
-		}
-		req := base
-		req.Image = image
-		resolved, err := e.resolve(sourceCtx, req, config)
-		if err != nil {
-			if ctx.Err() == nil && e.budget > 0 && errors.Is(sourceCtx.Err(), context.DeadlineExceeded) {
-				return nil, &TimeoutError{Image: image, Limit: e.budget, Budget: true}
-			}
-			failure := &Error{Image: image, SourceID: d.SourceID, Err: err}
-			var marker interface{ InfrastructureOutcome() bool }
-			if ctx.Err() != nil || (errors.As(err, &marker) && marker.InfrastructureOutcome()) {
-				return nil, failure
-			}
-			failed = append(failed, failure)
-			continue
-		}
-		if err := verify(image, resolved.Ref, e.sameRepository); err != nil {
-			failed = append(failed, &Error{Image: image, SourceID: d.SourceID, Err: err})
-			continue
-		}
-		out[image] = resolved
 	}
-	switch len(failed) {
+	for _, j := range sequential {
+		if stop := run.resolve(ctx, j); stop != nil {
+			return nil, stop
+		}
+	}
+	if stop := run.resolveConcurrently(concurrent); stop != nil {
+		return nil, stop
+	}
+	return run.result()
+}
+
+// job is one distinct image to resolve; index is its place among the
+// distinct images given, which orders the joined failures.
+type job struct {
+	index    int
+	image    string
+	declared Declared
+}
+
+type indexedFailure struct {
+	index int
+	err   error
+}
+
+// resolution is the state of one ResolveAll call. Concurrent resolutions share
+// it, so out, failed, budgets and stops are read and written under mu.
+type resolution struct {
+	catalog *Catalog
+	caller  context.Context
+	base    Request
+	mu      sync.Mutex
+	out     map[string]Resolved
+	failed  []indexedFailure
+	budgets map[string]context.Context
+	stops   []context.CancelFunc
+}
+
+// budget is the source's shared context, derived from parent the first time
+// the source starts an image.
+func (r *resolution) budget(parent context.Context, sourceID string) context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if started, ok := r.budgets[sourceID]; ok {
+		return started
+	}
+	sourceCtx := parent
+	if limit := r.catalog.entries[sourceID].budget; limit > 0 {
+		var stop context.CancelFunc
+		sourceCtx, stop = context.WithTimeout(parent, limit)
+		r.stops = append(r.stops, stop)
+	}
+	r.budgets[sourceID] = sourceCtx
+	return sourceCtx
+}
+
+func (r *resolution) stopBudgets() {
+	for _, stop := range r.stops {
+		stop()
+	}
+}
+
+// resolve resolves one image under parent and records its result or plan
+// fault. A non-nil return stops the whole call: a budget timeout, a caller
+// cancellation or an infrastructure outcome.
+func (r *resolution) resolve(parent context.Context, j job) error {
+	e := r.catalog.entries[j.declared.SourceID]
+	config, err := r.catalog.Decode(j.declared.SourceID, j.declared.Config)
+	if err != nil {
+		r.fail(j, err)
+		return nil
+	}
+	sourceCtx := r.budget(parent, j.declared.SourceID)
+	req := r.base
+	req.Image = j.image
+	resolved, err := e.resolve(sourceCtx, req, config)
+	if err != nil {
+		if r.caller.Err() == nil && e.budget > 0 && errors.Is(sourceCtx.Err(), context.DeadlineExceeded) {
+			return &TimeoutError{Image: j.image, Limit: e.budget, Budget: true}
+		}
+		failure := &Error{Image: j.image, SourceID: j.declared.SourceID, Err: err}
+		var marker interface{ InfrastructureOutcome() bool }
+		if r.caller.Err() != nil || (errors.As(err, &marker) && marker.InfrastructureOutcome()) {
+			return failure
+		}
+		if parent.Err() != nil {
+			// Cancelled because another resolution stopped the call.
+			return parent.Err()
+		}
+		r.fail(j, err)
+		return nil
+	}
+	if err := verify(j.image, resolved.Ref, e.sameRepository); err != nil {
+		r.fail(j, err)
+		return nil
+	}
+	r.mu.Lock()
+	r.out[j.image] = resolved
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *resolution) fail(j job, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failed = append(r.failed, indexedFailure{index: j.index, err: &Error{Image: j.image, SourceID: j.declared.SourceID, Err: err}})
+}
+
+// resolveConcurrently runs the jobs of concurrent sources, each source up to
+// its Concurrency at once. The first stop cancels the others; their own
+// cancellation errors are not the cause.
+func (r *resolution) resolveConcurrently(jobs []job) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+	pool, cancel := context.WithCancel(r.caller)
+	defer cancel()
+	slots := map[string]chan struct{}{}
+	for _, j := range jobs {
+		if _, ok := slots[j.declared.SourceID]; !ok {
+			slots[j.declared.SourceID] = make(chan struct{}, r.catalog.entries[j.declared.SourceID].concurrency)
+		}
+	}
+	var (
+		wg        sync.WaitGroup
+		stopMu    sync.Mutex
+		firstStop error
+	)
+	for _, j := range jobs {
+		slot := slots[j.declared.SourceID]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case slot <- struct{}{}:
+			case <-pool.Done():
+				return
+			}
+			defer func() { <-slot }()
+			if pool.Err() != nil {
+				return
+			}
+			stop := r.resolve(pool, j)
+			if stop == nil {
+				return
+			}
+			stopMu.Lock()
+			defer stopMu.Unlock()
+			if firstStop == nil && (pool.Err() == nil || r.caller.Err() != nil) {
+				firstStop = stop
+			}
+			cancel()
+		}()
+	}
+	wg.Wait()
+	if firstStop == nil && r.caller.Err() != nil {
+		return r.caller.Err()
+	}
+	return firstStop
+}
+
+func (r *resolution) result() (map[string]Resolved, error) {
+	slices.SortStableFunc(r.failed, func(a, b indexedFailure) int { return a.index - b.index })
+	switch len(r.failed) {
 	case 0:
-		return out, nil
+		return r.out, nil
 	case 1:
-		return nil, failed[0]
+		return nil, r.failed[0].err
 	}
-	return nil, errors.Join(failed...)
+	errs := make([]error, len(r.failed))
+	for i, f := range r.failed {
+		errs[i] = f.err
+	}
+	return nil, errors.Join(errs...)
 }
 
 func verify(image, ref string, sameRepository bool) error {
