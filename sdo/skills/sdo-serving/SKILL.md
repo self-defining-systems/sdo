@@ -66,6 +66,8 @@ SDO's operability report names each failing check as
 - `render`: a manifest or chart does not render, the tree has no deployment files, or it has several roots.
 - `build`: an image declaration or a build step failed. The detail carries the failing step and its log tail;
   reproduce it locally with `docker build` on the same context before you change the plan.
+- `rollout` on `O1.entry`: the workloads are ready but a Service users enter through does not answer (no
+  connection, or `GET /` returns 5xx). Compare the Service with the Pods it should reach, and read their logs.
 - `rollout`: a workload never became ready. Read its events, its Pods' status and the previous container's
   logs (`kubectl logs --previous`) in the environment the report names.
 - `immutable_change`: the API server refuses an in-place update (a Service `clusterIP`, a running Job). Keep the

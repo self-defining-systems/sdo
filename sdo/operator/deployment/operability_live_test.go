@@ -57,6 +57,7 @@ func TestCheckLivePassesForARealDeployment(t *testing.T) {
 	plan := depPlan(t, source, depRawWeb)
 	deployer, _ := depDeployer(t, root, &clusterFake{})
 	deployer.Environment = &contracts.RenderEnvironment{KubeVersion: "v1.34.0", ApiVersions: []string{"apps/v1", "apps/v1/Deployment", "v1", "v1/ConfigMap", "v1/Service", "v1/Secret"}}
+	deployer.EntryDialer = &flakyDialer{}
 	receipt, err := deployer.ApplyAndVerify(context.Background(), root, plan)
 	if err != nil {
 		t.Fatal(err)
@@ -68,9 +69,10 @@ func TestCheckLivePassesForARealDeployment(t *testing.T) {
 	var ids []string
 	for _, c := range checks {
 		ids = append(ids, c.ID)
-		// The fake cluster reports no per-container images, so O2.inputs is a note.
+		// The fake cluster reports no per-container images, so O2.inputs is a
+		// note; the fixture has no Service, so O1.entry is one too.
 		want := operability.StatusPass
-		if c.ID == "O2.inputs" {
+		if c.ID == "O2.inputs" || c.ID == "O1.entry" {
 			want = operability.StatusNote
 		}
 		if c.Status != want || c.Phase != operability.PhaseLive {

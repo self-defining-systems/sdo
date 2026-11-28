@@ -31,11 +31,15 @@ type LiveInput struct {
 	ServedAPIs []string
 	// Err is the ApplyAndVerify or VerifyAccepted error; nil means the receipt is trusted.
 	Err error
+	// Entries are the probed user entry points (O1.entry); EntryChecked is
+	// false when no dialer could reach them.
+	Entries      []EntryResult
+	EntryChecked bool
 }
 
 // LiveCheckIDs lists the live checks in the order LiveChecks reports them.
 func LiveCheckIDs() []string {
-	return []string{"O1.deploy", "O1.ready", "O1.apis", "O2.stamps", "O2.pins", "O2.inputs", "O2.resources", "O6.budget"}
+	return []string{"O1.deploy", "O1.ready", "O1.entry", "O1.apis", "O2.stamps", "O2.pins", "O2.inputs", "O2.resources", "O6.budget"}
 }
 
 // ClassifyDeploymentError maps an error of ApplyAndVerify or VerifyAccepted to a
@@ -124,6 +128,8 @@ func LiveChecks(in LiveInput) []operability.Check {
 		checks = append(checks, pass("O1.ready", fmt.Sprintf("%d workloads ready", len(r.ResourceIDs))))
 	}
 
+	checks = append(checks, entryCheck(in))
+
 	checks = append(checks, apisCheck(in))
 
 	if r.EffectiveTree == "" || r.ObservedRevision != r.EffectiveTree {
@@ -134,6 +140,31 @@ func LiveChecks(in LiveInput) []operability.Check {
 
 	checks = append(checks, pinsCheck(r), inputsCheck(r), resourcesCheck(r, in.Desired), budget)
 	return checks
+}
+
+// entryCheck reports O1.entry: every user entry point answers once the
+// workloads are ready. A refused or failing entry is the deployment's to fix
+// (cause rollout: deployed, not serving).
+func entryCheck(in LiveInput) operability.Check {
+	c := operability.Check{ID: "O1.entry", Phase: operability.PhaseLive}
+	var failing []string
+	for _, e := range in.Entries {
+		if e.Err != nil {
+			failing = append(failing, e.Entry.String()+": "+e.Err.Error())
+		}
+	}
+	switch {
+	case !in.EntryChecked:
+		c.Status, c.Detail = operability.StatusSkipped, "not run: this process cannot reach the application's Services"
+	case len(in.Entries) == 0:
+		c.Status, c.Detail = operability.StatusNote, "the deployment has no Service users can enter through"
+	case len(failing) > 0:
+		c.Status, c.Cause = operability.StatusFail, operability.CauseRollout
+		c.Detail = operability.Clip(fmt.Sprintf("%d of %d entry points do not answer: %s", len(failing), len(in.Entries), strings.Join(failing, "; ")))
+	default:
+		c.Status, c.Detail = operability.StatusPass, operability.Clip(fmt.Sprintf("%d entry points answer", len(in.Entries)))
+	}
+	return c
 }
 
 // apisCheck reports O1.apis: the deployer refuses a desired set whose kinds the
@@ -300,9 +331,6 @@ func (d Deployer) CheckLive(ctx context.Context, checkout string, plan *contract
 	if err := d.validate(); err != nil {
 		return nil, err
 	}
-	if plan == nil || plan.GetSource() == nil {
-		return nil, errors.New("deployment plan needs a source")
-	}
 	base, err := d.TreeDigest(ctx, checkout)
 	if err != nil {
 		return nil, err
@@ -320,7 +348,11 @@ func (d Deployer) CheckLive(ctx context.Context, checkout string, plan *contract
 	if err != nil {
 		return LiveChecks(LiveInput{Receipt: receipt, Err: err}), nil
 	}
-	return LiveChecks(LiveInput{Receipt: receipt, Desired: set, ServedAPIs: d.Environment.GetApiVersions()}), nil
+	in := LiveInput{Receipt: receipt, Desired: set, ServedAPIs: d.Environment.GetApiVersions()}
+	if d.EntryDialer != nil && receipt.Ready {
+		in.Entries, in.EntryChecked = d.probeEntries(ctx, EntryPoints(set)), true
+	}
+	return LiveChecks(in), nil
 }
 
 // recreatedDetail names the objects the deployer recreated for an immutable
