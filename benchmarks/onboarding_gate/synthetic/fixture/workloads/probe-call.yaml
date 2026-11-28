@@ -1,0 +1,7 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: probe-call
+purpose: health-probe
+timeout: 5s
+iterationTimeout: 20s
+scenarios: [{id: call-sign-in}, {id: call-notes}]

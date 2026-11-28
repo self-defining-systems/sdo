@@ -1,0 +1,3 @@
+sign-in	Sign in with a seeded account and verify that a wrong password is rejected.
+browse-notes	List the signed-in user's notes and verify that the seeded notes are present.
+create-note	Create a note as a signed-in user, read it back, and delete it.
