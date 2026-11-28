@@ -25,7 +25,7 @@ import (
 const investigatorStopTimeout = 30 * time.Second
 
 // startInvestigators arms the incident's investigators once the responder's session is running. Nothing starts
-// until the delay passes with no write; the returned stop ends them and deletes their Jobs, and the dispatcher
+// until the delay after the responder's first tool call passes with no progress; the returned stop ends them and deletes their Jobs, and the dispatcher
 // calls it when the responder returns.
 func (d KubernetesJobDispatcher) startInvestigators(ctx context.Context, request IncidentRequest, task *contracts.AgentTask, loop *ResponderLoop, reportDir string) (stop func()) {
 	board := &InvestigationBoard{Persist: func(id, node, report string) error {
@@ -33,9 +33,10 @@ func (d KubernetesJobDispatcher) startInvestigators(ctx context.Context, request
 	}}
 	loop.Investigations = board
 	d.Investigators.begin(ctx, investigatorPlan{
-		IncidentID: request.IncidentID,
-		HasWrite:   loop.hasKnownWrite,
-		Briefs:     loop.investigatorBriefs,
+		IncidentID:    request.IncidentID,
+		FirstToolCall: loop.firstToolCall(),
+		Progressed:    loop.responderProgressed,
+		Briefs:        loop.investigatorBriefs,
 		Launch: func(ctx context.Context, id string, brief investigatorBrief) (string, error) {
 			return d.runInvestigator(ctx, task, loop, id, brief)
 		},
