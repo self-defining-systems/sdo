@@ -84,9 +84,7 @@ Rules the memory check enforces:
   Services of your operations) lies on the path of a probed operation that enters at a user entry Service, or the
   component carries `unprobed`, one line saying why no synthetic request can reach it (needing a login is not a
   reason: a scenario signs in as a probe user); every operation, writing ones too, is in a `call` probe (a
-  write-read probe does not count); every writing operation is also in a write-read probe;
-  every data-holding component on a writing operation's path that another operation also reaches is on a
-  read-later probe's path. An operation broken
+  write-read probe does not count). Write-read and read-later coverage is advice (a note). An operation broken
   in the application as deployed is covered by a probe whose workload scenario is declared `knownBroken`
   (`knownBroken: {reason: <one line>, failsWith: ["404"]}`); at most half of the operations may be.
 

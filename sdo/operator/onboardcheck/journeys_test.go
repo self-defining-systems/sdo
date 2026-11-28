@@ -122,7 +122,17 @@ func TestOperationWithoutAResultCheckingProbeIsRed(t *testing.T) {
 	}
 }
 
-func TestWriteOrBackgroundJourneyNeedsAProbeThatReadsTheEffect(t *testing.T) {
+// A write a call probe checks is enough: read-back probes are advice.
+func TestWriteJourneyNeedsNoReadBackProbe(t *testing.T) {
+	text := strings.Replace(journeyMap, "kind: write-read, operations: [send-mail]", "kind: call, operations: [send-mail]", 1)
+	text = strings.Replace(text, "    triggers: [MailWorker]\n", "", 1)
+	r := journeyRun(t, text, newWorld(), false)
+	if status(r, ItemProbe, "send-mail") == Red {
+		t.Fatalf("a write checked by a call probe was held to a read-back probe:\n%s", r.Text())
+	}
+}
+
+func TestBackgroundJourneyNeedsAProbeThatReadsTheEffect(t *testing.T) {
 	text := strings.Replace(journeyMap, "kind: write-read, operations: [send-mail]", "kind: call, operations: [send-mail]", 1)
 	r := journeyRun(t, text, newWorld(), false)
 	if status(r, ItemProbe, "send-mail") != Red || !strings.Contains(r.Text(), "triggers background work") {

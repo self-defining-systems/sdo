@@ -108,13 +108,10 @@ func CoverageObligations(checkout string) string {
 	}
 	sort.Strings(entries)
 	sort.Strings(workers)
-	var stores, unprobedEntries []string
+	var unprobedEntries []string
 	userPath, unprobed := 0, 0
 	for _, comp := range m.Components {
 		got := coverage.Components[comp.Name]
-		if comp.HoldsData {
-			stores = append(stores, comp.Name)
-		}
 		if got.OnUserPath {
 			userPath++
 			if got.Unprobed != "" {
@@ -125,9 +122,8 @@ func CoverageObligations(checkout string) string {
 			unprobedEntries = append(unprobedEntries, comp.Name)
 		}
 	}
-	sort.Strings(stores)
 	sort.Strings(unprobedEntries)
-	if len(owed) == 0 && len(workers) == 0 && len(stores) == 0 && len(unprobedEntries) == 0 {
+	if len(owed) == 0 && len(workers) == 0 && len(unprobedEntries) == 0 {
 		return ""
 	}
 	var b strings.Builder
@@ -153,9 +149,6 @@ func CoverageObligations(checkout string) string {
 	}
 	if 2*unprobed > userPath {
 		fmt.Fprintf(&b, "\n%d of %d user-path components record `unprobed`; more than half is rejected (map.unprobed-share). Cover most of them with operations.\n", unprobed, userPath)
-	}
-	if len(stores) > 0 {
-		fmt.Fprintf(&b, "\nThe map holds data (%s), so it needs at least one gated probe (call or read-later) with a step built with `ReadsExistingRecords(path, field, pattern)` that lists records users made or the deployment seeded and checks their shape (map.records-unread). An empty list passes, so a fresh install stays healthy. The step must not template a key a write step of its scenario saved; list live and save the id from the list. Only when users keep no records, set `no_user_records: <why>` at the top level of the map.\n", strings.Join(stores, ", "))
 	}
 	if len(workers) > 0 {
 		fmt.Fprintf(&b, "\nNo user path reaches these components and they hold no data: %s. If one does work users wait for (a worker, consumer or schedule that takes work from a queue or table users write), declare its internal operation and probe it through the user operation that hands it the work: perform that operation, then read the effect (a status that moves on, a result that becomes readable) in a step wrapped in traffic.Eventually (map.effect-unobserved). A synchronous read-back, or an edge drawn toward the worker, does not observe it. Otherwise record `unprobed: <why>`.\n", strings.Join(workers, ", "))

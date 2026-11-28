@@ -98,7 +98,7 @@ func TestApplicationMapAgainstCompiledScenarios(t *testing.T) {
 			t.Fatalf("designer: %v %v", got, err)
 		}
 	})
-	t.Run("an unmarked records read blocks the designer", func(t *testing.T) {
+	t.Run("an unmarked records read is advice for the designer", func(t *testing.T) {
 		t.Parallel()
 		root := mapCompileTree(t, `read("call-all", "web", "api", "db")`)
 		path := filepath.Join(root, ".sdo/diagnostics/traffic/generators/generators.go")
@@ -113,9 +113,14 @@ func TestApplicationMapAgainstCompiledScenarios(t *testing.T) {
 		write(t, root, ".sdo/diagnostics/traffic/generators/generators.go", unmarked)
 		request := compileRequest(root)
 		request.Actor, request.Phase = HealthJudge, InitialPhase
+		var notes []Diagnostic
+		request.CoverageGaps = &notes
 		got, err := CompileCandidate(ctx, request)
-		if err != nil || len(got) != 1 || got[0].Rule != RuleMapRecordsUnread {
-			t.Fatalf("designer: %v %v", got, err)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("designer: an unmarked records read rejected: %v %v", got, err)
+		}
+		if !slices.ContainsFunc(notes, func(d Diagnostic) bool { return d.Rule == RuleMapRecordsUnread }) {
+			t.Fatalf("designer: no %s note: %v", RuleMapRecordsUnread, notes)
 		}
 	})
 	// Go's client-links detector, installed from the map and the link-probe

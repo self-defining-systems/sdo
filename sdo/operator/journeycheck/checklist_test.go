@@ -74,7 +74,7 @@ func TestChecklistFollowsTheGoalAndSaysWhatEachJourneyLacks(t *testing.T) {
 		{"share", JourneyMissingProbe, "share-item"},
 		{"edit", JourneyFailing, "s-edit"},
 		{"export", JourneyUnchecked, "s-export"},
-		{"upload", JourneyMissingProbe, "write-read"},
+		{"upload", JourneyPassed, "s-upload"},
 		{"notify", JourneyMissingProbe, "s-note"},
 	}
 	if len(r.Journeys) != len(want) {
@@ -89,7 +89,7 @@ func TestChecklistFollowsTheGoalAndSaysWhatEachJourneyLacks(t *testing.T) {
 	if !hasResult(r, ItemGivenJourney, "stray", Red) {
 		t.Errorf("an operation naming a journey the goal does not list is red: %+v", r.Results)
 	}
-	if got := r.JourneyCounts(); got[JourneyPassed] != 1 || got[JourneyMissingProbe] != 3 || got[JourneyUnchecked] != 1 {
+	if got := r.JourneyCounts(); got[JourneyPassed] != 2 || got[JourneyMissingProbe] != 2 || got[JourneyUnchecked] != 1 {
 		t.Errorf("counts = %v", got)
 	}
 	if !r.Red() {

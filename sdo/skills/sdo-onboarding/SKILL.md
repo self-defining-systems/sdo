@@ -17,10 +17,9 @@ the [worked example](references/example.md), [probe design](references/probe-des
 4. `init` maps request counters SDO's Prometheus scrapes; map others (`onboarding check --metrics`,
    [example](../sdo-operations-map/references/request-metrics.md)).
 
-What the checks require, so plan for it: every operation in a `call` probe; a writing one also in a `write-read`
-probe that reads the write back, and its data read by a `read-later` probe (Setup writes a fixture once, later
-iterations read it); and one step of a `call` or `read-later` probe lists records users already have
-(`ReadsExistingRecords`, templating no id the probe wrote).
+The checks require every operation in a `call` probe. Read-back probes (`write-read`, `read-later`,
+`ReadsExistingRecords`) are advice: add one only where a call probe misses a loss users would see. A later read
+detects loss only if no other probe rewrites that record.
 
 `onboarding journeys --plan` sends nothing. Fix `missing-map`, `missing-probe`, then `failing` and `unchecked`.
 Keep every journey ID. Dotted JSON paths name keys and indexes (`data.items.0.id`); `""` is the whole body.

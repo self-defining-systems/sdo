@@ -22,8 +22,8 @@ func TestAcceptedMemoryWithoutTheMarkerStillOperates(t *testing.T) {
 	}
 }
 
-func TestRecordsUnreadScopeFollowsTheDiff(t *testing.T) {
-	finding := appmap.Finding{Rule: appmap.RuleRecordsUnread, Message: "m"}
+func TestCoverageRuleScopeFollowsTheDiff(t *testing.T) {
+	finding := appmap.Finding{Rule: appmap.RuleEffectUnobserved, Message: "m"}
 	for name, tc := range map[string]struct {
 		changed []string
 		blocks  bool
@@ -38,6 +38,19 @@ func TestRecordsUnreadScopeFollowsTheDiff(t *testing.T) {
 		s.mapFinding(Compile, finding, 0)
 		if blocked := len(s.diags) == 1; blocked != tc.blocks {
 			t.Errorf("%s: blocked=%v", name, blocked)
+		}
+	}
+}
+
+// Reading records users already have is advice: no designer commit is held
+// to it, whatever the diff touches.
+func TestRecordsUnreadNeverBlocks(t *testing.T) {
+	for _, changed := range [][]string{nil, {layout.ArchitectureFile}, {layout.TrafficGeneratorsDir + "/g.go"}} {
+		var notes []Diagnostic
+		s := &run{req: Request{Actor: HealthJudge, Phase: InitialPhase, Layers: Compile, CoverageGaps: &notes}, changed: changed}
+		s.mapFinding(Compile, appmap.Finding{Rule: appmap.RuleRecordsUnread, Message: "m"}, 0)
+		if len(s.diags) != 0 || len(notes) != 1 {
+			t.Errorf("changed %v: diags=%v notes=%v", changed, s.diags, notes)
 		}
 	}
 }

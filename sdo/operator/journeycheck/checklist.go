@@ -121,8 +121,8 @@ func (r *Report) journey(g appmap.GivenJourney, m appmap.Map, schedules map[stri
 			lacking = append(lacking, op.ID+" has no probe: add one whose steps call it and check the result")
 		case len(scheduled) == 0:
 			lacking = append(lacking, fmt.Sprintf("%s: its probes %s are not scheduled by a health-probe workload (or are known broken), so they notice nothing", op.ID, strings.Join(named, ", ")))
-		case (op.Writes || len(op.Triggers) > 0) && !reads:
-			lacking = append(lacking, fmt.Sprintf("%s writes data or triggers background work but only call probes exercise it (%s): add a write-read or read-later probe that reads its effect back", op.ID, strings.Join(scheduled, ", ")))
+		case len(op.Triggers) > 0 && !reads:
+			lacking = append(lacking, fmt.Sprintf("%s triggers background work but only call probes exercise it (%s): add a write-read or read-later probe that reads its effect back", op.ID, strings.Join(scheduled, ", ")))
 		}
 		if best.Scenario == "" {
 			complete = false

@@ -143,7 +143,9 @@ func judgeProbesAndPointers(cfg Config, report *Report) {
 	for _, op := range m.Operations {
 		var scenarios []string
 		reads := false
-		needsRead := op.Writes || len(op.Triggers) > 0
+		// Background work must be seen to finish; a plain write needs no
+		// read-back probe (advice in the skill, not a check).
+		needsRead := len(op.Triggers) > 0
 		for _, p := range m.Probes {
 			for _, id := range p.Operations {
 				if id == op.ID {
@@ -156,7 +158,7 @@ func judgeProbesAndPointers(cfg Config, report *Report) {
 		case len(scenarios) == 0:
 			report.add(ItemProbe, op.ID, Red, "no probe exercises this operation: add a probe whose step calls it and checks the result (data written reads back intact, background work completes, existing records still right)")
 		case needsRead && !reads:
-			report.add(ItemProbe, op.ID, Red, fmt.Sprintf("writes data or triggers background work (%s) but only call probes exercise it (%s): add a write-read or read-later probe that waits for the triggered work to finish, reads its effect as a user would and cleans up", none(op.Triggers), strings.Join(scenarios, ", ")))
+			report.add(ItemProbe, op.ID, Red, fmt.Sprintf("triggers background work (%s) but only call probes exercise it (%s): add a write-read or read-later probe that waits for the triggered work to finish, reads its effect as a user would and cleans up", strings.Join(op.Triggers, ", "), strings.Join(scenarios, ", ")))
 		default:
 			if why := probeTrouble(*report, op, scenarios); why != "" {
 				report.add(ItemProbe, op.ID, Red, why)

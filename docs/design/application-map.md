@@ -90,9 +90,10 @@ Field rules (all blocking unless marked note):
 ## Coverage (what the shared memory check verifies)
 
 - Every operation is in some `call` probe; a `write-read` probe that also calls it does not count.
-- Every operation with `writes: true` is in some `write-read` probe.
-- Every `holds_data` component that lies on the path of a writing operation lies on the path of some
-  `read-later` probe.
+- Advice, a note only: every operation with `writes: true` is in some `write-read` probe, and every
+  `holds_data` component on a writing operation's path lies on the path of some `read-later` probe; a step reads
+  existing records (`map.records-unread`). Measured live, these probes caught no data-loss fault plain call probes
+  missed, and a later read detects loss only if no other probe rewrites that record.
 - Every component on the user path (reachable from a Service the manifests expose outside the cluster, else from
   the declared operations' entry Services) is covered by a probe whose operation enters at a user entry Service and
   includes it, or records `unprobed: <why>` (`map.coverage`; the reason is the note `map.unprobed`).

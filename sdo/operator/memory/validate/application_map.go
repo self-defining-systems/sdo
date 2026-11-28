@@ -21,7 +21,7 @@ func (r Request) mapBlocks() bool { return r.Actor == HealthJudge && r.Phase == 
 // them: they block only a commit that changes the map, the probes or the health
 // detectors, so restoring or operating with an accepted memory is unaffected.
 func coverageRuleV1(rule string) bool {
-	return rule == RuleMapUnprobedEntry || rule == RuleMapUnprobedShare || rule == RuleMapRecordsUnread || rule == RuleMapEffectUnobserved
+	return rule == RuleMapUnprobedEntry || rule == RuleMapUnprobedShare || rule == RuleMapEffectUnobserved
 }
 
 // touchesDesignerPaths reports whether the diff against Base changes the
@@ -41,9 +41,16 @@ func (s *run) touchesDesignerPaths() bool {
 	return false
 }
 
-// mapAlwaysNote lists the findings that never reject.
+// mapAlwaysNote lists the findings that never reject. Read-back coverage
+// (write-read, read-later, existing records) is advice: measured live, those
+// probes caught no data-loss fault plain call probes missed.
 func mapAlwaysNote(rule string) bool {
-	return rule == RuleMapMissing || rule == RuleMapUnprobed || rule == RuleMapPossibleEdge || rule == RuleMapNoUserRecords || rule == RuleMapReaders
+	switch rule {
+	case RuleMapMissing, RuleMapUnprobed, RuleMapPossibleEdge, RuleMapNoUserRecords, RuleMapReaders,
+		RuleMapUncoveredWrite, RuleMapUncoveredData, RuleMapRecordsUnread:
+		return true
+	}
+	return false
 }
 
 // AgentObligation reports whether a diagnostic names work the agent's edit is
@@ -53,7 +60,7 @@ func mapAlwaysNote(rule string) bool {
 // base check never reports them; the designer's proposal is still held to them.
 func AgentObligation(rule string) bool {
 	switch rule {
-	case RuleEmptyDiff, RuleMapUncoveredOp, RuleMapUncoveredWrite, RuleMapUncoveredData, RuleMapCoverage, RuleMapRecordsUnread:
+	case RuleEmptyDiff, RuleMapUncoveredOp, RuleMapCoverage:
 		return true
 	}
 	return false
