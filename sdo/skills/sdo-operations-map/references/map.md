@@ -37,12 +37,10 @@ edges:
   - {from: orders, to: orders-cache, evidence: [config], source: orders/cache.go}
   - {from: web, to: metrics, evidence: [config], source: web/config.yaml}
 operations:
-  - id: place-order
-    writes: true
+  - id: place-order                 # writes: POST, PUT, PATCH, DELETE write unless `writes: false`
     entry: {service: web, port: 8080, method: POST, path: /orders}
     path: [web, orders, orders-db]   # entry component first
-  - id: list-orders
-    writes: false
+  - id: list-orders                 # a GET that writes says `writes: true`
     entry: {service: web, port: 8080, method: GET, path: /orders}
     path: [web, orders, orders-cache, orders-db]
 probes:

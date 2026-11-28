@@ -14,7 +14,6 @@ operations:
   - id: place-order
     journey: place-and-track-order
     correct: The order and its receipt can be read back with the submitted values.
-    writes: true
     entry: {service: web, port: 80, method: POST, path: /api/orders}
     path: [web, orders-db, worker]
   - id: read-receipt
