@@ -27,6 +27,11 @@ type Options struct {
 	// requested image (a builder pushes to the target it was given). A source
 	// that pins tags, or rewrites to another repository, leaves it false.
 	SameRepository bool
+	// Concurrency is how many images of this source one ResolveAll call
+	// resolves at once. Zero or one is one at a time, in the order given. A
+	// source whose resolutions are independent and slow (image builds, each in
+	// its own Job) sets more, bounded by what the cluster can run together.
+	Concurrency int
 }
 
 // Catalog maps source IDs to registered sources. Build it once at wiring time;
@@ -47,6 +52,7 @@ type entry struct {
 	resolve        func(context.Context, Request, proto.Message) (Resolved, error)
 	budget         time.Duration
 	sameRepository bool
+	concurrency    int
 }
 
 // NewCatalog returns an empty catalog.
@@ -76,6 +82,9 @@ func Register[C proto.Message](c *Catalog, id string, s Source[C], o Options, op
 	}
 	if o.Budget < 0 {
 		return fmt.Errorf("imagesrc: source %q has a negative budget", id)
+	}
+	if o.Concurrency < 0 {
+		return fmt.Errorf("imagesrc: source %q has a negative concurrency", id)
 	}
 	var zero C
 	if any(zero) == nil {
@@ -109,6 +118,7 @@ func Register[C proto.Message](c *Catalog, id string, s Source[C], o Options, op
 		},
 		budget:         o.Budget,
 		sameRepository: o.SameRepository,
+		concurrency:    max(1, o.Concurrency),
 	}
 	return nil
 }
