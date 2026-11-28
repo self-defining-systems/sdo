@@ -117,7 +117,9 @@ func newHeldApplyWorld(t *testing.T, now func() time.Time, sleep func(time.Durat
 	executor := PlanExecutor{Client: TypedPlanClient{Client: w.world.client}, Source: w.world, Rollouts: heldRollouts{w}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: w.world}}
 	loop := NewResponderLoop(request, registry, w.world, detectors, executor, 5)
 	loop.Now = c.clock
-	loop.ReadView = func(v sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)} }
+	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
+	}
 	loop.saveToolState = func(context.Context, []byte) error { return nil }
 	w.dispatcher.loop = loop
 	t.Cleanup(w.releaseApply)
@@ -196,6 +198,18 @@ func TestDetectorsKeepEvaluatingDuringALongStageApply(t *testing.T) {
 		w.step()
 		if !w.joined() {
 			t.Fatal("a user test that started failing during the apply did not join the alert set at its first failing evaluation")
+		}
+		// Its join capture was taken during the apply, which was journaled before it wrote.
+		dir, err := memory.IncidentCorpusDir(w.c.config.CorpusSessionRoot, "synthetic-held-apply")
+		if err != nil {
+			t.Fatal(err)
+		}
+		joinContext, err := memory.ReadJoinCaptureContext(dir, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !joinContext.KnownWritesBefore || !slices.Contains(joinContext.WriteSources, "responder_plan") || len(joinContext.JoinedKeys) != 1 {
+			t.Fatalf("join context %+v: want the joiner, with the running apply as a known write", joinContext)
 		}
 		for range 3 * 60 {
 			w.step()

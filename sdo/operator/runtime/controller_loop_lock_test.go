@@ -122,16 +122,59 @@ func receiverType(fn *ast.FuncDecl) string {
 	return ""
 }
 
-// isLoopExpr reports an expression that names a responder loop: a variable
-// or field called loop/Loop or responderLoop.
+// isLoopExpr reports an expression that names a responder loop by this
+// package's naming: a variable loop, or a field loop, Loop or responderLoop.
+// The check is syntactic; the synctest tests over a held apply are the proof.
 func isLoopExpr(expr ast.Expr) bool {
 	switch e := expr.(type) {
 	case *ast.Ident:
 		return e.Name == "loop"
 	case *ast.SelectorExpr:
-		return e.Sel.Name == "Loop" || e.Sel.Name == "responderLoop"
+		return e.Sel.Name == "loop" || e.Sel.Name == "Loop" || e.Sel.Name == "responderLoop"
 	}
 	return false
+}
+
+// TestPlanJournalHasOneWriter keeps the journaled count controller
+// observation reads (hasJournaledPlans) equal to the journal: every
+// assignment to applicationsLog goes through setApplicationsLog.
+func TestPlanJournalHasOneWriter(t *testing.T) {
+	fset := token.NewFileSet()
+	paths, err := globAll("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || fn.Name.Name == "setApplicationsLog" {
+				continue
+			}
+			ast.Inspect(fn.Body, func(node ast.Node) bool {
+				assign, ok := node.(*ast.AssignStmt)
+				if !ok {
+					return true
+				}
+				for _, lhs := range assign.Lhs {
+					if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "applicationsLog" {
+						found = append(found, fmt.Sprintf("%s: %s assigns applicationsLog", fset.Position(assign.Pos()), fn.Name.Name))
+					}
+				}
+				return true
+			})
+		}
+	}
+	if len(found) > 0 {
+		t.Fatalf("use setApplicationsLog:\n%s", strings.Join(found, "\n"))
+	}
 }
 
 // waitsInBody reports a body that waits on a loop lock of a base the
