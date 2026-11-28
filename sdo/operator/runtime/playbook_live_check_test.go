@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
@@ -18,6 +19,7 @@ import (
 // with quietWhenHealthy, plans it only on the fault-time capture.
 type liveProgram struct {
 	diagnoseErrs     int
+	mitigateErrs     int
 	quietWhenHealthy bool
 	mitigations      int
 	seen             *[]program.Bindings
@@ -40,7 +42,12 @@ func (p *liveProgram) Diagnose(_ context.Context, _ program.ReadView, b program.
 // Mitigate plans first on the recovered cluster, then (if asked) on the capture.
 func (p *liveProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
 	p.mitigations++
-	if p.mitigations == 1 && p.quietWhenHealthy {
+	if p.mitigateErrs > 0 {
+		p.mitigateErrs--
+		return program.Plan{}, errors.New("parse consul entry: unexpected end of JSON input")
+	}
+	// An empty plan is retried on the recovered cluster: quiet on both tries.
+	if p.mitigations <= 2 && p.quietWhenHealthy {
 		return program.Plan{}, nil
 	}
 	return program.Plan{Actions: []program.Action{slowExecAction()}}, nil
@@ -81,28 +88,34 @@ func (f *fakeLiveLoop) programs() program.ProgramRegistry       { return f.regis
 func (f *fakeLiveLoop) operations() (PlanOperationClient, bool) { return f.client, true }
 
 // At the closing turn a changed playbook's checks run read only on the
-// recovered cluster. Only an observation's own exit code, answering neither
-// "holds" nor "needs the change", blocks memory check. A check that cannot run
-// (an exec error, a Diagnose error) is retried once and then is a note, so a
-// transient hiccup never costs the playbook. No Ensure ever runs.
+// recovered cluster. An observation whose own exit code answers neither
+// "holds" nor "needs the change" blocks memory check. A check that cannot run
+// (an exec error, a Diagnose error) is retried once, so a transient hiccup
+// never costs the playbook, and then blocks too: the automatic stage would hit
+// the same failure on first reuse. A Mitigate that fails on the recovered
+// cluster and on the fault-time capture is a note (it may refuse healthy
+// state). No Ensure ever runs.
 func TestNewPlaybookChecksRunLiveAtTheClosingTurn(t *testing.T) {
 	for _, c := range []struct {
 		name               string
 		observe            int32
 		diagErrs, execErrs int
+		mitigateErrs       int
 		blocks, notes      string
 	}{
 		{name: "state holds", observe: 0},
 		{name: "needs the change", observe: 1},
 		{name: "script error", observe: 252, blocks: "exited 252"},
 		{name: "one diagnose error is retried", diagErrs: 1},
-		{name: "diagnose errors twice", diagErrs: 2, notes: "Diagnose did not complete"},
+		{name: "diagnose errors twice", diagErrs: 2, blocks: "Diagnose did not complete"},
 		{name: "one exec error is retried", execErrs: 1},
-		{name: "exec errors twice", execErrs: 2, notes: "could not run live twice"},
+		{name: "exec errors twice", execErrs: 2, blocks: "could not run live twice"},
+		{name: "one mitigate error is retried", mitigateErrs: 1},
+		{name: "mitigate fails on both views", mitigateErrs: 3, notes: "Mitigate failed"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			loop := &fakeLiveLoop{registry: liveRegistry{p: &liveProgram{diagnoseErrs: c.diagErrs}}, client: &flakyExecClient{codedExecClient: codedExecClient{observe: c.observe}, execErrs: c.execErrs}}
-			blocking, notes := checkPlaybooksLive(context.Background(), loop, []liveCheckTarget{{ID: "merge-renamed"}})
+			loop := &fakeLiveLoop{registry: liveRegistry{p: &liveProgram{diagnoseErrs: c.diagErrs, mitigateErrs: c.mitigateErrs}}, client: &flakyExecClient{codedExecClient: codedExecClient{observe: c.observe}, execErrs: c.execErrs}}
+			blocking, notes := checkPlaybooksLive(context.Background(), loop, []liveCheckTarget{{ID: "merge-renamed", Open: &sdktest.ReplayReadView{}}})
 			for _, call := range loop.client.calls {
 				if call == "ensure" {
 					t.Fatalf("the live check ran an Ensure: %v", loop.client.calls)
@@ -133,14 +146,46 @@ func TestLiveCheckUsesTheIncidentsCapturedCase(t *testing.T) {
 	if len(seen) != 1 || !seen[0].Equal(bound) {
 		t.Fatalf("Diagnose bindings %+v, want the captured %+v", seen, bound)
 	}
-	if len(blocking) != 1 || !strings.Contains(blocking[0].Message, "exited 252") || len(notes) != 0 {
-		t.Fatalf("blocking %+v notes %+v, want the fault-time plan's failed check", blocking, notes)
+	// The fault-time plan names objects the repair may have replaced, so its
+	// failed check is a note: only a plan made on the live cluster blocks.
+	if len(blocking) != 0 || len(notes) != 1 || !strings.Contains(notes[0].Message, "exited 252") || !strings.Contains(notes[0].Message, "fault-time") {
+		t.Fatalf("blocking %+v notes %+v, want the fault-time plan's failed check as a note", blocking, notes)
+	}
+	loop = &fakeLiveLoop{registry: liveRegistry{p: &liveProgram{quietWhenHealthy: true}}, client: &flakyExecClient{execErrs: 2}}
+	blocking, notes = checkPlaybooksLive(context.Background(), loop, []liveCheckTarget{{ID: "merge-renamed", Open: &sdktest.ReplayReadView{}}})
+	if len(blocking) != 0 || len(notes) != 1 || !strings.Contains(notes[0].Message, "fault-time") {
+		t.Fatalf("blocking %+v notes %+v, want a fault-time plan whose check cannot run as a note", blocking, notes)
 	}
 
 	loop = &fakeLiveLoop{registry: liveRegistry{p: &liveProgram{}}, client: &flakyExecClient{codedExecClient: codedExecClient{observe: 252}}}
 	blocking, notes = checkPlaybooksLive(context.Background(), loop, []liveCheckTarget{{ID: "merge-renamed", Roles: []string{"store"}}})
 	if len(blocking) != 0 || len(notes) != 1 || !strings.Contains(notes[0].Message, "roles store") || len(loop.client.calls) != 0 {
 		t.Fatalf("blocking %+v notes %+v calls %v, want one roles note and no run", blocking, notes, loop.client.calls)
+	}
+}
+
+// The memory check's shared time limit running out is not the playbook's
+// failure: it is a timeout note, never a block that asks to fix the read.
+// Every playbook it did not reach is noted too.
+func TestLiveCheckOutOfTimeIsANote(t *testing.T) {
+	ctx, stop := context.WithDeadline(context.Background(), time.Unix(1, 0))
+	defer stop()
+	for _, p := range []*liveProgram{{diagnoseErrs: 2}, {}} {
+		loop := &fakeLiveLoop{registry: liveRegistry{p: p}, client: &flakyExecClient{execErrs: 2}}
+		blocking, notes := checkPlaybooksLive(ctx, loop, []liveCheckTarget{{ID: "merge-renamed"}, {ID: "other"}})
+		if len(blocking) != 0 || len(notes) != 2 || !strings.Contains(notes[0].Message, "time limit") && strings.Contains(notes[1].Message, "time limit") || strings.Contains(notes[0].Hint, "fix the read") {
+			t.Fatalf("blocking %+v notes %+v, want a time-limit note per playbook", blocking, notes)
+		}
+	}
+}
+
+// Diagnose runs on healthy state in the live check; the hint says that a
+// healthy cluster is NoMatch, not an error.
+func TestLiveCheckDiagnoseErrorHintNamesNoMatch(t *testing.T) {
+	loop := &fakeLiveLoop{registry: liveRegistry{p: &liveProgram{diagnoseErrs: 2}}, client: &flakyExecClient{}}
+	blocking, _ := checkPlaybooksLive(context.Background(), loop, []liveCheckTarget{{ID: "merge-renamed"}})
+	if len(blocking) != 1 || !strings.Contains(blocking[0].Hint, "NoMatch") {
+		t.Fatalf("blocking %+v, want a hint that healthy state is NoMatch", blocking)
 	}
 }
 
