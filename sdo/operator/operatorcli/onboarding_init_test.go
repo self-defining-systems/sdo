@@ -223,3 +223,22 @@ func TestOnboardingHelpIsAShortIndex(t *testing.T) {
 		}
 	}
 }
+
+// When SDO's Prometheus scrapes no request counter from any Service, init
+// says so and that the metrics check has nothing to map.
+func TestOnboardingInitSaysWhenNoRequestCounterIsScraped(t *testing.T) {
+	root := initRepo(t, "  - {name: web, workload: Deployment/web, services: [web], holds_data: false}\n")
+	none := func(string) ([]byte, string) { return nil, "" }
+	note, err := writeOnboardingScaffold(root, []initEntry{{service: "web", port: 80}}, "web:80", none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(note, "no request counter") || !strings.Contains(note, "skip `onboarding check --metrics`") {
+		t.Fatalf("note %q does not say there is nothing to map", note)
+	}
+	shared := func(string) ([]byte, string) { return []byte(apiCounter), "pod :8000/metrics" }
+	root = initRepo(t, "  - {name: a, workload: Deployment/a, services: [a], holds_data: false}\n  - {name: b, workload: Deployment/b, services: [b], holds_data: false}\n")
+	if note, err = writeOnboardingScaffold(root, []initEntry{{service: "a", port: 80}}, "", shared); err != nil || strings.Contains(note, "no request counter") {
+		t.Fatalf("a counter init could not map is still a counter: %q %v", note, err)
+	}
+}
