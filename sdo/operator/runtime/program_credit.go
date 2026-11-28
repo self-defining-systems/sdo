@@ -55,23 +55,24 @@ func ProgramCreditIndex(outcomes []*contracts.OutcomeRecord) ProgramCredits {
 		if outcome.GetClassification() != "success" {
 			continue
 		}
-		application := finalApplication(outcome)
-		if application == nil || len(application.GetProgramIds()) != 1 || !outcomeAllowsAutomaticCredit(outcome, application.GetProgramIds()[0]) {
-			// A batched application cannot attribute recovery to one playbook.
-			continue
-		}
-		id := application.GetProgramIds()[0]
-		if id == SourceRestoreID {
-			// Built in, never learned: no pair is credited for it.
-			continue
-		}
-		component, ok := applicationComponent(outcome, application, id)
-		if !ok {
-			continue
-		}
-		for _, symptom := range outcome.GetRecoveryVerification().GetOpeningKeys() {
-			if !credits.Credited(id, symptom, component) {
-				credits[id] = append(credits[id], CreditKey{Symptom: symptom, Component: component})
+		for _, application := range finalApplications(outcome) {
+			if len(application.GetProgramIds()) != 1 || !outcomeAllowsAutomaticCredit(outcome, application.GetProgramIds()[0]) {
+				// A batched application cannot attribute recovery to one playbook.
+				continue
+			}
+			id := application.GetProgramIds()[0]
+			if id == SourceRestoreID {
+				// Built in, never learned: no pair is credited for it.
+				continue
+			}
+			component, ok := applicationComponent(outcome, application, id)
+			if !ok {
+				continue
+			}
+			for _, symptom := range outcome.GetRecoveryVerification().GetOpeningKeys() {
+				if !credits.Credited(id, symptom, component) {
+					credits[id] = append(credits[id], CreditKey{Symptom: symptom, Component: component})
+				}
 			}
 		}
 	}
@@ -89,6 +90,67 @@ func ProgramCreditIndex(outcomes []*contracts.OutcomeRecord) ProgramCredits {
 
 func bindingKeyRef(ref sdk.ObjectRef) string { return ref.Kind + "/" + ref.Namespace + "/" + ref.Name }
 
+// finalApplications are the applications that may earn a credited pair: the
+// final application and, when it is the automatic stage's, every other stage
+// application of that report that verified with no later write other than the
+// stage's own. Each stage application is credited on its own settlement: its
+// own Diagnose, never the batch it shared.
+func finalApplications(outcome *contracts.OutcomeRecord) []*contracts.PlanApplication {
+	last := finalApplication(outcome)
+	if last == nil {
+		return nil
+	}
+	stage := map[string]bool{}
+	for _, attempt := range deterministicStageReport(outcome.GetPriorStages()).GetMitigations() {
+		if id := attempt.GetApplyReceipt().GetApplicationId(); id != "" {
+			stage[id] = true
+		}
+	}
+	result := []*contracts.PlanApplication{last}
+	if !stage[last.GetApplicationId()] {
+		return result
+	}
+	var stageApps []*contracts.PlanApplication
+	for _, application := range outcome.GetPlanApplications() {
+		if stage[application.GetApplicationId()] {
+			stageApps = append(stageApps, application)
+		}
+	}
+	for _, application := range stageApps {
+		if application == last || !verifiedApplication(application) {
+			continue
+		}
+		if !laterWrites(outcome, application, func(receipt *contracts.RepairActionReceipt) bool {
+			return slices.ContainsFunc(stageApps, func(own *contracts.PlanApplication) bool { return validate.ApplicationOwnsRepair(own, receipt) })
+		}) {
+			result = append(result, application)
+		}
+	}
+	return result
+}
+
+func verifiedApplication(application *contracts.PlanApplication) bool {
+	return !application.GetDryRun() && application.GetApplied() && application.GetCompletedAt() != nil &&
+		application.GetError() == "" && !application.GetRolledBack() && application.GetRollbackError() == "" &&
+		application.GetVerificationCompleted() && application.GetVerificationPassed() &&
+		application.GetSettlementRejectionReason() == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED
+}
+
+// laterWrites reports a recorded write that own does not claim and that
+// started after application completed.
+func laterWrites(outcome *contracts.OutcomeRecord, application *contracts.PlanApplication, own func(*contracts.RepairActionReceipt) bool) bool {
+	for _, receipt := range outcome.GetRepairActions() {
+		// A failed receipt with a reason wrote nothing that could have recovered users.
+		if receipt.GetStartedAt() == nil || (!receipt.GetSuccess() && receipt.GetFailureReason() != "") || own(receipt) {
+			continue
+		}
+		if receipt.GetStartedAt().AsTime().After(application.GetCompletedAt().AsTime()) {
+			return true
+		}
+	}
+	return false
+}
+
 // finalApplication is the last applied plan application, when it verified and
 // no write that is not its own started after it completed.
 func finalApplication(outcome *contracts.OutcomeRecord) *contracts.PlanApplication {
@@ -101,18 +163,10 @@ func finalApplication(outcome *contracts.OutcomeRecord) *contracts.PlanApplicati
 			last = application
 		}
 	}
-	if last == nil || last.GetError() != "" || last.GetRolledBack() || last.GetRollbackError() != "" || !last.GetVerificationCompleted() || !last.GetVerificationPassed() ||
-		last.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+	if last == nil || !verifiedApplication(last) || laterWrites(outcome, last, func(receipt *contracts.RepairActionReceipt) bool {
+		return validate.ApplicationOwnsRepair(last, receipt)
+	}) {
 		return nil
-	}
-	for _, receipt := range outcome.GetRepairActions() {
-		// A failed receipt with a reason wrote nothing that could have recovered users.
-		if receipt.GetStartedAt() == nil || (!receipt.GetSuccess() && receipt.GetFailureReason() != "") || validate.ApplicationOwnsRepair(last, receipt) {
-			continue
-		}
-		if receipt.GetStartedAt().AsTime().After(last.GetCompletedAt().AsTime()) {
-			return nil
-		}
 	}
 	return last
 }
@@ -170,20 +224,24 @@ func outcomeCaseContext(outcome *contracts.OutcomeRecord) memory.CaseContext {
 	return result
 }
 
-// automaticCreditApplication is the application eligible for attribution under
-// the controller-owned stage protocol. A second effective application, a
-// handoff at the deadline or a reported change before Recovered makes attribution ambiguous.
-func automaticCreditApplication(report *contracts.StageReport, applications []*contracts.PlanApplication, changes []*contracts.AgentChange, recovered time.Time) string {
+// automaticCreditApplications are the stage applications eligible for
+// attribution under the controller-owned stage protocol. A handoff at the
+// deadline, a reported change before Recovered, an unsettled rollout or a
+// write that is not the stage's makes attribution ambiguous, and then none is
+// eligible. With several, each is credited only on its own evidence: recovery
+// settlement requires its own fresh post-apply Diagnose to return NoMatch, so
+// a plan that only shared a clearing batch earns nothing.
+func automaticCreditApplications(report *contracts.StageReport, applications []*contracts.PlanApplication, changes []*contracts.AgentChange, recovered time.Time) map[string]bool {
 	// An early handoff leaves attribution to the agent's changes below: an alert
 	// set that cleared without one was the program's repair, shown late.
 	exit := report.GetRecoveryWait().GetExitReason()
 	early := len(report.GetHandoffKeys()) > 0 && exit == contracts.RecoveryWait_EXIT_REASON_UNCOVERED
 	if recovered.IsZero() || !early && (report.GetHandoffSelected() || exit != contracts.RecoveryWait_EXIT_REASON_CLEARED) {
-		return ""
+		return nil
 	}
 	for _, change := range changes {
 		if !change.GetAt().IsValid() || !change.GetAt().AsTime().After(recovered) {
-			return ""
+			return nil
 		}
 	}
 	ids := map[string]bool{}
@@ -191,23 +249,20 @@ func automaticCreditApplication(report *contracts.StageReport, applications []*c
 		app := attempt.GetApplyReceipt()
 		if stageReceiptWrote(app) && !app.GetRolledBack() {
 			if app.GetApplicationId() == "" || attempt.GetRolloutUnsettledAtDeadline() {
-				return ""
+				return nil
 			}
 			ids[app.GetApplicationId()] = true
 		}
 	}
-	if len(ids) != 1 {
-		return ""
+	if len(ids) == 0 {
+		return nil
 	}
 	for _, app := range applications {
 		if stageReceiptWrote(app) && !app.GetRolledBack() && !ids[app.GetApplicationId()] {
-			return ""
+			return nil
 		}
 	}
-	for id := range ids {
-		return id
-	}
-	return ""
+	return ids
 }
 
 func outcomeAllowsAutomaticCredit(outcome *contracts.OutcomeRecord, playbook string) bool {
@@ -222,6 +277,11 @@ func outcomeAllowsAutomaticCredit(outcome *contracts.OutcomeRecord, playbook str
 	if !automatic {
 		return true
 	}
-	return outcome.GetClassification() == "success" && outcome.GetRecoveryVerification().GetWritesSettled() &&
-		automaticCreditApplication(report, outcome.GetPlanApplications(), outcome.GetAgentChanges(), controllerTime(outcome.GetTimestamps().GetVerifiedAt())) != ""
+	if outcome.GetClassification() != "success" || !outcome.GetRecoveryVerification().GetWritesSettled() {
+		return false
+	}
+	eligible := automaticCreditApplications(report, outcome.GetPlanApplications(), outcome.GetAgentChanges(), controllerTime(outcome.GetTimestamps().GetVerifiedAt()))
+	return slices.ContainsFunc(report.GetMitigations(), func(attempt *contracts.StageMitigation) bool {
+		return attempt.GetPlaybookId() == playbook && eligible[attempt.GetApplyReceipt().GetApplicationId()]
+	})
 }
