@@ -100,6 +100,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil {
 		return lifecycle.Result{}, err
 	}
+	// The operate Job runs in the application's cluster, so it reaches the
+	// application's Services the way in-cluster users do (O1.entry).
+	readiness.EntryDialer = deployment.ClusterEntryDialer{}
 	workers, err := lifecycleWorkers(config, client, control, registry, repository)
 	if err != nil {
 		return lifecycle.Result{}, err

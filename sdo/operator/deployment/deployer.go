@@ -68,8 +68,14 @@ type Deployer struct {
 	// before it is recreated (DefaultJobWaitLimit when zero); past it the
 	// deploy stops with an ImmutableChangeError and the Job keeps running.
 	JobWaitLimit time.Duration
-	// Sleep waits between reads of a running Job; nil is a real timer.
+	// Sleep waits between reads of a running Job and between entry probes;
+	// nil is a real timer.
 	Sleep func(context.Context, time.Duration) error
+	// EntryDialer answers whether a user entry point responds (O1.entry). Nil
+	// skips the check: the process cannot reach the application's Services.
+	EntryDialer EntryDialer
+	// EntryWait bounds the entry check (DefaultEntryWait when zero).
+	EntryWait time.Duration
 }
 
 func (d Deployer) validate() error {
