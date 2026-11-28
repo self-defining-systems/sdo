@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/operability"
 	"sdo.dev/operator/operability/offline"
+	"sdo.dev/operator/rendered"
 )
 
 const (
@@ -85,9 +86,12 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 		if cfg.SteadyState {
 			await = c.awaitVerdict
 		}
-		verdict, err := await(ctx, cfg, func() (HealthVerdict, error) {
-			return c.Verifier.VerifyCandidate(ctx, candidate.Path, candidate.Commit, cfg.Namespace, cfg.HealthObjective, deployment)
-		})
+		evaluate, done, err := c.candidateEvaluation(ctx, cfg, candidate, deployment)
+		if err != nil {
+			return operability.Report{}, nil, err
+		}
+		verdict, err := await(ctx, cfg, evaluate)
+		done()
 		if err != nil && !errors.As(err, &pending) {
 			return operability.Report{}, nil, err
 		}
@@ -112,6 +116,36 @@ func seededDeploymentChecks() []operability.Check {
 		checks = append(checks, operability.Check{ID: string(item) + ".deployment", Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: detail})
 	}
 	return checks
+}
+
+// candidateEvaluation is how the gate evaluates the staged candidate, once per
+// pending repeat. When the verifier keeps a session, the candidate's detectors
+// compile once and one watch observes the live application for every repeat,
+// so a repeat reads a warm prober's next verdict instead of compiling again
+// and waiting out a cold warm-up. The deployment is already rolled out: the
+// session observes it from now. done releases the session.
+func (c Coordinator) candidateEvaluation(ctx context.Context, cfg Config, candidate broker.Candidate, deployment DeploymentReceipt) (func() (HealthVerdict, error), func(), error) {
+	cold := func() (HealthVerdict, error) {
+		return c.Verifier.VerifyCandidate(ctx, candidate.Path, candidate.Commit, cfg.Namespace, cfg.HealthObjective, deployment)
+	}
+	sv, ok := c.Verifier.(SessionVerifier)
+	if !ok {
+		return cold, func() {}, nil
+	}
+	session, err := sv.BeginCandidate(ctx, candidate.Path, candidate.Commit, cfg.Namespace, cfg.HealthObjective)
+	if errors.Is(err, ErrNoSession) {
+		return cold, func() {}, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	pins := rendered.ReceiptPins{EffectiveTree: deployment.EffectiveTree, BaseTree: deployment.BaseTree, Images: deployment.ContainerImages}
+	if err := session.Applied(ctx, pins); err != nil {
+		session.Close()
+		return nil, nil, err
+	}
+	readyAt := c.now()
+	return func() (HealthVerdict, error) { return session.Verdict(ctx, deployment, readyAt) }, session.Close, nil
 }
 
 func failing(checks []operability.Check) bool {

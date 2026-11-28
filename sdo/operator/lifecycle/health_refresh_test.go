@@ -11,6 +11,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/rendered"
 )
 
 func refreshRevision() memory.HealthRevision {
@@ -210,4 +211,48 @@ func TestPendingWindowIsElapsedTimeNotOnlyACount(t *testing.T) {
 	if h.verifier.calls == 0 || h.verifier.calls > 2*h.workers.judgeRuns {
 		t.Fatalf("verifications = %d over %d judge runs, want at most two per candidate once the 2-minute window is spent", h.verifier.calls, h.workers.judgeRuns)
 	}
+}
+
+// sessionVerifier is a SessionVerifier whose session returns the scripted
+// verdicts; it counts sessions, verdicts and cold verifications.
+type sessionVerifier struct {
+	fakeVerifier
+	begins, verdicts, closes int
+	script                   []lifecycle.HealthVerdict
+}
+
+func (v *sessionVerifier) BeginCandidate(context.Context, string, string, string, string) (lifecycle.CandidateSession, error) {
+	v.begins++
+	return &scriptedSession{v: v}, nil
+}
+
+type scriptedSession struct{ v *sessionVerifier }
+
+func (s *scriptedSession) Applied(context.Context, rendered.ReceiptPins) error { return nil }
+func (s *scriptedSession) Verdict(context.Context, lifecycle.DeploymentReceipt, time.Time) (lifecycle.HealthVerdict, error) {
+	s.v.verdicts++
+	return s.v.script[min(s.v.verdicts-1, len(s.v.script)-1)], nil
+}
+func (s *scriptedSession) Close() { s.v.closes++ }
+
+// The gate compiles a candidate's detectors once and repeats a pending verdict
+// from one warm watch: each repeat used to compile the detectors again and wait
+// out a cold prober's warm-up, minutes per repeat.
+func TestGateRepeatsAPendingVerdictFromOneSession(t *testing.T) {
+	verifier := &sessionVerifier{script: []lifecycle.HealthVerdict{pending, pending, clear}}
+	h := newHarness(t, &verifier.fakeVerifier)
+	h.coordinator.Verifier = verifier
+	receipt, err := h.coordinator.RefreshHealth(context.Background(), refreshConfig4(), refreshRevision())
+	if err != nil || receipt.Commit == "" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	if verifier.begins != 1 || verifier.verdicts != 3 || verifier.closes != 1 || verifier.calls != 0 {
+		t.Fatalf("sessions=%d verdicts=%d closes=%d cold verifications=%d, want one session read three times and no cold verification", verifier.begins, verifier.verdicts, verifier.closes, verifier.calls)
+	}
+}
+
+func refreshConfig4() lifecycle.Config {
+	cfg := refreshConfig()
+	cfg.PendingEvaluations = 4
+	return cfg
 }
