@@ -108,7 +108,7 @@ const stateOwn = "sdo.own"
 
 // creditOwn records the keys endpoint saved from the answer to a marked write.
 func creditOwn(step Step, request Request, scenario Scenario, state State) {
-	endpoint, ok := step.Endpoint.(*HTTPEndpoint)
+	endpoint, ok := declaredHTTP(step.Endpoint)
 	if !ok || len(endpoint.Saves) == 0 || !request.writes() {
 		return
 	}

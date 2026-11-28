@@ -352,3 +352,15 @@ func TestVerboseNotesAreOneShortLineEach(t *testing.T) {
 		t.Fatalf("%s", text)
 	}
 }
+
+// A single pass tries a probe before any workload schedules it: it uses the
+// default request and iteration timeouts.
+func TestSinglePassNeedsNoWorkload(t *testing.T) {
+	s := &store{items: map[string]string{}}
+	c := config(s, scenario(true))
+	c.Workloads = nil
+	c.Only, c.Once, c.Alter = []string{"write-item"}, true, false
+	if r := Run(context.Background(), c); r.Red() || s.next != 1 {
+		t.Fatalf("%+v", r.Results)
+	}
+}

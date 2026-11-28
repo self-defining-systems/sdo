@@ -191,9 +191,10 @@ type ExistingRecordsStep struct {
 	// ChecksContent is true when the step's member pattern is valid and
 	// non-empty.
 	ChecksContent bool
-	// OwnKeys are the State keys the step templates (in its path, query,
-	// headers or body) that a write step of the scenario saved, sorted: the
-	// step then reads what the scenario itself wrote.
+	// OwnKeys are the State keys the step templates (in its path, query or
+	// body) that a write step of the scenario saved, sorted: the step then
+	// reads what the scenario itself wrote. Headers carry credentials (a
+	// sign-in token), not record keys, so they do not count.
 	OwnKeys []string
 }
     ExistingRecordsStep is the compiled fact about one step built with

@@ -273,11 +273,12 @@ func singlePass(ctx context.Context, c Config) Report {
 		// Use the same workload selection as the full runner for timeouts.
 		workload, found := scenarioWorkloads(c.Workloads)[id]
 		if !found {
-			result.Detail = "no health-probe workload schedules it"
-		} else {
-			j := judge{c: c, scenario: scenario, workload: workload, shared: &sharedSetup{}}
-			result, report.Log = j.singlePass(ctx)
+			// Not scheduled yet: try it with the default timeouts.
+			workload = traffic.Workload{APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "journey-check",
+				Purpose: traffic.PurposeHealthProbe, Scenarios: []traffic.WorkloadScenario{{ID: id}}}.WithDefaults()
 		}
+		j := judge{c: c, scenario: scenario, workload: workload, shared: &sharedSetup{}}
+		result, report.Log = j.singlePass(ctx)
 	}
 	report.Results = []Result{result}
 	return report

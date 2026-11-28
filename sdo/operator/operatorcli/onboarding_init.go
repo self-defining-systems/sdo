@@ -32,6 +32,19 @@ const OnboardingInitUsage = `usage: sdo-operator onboarding init --repo DIR --na
 
 const initGenerator = layout.TrafficGeneratorsDir + "/generators.go"
 
+// initCallWorkload is the call probes' workload; the map's probe lines place
+// the scenarios in it, so it lists none.
+const initCallWorkload = layout.TrafficWorkloadsDir + "/probe-call.yaml"
+
+const initCallWorkloadYAML = `apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: probe-call
+purpose: health-probe
+timeout: 5s
+iterationTimeout: 20s
+slo: {window: 4, minSamples: 1, maxAge: 10m, maxErrorRate: 1, maxTimeoutRate: 1, maxLatency: 2s}
+`
+
 type initEntry struct {
 	service string
 	port    int
@@ -233,6 +246,11 @@ Steps: []traffic.Step{{Name: "todo", Endpoint: traffic.GET("/{replace-with-journ
 	}
 	if err := safefs.CreateNewFile(repo, initGenerator, generator, 0o644); err != nil {
 		return "", err
+	}
+	if _, err := os.Stat(filepath.Join(repo, initCallWorkload)); errors.Is(err, fs.ErrNotExist) {
+		if err := safefs.CreateNewFile(repo, initCallWorkload, []byte(initCallWorkloadYAML), 0o644); err != nil {
+			return "", errors.Join(err, safefs.Remove(repo, initGenerator))
+		}
 	}
 	if err := safefs.WriteFile(repo, archPath, []byte(document), 0o644); err != nil {
 		return "", errors.Join(err, safefs.Remove(repo, initGenerator))

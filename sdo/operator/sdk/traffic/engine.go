@@ -596,7 +596,7 @@ func (e *Engine) IterateWithTrace(ctx context.Context, iteration uint64, trace f
 			sample.Defect, sample.ByteCap = result.defect, result.byteCap
 			break
 		}
-		if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.MarksExistingRecords() {
+		if endpoint, ok := declaredHTTP(step.Endpoint); ok && endpoint.MarksExistingRecords() {
 			sample.ExistingRecords = existingRecordsOutcome(state[ExistingMembersKey], scenario.Marker)
 			sample.ExistingMarked = existingRecordsMarked(state[ExistingMembersKey], scenario.Marker)
 		}
