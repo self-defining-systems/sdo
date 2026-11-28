@@ -198,3 +198,13 @@ def test_the_responder_is_told_to_work_signals_in_parallel_and_wait_on_condition
 
     assert "every failing signal in parallel" in text
     assert "wait on its effect (`sdo detect --wait`), not a sleep" in text
+
+
+def test_app_managed_state_is_brought_current_through_the_apps_own_path() -> None:
+    """App-owned state is repaired with the app's own tools; hand writes stay possible but are named in the close."""
+
+    text = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8").lower()
+
+    assert "app-owned state" in text
+    assert "the app's own tools" in text
+    assert "are a last resort; name them as such in your close" in text
