@@ -137,7 +137,11 @@ var digestReference = regexp.MustCompile(`^[^@\s]+@sha256:[a-f0-9]{64}$`)
 
 // ResolveAll resolves every distinct image once, using its declared source or
 // the catalog default. Images are resolved sequentially in the order given, so
-// the result and any error do not depend on scheduling. It derives one context
+// the result and any error do not depend on scheduling. An image that fails as
+// a plan fault (a build or a bad reference) does not stop the others: the error
+// joins every such failure, so one correction round sees them all. A timeout,
+// a cancellation or an infrastructure outcome stops at once and is returned
+// alone, so the coordinator's retry still recognizes it. It derives one context
 // per source from that source's Budget, started at the source's first image,
 // and verifies every Ref: a digest reference, and for a source registered with
 // Options.SameRepository, in the repository of the requested image. The result
@@ -167,6 +171,7 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 		}
 	}()
 	out := make(map[string]Resolved, len(images))
+	var failed []error
 	for _, image := range images {
 		if _, done := out[image]; done {
 			continue
@@ -184,7 +189,8 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 		e := c.entries[d.SourceID]
 		config, err := c.Decode(d.SourceID, d.Config)
 		if err != nil {
-			return nil, &Error{Image: image, SourceID: d.SourceID, Err: err}
+			failed = append(failed, &Error{Image: image, SourceID: d.SourceID, Err: err})
+			continue
 		}
 		sourceCtx, started := budgets[d.SourceID]
 		if !started {
@@ -203,14 +209,27 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 			if ctx.Err() == nil && e.budget > 0 && errors.Is(sourceCtx.Err(), context.DeadlineExceeded) {
 				return nil, &TimeoutError{Image: image, Limit: e.budget, Budget: true}
 			}
-			return nil, &Error{Image: image, SourceID: d.SourceID, Err: err}
+			failure := &Error{Image: image, SourceID: d.SourceID, Err: err}
+			var marker interface{ InfrastructureOutcome() bool }
+			if ctx.Err() != nil || (errors.As(err, &marker) && marker.InfrastructureOutcome()) {
+				return nil, failure
+			}
+			failed = append(failed, failure)
+			continue
 		}
 		if err := verify(image, resolved.Ref, e.sameRepository); err != nil {
-			return nil, &Error{Image: image, SourceID: d.SourceID, Err: err}
+			failed = append(failed, &Error{Image: image, SourceID: d.SourceID, Err: err})
+			continue
 		}
 		out[image] = resolved
 	}
-	return out, nil
+	switch len(failed) {
+	case 0:
+		return out, nil
+	case 1:
+		return nil, failed[0]
+	}
+	return nil, errors.Join(failed...)
 }
 
 func verify(image, ref string, sameRepository bool) error {
