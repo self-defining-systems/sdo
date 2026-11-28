@@ -1,4 +1,4 @@
-Incident toy-incident in namespace toy: investigate and fix it. You have kubectl, the shell and the `sdo` command (skills at /opt/sdo/skills). On detector alerts, SDO ends work on recovery; until then, return only to give up. Never print a credential value.
+Incident toy-incident in namespace toy: investigate and fix it. You have kubectl, the shell and the `sdo` command (skills at /opt/sdo/skills). After a change, wait for its effect, not a fixed time. On detector alerts, SDO ends work on recovery; until then, return only to give up. Never print a credential value.
 Opened on Service/component-0 unavailable at 22:13:20 UTC.
 Learned playbooks for this incident (read the README; reuse its scripts where they fit):
 - repair-0: its detector is firing; .sdo/playbooks/repair-0/README.md, diagnose.go

@@ -276,6 +276,7 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 		response.Error = err.Error()
 		return nil
 	}
+	l.lastView = snapshot
 	readView := program.ReadFrom(snapshot)
 	if l.ReadView != nil {
 		readView = l.ReadView(snapshot)
@@ -330,7 +331,7 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 	}
 	now := l.clock().UTC()
 	page := l.pageInput(reads, response.Findings, now)
-	input := detectInput{Request: l.liveRequest(), Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), RecoveryWaiting: l.detectRecoveryWaiting(), AppState: page.AppState, Signals: page.Signals}
+	input := detectInput{Request: l.liveRequest(), Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), RecoveryWaiting: l.detectRecoveryWaiting(), AppState: page.AppState, Signals: page.Signals, HandoffKeys: l.handoffKeys}
 	stage := deterministicStageReport(input.Request.PriorStages)
 	if stage.GetHandoffSelected() && !input.Recovered && l.Programs != nil {
 		ids := map[string]bool{}

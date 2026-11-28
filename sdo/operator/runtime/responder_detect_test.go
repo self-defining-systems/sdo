@@ -208,7 +208,7 @@ func TestDetectWaitReturnsAtTheTimeoutWithoutAChange(t *testing.T) {
 	loop, clock := detectWorldLoop(&detectWorld{})
 	started := clock.Now()
 	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 5})
-	if first := strings.SplitN(response.Text, "\n", 2)[0]; first != "wait: no change in 5s" {
+	if first := strings.SplitN(response.Text, "\n", 2)[0]; first != "wait: no change in 5s; waited for an alert change (no write of yours SDO can see since 07:28:14Z)" {
 		t.Fatalf("first line = %q", first)
 	}
 	if got := clock.Since(started); got != 5*time.Second {
@@ -289,7 +289,8 @@ func waitWasIdle(t *testing.T, response ToolResponse, clock autoClock, seconds i
 		t.Fatal(response.Error)
 	}
 	first := strings.SplitN(response.Text, "\n", 2)[0]
-	if want := fmt.Sprintf("wait: no change in %ds", seconds); first != want {
+	// The idle line names what the wait waited for after a semicolon.
+	if want := fmt.Sprintf("wait: no change in %ds", seconds); first != want && !strings.HasPrefix(first, want+"; waited for ") {
 		t.Fatalf("first line = %q, want %q", first, want)
 	}
 	if got := clock.Since(detectNow()); got != time.Duration(seconds)*time.Second {
