@@ -49,6 +49,23 @@ type RouteExclusion struct {
 	Why   string `yaml:"why"`
 }
 
+// ExcludedRouteValues is the route part of each excluded route ("METHOD route"
+// or a route alone): the route label values a request counter carries for
+// routes users never call (health, metrics, static files).
+func (m Map) ExcludedRouteValues() []string {
+	if m.Routes == nil {
+		return nil
+	}
+	var values []string
+	for _, x := range m.Routes.Excluded {
+		fields := strings.Fields(x.Route)
+		if len(fields) > 0 {
+			values = append(values, fields[len(fields)-1])
+		}
+	}
+	return values
+}
+
 // RouteKey is the operation's route as the route list prints it: its method
 // and RouteValue, the one rule the check and the grader share.
 func (o Operation) RouteKey() string {
