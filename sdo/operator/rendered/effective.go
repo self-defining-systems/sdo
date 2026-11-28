@@ -68,3 +68,29 @@ func Effective(ctx context.Context, objects ObjectStore, base BaseTree) (Effecti
 	}
 	return EffectiveTree{ID: projected, Store: objects}, nil
 }
+
+// ChangedSince lists the tree-relative files that differ between the earlier
+// effective tree and t (added, removed or modified; a rename is both paths).
+// An earlier tree the store no longer holds is an error.
+func (t EffectiveTree) ChangedSince(ctx context.Context, earlier string) ([]string, error) {
+	if !treeID.MatchString(earlier) {
+		return nil, fmt.Errorf("earlier tree %q is not a Git object ID", earlier)
+	}
+	if earlier == t.ID {
+		return nil, nil
+	}
+	if err := requireTree(ctx, t.Store, earlier); err != nil {
+		return nil, err
+	}
+	out, err := t.Store.git(ctx, "diff-tree", "-r", "-z", "--no-renames", "--name-only", earlier, t.ID)
+	if err != nil {
+		return nil, sourceErrorf(SourceUnavailable, "diff effective trees %s and %s: %w", earlier, t.ID, err)
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}

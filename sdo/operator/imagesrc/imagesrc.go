@@ -29,6 +29,10 @@ type Request struct {
 	Tree     string // effective tree the objects came from
 	FS       fs.FS  // the same tracked-only tree view (stdlib type; no render import)
 	Checkout string // materialized checkout of Tree, for builders that need a directory
+	// Finished, when set, hears each image's outcome as ResolveAll records it
+	// (err is nil for a resolved image), so a caller can report progress while
+	// slow resolutions are still running. ResolveAll may call it concurrently.
+	Finished func(image string, err error)
 }
 
 // Inputs is what produced the bytes; carried into DeployedImage evidence.
@@ -289,13 +293,22 @@ func (r *resolution) resolve(parent context.Context, j job) error {
 	r.mu.Lock()
 	r.out[j.image] = resolved
 	r.mu.Unlock()
+	r.finished(j.image, nil)
 	return nil
 }
 
 func (r *resolution) fail(j job, err error) {
+	failure := &Error{Image: j.image, SourceID: j.declared.SourceID, Err: err}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.failed = append(r.failed, indexedFailure{index: j.index, err: &Error{Image: j.image, SourceID: j.declared.SourceID, Err: err}})
+	r.failed = append(r.failed, indexedFailure{index: j.index, err: failure})
+	r.mu.Unlock()
+	r.finished(j.image, failure)
+}
+
+func (r *resolution) finished(image string, err error) {
+	if r.base.Finished != nil {
+		r.base.Finished(image, err)
+	}
 }
 
 // resolveConcurrently runs the jobs of concurrent sources, each source up to

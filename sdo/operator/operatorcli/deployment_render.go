@@ -36,15 +36,20 @@ const DeploymentUsage = `usage: sdo-operator deployment render [--root .] [--pla
 
   build [IMAGE...]
         In a deployer task: build images of your last commit now, the way Go's
-        deploy builds them (same render, image rule, BuildKit and registry),
-        and print one line per image, then each failure with its failing step
-        and build-log tail. IMAGE is a rendered image reference, its
-        repository or the repository's last path segment; none builds every
-        image Go would build. Nothing is applied.
-        A passing build is cached, so Go's deploy of the same commit reuses it.
-        A build can take minutes. Exit 0 when every image built, 1 when one
-        failed, 2 when nothing could be built (render, unknown image, or not
-        a deployer task).`
+        deploy builds them (same render, image rule, BuildKit and registry).
+        With no IMAGE it builds every image whose inputs (its Dockerfile,
+        ignore files and the paths its COPY/ADD read) changed since that
+        image's last good build, and every image that has none; each line says
+        why. IMAGE (a rendered image reference, its repository or the
+        repository's last path segment) builds just those, and the report
+        lists other images your changes affect. Nothing is applied.
+        It blocks until every selected image is done (a cold build of many
+        images takes minutes) and prints one line as each image finishes,
+        then the report: each failure with its failing step and build-log
+        tail. A passing build is cached, so Go's deploy of the same commit
+        reuses it. Exit 0 when every image built or none needed building, 1
+        when one failed, 2 when nothing could be built (render, unknown image,
+        or not a deployer task).`
 
 // RunDeployment runs "sdo-operator deployment <args>" and returns the exit code.
 func RunDeployment(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {

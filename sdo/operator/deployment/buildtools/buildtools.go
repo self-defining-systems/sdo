@@ -3,7 +3,8 @@
 // BuildKit image, the registry push Secret and the builder service account).
 // The transport is a pair of directories on the shared repository volume:
 // the client writes requests/<id>.json, the server answers in
-// responses/<id>.json. A request names images only; the checkout, the plan
+// responses/<id>.json, and appends progress lines to responses/<id>.progress
+// while the build runs. A request names images only; the checkout, the plan
 // and every credential are chosen by the server for the task it serves.
 package buildtools
 
@@ -12,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -42,8 +44,9 @@ type Response struct {
 }
 
 // BuildFunc runs one build for the served task: the report text, whether an
-// image failed, or an error when nothing could be built.
-type BuildFunc func(ctx context.Context, images []string) (text string, failed bool, err error)
+// image failed, or an error when nothing could be built. progress takes one
+// line at a time while the build runs.
+type BuildFunc func(ctx context.Context, images []string, progress func(line string)) (text string, failed bool, err error)
 
 // Server answers build requests in Directory until its context ends, one at a
 // time.
@@ -102,7 +105,7 @@ func (s Server) process(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		response := s.answer(ctx, data)
+		response := s.answer(ctx, data, s.progress(strings.TrimSuffix(name, ".json")+".progress"))
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -118,7 +121,25 @@ func (s Server) process(ctx context.Context) error {
 	return nil
 }
 
-func (s Server) answer(ctx context.Context, data []byte) Response {
+// progress appends lines to responses/<name>; a write failure only loses
+// progress, never the response.
+func (s Server) progress(name string) func(string) {
+	return func(line string) {
+		root, err := os.OpenRoot(filepath.Join(s.Directory, "responses"))
+		if err != nil {
+			return
+		}
+		defer root.Close()
+		file, err := root.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		_, _ = file.WriteString(strings.TrimRight(line, "\n") + "\n")
+	}
+}
+
+func (s Server) answer(ctx context.Context, data []byte, progress func(string)) Response {
 	if len(data) > maxRequestBytes {
 		return Response{Error: "request is too large"}
 	}
@@ -126,16 +147,17 @@ func (s Server) answer(ctx context.Context, data []byte) Response {
 	if err := json.Unmarshal(data, &request); err != nil {
 		return Response{Error: "malformed request: " + err.Error()}
 	}
-	text, failed, err := s.Build(ctx, request.Images)
+	text, failed, err := s.Build(ctx, request.Images, progress)
 	if err != nil {
 		return Response{Text: text, Error: err.Error()}
 	}
 	return Response{Text: text, Failed: failed}
 }
 
-// Call sends one request through directory and waits for its answer.
+// Call sends one request through directory and waits for its answer, copying
+// the server's progress lines to progress (nil: dropped) as they arrive.
 // newID names the request file; Wait pauses between polls (nil: a real timer).
-func Call(ctx context.Context, directory string, request Request, newID func() string, pause func(context.Context, time.Duration) error) (Response, error) {
+func Call(ctx context.Context, directory string, request Request, newID func() string, pause func(context.Context, time.Duration) error, progress io.Writer) (Response, error) {
 	encoded, err := json.Marshal(request)
 	if err != nil {
 		return Response{}, err
@@ -148,9 +170,29 @@ func Call(ctx context.Context, directory string, request Request, newID func() s
 		return Response{}, fmt.Errorf("send build request: %w", err)
 	}
 	responsePath := path.Join("responses", name)
-	defer func() { _ = safefs.Remove(directory, responsePath) }()
+	progressPath := path.Join("responses", strings.TrimSuffix(name, ".json")+".progress")
+	defer func() {
+		_ = safefs.Remove(directory, responsePath)
+		_ = safefs.Remove(directory, progressPath)
+	}()
+	printed := 0
+	copyProgress := func() {
+		if progress == nil {
+			return
+		}
+		lines, err := readFile(directory, progressPath)
+		if err != nil {
+			return
+		}
+		// Only whole lines: the server may be mid-write.
+		if end := strings.LastIndexByte(string(lines), '\n') + 1; end > printed {
+			_, _ = progress.Write(lines[printed:end])
+			printed = end
+		}
+	}
 	for {
 		data, err := readFile(directory, responsePath)
+		copyProgress()
 		if err == nil {
 			var response Response
 			if err := json.Unmarshal(data, &response); err != nil {

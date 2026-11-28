@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"regexp"
 	"slices"
 	"sort"
@@ -53,6 +54,33 @@ type entry struct {
 	budget         time.Duration
 	sameRepository bool
 	concurrency    int
+	// inputs is the source's InputLister, when it implements one.
+	inputs func(fsys fs.FS, m proto.Message) (BuildInputs, error)
+}
+
+// BuildInputs are the tree paths one image's bytes are made from: a changed
+// file at or below any of them can change the image. A Path of "." is the
+// whole tree. Paths are tree-relative and slash-form.
+type BuildInputs struct {
+	Paths []string
+}
+
+// Covers reports whether a change to the tree-relative file p can change the
+// image.
+func (b BuildInputs) Covers(p string) bool {
+	for _, input := range b.Paths {
+		if input == "." || p == input || strings.HasPrefix(p, input+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// InputLister is implemented by a source that builds images from the tree and
+// can say which tree paths a build reads, before building. Sources that read
+// nothing from the tree (a prebuilt pin) do not implement it.
+type InputLister[C proto.Message] interface {
+	BuildInputs(fsys fs.FS, config C) (BuildInputs, error)
 }
 
 // NewCatalog returns an empty catalog.
@@ -120,7 +148,30 @@ func Register[C proto.Message](c *Catalog, id string, s Source[C], o Options, op
 		sameRepository: o.SameRepository,
 		concurrency:    max(1, o.Concurrency),
 	}
+	if lister, ok := any(s).(InputLister[C]); ok {
+		e := c.entries[id]
+		e.inputs = func(fsys fs.FS, m proto.Message) (BuildInputs, error) {
+			//assertcheck:ok C is the lister's own generic message type
+			return lister.BuildInputs(fsys, m.(C))
+		}
+		c.entries[id] = e
+	}
 	return nil
+}
+
+// BuildInputs returns the tree paths the declared image is built from, read
+// from fsys. ok is false when the image's source builds nothing from the tree.
+func (c *Catalog) BuildInputs(d Declared, fsys fs.FS) (inputs BuildInputs, ok bool, err error) {
+	e, found := c.entries[d.SourceID]
+	if !found || e.inputs == nil {
+		return BuildInputs{}, false, nil
+	}
+	config, err := c.Decode(d.SourceID, d.Config)
+	if err != nil {
+		return BuildInputs{}, false, err
+	}
+	inputs, err = e.inputs(fsys, config)
+	return inputs, err == nil, err
 }
 
 // SetDefault names the source used for images no Declared entry covers.

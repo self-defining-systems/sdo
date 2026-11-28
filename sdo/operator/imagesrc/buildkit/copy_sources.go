@@ -30,9 +30,21 @@ var (
 // (variables, wildcards, URLs, heredocs, --from stages) so that the check can
 // only reject a plan the build would reject too.
 func parseCopySources(dockerfile string) []copySource {
+	var out []copySource
+	forEachInstruction(dockerfile, func(keyword, rest string, line int, heredoc bool) {
+		if (keyword == "COPY" || keyword == "ADD") && !heredoc {
+			out = append(out, instructionSources(rest, line)...)
+		}
+	})
+	return out
+}
+
+// forEachInstruction calls visit for every instruction of a Dockerfile with
+// its upper-case keyword, its arguments (continuation lines joined), its first
+// line and whether it carries a heredoc. Heredoc bodies are skipped.
+func forEachInstruction(dockerfile string, visit func(keyword, rest string, line int, heredoc bool)) {
 	escape := `\`
 	lines := strings.Split(strings.ReplaceAll(dockerfile, "\r\n", "\n"), "\n")
-	var out []copySource
 	headerDone := false
 	for i := 0; i < len(lines); i++ {
 		raw := strings.TrimSpace(lines[i])
@@ -72,11 +84,8 @@ func parseCopySources(dockerfile string) []copySource {
 			}
 		}
 		keyword, rest, _ := strings.Cut(statement, " ")
-		if k := strings.ToUpper(keyword); (k == "COPY" || k == "ADD") && len(terminators) == 0 {
-			out = append(out, instructionSources(strings.TrimSpace(rest), start)...)
-		}
+		visit(strings.ToUpper(keyword), strings.TrimSpace(rest), start, len(terminators) > 0)
 	}
-	return out
 }
 
 func instructionSources(args string, line int) []copySource {

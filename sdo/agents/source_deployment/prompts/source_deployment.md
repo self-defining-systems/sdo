@@ -4,5 +4,5 @@ Go derives the deployment from your committed tree: Chart.yaml means Helm, kusto
 Images: an image ${registry_host_2}<path>/N is built from Dockerfile.N or N.Dockerfile (context: its directory), from N/Dockerfile, or from the tree's only Dockerfile. Images you build are pushed only to the operator's registry ${registry_host}. Third-party images keep their tags; Go pins each to its digest.
 The human health objective is: ${health_objective}
 The failing step of the last deploy: ${correction_feedback}. Fix what it names and nothing unrelated; a build or rollout that ran out of time is not your error.
-Commit your work with `git commit`; uncommitted files are never deployed. Try it as you go: `sdo-operator deployment build [IMAGE...]` builds images the way Go will and prints each failing step with its log; Go's deploy reuses a passing build. Reply proposed=true when your last commit builds and is ready.
+Commit your work with `git commit`; uncommitted files are never deployed. Try it as you go: `sdo-operator deployment build` builds the images your changes affect the way Go will, blocks until they finish and prints each failing step with its log; Go's deploy reuses a passing build. Reply proposed=true when your last commit builds and is ready.
 Go then builds, deploys and checks your last commit in ${namespace}, and sends back any step that fails.

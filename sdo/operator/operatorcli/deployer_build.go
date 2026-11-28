@@ -30,7 +30,7 @@ import (
 type deployerBuildWorkers struct {
 	worker_registry.KubernetesExecutor
 	RepositoryMount string
-	Build           func(ctx context.Context, checkout string, images []string) (string, bool, error)
+	Build           func(ctx context.Context, checkout string, images []string, progress func(string)) (string, bool, error)
 	// execute runs the prepared executor; nil is its Execute (tests inject it).
 	execute func(context.Context, worker_registry.KubernetesExecutor, *contracts.AgentTask) (*contracts.AgentResult, error)
 }
@@ -46,8 +46,8 @@ func (w deployerBuildWorkers) Execute(ctx context.Context, task *contracts.Agent
 	}
 	server := buildtools.Server{
 		Directory: filepath.Join(w.RepositoryMount, session, "tools"),
-		Build: func(ctx context.Context, images []string) (string, bool, error) {
-			return w.Build(ctx, checkout, images)
+		Build: func(ctx context.Context, images []string, progress func(string)) (string, bool, error) {
+			return w.Build(ctx, checkout, images, progress)
 		},
 	}
 	if err := server.Prepare(); err != nil {
@@ -79,10 +79,16 @@ func cloneMap(in map[string]string) map[string]string {
 	return out
 }
 
+// imageBuildRecord is where the operate process remembers each image's last
+// good turn-time build, below the repository mount; it outlives one deployer
+// task, so a correction task's build rebuilds only what changed since.
+const imageBuildRecord = ".sdo-runtime/image-builds.json"
+
 // deployerBuild is the build a deployer task's request runs: the checkout's
-// override (if any) and Go's deployer.
-func deployerBuild(deployer deployment.Deployer) func(ctx context.Context, checkout string, images []string) (string, bool, error) {
-	return func(ctx context.Context, checkout string, images []string) (string, bool, error) {
+// override (if any) and Go's deployer, selecting by record when no image is
+// named.
+func deployerBuild(deployer deployment.Deployer, record deployment.BuildRecord) func(ctx context.Context, checkout string, images []string, progress func(string)) (string, bool, error) {
+	return func(ctx context.Context, checkout string, images []string, progress func(string)) (string, bool, error) {
 		plan, err := planfile.Read(checkout, planfile.Catalogs{Renderers: deployer.Renderers, Images: deployer.Images})
 		switch {
 		case errors.Is(err, planfile.ErrAbsent):
@@ -90,7 +96,7 @@ func deployerBuild(deployer deployment.Deployer) func(ctx context.Context, check
 		case err != nil:
 			return "", false, fmt.Errorf("the deployment override .sdo/deployment/plan.yaml does not parse: %w", err)
 		}
-		report, err := deployer.BuildImages(ctx, checkout, plan, images)
+		report, err := deployer.BuildImages(ctx, checkout, plan, images, deployment.BuildOptions{Record: record, Progress: progress})
 		if err != nil {
 			return "", false, err
 		}
@@ -113,11 +119,11 @@ func deploymentBuild(ctx context.Context, args []string, getenv func(string) str
 	if directory == "" {
 		return exitInfra, errors.New("no build service: `deployment build` runs inside a deployer task, where SDO serves Go's own image builds")
 	}
-	response, err := buildtools.Call(ctx, directory, buildtools.Request{Images: args}, processio.RequestID, nil)
+	response, err := buildtools.Call(ctx, directory, buildtools.Request{Images: args}, processio.RequestID, nil, stdout)
 	if err != nil {
 		return exitInfra, err
 	}
-	fmt.Fprint(stdout, response.Text)
+	fmt.Fprint(stdout, "\n"+response.Text)
 	if response.Error != "" {
 		return exitInfra, errors.New(response.Error)
 	}
