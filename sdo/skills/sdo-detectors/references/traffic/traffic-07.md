@@ -36,10 +36,14 @@ type Scenario struct {
 
 func (s Scenario) DeleteReadBack() (Step, bool)
     DeleteReadBack is the read SDO sends after Cleanup to see the data gone:
-    when the last cleanup write is a declarative DELETE, no read follows it, and
-    a step of the scenario reads the same path (so the path has a GET route that
-    answers while the record exists), SDO GETs that path with the DELETE's query
-    and headers and requires 404 or 410. A scenario whose application answers
+    when the last cleanup write is a declarative DELETE, no read follows it,
+    and a step of the scenario reads the same path (so the path has a GET route
+    that answers while the record exists), SDO sends that read again (the
+    last such step's query, headers and credentials) and requires 404 or 410.
+    The read is the scenario's own: a DELETE's query holds write parameters (a
+    branch, a commit message) the read route does not take, and a GET built
+    from them is a request no user sends, which the application may refuse
+    (400) whether or not the data is gone. A scenario whose application answers
     a deleted path otherwise (a trash, a soft delete) reads it back itself;
     that read replaces this one.
 
@@ -235,8 +239,4 @@ func (w Window) Ready() bool
 
 func (w Window) SLO() SLO
     SLO returns the workload's effective SLO, defaults included.
-
-func (w Window) WarmupHorizon() time.Duration
-    WarmupHorizon is how long a freshly started prober needs, at the workload's
-    rate, to give every scenario its SLO's minimum samples.
 ```

@@ -204,10 +204,14 @@ func jsonHasValue(document any, values map[string]bool) bool {
 // DeleteReadBack is the read SDO sends after Cleanup to see the data gone:
 // when the last cleanup write is a declarative DELETE, no read follows it,
 // and a step of the scenario reads the same path (so the path has a GET route
-// that answers while the record exists), SDO GETs that path with the
-// DELETE's query and headers and requires 404 or 410. A scenario whose
-// application answers a deleted path otherwise (a trash, a soft delete) reads
-// it back itself; that read replaces this one.
+// that answers while the record exists), SDO sends that read again (the last
+// such step's query, headers and credentials) and requires 404 or 410. The
+// read is the scenario's own: a DELETE's query holds write parameters (a
+// branch, a commit message) the read route does not take, and a GET built from
+// them is a request no user sends, which the application may refuse (400)
+// whether or not the data is gone. A scenario whose application answers a
+// deleted path otherwise (a trash, a soft delete) reads it back itself; that
+// read replaces this one.
 func (s Scenario) DeleteReadBack() (Step, bool) {
 	var last *HTTPEndpoint
 	name := ""
@@ -229,16 +233,16 @@ func (s Scenario) DeleteReadBack() (Step, bool) {
 	if last == nil {
 		return Step{}, false
 	}
-	read := false
+	var read *HTTPEndpoint
 	for _, step := range append(append([]Step(nil), s.Setup...), s.Steps...) {
 		if endpoint, ok := declaredHTTP(step.Endpoint); ok && endpoint.Method == http.MethodGet && endpoint.Path == last.Path && step.Target == nil {
-			read = true
+			read = endpoint
 		}
 	}
-	if !read {
+	if read == nil {
 		return Step{}, false
 	}
-	gone := &HTTPEndpoint{Method: http.MethodGet, Path: last.Path, Query: last.Query, Headers: last.Headers,
-		basicUser: last.basicUser, basicPassword: last.basicPassword, ExpectStatus: []int{http.StatusNotFound, http.StatusGone}}
+	gone := &HTTPEndpoint{Method: http.MethodGet, Path: read.Path, Query: read.Query, Headers: read.Headers,
+		basicUser: read.basicUser, basicPassword: read.basicPassword, ExpectStatus: []int{http.StatusNotFound, http.StatusGone}}
 	return Step{Name: name + "-gone", Endpoint: gone}, true
 }
