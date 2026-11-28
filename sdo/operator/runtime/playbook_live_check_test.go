@@ -100,8 +100,9 @@ func (f *fakeLiveLoop) operations() (PlanOperationClient, bool) { return f.clien
 // the same failure on first reuse. A Mitigate that fails on the recovered
 // cluster and on the fault-time capture is a note (it may refuse healthy
 // state). A Diagnose that Matches the recovered cluster twice blocks: the
-// automatic stage would apply its repair to healthy state; with a new
-// incident open the cluster is not the recovered one, so it is a note. No
+// automatic stage would apply its repair to healthy state. While a new
+// incident is open the cluster is not the recovered one: nothing runs live
+// beside its responder, and a failure seen once it opened is a note. No
 // Ensure ever runs.
 func TestNewPlaybookChecksRunLiveAtTheClosingTurn(t *testing.T) {
 	for _, c := range []struct {
@@ -111,7 +112,9 @@ func TestNewPlaybookChecksRunLiveAtTheClosingTurn(t *testing.T) {
 		matches            int
 		mitigateErrs       int
 		newIncident        bool
-		blocks, notes      string
+		// opensAfter opens the new incident after that many incidentOpen reads.
+		opensAfter    int
+		blocks, notes string
 	}{
 		{name: "state holds", observe: 0},
 		{name: "needs the change", observe: 1},
@@ -120,7 +123,9 @@ func TestNewPlaybookChecksRunLiveAtTheClosingTurn(t *testing.T) {
 		{name: "diagnose errors twice", diagErrs: 2, blocks: "Diagnose did not complete"},
 		{name: "one healthy match is retried", matches: 1},
 		{name: "diagnose matches the recovered cluster", matches: 2, blocks: "Matches on the recovered cluster: Pod/app/count-cache-0"},
-		{name: "a match while a new incident is open is a note", matches: 2, newIncident: true, notes: "a new incident is open"},
+		{name: "nothing runs live while a new incident is open", matches: 2, newIncident: true, notes: "was not run live: a new incident is open"},
+		{name: "a match after a new incident opened is a note", matches: 2, opensAfter: 1, notes: "Matches on the recovered cluster: Pod/app/count-cache-0; not checked: a new incident is open"},
+		{name: "exec errors after a new incident opened are a note", execErrs: 2, opensAfter: 1, notes: "could not run live twice"},
 		{name: "one exec error is retried", execErrs: 1},
 		{name: "exec errors twice", execErrs: 2, blocks: "could not run live twice"},
 		{name: "one mitigate error is retried", mitigateErrs: 1},
@@ -128,7 +133,15 @@ func TestNewPlaybookChecksRunLiveAtTheClosingTurn(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			loop := &fakeLiveLoop{registry: liveRegistry{p: &liveProgram{diagnoseErrs: c.diagErrs, matches: c.matches, mitigateErrs: c.mitigateErrs}}, client: &flakyExecClient{codedExecClient: codedExecClient{observe: c.observe}, execErrs: c.execErrs}}
-			blocking, notes := checkPlaybooksLive(context.Background(), loop, []liveCheckTarget{{ID: "merge-renamed", Open: &sdktest.ReplayReadView{}}}, func() bool { return c.newIncident })
+			reads := 0
+			open := func() bool {
+				reads++
+				return c.newIncident || c.opensAfter > 0 && reads > c.opensAfter
+			}
+			blocking, notes := checkPlaybooksLive(context.Background(), loop, []liveCheckTarget{{ID: "merge-renamed", Open: &sdktest.ReplayReadView{}}}, open)
+			if c.newIncident && len(loop.client.calls) != 0 {
+				t.Fatalf("the live check ran beside a new incident: %v", loop.client.calls)
+			}
 			for _, call := range loop.client.calls {
 				if call == "ensure" {
 					t.Fatalf("the live check ran an Ensure: %v", loop.client.calls)

@@ -1204,10 +1204,10 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.mu.Lock()
 	incidentOpen := c.incidentOpen || c.earlyReportPendingLocked()
 	// The previous incident's queued closing and cleanup turns never hold the
-	// next incident: they write only .sdo/ memory in their checkout, and the
-	// session's live writes stay behind its own incident's fence. Its source
-	// deploy runs in a maintenance pause, which stops admission, and defers
-	// itself while an incident is open (sourceDeployBusy).
+	// next incident: they edit only their checkout, through a read-only
+	// cluster proxy. Their source deploy runs in a maintenance pause, which
+	// stops admission, and defers itself while an incident is open
+	// (sourceDeployBusy).
 	closurePending := c.closureBlocksNextLocked() && c.broker != nil
 	c.mu.Unlock()
 	if incidentOpen {
@@ -2848,6 +2848,11 @@ func (c *Controller) SetIncidentBroker(broker IncidentBroker) error {
 func (c *Controller) sourceDeployBusy() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.sourceDeployBusyLocked()
+}
+
+// sourceDeployBusyLocked is sourceDeployBusy; caller holds c.mu.
+func (c *Controller) sourceDeployBusyLocked() string {
 	switch {
 	case c.incidentOpen:
 		return "an incident is open"

@@ -266,7 +266,8 @@ func (q *deployingQueue) QueuedReflectionServingCommit(context.Context, string) 
 
 // The closing turn's source deploy is the one step that waits for the next
 // incident: it defers while that incident is open, without repeating the
-// closing turn, and deploys once that incident ended.
+// closing turn or retrying while the incident stays open, and deploys once
+// that incident ended.
 func TestTheClosingTurnsDeployWaitsForTheNextIncident(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := newLateWorld(t, false)
@@ -287,9 +288,10 @@ func TestTheClosingTurnsDeployWaitsForTheNextIncident(t *testing.T) {
 		// The closing turn ends while the next incident is open: its deploy waits.
 		release()
 		synctest.Wait()
-		w.driveAll(10, func() bool { return queue.deferrals.Load() >= 2 })
-		if queue.deferrals.Load() < 2 || queue.deployed.Load() != 0 || !w.c.IncidentOpen() {
-			t.Fatalf("deferrals=%d deployed=%d open=%v: the deploy must wait for the open incident",
+		w.driveAll(10, func() bool { return false })
+		// One deferral, then no retry while the incident stays open.
+		if queue.deferrals.Load() != 1 || queue.deployed.Load() != 0 || !w.c.IncidentOpen() {
+			t.Fatalf("deferrals=%d deployed=%d open=%v: the deploy must wait for the open incident, without retrying",
 				queue.deferrals.Load(), queue.deployed.Load(), w.c.IncidentOpen())
 		}
 		if queue.turns.Load() != 1 {

@@ -626,7 +626,7 @@ func (n NativeIncidentBroker) ProcessQueuedReflection(ctx context.Context, incid
 // reflectQueued runs the queued reflection, when one is owed, and reports
 // whether a source publication is still owed.
 func (n NativeIncidentBroker) reflectQueued(ctx context.Context, incidentID string) (sourceOwed bool, err error) {
-	err = n.withLock(func() error {
+	err = n.withLockReleasable(ctx, func(ctx context.Context) error {
 		ledger, err := n.readLedger(incidentID)
 		if err != nil {
 			return err
@@ -768,7 +768,11 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			if n.Reflector == nil {
 				return nil, errors.New("shell learning requires a registered reflection worker")
 			}
-			decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt)})
+			var decision ReflectionDecision
+			err = n.outsideLock(ctx, effect.IncidentID, func() (err error) {
+				decision, err = n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt)})
+				return err
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -858,7 +862,11 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		if n.Reflector == nil {
 			return nil, errors.New("closing turn requires a registered reflection worker")
 		}
-		decision, err := n.Reflector.Reflect(ctx, closed, workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), Changes: n.closingChangeLines(closed)})
+		var decision ReflectionDecision
+		err = n.outsideLock(ctx, effect.IncidentID, func() (err error) {
+			decision, err = n.Reflector.Reflect(ctx, closed, workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), Changes: n.closingChangeLines(closed)})
+			return err
+		})
 		if err != nil {
 			return nil, fmt.Errorf("reflection worker: %w", err)
 		}
@@ -1256,6 +1264,18 @@ func successfulRollout(receipts []ControllerRolloutReceipt) bool {
 }
 
 func (n NativeIncidentBroker) withLock(fn func() error) error {
+	return n.withLockReleasable(context.Background(), func(context.Context) error { return fn() })
+}
+
+// heldBrokerLock is the broker lock a withLockReleasable caller holds; an
+// agent turn under it gives it up for its duration (outsideLock).
+type heldBrokerLock struct{ file *os.File }
+
+type heldBrokerLockKey struct{}
+
+// withLockReleasable is withLock whose fn may give the lock up around a long
+// agent turn with outsideLock, through the context it receives.
+func (n NativeIncidentBroker) withLockReleasable(ctx context.Context, fn func(context.Context) error) error {
 	if n.Repository == nil || n.LedgerRoot == "" {
 		return errors.New("native broker repository and ledger root are required")
 	}
@@ -1271,7 +1291,39 @@ func (n NativeIncidentBroker) withLock(fn func() error) error {
 		return err
 	}
 	defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-	return fn()
+	return fn(context.WithValue(ctx, heldBrokerLockKey{}, &heldBrokerLock{file: file}))
+}
+
+// outsideLock runs a queued closing turn's agent session without the broker
+// lock, so the next incident's closure, acknowledgment and rollout records
+// never wait for it. The turn edits only its own checkout. Its incident's
+// ledger must be unchanged when the lock is taken back, or the reflection
+// fails and is retried from the ledger. Without a releasable lock (a
+// reflection inside a closure) it runs under the lock.
+func (n NativeIncidentBroker) outsideLock(ctx context.Context, incidentID string, run func() error) error {
+	held, _ := ctx.Value(heldBrokerLockKey{}).(*heldBrokerLock)
+	if held == nil {
+		return run()
+	}
+	before, err := n.readLedger(incidentID)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Flock(int(held.file.Fd()), syscall.LOCK_UN); err != nil {
+		return err
+	}
+	runErr := run()
+	if err := syscall.Flock(int(held.file.Fd()), syscall.LOCK_EX); err != nil {
+		return errors.Join(runErr, fmt.Errorf("retake the broker lock after the closing turn: %w", err))
+	}
+	after, err := n.readLedger(incidentID)
+	if err != nil {
+		return errors.Join(runErr, err)
+	}
+	if !proto.Equal(before, after) {
+		return errors.Join(runErr, fmt.Errorf("the ledger of incident %s changed while its closing turn ran", incidentID))
+	}
+	return runErr
 }
 
 // parseLedger decodes the ProtoJSON ledger stored at path. A document that

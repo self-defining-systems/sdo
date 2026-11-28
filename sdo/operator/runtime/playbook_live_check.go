@@ -144,9 +144,9 @@ func liveCheckTargets(root, incidentID string, ids []string) []liveCheckTarget {
 // stage runs the same reads through the same transport and would fail the
 // same way on first reuse. A Diagnose that Matches the recovered cluster on
 // two looks blocks too: the stage would apply the repair to healthy state
-// (a cache of counts flushed as if poisoned), unless an incident has opened
-// since recovery (incidentOpen), when the Match is a note: the cluster is not
-// the recovered one. A Mitigate that fails on both views is a note: it
+// (a cache of counts flushed as if poisoned). While a new incident is open
+// (incidentOpen) the cluster is not the recovered one: no playbook runs live
+// beside its responder, and a live failure seen once it opened is a note. A Mitigate that fails on both views is a note: it
 // may refuse healthy state by design. The memory check's own time limit
 // running out (ctx done) is a note for every playbook it did not finish.
 func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveCheckTarget, incidentOpen func() bool) (blocking, notes []validate.Diagnostic) {
@@ -159,6 +159,16 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 	const cannotRun = "it failed twice on the recovered cluster through the transport the automatic stage uses, so the stage would fail the same way on first reuse; fix the read (target, container, binary, timeout, output parsing) or remove the program and keep the playbook README-only, then run memory check again"
 	note := func(id, message string) {
 		notes = append(notes, validate.Diagnostic{Rule: LivePlaybookCheckNote, Path: layout.PlaybookDir(id), Message: message})
+	}
+	// A new incident makes the cluster not the recovered one: what fails there
+	// says nothing about the playbook, so it is a note, never a block.
+	opened := func() bool { return incidentOpen != nil && incidentOpen() }
+	failLive := func(id, message, hint string) {
+		if opened() {
+			note(id, message+"; not checked: a new incident is open, so the cluster is not the recovered one")
+			return
+		}
+		fail(id, message, hint)
 	}
 	outOfTime := func(id string) {
 		reason := "was cancelled"
@@ -180,6 +190,11 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 		}
 		if err := loop.loadWorkingPrograms(ctx, id); err != nil {
 			fail(id, fmt.Sprintf("playbook %s did not build for the live check: %v", id, err), "fix the build error, then run memory check again")
+			continue
+		}
+		// Nothing runs live beside a new incident's responder.
+		if opened() {
+			note(id, fmt.Sprintf("playbook %s was not run live: a new incident is open, so the cluster is not the recovered one", id))
 			continue
 		}
 		bindings := target.Bindings
@@ -207,12 +222,7 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 		if err == nil && verdict.Result == program.Match {
 			err = retryOnce(ctx, diagnose)
 			if err == nil && verdict.Result == program.Match {
-				message := fmt.Sprintf("playbook %s: its Diagnose Matches on the recovered cluster: %s", id, verdictObjects(verdict))
-				if incidentOpen != nil && incidentOpen() {
-					note(id, message+"; not checked: a new incident is open, so the cluster is not the recovered one")
-				} else {
-					fail(id, message, matchesHealthy)
-				}
+				failLive(id, fmt.Sprintf("playbook %s: its Diagnose Matches on the recovered cluster: %s", id, verdictObjects(verdict)), matchesHealthy)
 				continue
 			}
 		}
@@ -221,7 +231,7 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 				outOfTime(id)
 				continue
 			}
-			fail(id, fmt.Sprintf("playbook %s: its Diagnose did not complete twice on the live cluster: %v", id, err), diagnoseCannotRun)
+			failLive(id, fmt.Sprintf("playbook %s: its Diagnose did not complete twice on the live cluster: %v", id, err), diagnoseCannotRun)
 			continue
 		}
 		mitigator, ok := loop.programs().Mitigator(id)
@@ -262,7 +272,7 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 				note(id, message+" (on the plan Mitigate made on the fault-time capture, since it planned nothing live; that plan can name objects the repair replaced)")
 				return
 			}
-			fail(id, message, hint)
+			failLive(id, message, hint)
 		}
 		for index, action := range actions {
 			observe, _, expect := externalPair(action)

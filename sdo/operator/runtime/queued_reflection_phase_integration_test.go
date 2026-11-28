@@ -38,6 +38,17 @@ func queuedReflectionLedger(t *testing.T, root string, worker ReflectionWorkerFu
 // closure (for example to escalate it) before the closure is processed.
 func queuedReflectionLedgerWith(t *testing.T, root string, worker ReflectionWorkerFunc, configure func(*NativeIncidentBroker, *IncidentClosure)) *contracts.BrokerLedger {
 	t.Helper()
+	ledger, err := queuedReflectionRun(t, root, worker, configure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ledger
+}
+
+// queuedReflectionRun is queuedReflectionLedgerWith that returns the queued
+// reflection's error instead of failing on it.
+func queuedReflectionRun(t *testing.T, root string, worker ReflectionWorkerFunc, configure func(*NativeIncidentBroker, *IncidentClosure)) (*contracts.BrokerLedger, error) {
+	t.Helper()
 	accepted := filepath.Join(root, "accepted")
 	if err := os.MkdirAll(accepted, 0o755); err != nil {
 		t.Fatal(err)
@@ -93,14 +104,12 @@ func queuedReflectionLedgerWith(t *testing.T, root string, worker ReflectionWork
 	if err := native.AcknowledgeClosure(ctx, receipt); err != nil {
 		t.Fatal(err)
 	}
-	if err := native.ProcessQueuedReflection(ctx, workspace.IncidentID); err != nil {
-		t.Fatal(err)
-	}
+	reflectErr := native.ProcessQueuedReflection(ctx, workspace.IncidentID)
 	ledger, err := native.readLedger(workspace.IncidentID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ledger
+	return ledger, reflectErr
 }
 
 // A queued reflection that published nothing (a no-op, or a decision Go
@@ -231,5 +240,62 @@ func TestAnEscalatedCloseNeverCallsTheReflectionWorkerOnEitherCodePath(t *testin
 				t.Fatalf("%s path: an escalated close published a learning commit %q", path, ledger.GetReflectionCommit())
 			}
 		})
+	}
+}
+
+// A queued closing turn's agent session runs without the broker lock, so the
+// next incident's closure, acknowledgment and rollout records never wait the
+// length of the turn; the reflection still completes and records its phase.
+func TestAQueuedClosingTurnRunsWithoutTheBrokerLock(t *testing.T) {
+	var native NativeIncidentBroker
+	lockFree := false
+	worker := func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+		done := make(chan error, 1)
+		go func() { done <- native.withLock(func() error { return nil }) }()
+		select {
+		case err := <-done:
+			lockFree = err == nil
+		case <-time.After(10 * time.Second):
+		}
+		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic"}, nil
+	}
+	ledger := queuedReflectionLedgerWith(t, t.TempDir(), worker, func(n *NativeIncidentBroker, _ *IncidentClosure) { native = *n })
+	if !lockFree {
+		t.Fatal("the broker lock was held while the closing turn's agent ran")
+	}
+	if !ledger.GetReflectionProcessed() {
+		t.Fatal("the reflection did not complete")
+	}
+	if _, ok := ledger.GetClosurePhaseTimestamps()["reflection_without_commit"]; !ok {
+		t.Fatalf("phases %v", ledger.GetClosurePhaseTimestamps())
+	}
+}
+
+// The closing turn's ledger must be the one it read when it takes the lock
+// back: a change meanwhile fails the reflection (it is retried from the ledger)
+// rather than being overwritten.
+func TestAQueuedClosingTurnRefusesALedgerChangedMeanwhile(t *testing.T) {
+	var native NativeIncidentBroker
+	worker := func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
+		if err := native.withLock(func() error {
+			ledger, err := native.readLedger(workspace.IncidentID)
+			if err != nil {
+				return err
+			}
+			return native.recordPhase(ledger, "synthetic_concurrent_write")
+		}); err != nil {
+			return ReflectionDecision{}, err
+		}
+		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic"}, nil
+	}
+	ledger, err := queuedReflectionRun(t, t.TempDir(), worker, func(n *NativeIncidentBroker, _ *IncidentClosure) { native = *n })
+	if err == nil || !strings.Contains(err.Error(), "changed while its closing turn ran") {
+		t.Fatalf("err = %v: a reflection whose ledger changed during its closing turn must fail", err)
+	}
+	if ledger.GetReflectionProcessed() {
+		t.Fatal("the reflection was recorded as processed over a concurrent ledger change")
+	}
+	if _, ok := ledger.GetClosurePhaseTimestamps()["synthetic_concurrent_write"]; !ok {
+		t.Fatal("the concurrent ledger write was overwritten")
 	}
 }
