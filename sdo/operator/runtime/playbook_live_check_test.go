@@ -19,6 +19,7 @@ import (
 // with quietWhenHealthy, plans it only on the fault-time capture.
 type liveProgram struct {
 	diagnoseErrs     int
+	matches          int
 	mitigateErrs     int
 	quietWhenHealthy bool
 	mitigations      int
@@ -35,6 +36,10 @@ func (p *liveProgram) Diagnose(_ context.Context, _ program.ReadView, b program.
 	if p.diagnoseErrs > 0 {
 		p.diagnoseErrs--
 		return program.Verdict{}, errors.New("exec: mongo: not found")
+	}
+	if p.matches > 0 {
+		p.matches--
+		return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "count-cache-0"}}}}, nil
 	}
 	return program.Verdict{Result: program.NoMatch}, nil
 }
@@ -94,12 +99,15 @@ func (f *fakeLiveLoop) operations() (PlanOperationClient, bool) { return f.clien
 // never costs the playbook, and then blocks too: the automatic stage would hit
 // the same failure on first reuse. A Mitigate that fails on the recovered
 // cluster and on the fault-time capture is a note (it may refuse healthy
-// state). No Ensure ever runs.
+// state). A Diagnose that Matches the recovered cluster twice blocks: the
+// automatic stage would apply its repair to healthy state. No Ensure ever
+// runs.
 func TestNewPlaybookChecksRunLiveAtTheClosingTurn(t *testing.T) {
 	for _, c := range []struct {
 		name               string
 		observe            int32
 		diagErrs, execErrs int
+		matches            int
 		mitigateErrs       int
 		blocks, notes      string
 	}{
@@ -108,13 +116,15 @@ func TestNewPlaybookChecksRunLiveAtTheClosingTurn(t *testing.T) {
 		{name: "script error", observe: 252, blocks: "exited 252"},
 		{name: "one diagnose error is retried", diagErrs: 1},
 		{name: "diagnose errors twice", diagErrs: 2, blocks: "Diagnose did not complete"},
+		{name: "one healthy match is retried", matches: 1},
+		{name: "diagnose matches the recovered cluster", matches: 2, blocks: "Matches on the recovered cluster: Pod/app/count-cache-0"},
 		{name: "one exec error is retried", execErrs: 1},
 		{name: "exec errors twice", execErrs: 2, blocks: "could not run live twice"},
 		{name: "one mitigate error is retried", mitigateErrs: 1},
 		{name: "mitigate fails on both views", mitigateErrs: 3, notes: "Mitigate failed"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			loop := &fakeLiveLoop{registry: liveRegistry{p: &liveProgram{diagnoseErrs: c.diagErrs, mitigateErrs: c.mitigateErrs}}, client: &flakyExecClient{codedExecClient: codedExecClient{observe: c.observe}, execErrs: c.execErrs}}
+			loop := &fakeLiveLoop{registry: liveRegistry{p: &liveProgram{diagnoseErrs: c.diagErrs, matches: c.matches, mitigateErrs: c.mitigateErrs}}, client: &flakyExecClient{codedExecClient: codedExecClient{observe: c.observe}, execErrs: c.execErrs}}
 			blocking, notes := checkPlaybooksLive(context.Background(), loop, []liveCheckTarget{{ID: "merge-renamed", Open: &sdktest.ReplayReadView{}}})
 			for _, call := range loop.client.calls {
 				if call == "ensure" {
