@@ -2123,6 +2123,21 @@ func evaluateOnce(
 		// a typed pending reason naming the scenarios that lacked samples. A
 		// prober that cannot be read is unavailable, named per detector.
 		observer.AwaitWarm(ctx, evaluateOnceWarmupBudget)
+		// A workload whose declared warm-up is longer than this bounded
+		// evaluation may wait never fills here, so it would stay pending on
+		// every repeat. It is the controller's to judge: a clue (a coverage
+		// note) here, never a gating pending verdict.
+		if slow := observer.Unfillable(); len(slow) > 0 {
+			var runnable []sdk.Detector
+			for _, detector := range detectors {
+				if consumer, ok := detector.(traffic.Consumer); ok && slices.ContainsFunc(consumer.TrafficWorkloads(), func(name string) bool { return slices.Contains(slow, name) }) {
+					unavailable = append(unavailable, evaluation.UnavailableDetector{DetectorID: detector.Spec().ID, Clue: true, Reason: "its workload declares a warm-up longer than this bounded evaluation (" + observer.Ceiling.String() + "); the controller judges it"})
+					continue
+				}
+				runnable = append(runnable, detector)
+			}
+			detectors = runnable
+		}
 		if failure := observer.Failure(); failure != "" {
 			// Those detectors are not run: judging them without a window is an
 			// error, and the verdict is that they could not be observed.
@@ -2230,7 +2245,9 @@ func evaluateOnce(
 		}
 	}
 	for i := range unavailable {
-		unavailable[i].Clue = !openingDetectors[unavailable[i].DetectorID]
+		// An entry already a clue (a workload this evaluation cannot fill)
+		// stays one, opener or not.
+		unavailable[i].Clue = unavailable[i].Clue || !openingDetectors[unavailable[i].DetectorID]
 	}
 	findings := make([]sdk.Finding, 0)
 	var controllerErrors []error
