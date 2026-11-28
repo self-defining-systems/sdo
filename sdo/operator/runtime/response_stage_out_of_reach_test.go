@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/outcome"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -72,11 +74,14 @@ func escalationStage(t *testing.T, mitigator program.Mitigator, diagnoser progra
 	return stage, &IncidentState{Request: request, Findings: findings}
 }
 
-// A playbook that localizes an out-of-reach cause closes the incident as
-// escalated without the responder: a Diagnose-only playbook on its verdict,
-// and a playbook with a mitigation through an Escalate plan. A plan that
-// repairs instead proceeds as usual.
-func TestOutOfReachDiagnosisEscalatesWithoutTheResponder(t *testing.T) {
+// A playbook that localizes an out-of-reach cause writes nothing and records
+// the verdict as facts: a Diagnose-only playbook on its verdict, and a
+// playbook with a mitigation through an Escalate plan (the SDK name of "hand
+// this to the agent"). The pipeline does not run the agent on those findings
+// itself; the controller hands the incident to the agent on its next pass
+// (TestAnOutOfReachStageHandsTheIncidentToTheAgent). A plan that repairs
+// instead proceeds as usual.
+func TestOutOfReachDiagnosisRecordsTheVerdictWithoutWriting(t *testing.T) {
 	stall := trafficStallProgram{restartProgram{id: "api-acl"}}
 	escalate := program.Plan{Actions: []program.Action{program.Escalate{Reason: "the dependency's network path is slow outside the namespace"}}}
 	for name, programs := range map[string]struct {
@@ -93,10 +98,10 @@ func TestOutOfReachDiagnosisEscalatesWithoutTheResponder(t *testing.T) {
 				t.Fatal(err)
 			}
 			if agent.dispatched {
-				t.Fatal("the responder was dispatched for an escalated out-of-reach cause")
+				t.Fatal("the pipeline dispatched the responder before the controller handed off")
 			}
 			attempt := state.PriorStages[0].GetMitigations()[0]
-			if attempt.GetResult() != stageEscalated || attempt.GetApplyReceipt() != nil || attempt.GetEscalation().GetVerdict().GetReach() != program.ReachOutOfReach {
+			if attempt.GetResult() != stageOutOfReachResult || attempt.GetApplyReceipt() != nil || attempt.GetEscalation().GetVerdict().GetReach() != program.ReachOutOfReach {
 				t.Fatalf("attempt = %v", attempt)
 			}
 			result, err := responsePipelineResult(state, time.Unix(0, 0), time.Unix(1, 0))
@@ -115,7 +120,7 @@ func TestOutOfReachDiagnosisEscalatesWithoutTheResponder(t *testing.T) {
 				t.Fatalf("causes = %v", message.GetConfirmedRootCauses())
 			}
 			if !outcome.Escalation(message.GetConfirmedRootCauses(), request.GetFindings(), message.GetRepairActions()) {
-				t.Fatalf("the stage's cause does not derive an escalated outcome: %v", message.GetConfirmedRootCauses())
+				t.Fatalf("the stage's cause is not a confirmed out-of-reach cause: %v", message.GetConfirmedRootCauses())
 			}
 		})
 	}
@@ -129,4 +134,19 @@ func TestOutOfReachDiagnosisEscalatesWithoutTheResponder(t *testing.T) {
 			t.Fatalf("dispatched=%v report=%v", agent.dispatched, state.PriorStages[0])
 		}
 	})
+}
+
+// An out-of-reach diagnosis hands the incident to the agent at once, with the
+// verdict in the stage report as facts; SDO never escalates.
+func TestAnOutOfReachStageHandsTheIncidentToTheAgent(t *testing.T) {
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{healAfter: time.Hour}, settings.AfterPlaybookAgent)
+	report := autoReport(c)
+	report.Mitigations = []*contracts.StageMitigation{{PlaybookId: "api-acl", ProgramRevision: "rev", Result: stageOutOfReachResult,
+		EscalationReason: "Diagnose matched an out-of-reach network-delay cause"}}
+	report.RecoveryDeadline = nil
+	autoStep(t, c, world.clock, time.Second)
+	report = autoReport(c)
+	if !report.GetHandoffSelected() || !c.IncidentOpen() || len(report.GetHandoffKeys()) == 0 {
+		t.Fatalf("the out-of-reach stage did not hand off to the agent: %v", report)
+	}
 }

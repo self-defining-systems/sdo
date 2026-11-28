@@ -39,7 +39,7 @@ def test_the_first_message_requires_no_skill_and_no_command() -> None:
 
     for forced in ("Read your skills", "SKILL.md", "Start with", "subagent", "orchestrat"):
         assert forced not in prompt
-    assert "return only to give up" in prompt
+    assert "done is SDO's recovered verdict" in prompt
 
 
 def test_the_fixed_part_of_the_first_message_cannot_grow_back() -> None:

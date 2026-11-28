@@ -35,7 +35,7 @@ func queuedReflectionLedger(t *testing.T, root string, worker ReflectionWorkerFu
 }
 
 // queuedReflectionLedgerWith is queuedReflectionLedger with a hook that may change the broker (its code path) and the
-// closure (for example to escalate it) before the closure is processed.
+// closure (for example to fail it) before the closure is processed.
 func queuedReflectionLedgerWith(t *testing.T, root string, worker ReflectionWorkerFunc, configure func(*NativeIncidentBroker, *IncidentClosure)) *contracts.BrokerLedger {
 	t.Helper()
 	ledger, err := queuedReflectionRun(t, root, worker, configure)
@@ -216,9 +216,9 @@ func TestQueuedReflectionServesTheAcceptedHeadAfterALaterPublication(t *testing.
 	}
 }
 
-// The wiring, not just the gate: an escalated close never reaches the reflection worker on either code path, and
-// the ledger records why. (The responder had a fix and a session; escalation alone withholds learning.)
-func TestAnEscalatedCloseNeverCallsTheReflectionWorkerOnEitherCodePath(t *testing.T) {
+// The wiring, not just the gate: a failed close never reaches the reflection worker on either code path, and
+// the ledger records why. (The responder had a fix and a session; the failed dispatch alone withholds learning.)
+func TestAFailedCloseNeverCallsTheReflectionWorkerOnEitherCodePath(t *testing.T) {
 	for _, path := range []string{"go", "shell"} {
 		t.Run(path, func(t *testing.T) {
 			calls := 0
@@ -227,17 +227,17 @@ func TestAnEscalatedCloseNeverCallsTheReflectionWorkerOnEitherCodePath(t *testin
 				return ReflectionDecision{LearningDecision: "updated"}, nil
 			}, func(native *NativeIncidentBroker, closure *IncidentClosure) {
 				native.CodePath = CodePathConfig{Name: path}
-				closure.EscalatedAt = closure.VerifiedAt
+				closure.DispatchError = "synthetic dispatch failure"
 			})
 			if calls != 0 {
-				t.Fatalf("%s path: the reflection worker ran %d time(s) for an escalated close", path, calls)
+				t.Fatalf("%s path: the reflection worker ran %d time(s) for a failed close", path, calls)
 			}
 			decision := ledger.GetReflectionDecision()
-			if decision.GetLearningDecision() != "no_change" || decision.GetNoChangeReason() != "escalated_no_learning" {
-				t.Fatalf("%s path: decision = %v, want no_change/escalated_no_learning", path, decision)
+			if decision.GetLearningDecision() != "no_change" || decision.GetNoChangeReason() != "failed_no_learning" {
+				t.Fatalf("%s path: decision = %v, want no_change/failed_no_learning", path, decision)
 			}
 			if ledger.GetReflectionCommit() != "" {
-				t.Fatalf("%s path: an escalated close published a learning commit %q", path, ledger.GetReflectionCommit())
+				t.Fatalf("%s path: a failed close published a learning commit %q", path, ledger.GetReflectionCommit())
 			}
 		})
 	}

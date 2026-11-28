@@ -101,10 +101,9 @@ func TestAFailingOrUnansweredTurnEndsInADiscardAndNeverRepeats(t *testing.T) {
 	}
 }
 
-// A closure that escalated gets no cleanup turn, and without a session none is asked.
-func TestNoCleanupTurnWithoutASessionOrForAnEscalatedClosure(t *testing.T) {
+// Without a session no cleanup turn is asked.
+func TestNoCleanupTurnWithoutASession(t *testing.T) {
 	for name, tc := range map[string]func(*repairClosureWorld, *IncidentClosure){
-		"escalated":  func(_ *repairClosureWorld, c *IncidentClosure) { c.EscalatedAt = c.VerifiedAt.Add(1) },
 		"no session": func(_ *repairClosureWorld, c *IncidentClosure) { c.Result.ResponderSessionID = "" },
 	} {
 		t.Run(name, func(t *testing.T) {

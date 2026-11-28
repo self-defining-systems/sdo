@@ -164,7 +164,7 @@ def test_nothing_tells_the_responder_to_end_a_turn_to_wait() -> None:
 
     assert "end your turn to wait" not in text
     assert "between turns" not in text
-    assert "return only to give up" in text
+    assert "done is sdo's recovered verdict" in text
     assert "use failed when giving up" in text
 
 

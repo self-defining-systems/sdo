@@ -11,16 +11,17 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-// stageEscalated is a matched out-of-reach diagnosis the stage escalated: it
-// wrote nothing and handed its findings to closure, which records the
-// incident escalated while they still fire.
-const stageEscalated = "escalated"
+// stageOutOfReachResult is a matched out-of-reach diagnosis: the stage wrote
+// nothing for it and hands the incident to the agent at once, with the verdict
+// in its report as facts. SDO never escalates.
+const stageOutOfReachResult = "out_of_reach"
 
-// stageEscalation decides whether a matched diagnosis escalates. Only a
-// verdict whose Reach is out-of-reach does: a Diagnose-only playbook escalates
-// on it, and a playbook with a mitigation escalates when Mitigate returns an
-// Escalate plan. Any other plan proceeds through ordinary planning.
-func stageEscalation(ctx context.Context, mitigator program.Mitigator, canMitigate bool, view program.ReadView, bindings program.Bindings, verdict program.Verdict, deadline time.Duration) (program.Escalate, bool, error) {
+// stageOutOfReach decides whether a matched diagnosis is out of reach. Only a
+// verdict whose Reach is out-of-reach is: a Diagnose-only playbook on it, and
+// a playbook with a mitigation whose Mitigate returns an Escalate plan (the
+// SDK name of "hand this to the agent"). Any other plan proceeds through
+// ordinary planning.
+func stageOutOfReach(ctx context.Context, mitigator program.Mitigator, canMitigate bool, view program.ReadView, bindings program.Bindings, verdict program.Verdict, deadline time.Duration) (program.Escalate, bool, error) {
 	if !verdict.CanEscalate() {
 		return program.Escalate{}, false, nil
 	}
@@ -44,19 +45,20 @@ func stageEscalation(ctx context.Context, mitigator program.Mitigator, canMitiga
 	return escalation, ok, nil
 }
 
-// stageEscalatedIn reports whether any automatic-stage attempt escalated.
-func stageEscalatedIn(stages []*contracts.StageReport) bool {
+// stageOutOfReachIn reports whether any automatic-stage attempt matched an
+// out-of-reach diagnosis.
+func stageOutOfReachIn(stages []*contracts.StageReport) bool {
 	return slices.ContainsFunc(stages, func(report *contracts.StageReport) bool {
-		return slices.ContainsFunc(report.GetMitigations(), func(attempt *contracts.StageMitigation) bool { return attempt.GetResult() == stageEscalated })
+		return slices.ContainsFunc(report.GetMitigations(), func(attempt *contracts.StageMitigation) bool { return attempt.GetResult() == stageOutOfReachResult })
 	})
 }
 
-// escalateStageAttempt records the escalation and removes its targeted
-// findings from the stage's remaining work, so no later stage repairs a cause
-// out of the namespace's reach. The findings stay in the incident request:
-// closure still observes them.
-func escalateStageAttempt(state *IncidentState, attempt *contracts.StageMitigation, match stageCandidate, bindings program.Bindings, verdict program.Verdict, escalation program.Escalate) {
-	attempt.Result = stageEscalated
+// recordOutOfReachAttempt records the out-of-reach diagnosis and removes its
+// targeted findings from the stage's remaining work, so no later program
+// repairs a cause out of the namespace's reach. The findings stay in the
+// incident request: the agent works them and closure observes them.
+func recordOutOfReachAttempt(state *IncidentState, attempt *contracts.StageMitigation, match stageCandidate, bindings program.Bindings, verdict program.Verdict, escalation program.Escalate) {
+	attempt.Result = stageOutOfReachResult
 	attempt.SkipReason = ""
 	attempt.EscalationReason = escalation.Reason
 	attempt.EscalatedResources = objectRefsContract(escalation.Resources)
@@ -76,11 +78,11 @@ func escalateStageAttempt(state *IncidentState, attempt *contracts.StageMitigati
 	recordStageFindingProgress(attempt, match.targets, state.Findings)
 }
 
-// escalatedCause is the confirmed out-of-reach cause of an escalated attempt:
+// outOfReachCause is the confirmed out-of-reach cause of an escalated attempt:
 // the resources its verdict and Escalate named plus the resources of the
 // opening findings it explained, with those findings as detector evidence.
-func escalatedCause(attempt *contracts.StageMitigation, findings []sdk.Finding) (ConfirmedRootCause, bool) {
-	if attempt.GetResult() != stageEscalated || attempt.GetEscalation() == nil {
+func outOfReachCause(attempt *contracts.StageMitigation, findings []sdk.Finding) (ConfirmedRootCause, bool) {
+	if attempt.GetResult() != stageOutOfReachResult || attempt.GetEscalation() == nil {
 		return ConfirmedRootCause{}, false
 	}
 	run := programRunState(attempt.GetEscalation())

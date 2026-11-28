@@ -47,12 +47,12 @@ func TestFreeTextCauseKeepsMatchWithoutEscalating(t *testing.T) {
 	}{{"free-form", "other", false}, {"other", "other", true}, {"network-delay", "network-delay", true}} {
 		t.Run(tc.label, func(t *testing.T) {
 			v := program.RunDiagnose(ctx, causeLabelDiagnosis{label: tc.label}, nil, program.Bindings{}, time.Second)
-			_, escalates, err := stageEscalation(ctx, nil, false, nil, program.Bindings{}, v, time.Second)
+			_, escalates, err := stageOutOfReach(ctx, nil, false, nil, program.Bindings{}, v, time.Second)
 			if err != nil || v.Result != program.Match || v.CauseClass != tc.category || escalates != tc.escalates {
 				t.Fatalf("verdict = %+v, escalates = %v, err = %v", v, escalates, err)
 			}
 			raw, _ := (causeLabelDiagnosis{label: tc.label}).Diagnose(ctx, nil, program.Bindings{})
-			_, escalates, err = stageEscalation(ctx, nil, false, nil, program.Bindings{}, raw, time.Second)
+			_, escalates, err = stageOutOfReach(ctx, nil, false, nil, program.Bindings{}, raw, time.Second)
 			if err != nil || escalates != tc.escalates {
 				t.Fatalf("raw verdict escalates = %v, err = %v", escalates, err)
 			}

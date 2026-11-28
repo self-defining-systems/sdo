@@ -127,11 +127,12 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 				stats[id] = state
 			}
 		}
-		// A close that did not recover users after a playbook applied lowers that playbook's trust, once per
-		// incident and revision. This is about the outcome (the opening alerts did not clear), not about what a
-		// repair did to data, so it does not touch "never a gate or a credit rule": trust gates nothing, it is
-		// the failure count that coverage and `sdo detect` show.
-		if class := outcome.GetClassification(); class == outcomeclass.Failed || class == outcomeclass.Escalated {
+		// A playbook that applied without recovering users lowers its trust, once per incident and revision:
+		// the stage handed off to the agent after it applied, or the incident closed without recovering (a
+		// historical escalated or failed close). This is about the outcome (the alert set did not clear), not
+		// about what a repair did to data, so it does not touch "never a gate or a credit rule": trust gates
+		// nothing, it is the failure count that coverage and `sdo detect` show.
+		if class := outcome.GetClassification(); class == outcomeclass.Failed || class == outcomeclass.Escalated || stageHandedOffAfterApply(outcome.GetPriorStages()) {
 			for _, application := range outcome.GetPlanApplications() {
 				// "Applied" means what the application loop above counts.
 				if application.GetDryRun() || applicationRefused(application) || (application.GetRolloutPending() != nil && !applicationExecutionFailed(application)) ||
@@ -373,4 +374,15 @@ func applicationExecutionFailed(app *contracts.PlanApplication) bool {
 	}
 	// Missing/truncated reports and presentation errors prove no adverse write.
 	return false
+}
+
+// stageHandedOffAfterApply reports an outcome whose automatic stage applied a
+// playbook and handed the incident to the agent at the stage's bound because
+// the alert set had not recovered. Handoffs by design (a page, a stage where
+// only the built-in restore wrote, a cause the writes cannot reach) do not
+// count: the playbook may have fixed its own cause.
+func stageHandedOffAfterApply(stages []*contracts.StageReport) bool {
+	report := deterministicStageReport(stages)
+	return report.GetHandoffSelected() && playbookWrote(report) &&
+		report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_DEADLINE
 }

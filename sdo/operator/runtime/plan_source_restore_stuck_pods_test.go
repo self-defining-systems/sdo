@@ -309,8 +309,8 @@ func testAutomaticStatefulSetRestore(t *testing.T, replacementUnavailable bool) 
 		}
 		present("store-0", true)
 		present("store-1", true)
-		if closed.Result == nil || !closed.EscalatedAt.IsZero() {
-			t.Fatalf("an unavailable replacement held a recovered incident: open=%v stable since %v now %v escalated at %v", c.IncidentOpen(), c.closureStableSince, world.clock.Now(), closed.EscalatedAt)
+		if closed.Result == nil || len(closed.FinalDetectorStates) == 0 {
+			t.Fatalf("an unavailable replacement held a recovered incident: open=%v stable since %v now %v", c.IncidentOpen(), c.closureStableSince, world.clock.Now())
 		}
 		report := deterministicStageReport(closed.Request.PriorStages)
 		effects := report.GetMitigations()[0].GetApplyReceipt().GetObjectEffects()

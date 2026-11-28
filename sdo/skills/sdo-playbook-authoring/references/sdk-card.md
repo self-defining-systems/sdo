@@ -92,7 +92,7 @@ Full [SDK](program-sdk.md).
 - `type RestoreBackup struct{Target StoreTarget; Backup string; Reason string}`: puts an incident's StoreBackup back.
 - `type RestoreStoreItem struct{Target StoreTarget; Change storestate.Change; EndSessions bool; Reason string}`: puts a store-state item back to its baseline.
 - `type CheckStoreCredential struct{Target StoreTarget; Client sdk.ObjectRef; Container string; Credential storestate.CredentialInputs; Reason string}`: tests a client's credential against a store.
-- `type Escalate struct{Reason string; Resources []sdk.ObjectRef}`: closes the incident as escalated, without a repair.
+- `type Escalate struct{Reason string; Resources []sdk.ObjectRef}`: hands the incident to the agent without a repair.
 - `type ProposeSourceChange struct{Ref sdk.ObjectRef; Path string; Value Value; Reason string}`: proposes a durable change to accepted source.
 
 ## Any other hand repair: commands, HTTP, Jobs, raw API objects

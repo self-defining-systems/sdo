@@ -344,7 +344,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		defer func() { stopTools(); tools.Wait() }()
 		server := SessionToolServer{Directory: directory, Handle: func(toolCtx context.Context, toolRequest ToolRequest) ToolResponse {
 			received := lifecycleio.Now().UTC()
-			if toolRequest.Command != "session-open" { // the worker itself opens the session
+			if toolRequest.Command != "session-open" && toolRequest.Command != "finish" { // the worker itself opens and finishes the session
 				modelCalls.Add(1)
 			}
 			response := loop.Handle(toolCtx, toolRequest)

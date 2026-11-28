@@ -34,7 +34,7 @@ func (p ClosureRetryPolicy) retryBackoffTotal() time.Duration {
 // incidentWorkOpenLocked reports whether the controller still owns incident
 // work: an open incident, a closure in flight, a reflection queued or running
 // (an unreadable queue counts as one), or a finding already pending in the
-// batcher; an escalated open incident is not (see below). Finding states are not work: an active finding, drift included, may
+// batcher. Finding states are not work: an active finding, drift included, may
 // stay active without ever opening an incident or gating a closure, and a
 // finding still pending confirmation is not work until it is batched. Reflection
 // state is work only while this process owns the task that will finish it: it
@@ -49,10 +49,9 @@ func (c *Controller) incidentWorkOpenLocked() (inFlight bool, reflections int) {
 		reflections = 1
 	}
 	_, batched := c.batcher.Deadline()
-	// An escalated incident stays open until its alerts clear but is not work in
-	// flight: no agent runs for it, so a harness reads it as the fault's end state.
-	// A batched opener is work: it closes the escalated incident and opens the next.
-	inFlight = (c.incidentOpen || c.currentIncidentRequest != nil) && c.escalatedAt.IsZero() || c.closureBlocksNextLocked() || batched
+	// An open incident is always work: SDO keeps an agent session on it until
+	// Recovered holds.
+	inFlight = c.incidentOpen || c.currentIncidentRequest != nil || c.closureBlocksNextLocked() || batched
 	return inFlight, reflections
 }
 

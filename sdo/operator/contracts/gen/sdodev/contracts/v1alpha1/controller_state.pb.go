@@ -814,9 +814,6 @@ type ControllerState struct {
 	// period is off. It is persisted so a restart neither starts a new period
 	// nor extends one.
 	Startup *StartupPeriod `protobuf:"bytes,49,opt,name=startup,proto3" json:"startup,omitempty"`
-	// When the open incident escalated: its responder returned, or its response
-	// timeout passed, before Recovered held. No agent is dispatched again.
-	EscalatedAt *timestamppb.Timestamp `protobuf:"bytes,50,opt,name=escalated_at,json=escalatedAt,proto3" json:"escalated_at,omitempty"`
 	// The ID of the last page (the external incident inbox read in detector
 	// mode) the controller accepted, by opening an incident or joining the open
 	// one. A page is accepted once; the producer may leave it in the inbox.
@@ -836,8 +833,13 @@ type ControllerState struct {
 	// incident's session directory, which the responder can write.
 	JoinCaptureIncidentId string `protobuf:"bytes,55,opt,name=join_capture_incident_id,json=joinCaptureIncidentId,proto3" json:"join_capture_incident_id,omitempty"`
 	JoinCaptures          int32  `protobuf:"varint,56,opt,name=join_captures,json=joinCaptures,proto3" json:"join_captures,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// The open incident's agent-session account: the failing alert-set keys the
+	// session was last prompted on, whether that prompt was a resume, the
+	// consecutive resumed turns without progress and the pacing delay. Kept so a
+	// controller restart neither resets the no-progress limit nor the backoff.
+	SessionProgress *ResponderSessionProgress `protobuf:"bytes,57,opt,name=session_progress,json=sessionProgress,proto3" json:"session_progress,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ControllerState) Reset() {
@@ -1143,13 +1145,6 @@ func (x *ControllerState) GetStartup() *StartupPeriod {
 	return nil
 }
 
-func (x *ControllerState) GetEscalatedAt() *timestamppb.Timestamp {
-	if x != nil {
-		return x.EscalatedAt
-	}
-	return nil
-}
-
 func (x *ControllerState) GetLastPageId() string {
 	if x != nil {
 		return x.LastPageId
@@ -1183,6 +1178,13 @@ func (x *ControllerState) GetJoinCaptures() int32 {
 		return x.JoinCaptures
 	}
 	return 0
+}
+
+func (x *ControllerState) GetSessionProgress() *ResponderSessionProgress {
+	if x != nil {
+		return x.SessionProgress
+	}
+	return nil
 }
 
 // StartupObservation is one workload's recent healthy starts: the time from a
@@ -2132,6 +2134,76 @@ func (x *OwnershipAdoptionStatus) GetUnadoptedObjects() []string {
 	return nil
 }
 
+// ResponderSessionProgress is Go's no-progress account of the open incident's
+// agent sessions (runtime sessionProgress).
+type ResponderSessionProgress struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Baseline      []string               `protobuf:"bytes,1,rep,name=baseline,proto3" json:"baseline,omitempty"`
+	Resumed       bool                   `protobuf:"varint,2,opt,name=resumed,proto3" json:"resumed,omitempty"`
+	NoProgress    int32                  `protobuf:"varint,3,opt,name=no_progress,json=noProgress,proto3" json:"no_progress,omitempty"`
+	Delay         *durationpb.Duration   `protobuf:"bytes,4,opt,name=delay,proto3" json:"delay,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResponderSessionProgress) Reset() {
+	*x = ResponderSessionProgress{}
+	mi := &file_sdodev_contracts_v1alpha1_controller_state_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResponderSessionProgress) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResponderSessionProgress) ProtoMessage() {}
+
+func (x *ResponderSessionProgress) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_controller_state_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResponderSessionProgress.ProtoReflect.Descriptor instead.
+func (*ResponderSessionProgress) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_controller_state_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ResponderSessionProgress) GetBaseline() []string {
+	if x != nil {
+		return x.Baseline
+	}
+	return nil
+}
+
+func (x *ResponderSessionProgress) GetResumed() bool {
+	if x != nil {
+		return x.Resumed
+	}
+	return false
+}
+
+func (x *ResponderSessionProgress) GetNoProgress() int32 {
+	if x != nil {
+		return x.NoProgress
+	}
+	return 0
+}
+
+func (x *ResponderSessionProgress) GetDelay() *durationpb.Duration {
+	if x != nil {
+		return x.Delay
+	}
+	return nil
+}
+
 var File_sdodev_contracts_v1alpha1_controller_state_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
@@ -2185,7 +2257,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
 	"\x06action\x18\t \x01(\tR\x06action\x12Q\n" +
 	"\x06reason\x18\n" +
-	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xea&\n" +
+	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\x9f'\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -2229,14 +2301,14 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"step_count\x18, \x01(\x03R\tstepCount\x128\n" +
 	"\x18setup_evaluated_revision\x18. \x01(\tR\x16setupEvaluatedRevision\x12R\n" +
 	"&last_acknowledged_external_incident_id\x180 \x01(\tR\"lastAcknowledgedExternalIncidentId\x12B\n" +
-	"\astartup\x181 \x01(\v2(.sdodev.contracts.v1alpha1.StartupPeriodR\astartup\x12=\n" +
-	"\fescalated_at\x182 \x01(\v2\x1a.google.protobuf.TimestampR\vescalatedAt\x12 \n" +
+	"\astartup\x181 \x01(\v2(.sdodev.contracts.v1alpha1.StartupPeriodR\astartup\x12 \n" +
 	"\flast_page_id\x183 \x01(\tR\n" +
 	"lastPageId\x12:\n" +
 	"\x19dispatch_failure_attempts\x184 \x01(\x05R\x17dispatchFailureAttempts\x12`\n" +
 	"\x14startup_observations\x185 \x03(\v2-.sdodev.contracts.v1alpha1.StartupObservationR\x13startupObservations\x127\n" +
 	"\x18join_capture_incident_id\x187 \x01(\tR\x15joinCaptureIncidentId\x12,\n" +
-	"\rjoin_captures\x188 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\fjoinCaptures\x1aa\n" +
+	"\rjoin_captures\x188 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\fjoinCaptures\x12^\n" +
+	"\x10session_progress\x189 \x01(\v23.sdodev.contracts.v1alpha1.ResponderSessionProgressR\x0fsessionProgress\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +
@@ -2250,7 +2322,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"*state.failed_closure_has_permanent_failure\x126a failed closure requires its permanent failure record\x1aXthis.closure_state != 5 || (has(this.closure_failure) && this.closure_failure.permanent)\x1a\xe0\x02\n" +
 	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xc8\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 5))\x1a\x9c\x01\n" +
 	"!state.pending_closure_has_payload\x129pending or processing closure requires its frozen payload\x1a<!(this.closure_state in [1, 2]) || has(this.pending_closure)\x1a\x9c\x01\n" +
-	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b/\x100J\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#J\x04\b-\x10.J\x04\b6\x107R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x18disabled_setup_detectorsR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursorsR\x18verification_deadline_atR\rhealthy_since\"\xcf\x01\n" +
+	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b/\x100J\x04\b2\x103J\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#J\x04\b-\x10.J\x04\b6\x107R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x18disabled_setup_detectorsR\fescalated_atR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursorsR\x18verification_deadline_atR\rhealthy_since\"\xcf\x01\n" +
 	"\x12StartupObservation\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12:\n" +
 	"\vready_after\x18\x02 \x03(\v2\x19.google.protobuf.DurationR\n" +
@@ -2349,7 +2421,13 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\bfailures\x18\b \x01(\x05R\bfailures\x12)\n" +
 	"\x10accepted_objects\x18\t \x03(\tR\x0facceptedObjects\x12+\n" +
 	"\x11unadopted_objects\x18\n" +
-	" \x03(\tR\x10unadoptedObjects*\x93\x02\n" +
+	" \x03(\tR\x10unadoptedObjects\"\xab\x01\n" +
+	"\x18ResponderSessionProgress\x12\x1a\n" +
+	"\bbaseline\x18\x01 \x03(\tR\bbaseline\x12\x18\n" +
+	"\aresumed\x18\x02 \x01(\bR\aresumed\x12(\n" +
+	"\vno_progress\x18\x03 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\n" +
+	"noProgress\x12/\n" +
+	"\x05delay\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x05delay*\x93\x02\n" +
 	"\rDispatchState\x12\x1e\n" +
 	"\x1aDISPATCH_STATE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13DISPATCH_STATE_IDLE\x10\x01\x12$\n" +
@@ -2399,7 +2477,7 @@ func file_sdodev_contracts_v1alpha1_controller_state_proto_rawDescGZIP() []byte 
 }
 
 var file_sdodev_contracts_v1alpha1_controller_state_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_sdodev_contracts_v1alpha1_controller_state_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_sdodev_contracts_v1alpha1_controller_state_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_sdodev_contracts_v1alpha1_controller_state_proto_goTypes = []any{
 	(DispatchState)(0),                   // 0: sdodev.contracts.v1alpha1.DispatchState
 	(ClosureState)(0),                    // 1: sdodev.contracts.v1alpha1.ClosureState
@@ -2419,108 +2497,110 @@ var file_sdodev_contracts_v1alpha1_controller_state_proto_goTypes = []any{
 	(*ControllerRolloutReceipt)(nil),     // 15: sdodev.contracts.v1alpha1.ControllerRolloutReceipt
 	(*BrokerLedger)(nil),                 // 16: sdodev.contracts.v1alpha1.BrokerLedger
 	(*OwnershipAdoptionStatus)(nil),      // 17: sdodev.contracts.v1alpha1.OwnershipAdoptionStatus
-	nil,                                  // 18: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry
-	nil,                                  // 19: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry
-	nil,                                  // 20: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry
-	nil,                                  // 21: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry
-	nil,                                  // 22: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry
-	(*Finding)(nil),                      // 23: sdodev.contracts.v1alpha1.Finding
-	(*timestamppb.Timestamp)(nil),        // 24: google.protobuf.Timestamp
-	(*IncidentClosure)(nil),              // 25: sdodev.contracts.v1alpha1.IncidentClosure
-	(*DetectorEvaluation)(nil),           // 26: sdodev.contracts.v1alpha1.DetectorEvaluation
-	(*IncidentRequest)(nil),              // 27: sdodev.contracts.v1alpha1.IncidentRequest
-	(*IncidentResult)(nil),               // 28: sdodev.contracts.v1alpha1.IncidentResult
-	(*DetectorTimelineEntry)(nil),        // 29: sdodev.contracts.v1alpha1.DetectorTimelineEntry
-	(*IncidentView)(nil),                 // 30: sdodev.contracts.v1alpha1.IncidentView
-	(*DriftEvent)(nil),                   // 31: sdodev.contracts.v1alpha1.DriftEvent
-	(*SelectionLedger)(nil),              // 32: sdodev.contracts.v1alpha1.SelectionLedger
-	(*NamespaceOnboarding)(nil),          // 33: sdodev.contracts.v1alpha1.NamespaceOnboarding
-	(*durationpb.Duration)(nil),          // 34: google.protobuf.Duration
-	(*SdkGap)(nil),                       // 35: sdodev.contracts.v1alpha1.SdkGap
-	(*UsageMetrics)(nil),                 // 36: sdodev.contracts.v1alpha1.UsageMetrics
-	(*ProposalRejection)(nil),            // 37: sdodev.contracts.v1alpha1.ProposalRejection
-	(*OutcomeRecord)(nil),                // 38: sdodev.contracts.v1alpha1.OutcomeRecord
-	(*ProposalWorkspace)(nil),            // 39: sdodev.contracts.v1alpha1.ProposalWorkspace
-	(*MemoryDiagnostic)(nil),             // 40: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*ResponderSessionProgress)(nil),     // 18: sdodev.contracts.v1alpha1.ResponderSessionProgress
+	nil,                                  // 19: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry
+	nil,                                  // 20: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry
+	nil,                                  // 21: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry
+	nil,                                  // 22: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry
+	nil,                                  // 23: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry
+	(*Finding)(nil),                      // 24: sdodev.contracts.v1alpha1.Finding
+	(*timestamppb.Timestamp)(nil),        // 25: google.protobuf.Timestamp
+	(*IncidentClosure)(nil),              // 26: sdodev.contracts.v1alpha1.IncidentClosure
+	(*DetectorEvaluation)(nil),           // 27: sdodev.contracts.v1alpha1.DetectorEvaluation
+	(*IncidentRequest)(nil),              // 28: sdodev.contracts.v1alpha1.IncidentRequest
+	(*IncidentResult)(nil),               // 29: sdodev.contracts.v1alpha1.IncidentResult
+	(*DetectorTimelineEntry)(nil),        // 30: sdodev.contracts.v1alpha1.DetectorTimelineEntry
+	(*IncidentView)(nil),                 // 31: sdodev.contracts.v1alpha1.IncidentView
+	(*DriftEvent)(nil),                   // 32: sdodev.contracts.v1alpha1.DriftEvent
+	(*SelectionLedger)(nil),              // 33: sdodev.contracts.v1alpha1.SelectionLedger
+	(*NamespaceOnboarding)(nil),          // 34: sdodev.contracts.v1alpha1.NamespaceOnboarding
+	(*durationpb.Duration)(nil),          // 35: google.protobuf.Duration
+	(*SdkGap)(nil),                       // 36: sdodev.contracts.v1alpha1.SdkGap
+	(*UsageMetrics)(nil),                 // 37: sdodev.contracts.v1alpha1.UsageMetrics
+	(*ProposalRejection)(nil),            // 38: sdodev.contracts.v1alpha1.ProposalRejection
+	(*OutcomeRecord)(nil),                // 39: sdodev.contracts.v1alpha1.OutcomeRecord
+	(*ProposalWorkspace)(nil),            // 40: sdodev.contracts.v1alpha1.ProposalWorkspace
+	(*MemoryDiagnostic)(nil),             // 41: sdodev.contracts.v1alpha1.MemoryDiagnostic
 }
 var file_sdodev_contracts_v1alpha1_controller_state_proto_depIdxs = []int32{
-	23, // 0: sdodev.contracts.v1alpha1.FindingState.finding:type_name -> sdodev.contracts.v1alpha1.Finding
-	24, // 1: sdodev.contracts.v1alpha1.FindingState.first_seen_at:type_name -> google.protobuf.Timestamp
-	24, // 2: sdodev.contracts.v1alpha1.FindingState.first_clear_at:type_name -> google.protobuf.Timestamp
-	24, // 3: sdodev.contracts.v1alpha1.FindingState.last_observed_at:type_name -> google.protobuf.Timestamp
-	23, // 4: sdodev.contracts.v1alpha1.BatcherState.findings:type_name -> sdodev.contracts.v1alpha1.Finding
-	18, // 5: sdodev.contracts.v1alpha1.BatcherState.deadlines:type_name -> sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry
-	24, // 6: sdodev.contracts.v1alpha1.BatcherState.deadline:type_name -> google.protobuf.Timestamp
-	25, // 7: sdodev.contracts.v1alpha1.FailedIncidentClosure.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
+	24, // 0: sdodev.contracts.v1alpha1.FindingState.finding:type_name -> sdodev.contracts.v1alpha1.Finding
+	25, // 1: sdodev.contracts.v1alpha1.FindingState.first_seen_at:type_name -> google.protobuf.Timestamp
+	25, // 2: sdodev.contracts.v1alpha1.FindingState.first_clear_at:type_name -> google.protobuf.Timestamp
+	25, // 3: sdodev.contracts.v1alpha1.FindingState.last_observed_at:type_name -> google.protobuf.Timestamp
+	24, // 4: sdodev.contracts.v1alpha1.BatcherState.findings:type_name -> sdodev.contracts.v1alpha1.Finding
+	19, // 5: sdodev.contracts.v1alpha1.BatcherState.deadlines:type_name -> sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry
+	25, // 6: sdodev.contracts.v1alpha1.BatcherState.deadline:type_name -> google.protobuf.Timestamp
+	26, // 7: sdodev.contracts.v1alpha1.FailedIncidentClosure.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
 	8,  // 8: sdodev.contracts.v1alpha1.FailedIncidentClosure.failure:type_name -> sdodev.contracts.v1alpha1.ClosureFailure
-	24, // 9: sdodev.contracts.v1alpha1.ClosureFailure.first_failed_at:type_name -> google.protobuf.Timestamp
-	24, // 10: sdodev.contracts.v1alpha1.ClosureFailure.last_failed_at:type_name -> google.protobuf.Timestamp
-	24, // 11: sdodev.contracts.v1alpha1.ClosureFailure.next_attempt_at:type_name -> google.protobuf.Timestamp
+	25, // 9: sdodev.contracts.v1alpha1.ClosureFailure.first_failed_at:type_name -> google.protobuf.Timestamp
+	25, // 10: sdodev.contracts.v1alpha1.ClosureFailure.last_failed_at:type_name -> google.protobuf.Timestamp
+	25, // 11: sdodev.contracts.v1alpha1.ClosureFailure.next_attempt_at:type_name -> google.protobuf.Timestamp
 	2,  // 12: sdodev.contracts.v1alpha1.ClosureFailure.reason:type_name -> sdodev.contracts.v1alpha1.ClosureFailureReason
-	19, // 13: sdodev.contracts.v1alpha1.ControllerState.scheduler_deadlines:type_name -> sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry
-	20, // 14: sdodev.contracts.v1alpha1.ControllerState.finding_states:type_name -> sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry
+	20, // 13: sdodev.contracts.v1alpha1.ControllerState.scheduler_deadlines:type_name -> sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry
+	21, // 14: sdodev.contracts.v1alpha1.ControllerState.finding_states:type_name -> sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry
 	5,  // 15: sdodev.contracts.v1alpha1.ControllerState.pending_batch:type_name -> sdodev.contracts.v1alpha1.BatcherState
-	26, // 16: sdodev.contracts.v1alpha1.ControllerState.history:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	27, // 17: sdodev.contracts.v1alpha1.ControllerState.incident_request:type_name -> sdodev.contracts.v1alpha1.IncidentRequest
-	28, // 18: sdodev.contracts.v1alpha1.ControllerState.incident_result:type_name -> sdodev.contracts.v1alpha1.IncidentResult
-	24, // 19: sdodev.contracts.v1alpha1.ControllerState.incident_detected_at:type_name -> google.protobuf.Timestamp
-	24, // 20: sdodev.contracts.v1alpha1.ControllerState.incident_dispatched_at:type_name -> google.protobuf.Timestamp
-	24, // 21: sdodev.contracts.v1alpha1.ControllerState.responder_completed_at:type_name -> google.protobuf.Timestamp
-	21, // 22: sdodev.contracts.v1alpha1.ControllerState.detector_clear_since:type_name -> sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry
+	27, // 16: sdodev.contracts.v1alpha1.ControllerState.history:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	28, // 17: sdodev.contracts.v1alpha1.ControllerState.incident_request:type_name -> sdodev.contracts.v1alpha1.IncidentRequest
+	29, // 18: sdodev.contracts.v1alpha1.ControllerState.incident_result:type_name -> sdodev.contracts.v1alpha1.IncidentResult
+	25, // 19: sdodev.contracts.v1alpha1.ControllerState.incident_detected_at:type_name -> google.protobuf.Timestamp
+	25, // 20: sdodev.contracts.v1alpha1.ControllerState.incident_dispatched_at:type_name -> google.protobuf.Timestamp
+	25, // 21: sdodev.contracts.v1alpha1.ControllerState.responder_completed_at:type_name -> google.protobuf.Timestamp
+	22, // 22: sdodev.contracts.v1alpha1.ControllerState.detector_clear_since:type_name -> sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry
 	0,  // 23: sdodev.contracts.v1alpha1.ControllerState.dispatch_state:type_name -> sdodev.contracts.v1alpha1.DispatchState
-	25, // 24: sdodev.contracts.v1alpha1.ControllerState.pending_closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
+	26, // 24: sdodev.contracts.v1alpha1.ControllerState.pending_closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
 	1,  // 25: sdodev.contracts.v1alpha1.ControllerState.closure_state:type_name -> sdodev.contracts.v1alpha1.ClosureState
 	6,  // 26: sdodev.contracts.v1alpha1.ControllerState.closure_receipt:type_name -> sdodev.contracts.v1alpha1.ClosureReceipt
 	8,  // 27: sdodev.contracts.v1alpha1.ControllerState.closure_failure:type_name -> sdodev.contracts.v1alpha1.ClosureFailure
-	29, // 28: sdodev.contracts.v1alpha1.ControllerState.detector_timeline:type_name -> sdodev.contracts.v1alpha1.DetectorTimelineEntry
-	30, // 29: sdodev.contracts.v1alpha1.ControllerState.incident_view:type_name -> sdodev.contracts.v1alpha1.IncidentView
-	31, // 30: sdodev.contracts.v1alpha1.ControllerState.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
+	30, // 28: sdodev.contracts.v1alpha1.ControllerState.detector_timeline:type_name -> sdodev.contracts.v1alpha1.DetectorTimelineEntry
+	31, // 29: sdodev.contracts.v1alpha1.ControllerState.incident_view:type_name -> sdodev.contracts.v1alpha1.IncidentView
+	32, // 30: sdodev.contracts.v1alpha1.ControllerState.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
 	17, // 31: sdodev.contracts.v1alpha1.ControllerState.ownership_adoption:type_name -> sdodev.contracts.v1alpha1.OwnershipAdoptionStatus
 	7,  // 32: sdodev.contracts.v1alpha1.ControllerState.failed_closures:type_name -> sdodev.contracts.v1alpha1.FailedIncidentClosure
-	32, // 33: sdodev.contracts.v1alpha1.ControllerState.selection_ledger:type_name -> sdodev.contracts.v1alpha1.SelectionLedger
-	31, // 34: sdodev.contracts.v1alpha1.ControllerState.accepted_source_drift:type_name -> sdodev.contracts.v1alpha1.DriftEvent
-	33, // 35: sdodev.contracts.v1alpha1.ControllerState.namespace_onboarding:type_name -> sdodev.contracts.v1alpha1.NamespaceOnboarding
-	24, // 36: sdodev.contracts.v1alpha1.ControllerState.busy_until:type_name -> google.protobuf.Timestamp
+	33, // 33: sdodev.contracts.v1alpha1.ControllerState.selection_ledger:type_name -> sdodev.contracts.v1alpha1.SelectionLedger
+	32, // 34: sdodev.contracts.v1alpha1.ControllerState.accepted_source_drift:type_name -> sdodev.contracts.v1alpha1.DriftEvent
+	34, // 35: sdodev.contracts.v1alpha1.ControllerState.namespace_onboarding:type_name -> sdodev.contracts.v1alpha1.NamespaceOnboarding
+	25, // 36: sdodev.contracts.v1alpha1.ControllerState.busy_until:type_name -> google.protobuf.Timestamp
 	11, // 37: sdodev.contracts.v1alpha1.ControllerState.startup:type_name -> sdodev.contracts.v1alpha1.StartupPeriod
-	24, // 38: sdodev.contracts.v1alpha1.ControllerState.escalated_at:type_name -> google.protobuf.Timestamp
-	10, // 39: sdodev.contracts.v1alpha1.ControllerState.startup_observations:type_name -> sdodev.contracts.v1alpha1.StartupObservation
-	34, // 40: sdodev.contracts.v1alpha1.StartupObservation.ready_after:type_name -> google.protobuf.Duration
-	24, // 41: sdodev.contracts.v1alpha1.StartupObservation.last_ready_at:type_name -> google.protobuf.Timestamp
-	24, // 42: sdodev.contracts.v1alpha1.StartupPeriod.began_at:type_name -> google.protobuf.Timestamp
-	24, // 43: sdodev.contracts.v1alpha1.StartupPeriod.bound_at:type_name -> google.protobuf.Timestamp
-	24, // 44: sdodev.contracts.v1alpha1.StartupPeriod.established_at:type_name -> google.protobuf.Timestamp
-	24, // 45: sdodev.contracts.v1alpha1.StartupPeriod.bound_reached_at:type_name -> google.protobuf.Timestamp
-	35, // 46: sdodev.contracts.v1alpha1.ReflectionDecision.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
-	36, // 47: sdodev.contracts.v1alpha1.ReflectionDecision.usage:type_name -> sdodev.contracts.v1alpha1.UsageMetrics
-	37, // 48: sdodev.contracts.v1alpha1.ProposalRejectionLog.rejections:type_name -> sdodev.contracts.v1alpha1.ProposalRejection
+	10, // 38: sdodev.contracts.v1alpha1.ControllerState.startup_observations:type_name -> sdodev.contracts.v1alpha1.StartupObservation
+	18, // 39: sdodev.contracts.v1alpha1.ControllerState.session_progress:type_name -> sdodev.contracts.v1alpha1.ResponderSessionProgress
+	35, // 40: sdodev.contracts.v1alpha1.StartupObservation.ready_after:type_name -> google.protobuf.Duration
+	25, // 41: sdodev.contracts.v1alpha1.StartupObservation.last_ready_at:type_name -> google.protobuf.Timestamp
+	25, // 42: sdodev.contracts.v1alpha1.StartupPeriod.began_at:type_name -> google.protobuf.Timestamp
+	25, // 43: sdodev.contracts.v1alpha1.StartupPeriod.bound_at:type_name -> google.protobuf.Timestamp
+	25, // 44: sdodev.contracts.v1alpha1.StartupPeriod.established_at:type_name -> google.protobuf.Timestamp
+	25, // 45: sdodev.contracts.v1alpha1.StartupPeriod.bound_reached_at:type_name -> google.protobuf.Timestamp
+	36, // 46: sdodev.contracts.v1alpha1.ReflectionDecision.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
+	37, // 47: sdodev.contracts.v1alpha1.ReflectionDecision.usage:type_name -> sdodev.contracts.v1alpha1.UsageMetrics
+	38, // 48: sdodev.contracts.v1alpha1.ProposalRejectionLog.rejections:type_name -> sdodev.contracts.v1alpha1.ProposalRejection
 	14, // 49: sdodev.contracts.v1alpha1.ControllerRolloutReceipt.expectation:type_name -> sdodev.contracts.v1alpha1.ControllerRolloutExpectation
-	24, // 50: sdodev.contracts.v1alpha1.ControllerRolloutReceipt.verified_at:type_name -> google.protobuf.Timestamp
-	25, // 51: sdodev.contracts.v1alpha1.BrokerLedger.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
-	38, // 52: sdodev.contracts.v1alpha1.BrokerLedger.outcome_document:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	25, // 50: sdodev.contracts.v1alpha1.ControllerRolloutReceipt.verified_at:type_name -> google.protobuf.Timestamp
+	26, // 51: sdodev.contracts.v1alpha1.BrokerLedger.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
+	39, // 52: sdodev.contracts.v1alpha1.BrokerLedger.outcome_document:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
 	12, // 53: sdodev.contracts.v1alpha1.BrokerLedger.reflection_decision:type_name -> sdodev.contracts.v1alpha1.ReflectionDecision
 	14, // 54: sdodev.contracts.v1alpha1.BrokerLedger.rollout_expectation:type_name -> sdodev.contracts.v1alpha1.ControllerRolloutExpectation
 	15, // 55: sdodev.contracts.v1alpha1.BrokerLedger.rollout_receipts:type_name -> sdodev.contracts.v1alpha1.ControllerRolloutReceipt
 	6,  // 56: sdodev.contracts.v1alpha1.BrokerLedger.receipt:type_name -> sdodev.contracts.v1alpha1.ClosureReceipt
-	24, // 57: sdodev.contracts.v1alpha1.BrokerLedger.acknowledged_at:type_name -> google.protobuf.Timestamp
-	37, // 58: sdodev.contracts.v1alpha1.BrokerLedger.reflection_rejections:type_name -> sdodev.contracts.v1alpha1.ProposalRejection
-	22, // 59: sdodev.contracts.v1alpha1.BrokerLedger.closure_phase_timestamps:type_name -> sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry
+	25, // 57: sdodev.contracts.v1alpha1.BrokerLedger.acknowledged_at:type_name -> google.protobuf.Timestamp
+	38, // 58: sdodev.contracts.v1alpha1.BrokerLedger.reflection_rejections:type_name -> sdodev.contracts.v1alpha1.ProposalRejection
+	23, // 59: sdodev.contracts.v1alpha1.BrokerLedger.closure_phase_timestamps:type_name -> sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry
 	3,  // 60: sdodev.contracts.v1alpha1.BrokerLedger.reflection_phase:type_name -> sdodev.contracts.v1alpha1.ReflectionPhase
-	39, // 61: sdodev.contracts.v1alpha1.BrokerLedger.reflection_workspace:type_name -> sdodev.contracts.v1alpha1.ProposalWorkspace
+	40, // 61: sdodev.contracts.v1alpha1.BrokerLedger.reflection_workspace:type_name -> sdodev.contracts.v1alpha1.ProposalWorkspace
 	12, // 62: sdodev.contracts.v1alpha1.BrokerLedger.reflection_results:type_name -> sdodev.contracts.v1alpha1.ReflectionDecision
-	24, // 63: sdodev.contracts.v1alpha1.BrokerLedger.reflection_dispatch_at:type_name -> google.protobuf.Timestamp
-	24, // 64: sdodev.contracts.v1alpha1.BrokerLedger.reflection_queued_at:type_name -> google.protobuf.Timestamp
-	40, // 65: sdodev.contracts.v1alpha1.BrokerLedger.reflection_coverage_gaps:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	24, // 66: sdodev.contracts.v1alpha1.OwnershipAdoptionStatus.retry_at:type_name -> google.protobuf.Timestamp
-	24, // 67: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry.value:type_name -> google.protobuf.Timestamp
-	24, // 68: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry.value:type_name -> google.protobuf.Timestamp
-	4,  // 69: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry.value:type_name -> sdodev.contracts.v1alpha1.FindingState
-	24, // 70: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry.value:type_name -> google.protobuf.Timestamp
-	24, // 71: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry.value:type_name -> google.protobuf.Timestamp
-	72, // [72:72] is the sub-list for method output_type
-	72, // [72:72] is the sub-list for method input_type
-	72, // [72:72] is the sub-list for extension type_name
-	72, // [72:72] is the sub-list for extension extendee
-	0,  // [0:72] is the sub-list for field type_name
+	25, // 63: sdodev.contracts.v1alpha1.BrokerLedger.reflection_dispatch_at:type_name -> google.protobuf.Timestamp
+	25, // 64: sdodev.contracts.v1alpha1.BrokerLedger.reflection_queued_at:type_name -> google.protobuf.Timestamp
+	41, // 65: sdodev.contracts.v1alpha1.BrokerLedger.reflection_coverage_gaps:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	25, // 66: sdodev.contracts.v1alpha1.OwnershipAdoptionStatus.retry_at:type_name -> google.protobuf.Timestamp
+	35, // 67: sdodev.contracts.v1alpha1.ResponderSessionProgress.delay:type_name -> google.protobuf.Duration
+	25, // 68: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry.value:type_name -> google.protobuf.Timestamp
+	25, // 69: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry.value:type_name -> google.protobuf.Timestamp
+	4,  // 70: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry.value:type_name -> sdodev.contracts.v1alpha1.FindingState
+	25, // 71: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry.value:type_name -> google.protobuf.Timestamp
+	25, // 72: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry.value:type_name -> google.protobuf.Timestamp
+	73, // [73:73] is the sub-list for method output_type
+	73, // [73:73] is the sub-list for method input_type
+	73, // [73:73] is the sub-list for extension type_name
+	73, // [73:73] is the sub-list for extension extendee
+	0,  // [0:73] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_state_proto_init() }
@@ -2540,7 +2620,7 @@ func file_sdodev_contracts_v1alpha1_controller_state_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   19,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

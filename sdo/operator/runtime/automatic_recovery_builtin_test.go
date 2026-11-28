@@ -50,7 +50,7 @@ func TestABuiltInOnlyStageHandsOffAsItsApplyReturns(t *testing.T) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.responderDone || !c.escalatedAt.IsZero() ||
+	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.responderDone ||
 		autoReport(c).GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_BUILTIN_ONLY || world.restarts.Load() != 1 {
 		t.Fatalf("the agent was started again or the stage acted after handoff: dispatch %s, done %t, writes %d, report %v",
 			c.dispatchState, c.responderDone, world.restarts.Load(), autoReport(c))

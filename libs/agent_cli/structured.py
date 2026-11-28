@@ -328,6 +328,7 @@ def run_structured_turn(
     session_termination_observer: Callable[[WorkerIdentity, float], WorkerTermination | None] | None = None,
     interrupt_when: Callable[[], bool] | None = None,
     provider_capacity: ProviderCapacity | None = None,
+    claude_hooks: Sequence[ClaudeHook] = (),
 ) -> StructuredTurn:
     """Run a turn; Claude capacity waits never consume the active-turn budget.
 
@@ -447,6 +448,7 @@ def run_structured_turn(
                     session_ownership_worker=session_ownership_worker,
                     session_termination_observer=session_termination_observer,
                     interrupt_when=interrupt_when,
+                    claude_hooks=claude_hooks,
                 )
             turn = _with_prior_usage(turn, prior_usage)
             completed = replace(
@@ -579,8 +581,11 @@ def _run_structured_turn_once(
     session_ownership_worker: WorkerIdentity | None = None,
     session_termination_observer: Callable[[WorkerIdentity, float], WorkerTermination | None] | None = None,
     interrupt_when: Callable[[], bool] | None = None,
+    claude_hooks: Sequence[ClaudeHook] = (),
 ) -> StructuredTurn:
     """Run one structured turn, fresh or resumed, and return its output.
+
+    ``claude_hooks`` are added to a Claude turn's settings (Codex has no hooks).
 
     ``interrupt_when`` is polled while the turn runs; once it returns true the
     running CLI is stopped. A turn that still finished normally is returned.
@@ -759,7 +764,7 @@ def _run_structured_turn_once(
                 if resume_session_id is not None:
                     ownership.claim(resume_session_id, resume=True)
             executor = writer
-            selected, extra_args, extra_env = _provider_for(provider, access, workspace, turn_scope)
+            selected, extra_args, extra_env = _provider_for(provider, access, workspace, turn_scope, claude_hooks)
             startup = turn_scope.enter_context(StartupTelemetry(provider))
             if provider == "codex":
                 settings = codex_session_settings({**os.environ, **(environment or {})})
@@ -1280,7 +1285,11 @@ def _model_response_usage(line: str) -> dict[str, object] | None:
 
 
 def _provider_for(
-    provider: AgentProvider, access: AccessMode, workspace: Path, turn_scope: ExitStack
+    provider: AgentProvider,
+    access: AccessMode,
+    workspace: Path,
+    turn_scope: ExitStack,
+    hooks: Sequence[ClaudeHook] = (),
 ) -> tuple[Provider, Sequence[str], dict[str, str]]:
     """Build the agentshim provider, extra CLI arguments and env for *access*.
 
@@ -1297,13 +1306,15 @@ def _provider_for(
         return CodexProvider(sandbox=sandbox), (), {"CODEX_HOME": str(home)}
     denied = disallowed_tools_args()
     if access == "danger-full-access":
-        return ClaudeProvider(), denied, {}
+        return ClaudeProvider(hooks=tuple(hooks)), denied, {}
     root = str(workspace)
     # The Skill tool loads SKILL.md itself, but a skill's references are read
     # with the native Read tool, which the confinement would otherwise deny.
     readable = [root, str(_claude_skills_dir())]
     if access == "read-only":
-        claude = ClaudeProvider(sandbox=SandboxConfig(deny_write=[root], confine_native_reads_to=readable))
+        claude = ClaudeProvider(
+            sandbox=SandboxConfig(deny_write=[root], confine_native_reads_to=readable), hooks=tuple(hooks)
+        )
         return claude, disallowed_tools_args(("Edit", "Write", "NotebookEdit")), claude.sandbox_env
     claude = ClaudeProvider(
         sandbox=SandboxConfig(
@@ -1315,7 +1326,8 @@ def _provider_for(
                 event="PreToolUse",
                 matcher="Bash",
                 command=[sys.executable, DENY_EXECUTABLES_HOOK, "go"],
-            )
+            ),
+            *hooks,
         ],
     )
     return claude, denied, claude.sandbox_env

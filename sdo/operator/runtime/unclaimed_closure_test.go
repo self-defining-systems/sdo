@@ -13,9 +13,10 @@ import (
 )
 
 // A closure that makes no health claim (no final detector states, no
-// health-cleared time) records an incident that ended without Recovered: an
-// escalated incident handing its alerts to the next one, or a terminal
-// dispatch failure, or a page the responder did not verify. Its user tests still fail by definition. Such a closure
+// health-cleared time) records an incident that ended without Recovered: a
+// page the responder did not verify, or a page whose dispatch failed (an
+// alert-opened incident never closes so: SDO keeps working it). Its user
+// tests still fail by definition. Such a closure
 // must commit, or fail once with an actionable error; it must never wait on
 // Recovered, which cannot hold, while it blocks admission of the next
 // incident.
@@ -24,16 +25,9 @@ func TestAClosureWithoutAHealthClaimCommitsWhileItsUserTestsStillFail(t *testing
 		setup func(w *lateWorld)
 		waits bool
 	}{
-		"escalated handover": {func(w *lateWorld) { w.late.failing.Store(true) }, true},
-		"unverified page": {func(w *lateWorld) {
-			w.c.mu.Lock()
-			request := w.c.currentIncidentRequest
-			// The read test joined the page's alert set and still fails.
-			request.Page, request.JoinedKeys, request.OpeningKeys = "synthetic page: reads fail", request.OpeningKeys, nil
-			w.c.currentIncidentResult.Status = IncidentFailed
-			w.c.mu.Unlock()
-		}, false},
-		"dispatch failure": {func(w *lateWorld) {
+		"unverified page": {unverifiedPage, false},
+		"page dispatch failure": {func(w *lateWorld) {
+			unverifiedPage(w)
 			w.c.mu.Lock()
 			w.c.dispatchError = "synthetic dispatch failure"
 			w.c.mu.Unlock()
@@ -76,6 +70,16 @@ func TestAClosureWithoutAHealthClaimCommitsWhileItsUserTestsStillFail(t *testing
 	}
 }
 
+// unverifiedPage turns the first incident into a page the responder did not
+// verify: the read test joined its alert set and still fails.
+func unverifiedPage(w *lateWorld) {
+	w.c.mu.Lock()
+	request := w.c.currentIncidentRequest
+	request.Page, request.JoinedKeys, request.OpeningKeys = "synthetic page: reads fail", request.OpeningKeys, nil
+	w.c.currentIncidentResult.Status = IncidentFailed
+	w.c.mu.Unlock()
+}
+
 // newUserTestLateWorld is a late world whose first incident opened on a user
 // test that keeps failing.
 func newUserTestLateWorld(t *testing.T) *lateWorld {
@@ -93,7 +97,7 @@ func TestAnUnconfirmedDecisionThatChangesNothingIsAnError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := newUserTestLateWorld(t)
 		w.c.config.VerificationTimeout = 3 * time.Second
-		w.late.failing.Store(true)
+		unverifiedPage(w)
 		w.runUntil(30, func() bool { return len(w.closed) > 0 })
 		w.c.mu.Lock()
 		defer w.c.mu.Unlock()

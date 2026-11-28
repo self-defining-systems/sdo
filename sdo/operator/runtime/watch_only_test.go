@@ -108,8 +108,8 @@ func TestWatchOnlyIncidentClosesOnHealthWithoutResponding(t *testing.T) {
 	if firstAcknowledgedAt.IsZero() || !controller.incidentOpen || controller.currentIncidentRequest.IncidentID == closure.Request.IncidentID {
 		t.Fatal("second alert did not open a new incident after acknowledgement")
 	}
-	if !closure.EscalatedAt.IsZero() {
-		t.Fatalf("watch-only closure escalated at %s", closure.EscalatedAt)
+	if closure.Request.SessionGeneration != 0 {
+		t.Fatalf("watch-only closure restarted its session %d times", closure.Request.SessionGeneration)
 	}
 	if elapsed := firstAcknowledgedAt.Sub(healedAt); elapsed > time.Minute {
 		t.Fatalf("closure took %s after the workload healed", elapsed)

@@ -299,12 +299,13 @@ func TestAfterPlaybookDefaultsFileEnvironmentAndValidation(t *testing.T) {
 	if err != nil || cfg.Response.AfterPlaybook != settings.AfterPlaybookWait || time.Duration(cfg.Response.AfterPlaybookWait) != 3*time.Minute {
 		t.Fatalf("file: %v %+v", err, cfg.Response)
 	}
-	cfg, err = settings.Resolve([]string{file}, []string{"SDO_AGENT_MODEL=m", "SDO_RESPONSE_AFTER_PLAYBOOK=escalate"})
-	if err != nil || cfg.Response.AfterPlaybook != settings.AfterPlaybookEscalate {
+	cfg, err = settings.Resolve([]string{file}, []string{"SDO_AGENT_MODEL=m", "SDO_RESPONSE_AFTER_PLAYBOOK=agent"})
+	if err != nil || cfg.Response.AfterPlaybook != settings.AfterPlaybookAgent {
 		t.Fatalf("environment must win over the file: %v %+v", err, cfg.Response)
 	}
 	for _, mutate := range []func(*settings.Config){
 		func(c *settings.Config) { c.Response.AfterPlaybook = "never" },
+		func(c *settings.Config) { c.Response.AfterPlaybook = "escalate" }, // SDO never escalates
 		func(c *settings.Config) { c.Response.AfterPlaybookWait = 0 },
 	} {
 		bad := settings.Default()

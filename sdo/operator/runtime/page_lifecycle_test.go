@@ -94,7 +94,7 @@ func TestPageDispatchesDuringWarmupWithoutOpeningAlerts(t *testing.T) {
 	}
 }
 
-func TestPageWithoutAlertsClosesEscalatedAtVerificationBound(t *testing.T) {
+func TestPageWithoutAlertsClosesUnverifiedAtVerificationBound(t *testing.T) {
 	for _, cause := range []string{"responder gave up", "response timeout", "task preparation failed", "observer unavailable"} {
 		t.Run(cause, func(t *testing.T) {
 			ctx := context.Background()
@@ -149,12 +149,12 @@ func TestPageWithoutAlertsClosesEscalatedAtVerificationBound(t *testing.T) {
 					t.Fatal(err)
 				}
 				if now.Before(bound) && closed != nil {
-					t.Fatal("escalation closed while verification still had time")
+					t.Fatal("the page closed while verification still had time")
 				}
 				now = now.Add(time.Second)
 			}
 			if c.IncidentOpen() || closed == nil {
-				t.Fatal("page escalation did not finalize the incident")
+				t.Fatal("the page bound did not finalize the incident")
 			}
 			if lease, err := gate.Begin(); err == nil || err.Error() != "incident_closed" {
 				if lease != nil {
@@ -162,8 +162,8 @@ func TestPageWithoutAlertsClosesEscalatedAtVerificationBound(t *testing.T) {
 				}
 				t.Fatalf("terminal closure left the mutation gate open: %v", err)
 			}
-			if closed.EscalatedAt.IsZero() || closed.HealthClearedAt != nil || closed.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
-				t.Fatalf("expected an escalated closure without recovery proof: %+v", closed)
+			if closed.HealthClearedAt != nil || closed.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
+				t.Fatalf("expected an unverified closure without recovery proof: %+v", closed)
 			}
 		})
 	}
@@ -368,9 +368,6 @@ func TestPageStartsOnItsResponderWithoutAScan(t *testing.T) {
 		{"startup", func(cfg *ControllerConfig, _ *ResponderLoop, _ *IncidentRequest) { cfg.StartupBound = 30 * time.Minute }},
 		{"frozen task", func(_ *ControllerConfig, _ *ResponderLoop, request *IncidentRequest) {
 			request.PreparedAgentTask = "task"
-		}},
-		{"escalate policy", func(cfg *ControllerConfig, _ *ResponderLoop, _ *IncidentRequest) {
-			cfg.AfterPlaybook = settings.AfterPlaybookEscalate
 		}},
 		{"wait policy", func(cfg *ControllerConfig, _ *ResponderLoop, _ *IncidentRequest) {
 			cfg.AfterPlaybook = settings.AfterPlaybookWait

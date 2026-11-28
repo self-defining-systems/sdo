@@ -491,3 +491,11 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 [template_data.onboarding-onboarding-skills_root]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[responder.prior_session]
+max_chars = 4100
+reason = "A fresh agent session's start: Go renders the incident's facts and the earlier session's result, known writes and still-failing alerts, capped at 4000 code points."
+
+[responder.resume]
+max_chars = 4600
+reason = "The resume message Go renders after a return before Recovered: the not-recovered verdict, each failing alert-set member with its newest sample (200 code points each) and the fixed reflective ask (about 480 code points)."

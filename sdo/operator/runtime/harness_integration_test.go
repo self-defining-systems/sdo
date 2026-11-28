@@ -431,12 +431,12 @@ func (h *harness) crashController(why string) {
 	}
 }
 
-// recordEscalation ends the open incident whose responder returned before
-// Recovered. SDO sends the agent one task per incident, so an escalated
-// incident has no further handler and stays open until its alerts clear; the
-// reliability check counts that escalation as the incident's (failed) end
-// rather than a wedge, since only a clearing alert can close it.
-func (h *harness) recordEscalation() {
+// recordUnrecovered ends the open incident whose responder returned before
+// Recovered (its next session pending or started) by the run's end. SDO keeps
+// working it (resume or a paced fresh session) until its alerts clear; the
+// reliability check counts that as the incident's (failed) end rather than a
+// wedge, since the run ended first.
+func (h *harness) recordUnrecovered() {
 	h.mu.Lock()
 	c := h.ctl
 	h.mu.Unlock()
@@ -445,7 +445,7 @@ func (h *harness) recordEscalation() {
 	}
 	c.mu.Lock()
 	incident := ""
-	if c.incidentOpen && c.currentIncidentRequest != nil && !c.escalatedAt.IsZero() {
+	if c.incidentOpen && c.currentIncidentRequest != nil && (c.responderDone || c.currentIncidentRequest.SessionGeneration > 0) {
 		incident = c.currentIncidentRequest.IncidentID
 	}
 	c.mu.Unlock()
@@ -589,7 +589,7 @@ func runHarness(t *testing.T, seed uint64) (sim.Log, sim.Config) {
 		e.do()
 	}
 	time.Sleep(time.Until(h.start.Add(p.Quiesce + p.Settle)))
-	h.recordEscalation()
+	h.recordUnrecovered()
 	h.rec.Add(sim.RunEnded{At: h.now()})
 	if os.Getenv("SDO_SIM_OUT") != "" {
 		for _, line := range h.out.lines() {

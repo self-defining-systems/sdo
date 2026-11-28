@@ -750,6 +750,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			loop.IncidentStatus = func() *apihistory.IncidentVerified { return controller.incidentVerificationWarning(request.IncidentID) }
 			loop.RecoveryWaiting = func() string { return controller.recoveryWaitingLine(request.IncidentID) }
 			loop.AlertProgress = func() bool { return controller.alertSetProgressed(request.IncidentID) }
+			loop.Finish = func(finish FinishRequest) FinishAnswer { return controller.answerFinish(request.IncidentID, finish) }
 			if options.NativeBroker != nil {
 				gate, err := controller.incidentGate(request.IncidentID)
 				if err != nil {

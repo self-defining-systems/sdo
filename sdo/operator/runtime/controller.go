@@ -86,8 +86,8 @@ type ControllerConfig struct {
 	AfterPlaybookWait time.Duration
 	// DispatchPrepareBound is response.dispatch_prepare_bound: how long a
 	// transient failure to prepare the responder's task retries before the
-	// incident escalates. Zero takes the default; it is capped by the response
-	// timeout.
+	// responder's dispatch ends and a fresh session follows. Zero takes the
+	// default; it is capped by the response timeout.
 	DispatchPrepareBound time.Duration
 	// ClosureRetry bounds resubmission of a closure the broker rejects.
 	ClosureRetry ClosureRetryPolicy
@@ -265,7 +265,11 @@ type Controller struct {
 	incidentDetectedAt      time.Time
 	incidentDispatchedAt    time.Time
 	responderCompletedAt    time.Time
-	escalatedAt             time.Time
+	// session is Go's no-progress account and pacing of the open incident's
+	// agent sessions; writesSettled is the last closure pass's settle of
+	// SDO's known writes. Guarded by mu.
+	session       sessionProgress
+	writesSettled bool
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
@@ -755,7 +759,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		if ctx.Err() == nil {
 			c.loseAutomaticObservation(now)
 			if c.maybeCloseIncidentObserved(ctx, ctx, now, nil, err) {
-				// The run loop must persist and process the escalated closure.
+				// The run loop must persist and process the page's bounded closure.
 				return nil
 			}
 		}
@@ -1417,7 +1421,7 @@ func (c *Controller) nextWake() (time.Time, string) {
 	}
 	c.mu.Lock()
 	verificationPending := c.incidentOpen && c.responderDone && c.currentIncidentRequest != nil &&
-		(c.escalatedAt.IsZero() || pageOpened(c.currentIncidentRequest)) && !c.midStage.running && !c.closurePreparingLocked()
+		!c.midStage.running && !c.closurePreparingLocked()
 	verificationDeadline := time.Time{}
 	if verificationPending {
 		verificationDeadline = c.recoveryGraceEndsLocked()
@@ -1430,6 +1434,13 @@ func (c *Controller) nextWake() (time.Time, string) {
 		// A running stability window outlives the deadline; its own wake
 		// below covers it, and an expired deadline would spin the loop.
 		if !verificationDeadline.After(c.clock()) && c.recoveryWindowRunningLocked(c.clock()) {
+			verificationDeadline = time.Time{}
+		}
+		// Past its grace or stage deadline an alert-opened incident acts on
+		// the next observation (a handoff, or a fresh session once an alert
+		// is not shown clear); the expired bound is not a wake, which would
+		// spin the loop.
+		if !verificationDeadline.After(c.clock()) && !pageOpened(c.currentIncidentRequest) {
 			verificationDeadline = time.Time{}
 		}
 	}
@@ -1803,8 +1814,8 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 	}
 	var timedOut *ResponseTimeoutError
 	if errors.As(completion.err, &timedOut) {
-		// The response timeout is a safety stop, not a failure: the agent never
-		// reached Recovered, so the incident escalates and stays open.
+		// The response timeout ends this session, not the incident: the agent
+		// never reached Recovered, so a fresh session follows (restartSessionLocked).
 		c.responderDone = true
 		c.responderCompletedAt = observedAt.UTC()
 		if c.responderCompletedAt.Before(c.incidentDispatchedAt) {
@@ -1824,14 +1835,13 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 			result.Status, result.Error = IncidentFailed, timedOut.Error()
 		}
 		c.currentIncidentResult = result
-		c.escalateLocked(c.responderCompletedAt)
 		c.resetDispatchRetryLocked()
 	} else if workerNeverStarted(completion.err) {
-		// No worker took a turn: escalate like a task that could not be prepared.
+		// No worker took a turn: end it like a task that could not be prepared.
 		if len(completion.result.PlanApplications) > 0 && deterministicStageReport(c.currentIncidentRequest.PriorStages) != nil {
 			c.currentIncidentResult = cloneIncidentResult(&completion.result)
 		}
-		c.escalateDispatchFailureLocked(observedAt, "worker_never_started", completion.err)
+		c.endDispatchFailureLocked(observedAt, "worker_never_started", completion.err)
 		c.mu.Unlock()
 		if c.OnError != nil {
 			c.OnError(fmt.Errorf("dispatch incident: %w", completion.err))
@@ -1864,7 +1874,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.resetDispatchRetryLocked()
 	} else if prepare, ok := dispatchPrepareFailure(completion.err); ok {
 		// The agent stage could not freeze its task: the preparation policy
-		// decides between a bounded retry and an escalation without an agent.
+		// decides between a bounded retry and ending this dispatch.
 		cause := prepare.Err
 		c.mu.Unlock()
 		if !c.noteDispatchPrepareFailure(completion.incidentID, cause) {
@@ -1901,9 +1911,6 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 		c.dispatchError = ""
 		c.currentIncidentResult = cloneIncidentResult(&completion.result)
-		if completion.automatic != nil && stageEscalatedIn(c.currentIncidentRequest.PriorStages) {
-			c.escalateLocked(observedAt)
-		}
 		if completion.automatic != nil && pageOpened(c.currentIncidentRequest) {
 			if report := c.awaitingAutomaticRecoveryLocked(); report != nil {
 				c.automaticRecoveryLocked(observedAt, report, false, recoveryCheck{}, nil)
@@ -1979,7 +1986,6 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	page := pageOpened(c.currentIncidentRequest)
-	handover := false
 	pageBoundReached := page && !early && !now.Before(c.recoveryGraceEndsLocked())
 	if observationErr != nil && !pageBoundReached {
 		c.mu.Unlock()
@@ -2111,6 +2117,8 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		c.mu.Unlock()
 		return false
 	}
+	c.writesSettled = observationErr == nil && safe && (guard == nil || !guard.Pending) && !restorePending &&
+		(recovery.record == nil || recovery.record.GetWritesSettled()) && len(source.Rollouts) == 0
 	// Any observed responder write restarts the stability window, including
 	// the last writes before the responder finished.
 	if safe && guard != nil && c.closureMutationRevision != guard.Revision {
@@ -2142,11 +2150,10 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	if !prerequisites {
 		c.recoverySafetyLost = true
 	}
-	// A terminal dispatch failure closes as failed: once health permits it, or
-	// at once when the responder is done, because there is no attempt to
-	// verify and waiting would hold still-firing findings back from the next
-	// attempt.
-	dispatchFailed := !early && c.dispatchError != ""
+	// A terminal dispatch failure closes as failed once health permits it. A
+	// page also closes at once when its responder is done; an alert-opened
+	// incident lost only that session, and a fresh one follows.
+	dispatchFailed := !early && c.dispatchError != "" && page
 	terminalFailure := dispatchFailed || (healthVerified && c.dispatchError != "")
 	if dispatchFailed && !healthVerified {
 		slog.Info("incident_terminal_dispatch_failure", "incident_id", c.currentIncidentRequest.IncidentID, "error", c.dispatchError, "active_health_detectors", c.activeHealthDetectors())
@@ -2249,7 +2256,17 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			c.mu.Unlock()
 			return false
 		}
-		if now.Before(c.recoveryGraceEndsLocked()) {
+		// An alert-opened incident waits only for SDO's last known write to
+		// settle (capped by the grace) and for an alert of its set to fail.
+		// Before the grace ends only an alert shown failing one stability
+		// window after the return and SDO's last known write starts it (a fix
+		// gets that window to show); after, one not shown clear does.
+		if now.Before(c.recoveryGraceEndsLocked()) && (page || !c.writesSettled ||
+			len(c.failingAlertFactsLocked(c.lastKnownWriteLocked(c.responderCompletedAt).Add(c.config.ClosureStabilityWindow), false)) == 0) {
+			c.mu.Unlock()
+			return false
+		}
+		if !page && len(c.failingAlertFactsLocked(c.incidentDetectedAt, true)) == 0 {
 			c.mu.Unlock()
 			return false
 		}
@@ -2262,15 +2279,13 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			return false
 		}
 		// A page is a bounded response attempt. An alert-opened incident
-		// stays open after escalation until its alerts clear, it is reset, or
-		// a new opener waits for the next incident: then it closes escalated
-		// and the next incident opens on every alert still failing.
-		c.escalateLocked(now)
-		if !page && !c.nextIncidentWaitingLocked(now) {
+		// never escalates: its session ended before Recovered, so a fresh
+		// session starts on the same incident and checkout.
+		if !page {
+			c.restartSessionLocked(now)
 			c.mu.Unlock()
 			return false
 		}
-		handover = !page
 	}
 	// Back off freezing the closure after deciding whether automatic recovery
 	// should hand off. A prior freeze failure cannot suppress that decision.
@@ -2294,7 +2309,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		}
 		if !early && c.currentIncidentResult != nil {
 			input.Result, input.Stages = cloneIncidentResult(c.currentIncidentResult), cloneStageReports(c.currentIncidentRequest.PriorStages)
-			if c.awaitingAutomaticRecoveryLocked() != nil && playbookApplied(input.Stages) && c.escalatedAt.IsZero() {
+			if c.awaitingAutomaticRecoveryLocked() != nil && playbookApplied(input.Stages) {
 				stage := deterministicStageReport(input.Stages)
 				markAutomaticRecovery(stage, now, contracts.RecoveryWait_EXIT_REASON_CLEARED)
 				if restorePending {
@@ -2371,7 +2386,6 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	}
 
 	closure := IncidentClosure{
-		EscalatedAt:                   c.escalatedAt,
 		VerifiedWhileResponderRunning: early,
 		ClosureStabilityWindow:        windowUsed,
 		ObservationGeneration:         generation,
@@ -2385,10 +2399,10 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		ResponderCompletedAt: c.responderCompletedAt, VerifiedAt: verifiedAt,
 		CleanedHelpers: append([]string(nil), c.cleanedHelpers...),
 	}
-	if verified && c.awaitingAutomaticRecoveryLocked() != nil && playbookApplied(closure.Request.PriorStages) && c.escalatedAt.IsZero() {
+	if verified && c.awaitingAutomaticRecoveryLocked() != nil && playbookApplied(closure.Request.PriorStages) {
 		markAutomaticRecovery(deterministicStageReport(closure.Request.PriorStages), now, contracts.RecoveryWait_EXIT_REASON_CLEARED)
 	}
-	if (page || handover) && !verified && closure.Result != nil {
+	if page && !verified && closure.Result != nil {
 		closure.Result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)
 	}
 	if !verified && !terminalFailure && len(verification.Findings) == 0 {
@@ -2488,9 +2502,6 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		}
 	}
 
-	if handover {
-		c.handOverStillFailingLocked(closure.Request, now)
-	}
 	if early {
 		c.incidentOpen = false
 		c.publishHeldLocked()
@@ -2508,23 +2519,14 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 }
 
 // recoveryGraceEndsLocked bounds verification after the responder returns.
-// A page-opened incident finalizes an escalation at this bound when recovery
-// cannot be confirmed.
+// A page-opened incident closes unverified at this bound when recovery cannot
+// be confirmed; an alert-opened one starts a fresh session by then.
 func (c *Controller) recoveryGraceEndsLocked() time.Time {
 	bound := c.responderCompletedAt.Add(c.config.VerificationTimeout)
 	if response := c.currentIncidentRequest.ResponseDeadline; !response.IsZero() && response.Before(bound) {
 		bound = response
 	}
 	return bound
-}
-
-// escalateLocked records that the incident's responder ended before Recovered.
-// The first escalation time is kept; a restart rejoins it.
-func (c *Controller) escalateLocked(at time.Time) {
-	if c.escalatedAt.IsZero() {
-		c.escalatedAt = at.UTC()
-		slog.Warn("incident_escalated", "incident_id", c.currentIncidentRequest.IncidentID, "active_health_detectors", c.activeHealthDetectors())
-	}
 }
 
 // activeHealthDetectors lists health detectors with an active finding the
@@ -2688,7 +2690,6 @@ func (c *Controller) exportState(unencodable func(protoreflect.Name, error)) (*c
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: validContractText(c.dispatchError), IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		EscalatedAt:             optionalTimestamp(c.escalatedAt),
 		DispatchFailureAttempts: int32(c.dispatchFailureAttempts),
 		DetectorClearSince:      timestampsContract(c.detectorClearSince),
 		DispatchState:           dispatchState,
@@ -2701,7 +2702,8 @@ func (c *Controller) exportState(unencodable func(protoreflect.Name, error)) (*c
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
 		BusyUntil:             optionalBusyUntil(c.busyUntilLocked(c.clock())),
 		JoinCaptureIncidentId: c.joinCaptures.incident, JoinCaptures: int32(c.joinCaptures.taken),
-		Startup: c.startup.contract(),
+		SessionProgress: c.session.contract(),
+		Startup:         c.startup.contract(),
 
 		StartupObservations: c.config.StartupObservations.contract(),
 	}
@@ -2781,7 +2783,10 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
 	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
-	c.escalatedAt = controllerTime(state.GetEscalatedAt())
+	c.session = sessionProgressState(state.GetSessionProgress())
+	if request := state.GetIncidentRequest(); request != nil {
+		c.session.generation = int(request.GetSessionGeneration())
+	}
 	c.detectorClearSince = cloneClearSince(timestampsState(state.GetDetectorClearSince()))
 	c.recoveryObserverStarted = c.startedAt
 	c.dispatchState = state.DispatchState

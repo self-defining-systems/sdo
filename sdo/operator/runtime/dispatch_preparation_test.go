@@ -149,10 +149,12 @@ func (h *preparationHarness) step() {
 	}
 }
 
-func (h *preparationHarness) escalated() bool {
+// ended reports that the dispatch ended without an agent: the responder is
+// done and nothing is pending until a fresh session starts.
+func (h *preparationHarness) ended() bool {
 	h.controller.mu.Lock()
 	defer h.controller.mu.Unlock()
-	return !h.controller.escalatedAt.IsZero()
+	return h.controller.responderDone && h.controller.dispatchState == contracts.DispatchState_DISPATCH_STATE_COMPLETED
 }
 
 func (h *preparationHarness) dispatchFailed() *contracts.LifecycleEvent {
@@ -166,10 +168,10 @@ func (h *preparationHarness) dispatchFailed() *contracts.LifecycleEvent {
 	return nil
 }
 
-// A permanent preparation failure (memory the reader rejects) escalates in one
-// step: one PrepareDispatch call however many steps follow, a state save that
-// succeeds every step, and no agent.
-func TestPermanentPreparationErrorEscalatesWithoutRetry(t *testing.T) {
+// A permanent preparation failure (memory the reader rejects) ends the dispatch
+// in one step: one PrepareDispatch call however many steps follow (a fresh
+// session is paced), a state save that succeeds every step, and no agent.
+func TestPermanentPreparationErrorEndsTheDispatchWithoutRetry(t *testing.T) {
 	h := newPreparationHarness(t, func(int) error {
 		return fmt.Errorf("read logical operational memory: %w: unrecognized file in operational memory: .sdo/playbooks/stray-x", memory.ErrUnreadable)
 	})
@@ -180,11 +182,8 @@ func TestPermanentPreparationErrorEscalatesWithoutRetry(t *testing.T) {
 	if calls := h.dispatcher.prepareCalls(); calls != 1 {
 		t.Fatalf("PrepareDispatch called %d times, want exactly 1 for a permanent error", calls)
 	}
-	if !h.escalated() {
-		t.Fatal("the incident did not escalate")
-	}
 	if _, ok := h.controller.PendingDispatchEffect(); ok {
-		t.Fatal("an escalated dispatch must not leave a pending dispatch effect")
+		t.Fatal("an ended dispatch must not leave a pending dispatch effect")
 	}
 	event := h.dispatchFailed()
 	if event == nil {
@@ -197,18 +196,18 @@ func TestPermanentPreparationErrorEscalatesWithoutRetry(t *testing.T) {
 	if err != nil || state == nil {
 		t.Fatalf("no saved state: %v", err)
 	}
-	if state.GetDispatchState() != contracts.DispatchState_DISPATCH_STATE_COMPLETED || state.GetEscalatedAt() == nil {
-		t.Fatalf("saved state = dispatch %v escalated %v; want completed and escalated", state.GetDispatchState(), state.GetEscalatedAt())
+	if !state.GetIncidentOpen() || state.GetIncidentResult().GetStatus() != string(IncidentFailed) {
+		t.Fatalf("saved state = open %v result %v; want an open incident with the failed dispatch's result", state.GetIncidentOpen(), state.GetIncidentResult())
 	}
 }
 
-// A transient preparation failure backs off, then escalates when
+// A transient preparation failure backs off, then ends the dispatch when
 // response.dispatch_prepare_bound passes, never before.
-func TestTransientPreparationErrorBacksOffThenEscalates(t *testing.T) {
+func TestTransientPreparationErrorBacksOffThenEndsTheDispatch(t *testing.T) {
 	h := newPreparationHarness(t, func(int) error { return errors.New("synthetic git error") })
 	var calls []time.Duration
 	start := h.now
-	for h.now.Sub(start) < 3*time.Minute && !h.escalated() {
+	for h.now.Sub(start) < 3*time.Minute && !h.ended() {
 		before := h.dispatcher.prepareCalls()
 		h.step()
 		if h.dispatcher.prepareCalls() > before {
@@ -216,11 +215,11 @@ func TestTransientPreparationErrorBacksOffThenEscalates(t *testing.T) {
 		}
 		h.now = h.now.Add(time.Second)
 	}
-	if !h.escalated() {
-		t.Fatalf("still not escalated after %s of failing preparation; calls at %v", h.now.Sub(start), calls)
+	if !h.ended() {
+		t.Fatalf("still not ended after %s of failing preparation; calls at %v", h.now.Sub(start), calls)
 	}
 	if got := calls[len(calls)-1]; got < 2*time.Minute || got > 2*time.Minute+5*time.Second {
-		t.Fatalf("escalated at %s, want at the 2m dispatch_prepare_bound; calls at %v", got, calls)
+		t.Fatalf("ended at %s, want at the 2m dispatch_prepare_bound; calls at %v", got, calls)
 	}
 	if len(calls) < 4 || len(calls) > 12 {
 		t.Fatalf("%d preparation attempts in 2m; want bounded exponential backoff (a handful), calls at %v", len(calls), calls)
@@ -235,7 +234,7 @@ func TestTransientPreparationErrorBacksOffThenEscalates(t *testing.T) {
 	}
 }
 
-// A transient failure that clears is not an escalation: the task freezes, is
+// A transient failure that clears does not end the dispatch: the task freezes, is
 // saved, and the dispatch effect becomes ready.
 func TestTransientPreparationErrorThatClearsDispatches(t *testing.T) {
 	h := newPreparationHarness(t, func(call int) error {
@@ -248,8 +247,8 @@ func TestTransientPreparationErrorThatClearsDispatches(t *testing.T) {
 		h.step()
 		h.now = h.now.Add(time.Second)
 	}
-	if h.escalated() {
-		t.Fatal("a transient failure that cleared must not escalate")
+	if h.ended() {
+		t.Fatal("a transient failure that cleared must not end the dispatch")
 	}
 	effect, ok := h.controller.PendingDispatchEffect()
 	if !ok || effect.Request.PreparedAgentTask == "" {
@@ -274,10 +273,10 @@ func TestStateSaveDoesNotPrepareDispatch(t *testing.T) {
 
 func contains(text, part string) bool { return strings.Contains(text, part) }
 
-// After a dispatch that could not be prepared escalates, the incident closes
-// like any escalated one when its alerts clear: through the broker, marked
-// escalated (so nothing is learned), never as a dispatch failure.
-func TestRecoveredAfterEscalatedDispatchClosesNormally(t *testing.T) {
+// After a dispatch that could not be prepared ends, the incident closes when
+// its alerts clear: through the broker, verified by health, never as a
+// dispatch failure.
+func TestRecoveredAfterAnEndedDispatchClosesNormally(t *testing.T) {
 	runOnOneProcessor(t)
 	ctx := context.Background()
 	opened := time.Unix(20_000, 0).UTC()
@@ -334,11 +333,11 @@ func TestRecoveredAfterEscalatedDispatchClosesNormally(t *testing.T) {
 		t.Fatal("the incident never closed after its alerts cleared")
 	}
 	closure := closures[0]
-	if closure.EscalatedAt.IsZero() {
-		t.Fatal("the closure is not marked escalated; an escalated close must never learn")
+	if closure.HealthClearedAt == nil {
+		t.Fatal("the closure is not verified by health")
 	}
 	if closure.DispatchError != "" {
-		t.Fatalf("closure dispatch error = %q; an escalated dispatch failure closes by health, not as a failed Job", closure.DispatchError)
+		t.Fatalf("closure dispatch error = %q; an ended dispatch closes by health, not as a failed Job", closure.DispatchError)
 	}
 	if got := dispatcher.prepareCalls(); got != 1 {
 		t.Fatalf("PrepareDispatch called %d times, want 1", got)
@@ -360,9 +359,9 @@ func (r *recordingLifecycle) has(phase string) bool {
 // preparation failure there follows the same policy as the controller's step.
 func TestStageHandoffPreparationFailureFollowsThePolicy(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		err           error
-		wantEscalated bool
+		name      string
+		err       error
+		wantEnded bool
 	}{
 		{"permanent", fmt.Errorf("%w: synthetic", memory.ErrSnapshotBudget), true},
 		{"transient", errors.New("synthetic api error"), false},
@@ -375,16 +374,16 @@ func TestStageHandoffPreparationFailureFollowsThePolicy(t *testing.T) {
 			id := h.controller.currentIncidentRequest.IncidentID
 			h.controller.mu.Unlock()
 			h.controller.handleDispatchCompletion(dispatchCompletion{incidentID: id, err: &DispatchPrepareError{Err: tc.err}}, h.now)
-			if got := h.escalated(); got != tc.wantEscalated {
-				t.Fatalf("escalated = %v, want %v", got, tc.wantEscalated)
+			if got := h.ended(); got != tc.wantEnded {
+				t.Fatalf("ended = %v, want %v", got, tc.wantEnded)
 			}
 			h.controller.mu.Lock()
 			state, retryAt := h.controller.dispatchState, h.controller.dispatchNextRetryAt
 			h.controller.mu.Unlock()
-			if tc.wantEscalated && state != contracts.DispatchState_DISPATCH_STATE_COMPLETED {
+			if tc.wantEnded && state != contracts.DispatchState_DISPATCH_STATE_COMPLETED {
 				t.Fatalf("dispatch state = %v, want completed", state)
 			}
-			if !tc.wantEscalated && (state != contracts.DispatchState_DISPATCH_STATE_PENDING || !retryAt.After(h.now)) {
+			if !tc.wantEnded && (state != contracts.DispatchState_DISPATCH_STATE_PENDING || !retryAt.After(h.now)) {
 				t.Fatalf("dispatch state = %v, retry at %v; want pending with a backoff", state, retryAt)
 			}
 		})

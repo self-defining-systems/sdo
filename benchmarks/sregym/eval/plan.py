@@ -67,7 +67,7 @@ class EvalConfig(BaseModel):
     cell_cap_seconds: float = Field(default=1800.0, gt=0)
     #: After the agent ends, keep probing at most this long for the hold to be satisfied.
     settle_cap_seconds: float = Field(default=300.0, gt=0)
-    after_playbook: Literal["agent", "escalate", "wait"] = "agent"
+    after_playbook: Literal["agent", "wait"] = "agent"
     #: Start a cell only while the 1-minute load average is below this, never by a fixed concurrency.
     max_load: float = Field(default=40.0, gt=0)
     #: Minimum gap between cell starts, because the load average lags a burst of starts.

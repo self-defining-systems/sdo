@@ -261,7 +261,7 @@ func mergeStageReports(earlier, fresh []*contracts.StageReport) []*contracts.Sta
 // Dispatch freezes the handoff report and gives write ownership to the agent.
 func (c *Controller) learnedPassAllowedLocked() bool {
 	if request := c.currentIncidentRequest; request == nil || pageOpened(request) ||
-		!request.ResponseDeadline.IsZero() && !c.clock().Before(request.ResponseDeadline) || stageEscalatedIn(request.PriorStages) {
+		!request.ResponseDeadline.IsZero() && !c.clock().Before(request.ResponseDeadline) || stageOutOfReachIn(request.PriorStages) {
 		return false
 	}
 	if c.responseStagesRunning {

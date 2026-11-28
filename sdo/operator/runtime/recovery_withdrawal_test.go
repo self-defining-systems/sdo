@@ -73,8 +73,8 @@ func joinedUserTest() sdk.Finding {
 func requireOpenForWrites(t *testing.T, w *closureRestartWorld, gate *apihistory.MutationGate) {
 	t.Helper()
 	c := w.controller
-	if !c.IncidentOpen() || c.pendingClosure != nil || c.responderDone || !c.escalatedAt.IsZero() || c.responderLoop == nil {
-		t.Fatalf("recovery was not withdrawn from the running session: open=%v pending=%v done=%v escalated=%s", c.IncidentOpen(), c.pendingClosure != nil, c.responderDone, c.escalatedAt)
+	if !c.IncidentOpen() || c.pendingClosure != nil || c.responderDone || c.responderLoop == nil {
+		t.Fatalf("recovery was not withdrawn from the running session: open=%v pending=%v done=%v escalated=%s", c.IncidentOpen(), c.pendingClosure != nil, c.responderDone, "never")
 	}
 	if c.incidentVerificationWarning(c.currentIncidentRequest.IncidentID) != nil {
 		t.Fatal("the agent is still told that the incident is verified")
@@ -147,9 +147,9 @@ func TestAUserTestAfterTheSessionReturnedWaitsForTheNextIncident(t *testing.T) {
 		t.Fatal("a user test joined after the session returned")
 	}
 	c.finishEarlyReport(context.Background(), c.clock())
-	if c.IncidentOpen() || !c.escalatedAt.IsZero() || c.pendingClosure == nil || c.pendingClosure.Request.IncidentID != id ||
-		len(c.pendingClosure.Request.JoinedKeys) != 0 || !c.pendingClosure.EscalatedAt.IsZero() {
-		t.Fatalf("open=%v escalated=%s pending=%+v", c.IncidentOpen(), c.escalatedAt, c.pendingClosure)
+	if c.IncidentOpen() || c.pendingClosure == nil || c.pendingClosure.Request.IncidentID != id ||
+		len(c.pendingClosure.Request.JoinedKeys) != 0 {
+		t.Fatalf("open=%v escalated=%s pending=%+v", c.IncidentOpen(), "never", c.pendingClosure)
 	}
 	if _, err := gate.Begin(); err == nil {
 		t.Fatal("a retired session may write")
