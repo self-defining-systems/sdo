@@ -427,3 +427,59 @@ func TestDeclaredCoversReportsWhichDeclarationMatches(t *testing.T) {
 		}
 	}
 }
+
+// A deploy that fails on image builds hands the deployer agent its correction
+// feedback, and every correction round costs a deployer task. ResolveAll must
+// therefore report every image that fails as a plan fault in one call, not only
+// the first, while still stopping at once on an infrastructure outcome.
+func TestResolveAllReportsEveryFailingImage(t *testing.T) {
+	var called []string
+	src := funcSource(func(_ context.Context, req imagesrc.Request) (imagesrc.Resolved, error) {
+		called = append(called, req.Image)
+		if req.Image == "r/b:1" || req.Image == "r/d:1" {
+			return imagesrc.Resolved{}, &typedCause{"compile error in " + req.Image}
+		}
+		return imagesrc.Resolved{Ref: imagesrctest.Repository(req.Image) + "@" + imagesrctest.Digest(req.Image), Inputs: imagesrc.Inputs{SourceImage: req.Image}}, nil
+	})
+	c := catalogWith(t, "s", src, imagesrc.Options{})
+	images := []string{"r/a:1", "r/b:1", "r/c:1", "r/d:1"}
+	got, err := c.ResolveAll(context.Background(), images, nil, imagesrc.Request{})
+	if got != nil || err == nil {
+		t.Fatalf("got %v, %v; want an error", got, err)
+	}
+	if !reflect.DeepEqual(called, images) {
+		t.Fatalf("resolved %v; want every image tried: %v", called, images)
+	}
+	for _, image := range []string{"r/b:1", "r/d:1"} {
+		if !strings.Contains(err.Error(), "compile error in "+image) {
+			t.Fatalf("error %q does not report %s", err, image)
+		}
+	}
+	var attributed *imagesrc.Error
+	if !errors.As(err, &attributed) || attributed.Image != "r/b:1" {
+		t.Fatalf("errors.As(*imagesrc.Error) = %#v; want the first failing image", attributed)
+	}
+}
+
+func TestResolveAllStopsAtAnInfrastructureOutcome(t *testing.T) {
+	var called []string
+	src := funcSource(func(_ context.Context, req imagesrc.Request) (imagesrc.Resolved, error) {
+		called = append(called, req.Image)
+		switch req.Image {
+		case "r/a:1":
+			return imagesrc.Resolved{}, &typedCause{"compile error"}
+		case "r/b:1":
+			return imagesrc.Resolved{}, &imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: errors.New("rate limited")}
+		}
+		return imagesrc.Resolved{Ref: imagesrctest.Repository(req.Image) + "@" + imagesrctest.Digest(req.Image), Inputs: imagesrc.Inputs{SourceImage: req.Image}}, nil
+	})
+	c := catalogWith(t, "s", src, imagesrc.Options{})
+	_, err := c.ResolveAll(context.Background(), []string{"r/a:1", "r/b:1", "r/c:1"}, nil, imagesrc.Request{})
+	if !reflect.DeepEqual(called, []string{"r/a:1", "r/b:1"}) {
+		t.Fatalf("resolved %v; an infrastructure outcome must stop resolution", called)
+	}
+	var marker interface{ InfrastructureOutcome() bool }
+	if !errors.As(err, &marker) || !marker.InfrastructureOutcome() {
+		t.Fatalf("err = %v; want the infrastructure outcome so the coordinator retries", err)
+	}
+}
