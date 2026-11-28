@@ -31,7 +31,7 @@ func (e *StageError) Unwrap() error { return e.Err }
 func RunGo(ctx context.Context, directory string, environment []string, args ...string) (time.Duration, error) {
 	// Go's exact-input cache can survive a new isolated staging directory only
 	// when temporary source paths are omitted from compiled package identities.
-	if len(args) > 0 && (args[0] == "build" || args[0] == "vet" || args[0] == "test") {
+	if len(args) > 0 && (args[0] == "build" || args[0] == "list" || args[0] == "vet" || args[0] == "test") {
 		args = append([]string{args[0], "-trimpath"}, args[1:]...)
 	}
 	stage := strings.Join(args, " ")
@@ -54,7 +54,7 @@ func RunGo(ctx context.Context, directory string, environment []string, args ...
 }
 
 func SeedGoBuildCache(ctx context.Context) error {
-	// The cache helper reads image entries in place and writes misses to scratch.
+	// The cache helper reads the seeds in place and writes misses to scratch.
 	if os.Getenv("GOCACHEPROG") != "" {
 		return nil
 	}

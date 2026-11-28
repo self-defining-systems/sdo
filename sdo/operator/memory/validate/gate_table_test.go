@@ -769,7 +769,7 @@ const (
 
 var gateCompileRows = []gateCompileRow{
 	{name: "does not build", rule: RuleDetectorCompile, path: gateFixtureDetector,
-		fake: testutil.GoRule{Verb: "build", Output: "detectors/learned/missing-configmap/detector.go:17: undefined: undefinedValue"},
+		fake: testutil.GoRule{Verb: "list", Output: "detectors/learned/missing-configmap/detector.go:17: undefined: undefinedValue"},
 		real: func(t *testing.T, root string) {
 			edit(t, root, gateFixtureDetector, "return Detector{}", "return undefinedValue")
 		}},

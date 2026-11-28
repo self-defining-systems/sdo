@@ -272,11 +272,11 @@ func (s *run) compile(ctx context.Context) error {
 		case strings.HasPrefix(m[1], "generated/"):
 			path = m[1]
 		}
-		s.add(Compile, Diagnostic{Rule: rule, Path: path, Line: line, Message: strings.TrimSpace(m[3]), Hint: "go " + stage.Stage + " failed"})
+		s.add(Compile, Diagnostic{Rule: rule, Path: path, Line: line, Message: strings.TrimSpace(m[3]), Hint: stageFailed(stage)})
 	}
 	if len(located) == 0 && rule == RuleDetectorTest {
 		if message, path := summarizeGoTest(goTestDuration.ReplaceAllString(stage.Output, "")); message != "" {
-			s.add(Compile, Diagnostic{Rule: rule, Path: path, Message: message, Hint: "go " + stage.Stage + " failed; fix the failing test or the code it exercises, the useful lines are the failing tests, the panic and the first frame in your source"})
+			s.add(Compile, Diagnostic{Rule: rule, Path: path, Message: message, Hint: stageFailed(stage) + "; fix the failing test or the code it exercises, the useful lines are the failing tests, the panic and the first frame in your source"})
 			return nil
 		}
 	}
@@ -285,7 +285,7 @@ func (s *run) compile(ctx context.Context) error {
 		if len(output) > maxCompileOutput {
 			output = "..." + output[len(output)-maxCompileOutput:]
 		}
-		s.add(Compile, Diagnostic{Rule: rule, Path: layout.DiagnosticsDir, Message: "go " + stage.Stage + " failed: " + output})
+		s.add(Compile, Diagnostic{Rule: rule, Path: layout.DiagnosticsDir, Message: stageFailed(stage) + ": " + output})
 	}
 	return nil
 }
@@ -358,4 +358,13 @@ func (s *run) incidentCapture() string {
 		return ""
 	}
 	return dir
+}
+
+// stageFailed names the Go stage that rejected the candidate. The compile stage is `go list -export ./...` (it compiles
+// every package without linking), which is a compile failure to the reader, not a listing.
+func stageFailed(stage *builder.StageError) string {
+	if strings.HasPrefix(stage.Stage, "list ") {
+		return "compiling ./... failed"
+	}
+	return "go " + stage.Stage + " failed"
 }

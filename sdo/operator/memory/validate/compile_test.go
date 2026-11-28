@@ -84,7 +84,7 @@ func TestCompileSkipsRepositoriesWithoutDetectors(t *testing.T) {
 // each Go failure stage. Real compiler fixtures still run in nightly CI.
 func TestCompileStageDiagnostics(t *testing.T) {
 	for _, stage := range []struct{ name, rule string }{
-		{"build", RuleDetectorCompile}, {"vet", RuleDetectorVet}, {"test", RuleDetectorTest},
+		{"list", RuleDetectorCompile}, {"vet", RuleDetectorVet}, {"test", RuleDetectorTest},
 	} {
 		t.Run(stage.name, func(t *testing.T) {
 			bin := t.TempDir()

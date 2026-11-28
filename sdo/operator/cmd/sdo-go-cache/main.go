@@ -1,6 +1,8 @@
 // sdo-go-cache implements Go's GOCACHEPROG protocol as a read-through overlay.
 // The pinned Go 1.26 disk-cache v1 format is shared with image-build warming.
-// Seed files are never opened for writing; misses are stored only in GOCACHE.
+// SDO_GO_CACHE_SEED is a list of read-only Go disk caches (filepath.SplitList),
+// consulted in order after GOCACHE. Seed files are never opened for writing;
+// misses are stored only in GOCACHE.
 package main
 
 import (
@@ -29,7 +31,28 @@ type response struct {
 	Size          int64    `json:",omitempty"`
 	DiskPath      string   `json:",omitempty"`
 }
-type cache struct{ seed, writable string }
+type cache struct {
+	writable string
+	seeds    []string
+}
+
+// newCache pairs the private writable GOCACHE with the read-only seeds.
+func newCache(writable, seeds string) (cache, error) {
+	c := cache{writable: filepath.Clean(writable)}
+	if !filepath.IsAbs(writable) {
+		return cache{}, errors.New("GOCACHE must be an absolute private writable directory")
+	}
+	for _, seed := range filepath.SplitList(seeds) {
+		if seed == "" {
+			continue
+		}
+		if filepath.Clean(seed) == c.writable {
+			return cache{}, errors.New("GOCACHE must be distinct from every SDO_GO_CACHE_SEED directory")
+		}
+		c.seeds = append(c.seeds, seed)
+	}
+	return c, nil
+}
 
 func cachePath(root string, id []byte, suffix string) string {
 	key := hex.EncodeToString(id)
@@ -40,7 +63,7 @@ func (c cache) get(action []byte) response {
 	if len(action) != 32 {
 		return response{Miss: true}
 	}
-	for _, root := range []string{c.writable, c.seed} {
+	for _, root := range append([]string{c.writable}, c.seeds...) {
 		if root == "" {
 			continue
 		}
@@ -146,12 +169,12 @@ func serve(input io.Reader, output io.Writer, c cache) error {
 }
 
 func main() {
-	writable := cacheio.Getenv("GOCACHE")
-	if !filepath.IsAbs(writable) || writable == cacheio.Getenv("SDO_GO_CACHE_SEED") {
-		fmt.Fprintln(os.Stderr, "GOCACHE must be an absolute private writable directory distinct from SDO_GO_CACHE_SEED")
+	c, err := newCache(cacheio.Getenv("GOCACHE"), cacheio.Getenv("SDO_GO_CACHE_SEED"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if err := serve(os.Stdin, os.Stdout, cache{seed: cacheio.Getenv("SDO_GO_CACHE_SEED"), writable: writable}); err != nil {
+	if err := serve(os.Stdin, os.Stdout, c); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

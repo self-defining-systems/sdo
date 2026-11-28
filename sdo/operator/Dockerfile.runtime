@@ -177,6 +177,9 @@ COPY --from=go-deps /usr/local/go /usr/local/go
 COPY --from=go-deps /go/pkg/mod /go/pkg/mod
 COPY --from=go-deps /go/build-cache /go/build-cache
 COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/
+# The GOCACHEPROG helper travels with the toolchain seed (/go), so every worker
+# that receives Go reads the image and controller build caches in place.
+COPY --from=go-binaries /usr/local/bin/sdo-go-cache /go/bin/sdo-go-cache
 
 FROM compiler-base AS runtime-sources
 COPY --from=go-binaries /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
