@@ -259,10 +259,4 @@ type ObservationScope struct {
 func (s ObservationScope) Allows(t ObservationTarget) bool
 
 func (s ObservationScope) AllowsWatch(w WatchKind, app string) bool
-
-func (s ObservationScope) Identity() string
-
-func (s ObservationScope) Validate() error
-
-func (s ObservationScope) Within(ceiling ObservationScope) error
 ```
