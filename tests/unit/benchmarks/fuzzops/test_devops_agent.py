@@ -336,7 +336,9 @@ def alarm_settings(env, tmp_path, block):
     first_bad = datetime.now(timezone.utc)
     (vanilla.run_dir({**env, "BENCH_OPERATOR": str(path)})).mkdir(parents=True, exist_ok=True)
     onset = vanilla.run_dir(env) / "onset.json"
-    onset.write_text(json.dumps({"first_bad": first_bad.isoformat()}))
+    # FuzzOps' onset sample: the first bad one-second bucket.
+    bucket = {"Start": first_bad.strftime("%Y-%m-%dT%H:%M:%SZ"), "OK": 5, "Failed": 1, "Wrong": 0, "Slow": 0}
+    onset.write_text(json.dumps({"first_bad": bucket}))
     return {**env, "BENCH_OPERATOR": str(path)}
 
 
@@ -376,9 +378,9 @@ def test_no_alarm_task_pages_as_the_fallback(alarm_env):
     started = time.time()
     done = respond(alarm_env, service, started - 1)
     assert len(service.created) == 1
-    assert time.time() - started >= 0.3
     assert done["paged_by"] == "fallback"
     paged = evidence(alarm_env, "paging.json")
+    assert time.time() >= datetime.fromisoformat(paged["fallback_due"]).timestamp()
     assert (paged["paged_by"], paged["task_id"], paged["alarm_name"]) == ("fallback", "t1", None)
     assert evidence(alarm_env, "page.json")["title"].startswith("Users are reporting")
     first_bad = datetime.fromisoformat(paged["first_bad"])

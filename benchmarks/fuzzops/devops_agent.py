@@ -424,9 +424,11 @@ def parse_time(value: Any) -> float | None:
 
 
 def first_bad_time(target: Path, default: float) -> float:
-    """The first harmed user request, from the onset sample vanilla wrote; the supervisor's start when it has none."""
+    """The first harmed user second, from the onset sample vanilla wrote (FuzzOps' first bad bucket, ``Start``); the
+    supervisor's start when it has none."""
     try:
-        found = parse_time(json.loads((target / "onset.json").read_text()).get("first_bad"))
+        bad = json.loads((target / "onset.json").read_text()).get("first_bad")
+        found = parse_time(bad.get("Start") if isinstance(bad, dict) else bad)
     except (OSError, ValueError, AttributeError):
         found = None
     return default if found is None else found
