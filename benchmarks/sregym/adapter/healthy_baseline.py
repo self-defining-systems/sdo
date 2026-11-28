@@ -47,7 +47,6 @@ _SNAPSHOT_KEYS: dict[str, str] = {
     "PodDisruptionBudget": "podDisruptionBudgets",
     "Ingress": "ingresses",
     "Node": "nodes",
-    "Secret": "secrets",
     "Service": "services",
     "Pod": "pods",
     "Deployment": "deployments",
@@ -60,7 +59,20 @@ _SNAPSHOT_KEYS: dict[str, str] = {
 _RESOURCES = (
     "configmaps,services,pods,deployments,replicasets,endpoints,endpointslices,networkpolicies,events,"
     "statefulsets,daemonsets,jobs,cronjobs,persistentvolumeclaims,serviceaccounts,"
-    "horizontalpodautoscalers,poddisruptionbudgets,ingresses,secrets"
+    "horizontalpodautoscalers,poddisruptionbudgets,ingresses"
+)
+# The capture's only Secret read: one JSON object per Secret with what a snapshot keeps (identity, type, labels and
+# data key names). It never prints a value, so Secret values never reach the harness process, and the lane guard
+# permits exactly this output. Detectors may test for a data key, so names alone would not replay faithfully.
+SECRET_METADATA_OUTPUT = (
+    "go-template={{range .items}}"
+    '{"name":{{printf "%q" .metadata.name}},"namespace":{{printf "%q" .metadata.namespace}},'
+    '"type":{{printf "%q" (or .type "")}},'
+    '"labels":{ {{- $separator := ""}}{{range $key, $label := .metadata.labels}}'
+    '{{$separator}}{{printf "%q" $key}}:{{printf "%q" $label}}{{$separator = ","}}{{end -}} },'
+    '"dataKeys":[ {{- $separator = ""}}{{range $key, $unused := .data}}'
+    '{{$separator}}{{printf "%q" $key}}{{$separator = ","}}{{end -}} ]}'
+    '{{"\\n"}}{{end}}'
 )
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.json$")
 
@@ -75,31 +87,38 @@ class KubectlRunner(Protocol):
     ) -> subprocess.CompletedProcess[str]: ...
 
 
-def snapshot_document(namespace: str, listing: dict[str, Any]) -> dict[str, Any]:
-    """Convert a ``kubectl get ... -o json`` list into one ``sdktest.Snapshot`` document."""
+def snapshot_document(namespace: str, listing: dict[str, Any], secrets: list[dict[str, Any]]) -> dict[str, Any]:
+    """Convert a ``kubectl get ... -o json`` list and the Secret metadata into one ``sdktest.Snapshot`` document.
+
+    Secrets come only from ``secrets``; a Secret object in ``listing`` is dropped like any unknown kind.
+    """
 
     document: dict[str, Any] = {"namespace": namespace, **{key: [] for key in _SNAPSHOT_KEYS.values()}}
+    document["secrets"] = secrets
     for item in listing.get("items", []):
         key = _SNAPSHOT_KEYS.get(str(item.get("kind", "")))
         if key is None:
-            continue
-        if item.get("kind") == "Secret":
-            metadata = item.get("metadata", {})
-            document[key].append(
-                {
-                    "name": metadata.get("name", ""),
-                    "namespace": metadata.get("namespace", ""),
-                    "type": item.get("type", ""),
-                    "labels": metadata.get("labels", {}),
-                    "dataKeys": sorted(set(item.get("data", {})) | set(item.get("stringData", {}))),
-                }
-            )
             continue
         metadata = item.get("metadata")
         if isinstance(metadata, dict):
             metadata.pop("managedFields", None)
         document[key].append(item)
     return document
+
+
+def _secret_metadata(namespace: str, kubectl_runner: KubectlRunner) -> list[dict[str, Any]]:
+    completed = kubectl_runner(["get", "secrets", "-o", SECRET_METADATA_OUTPUT], namespace=namespace, check=False)
+    if completed.returncode != 0:
+        # Never stdout: kubectl's template printer dumps the raw objects there when a template fails.
+        raise HealthyBaselineCaptureError(
+            f"cannot list Secret metadata in {namespace!r} for the healthy baseline: {completed.stderr.strip()}"
+        )
+    try:
+        return [json.loads(line) for line in completed.stdout.splitlines() if line]
+    except json.JSONDecodeError as exc:
+        raise HealthyBaselineCaptureError(
+            f"kubectl returned invalid Secret metadata for namespace {namespace!r}"
+        ) from exc
 
 
 def capture_snapshots(
@@ -137,7 +156,8 @@ def capture_snapshots(
             listing.setdefault("items", []).extend(json.loads(nodes.stdout).get("items", []))
         except json.JSONDecodeError as exc:
             raise HealthyBaselineCaptureError("invalid node JSON for the healthy baseline") from exc
-        snapshots[f"healthy-{index}.json"] = snapshot_document(namespace, listing)
+        secrets = _secret_metadata(namespace, kubectl_runner)
+        snapshots[f"healthy-{index}.json"] = snapshot_document(namespace, listing, secrets)
     return snapshots
 
 

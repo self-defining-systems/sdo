@@ -23,6 +23,29 @@ def test_foreign_lane_or_secret_payload_is_rejected(command):
         LaneGuard("luna-pilot-50", Path("/owned"), "le-hu").command(command)
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["-o", "go-template={{range .items}}{{.data}}{{end}}"],
+        ["-o", "go-template={projection}{{{{.items}}}}"],
+        ["-o", "go-template"],
+        ["-o", "{projection}", "--template={{{{.items}}}}"],
+        ["-o", "{projection}", "--template", "{{{{.items}}}}"],
+        ["--template={{{{.items}}}}"],
+    ],
+)
+def test_only_the_exact_value_free_secret_template_is_permitted(arguments):
+    from benchmarks.sregym.adapter import SECRET_METADATA_OUTPUT
+    from benchmarks.sregym.fastloop.lane_guard import LaneGuard
+
+    guard = LaneGuard("luna-pilot-50", Path("/owned"), "le-hu")
+    exact = ["kubectl", "get", "secrets", "-o", SECRET_METADATA_OUTPUT]
+    assert guard.command(exact) == exact
+    values = [value.replace("{projection}", SECRET_METADATA_OUTPUT) for value in arguments]
+    with pytest.raises(ValueError, match="lane guard"):
+        guard.command(["kubectl", "get", "secrets", *values])
+
+
 def test_secret_metadata_only_projection_is_explicit():
     from benchmarks.sregym.fastloop.lane_guard import LaneGuard
 

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.adapter import SECRET_METADATA_OUTPUT, WaitKind, wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -26,6 +26,10 @@ if TYPE_CHECKING:
     from benchmarks.sregym.faults.description import ProblemDescription
 
 _SECRET_GET = re.compile(r"kubectl\s+get\s+secrets?\b[^\"'\n]*")
+#: The only ``-o`` outputs a Secret read may use; none carries a value.
+_SECRET_OUTPUTS = frozenset(
+    {"name", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name", SECRET_METADATA_OUTPUT}
+)
 
 
 class FaultNotInstallableError(ValueError):
@@ -111,9 +115,10 @@ class LaneGuard:
                 outputs.append(value.split("=", 1)[1])
             elif value.startswith("-o") and value != "-o":
                 outputs.append(value[2:])
-        allowed = {"name", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name"}
-        if len(outputs) > 1 or any(value not in allowed for value in outputs):
-            raise ValueError("lane guard permits only Secret namespace/name metadata")
+        # kubectl lets --template replace the template named in -o.
+        templated = any(value == "--template" or value.startswith("--template=") for value in values)
+        if templated or len(outputs) > 1 or any(value not in _SECRET_OUTPUTS for value in outputs):
+            raise ValueError("lane guard permits only value-free Secret metadata")
         return values if outputs else [*values, "-o", "name"]
 
     def install(self) -> None:

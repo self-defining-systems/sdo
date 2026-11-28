@@ -53,7 +53,11 @@ if TYPE_CHECKING:
         wait_for_proof,
     )
     from benchmarks.sregym.adapter.fault_reversion import FaultReversion, grade_faults
-    from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
+    from benchmarks.sregym.adapter.healthy_baseline import (
+        SECRET_METADATA_OUTPUT,
+        HealthyBaselineCaptureOps,
+        kubectl_capture_ops,
+    )
     from benchmarks.sregym.adapter.host_memory import (
         HostMemoryPolicy,
         HostMemoryRefused,
@@ -286,6 +290,7 @@ _EXPORTS: dict[str, str] = {
     "raw_source": "deployment_source",
     "source_from_config": "deployment_source",
     "HealthyBaselineCaptureOps": "healthy_baseline",
+    "SECRET_METADATA_OUTPUT": "healthy_baseline",
     "kubectl_capture_ops": "healthy_baseline",
 }
 
@@ -395,6 +400,7 @@ __all__ = [
     "StageInputs",
     "HealthyBaselineCaptureOps",
     "kubectl_capture_ops",
+    "SECRET_METADATA_OUTPUT",
     "control_namespace_for",
     "apply_external_incident",
     "read_runtime_state",
