@@ -515,9 +515,8 @@ print(json.dumps({{'tasks': [{{'taskId': 'b'}}]}} if token else {{'tasks': [{{'t
     assert json.loads(first[first.index("--filter") + 1]) == {"createdAfter": "2026-01-01T00:00:00+00:00"}
 
 
-def test_expired_scoped_token_is_refreshed_before_the_plan_runs(env, monkeypatch):
+def test_the_scoped_token_is_refreshed_before_every_apply(env, monkeypatch):
     refreshed = []
-    monkeypatch.setattr(vanilla, "credentials_work", lambda e: bool(refreshed))
     monkeypatch.setattr(vanilla, "refresh_token", lambda e: refreshed.append(True))
     target = vanilla.run_dir(env)
     target.mkdir(parents=True, exist_ok=True)
