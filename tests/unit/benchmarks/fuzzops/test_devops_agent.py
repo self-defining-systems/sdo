@@ -107,6 +107,13 @@ class FakeService:
         return {"preferences": {"elevatedActionsEnabled": False}}
 
 
+@pytest.fixture(autouse=True)
+def scoped_credentials(monkeypatch):
+    """The scoped token is minted through the cluster's kubectl; these tests have none (see the refresh tests)."""
+    monkeypatch.setattr(vanilla, "refresh_token", lambda env: None)
+    monkeypatch.setattr(vanilla, "credentials_work", lambda env: True)
+
+
 @pytest.fixture
 def env(tmp_path):
     tools = tmp_path / "bin"
@@ -506,3 +513,30 @@ print(json.dumps({{'tasks': [{{'taskId': 'b'}}]}} if token else {{'tasks': [{{'t
     first = json.loads((tmp_path / "aws.log").read_text().splitlines()[0])
     assert first[0:2] == ["devops-agent", "list-backlog-tasks"]
     assert json.loads(first[first.index("--filter") + 1]) == {"createdAfter": "2026-01-01T00:00:00+00:00"}
+
+
+def test_expired_scoped_token_is_refreshed_before_the_plan_runs(env, monkeypatch):
+    refreshed = []
+    monkeypatch.setattr(vanilla, "credentials_work", lambda e: bool(refreshed))
+    monkeypatch.setattr(vanilla, "refresh_token", lambda e: refreshed.append(True))
+    target = vanilla.run_dir(env)
+    target.mkdir(parents=True, exist_ok=True)
+    devops_agent.apply(env, target, {"steps": []}, time.time() + 30)
+    assert refreshed == [True]
+
+
+def test_refresh_token_replaces_the_token_and_proves_it(env, monkeypatch):
+    calls = []
+
+    def kube(e, config, *args, stdin=None):
+        calls.append((config, args))
+        if args[:2] == ("create", "token"):
+            return "fresh-token"
+        return "yes"
+
+    monkeypatch.setattr(vanilla, "kubectl", kube)
+    monkeypatch.undo()  # keep the module's own functions, only kubectl is replaced below
+    monkeypatch.setattr(vanilla, "kubectl", kube)
+    vanilla.refresh_token(env)
+    assert json.loads((vanilla.state(env) / "kubeconfig").read_text())["users"][0]["user"]["token"] == "fresh-token"
+    assert calls[-1][1][:2] == ("auth", "can-i")
