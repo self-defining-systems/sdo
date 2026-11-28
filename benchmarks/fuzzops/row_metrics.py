@@ -142,6 +142,14 @@ class Row:
     first_episode_end_s: float | None = None
     inject_to_page_s: float | None = None
     page_source: str = "n.a."
+    #: Harness pages (the plain arm's pages; SDO's fallback pages for harm episodes it did not page itself for), their
+    #: times, and for SDO the harm episodes, those it paged itself for, and the fallback pages sent after an SDO
+    #: incident had already been open in that episode.
+    external_pages: int | None = None
+    external_page_at: list[str] = field(default_factory=list)
+    harm_episodes: int | None = None
+    self_paged_episodes: int | None = None
+    external_pages_after_open_incident: int | None = None
     ttf_s: float | None = None
     ttf_source: str = "unavailable"
     agent_wall_s: float | None = None
@@ -541,6 +549,10 @@ def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Documen
     # With several pages, the time between them is not the agent's.
     sessions = _number(done.get("agent_seconds"))
     row.agent_wall_s = sessions if done.get("pages", 1) > 1 else _seconds(start, end)
+    pages = [page for page in _events(op / "pages.jsonl") if page]
+    if pages:
+        row.external_pages = len(pages)
+        row.external_page_at = [str(page["paged_at"]) for page in pages if page.get("paged_at")]
     transcript = op / "transcript.jsonl"
     usage = _read(op / "usage.json")
     if not usage:
@@ -814,6 +826,15 @@ def _sdo(
         page_source = "fallback"
     page = page or opened
     row.inject_to_page_s = _seconds(inject, page)
+    if "episodes" in collect:
+        episodes = list(_objects(collect.get("episodes")))
+        # A page whose inbox write never landed (an ID with no time) reached nobody.
+        pages = [e for e in episodes if e.get("fallback_page_at")]
+        row.harm_episodes = len(episodes)
+        row.self_paged_episodes = sum(1 for e in episodes if e.get("sdo_page_at"))
+        row.external_pages = len(pages)
+        row.external_page_at = [str(e["fallback_page_at"]) for e in pages]
+        row.external_pages_after_open_incident = sum(1 for e in pages if e.get("open_incident"))
     if page is not None:
         row.page_source = page_source if page_source in {"own", "fallback"} else "own"
     if "timelines" not in manifest:

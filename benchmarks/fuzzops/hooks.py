@@ -1856,7 +1856,7 @@ def collect(
     part("memory", memory)
     part("state", state)
     paging = collect_page(dest.parent, cellevidence.read_json_object(dest / "controller-state.json"))
-    if paging.fallback_id:
+    if paging.fallback_id or any(episode.fallback_id for episode in paging.episodes):
         # Remove a pending page too, so a delayed admission cannot cross into
         # the next row after its incident reset.
         def remove_fallback() -> str:

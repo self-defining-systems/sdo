@@ -28,7 +28,8 @@ takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound i
   the `--config` arguments and `SDO_*` variables and translates format-1 baseline flags.
 - `observe.py`: the command of `exec:sdo`. It polls `sdo-controller-state`, prints applied plans and successful repairs to stdout (fuzzops
   records them as actions) and lifecycle notices to stderr, writes `$FUZZOPS_REPORT` from the detector findings and then from the responder's
-  confirmed root causes, keeps every state snapshot under `$FUZZOPS_OUT`, and exits after closure.
+  confirmed root causes, keeps every state snapshot under `$FUZZOPS_OUT`, and exits after closure (a fallback-paging
+  watch stays for later harm episodes; see "Detector-first paging").
 - `window.py`: which incidents belong to a run: detected in the window, or open at the inject with findings, causes
   or repair actions naming the faulted component by resource ref. `table.py` and `observe.py` (`--fault`) share it.
 - `table.py`: SDO's table over a fuzzops-bench experiment (one column per experiment): joins the bench's grades
@@ -121,6 +122,19 @@ watch hook sends one namespace-only user report through the controller's normal 
 evaluating detectors, joining alerts and verifying recovery. The clock starts at the first bad second in
 `FUZZOPS_TRAFFIC` (the AWS arm's rule); with no harm there is no page. This requires a FuzzOps pin that publishes that stream. Set `settings.fallback_page: false` to
 disable the fallback or `settings.fallback_page_seconds` to change the delay. Healthy runs send no fallback page.
+
+The same holds for every later harm episode, so SDO gets the plain arm's signal: episodes are `repage.Harm`'s (a bad
+second after 15 s without one starts a new one), and an episode SDO did not page itself for (an own incident opened
+after the previous episode's last bad second, or after the inject for the first) gets the same generic page, under a
+new inbox id, once its delay has passed and no SDO incident is open. A later episode is paged only while it still goes
+on and the traffic stream is live, as the plain arm's re-page; at most faults + 1 episodes are paged per row, SDO's own
+pages included (`repage.page_limit`). The watch therefore stays after its incident closes, standing by
+(`FUZZOPS_STANDBY`, so FuzzOps' early stop applies) while SDO is idle and no page is pending, and ends when no further
+page can come, the window is over or the traffic stream stalls. `sdo-page.json` and `collect.json` list every episode
+(`episodes`: `at`, `since`, `sdo_page_at` when SDO paged itself, `fallback_id` and `fallback_page_at` when the harness
+did, `open_incident` when an SDO incident was already open in the episode before the page) and `page_limit`;
+`row_metrics` reports `harm_episodes`, `self_paged_episodes`, `external_pages`, `external_page_at` and
+`external_pages_after_open_incident`.
 The explicit `settings.harness_page` arm uses its fixed schedule.
 
 ### Baselines

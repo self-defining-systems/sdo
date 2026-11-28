@@ -597,3 +597,35 @@ def test_reset_worker_usage_comes_from_its_latest_checkpoint(tmp_path: Path) -> 
     assert worker is not None
     assert worker.usage == Usage(0.03, 20, 6)
     assert worker.complete is False
+
+
+def test_sdo_rows_report_self_detected_episodes_apart_from_harness_pages(tmp_path: Path) -> None:
+    grade(tmp_path)
+    episodes = [
+        {"at": at(0), "sdo_page_at": at(8), "fallback_id": None, "fallback_page_at": None, "open_incident": None},
+        {"at": at(60), "sdo_page_at": None, "fallback_id": "f-1", "fallback_page_at": at(180), "open_incident": "own"},
+        {"at": at(200), "sdo_page_at": None, "fallback_id": "f-2", "fallback_page_at": None, "open_incident": None},
+    ]
+    put(tmp_path, "operator/collect.json", {"page_source": "own", "sdo_page_at": at(8), "episodes": episodes})
+    row = measure(tmp_path)
+    # A page whose inbox write never landed reached nobody: it is not counted.
+    assert (row.harm_episodes, row.self_paged_episodes, row.external_pages) == (3, 1, 1)
+    assert row.external_page_at == [at(180)]
+    assert row.external_pages_after_open_incident == 1
+    assert (row.page_source, row.inject_to_page_s) == ("own", 8)
+
+
+def test_rows_without_the_episode_record_leave_the_page_counts_unknown(tmp_path: Path) -> None:
+    grade(tmp_path)
+    put(tmp_path, "operator/collect.json", {"page_source": "own", "sdo_page_at": at(8)})
+    row = measure(tmp_path)
+    assert (row.harm_episodes, row.self_paged_episodes, row.external_pages) == (None, None, None)
+
+
+def test_vanilla_rows_count_every_page_as_a_harness_page(tmp_path: Path) -> None:
+    grade(tmp_path)
+    put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(90), "pages": 2, "agent_seconds": 50})
+    pages = [{"page": 1, "paged_at": at(3)}, {"page": 2, "paged_at": at(70)}]
+    (tmp_path / "operator/pages.jsonl").write_text("".join(json.dumps(p) + "\n" for p in pages))
+    row = measure(tmp_path)
+    assert (row.arm, row.external_pages, row.external_page_at) == ("vanilla", 2, [at(3), at(70)])

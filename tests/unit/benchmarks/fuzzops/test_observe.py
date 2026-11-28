@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from benchmarks.fuzzops import observe
+from benchmarks.fuzzops import observe, repage
 from benchmarks.fuzzops.observe import Watcher, WatchLine, classify, component, report_from_result
 
 if TYPE_CHECKING:
@@ -517,3 +517,275 @@ def test_exec_stdout_carries_only_applied_changes_and_reports_still_reach_fuzzop
         assert notice in streams.err
     assert json.loads(report.read_text())["summary"].startswith("SDO responder:")
     assert "diagnosed" in [json.loads(line)["event"] for line in timeline.read_text().splitlines()]
+
+
+# Per-episode fallback pages: the plain arm's episode rule (repage.Harm), applied to SDO after its own pages. -------
+
+#: FuzzOps settles a second's requests this long after it.
+LAG = 4
+SINGLE = "synthetic@deploy/a"
+TRIPLE = "random-faults/app-p1/s1/k3[synthetic@deploy/a&synthetic@deploy/b&synthetic@deploy/c]"
+PAGE = "Users are reporting problems with the application in namespace app; investigate and fix it."
+
+
+class Run:
+    """A FuzzOps window (one traffic sample a second, users hurt in ``bad``) and an SDO controller.
+
+    ``own`` lists the incidents SDO opens itself as (opened, closed) seconds after the inject. A fallback page opens a
+    page incident two seconds after its inbox write, which closes ``page_lasts`` seconds later."""
+
+    def __init__(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        bad: list[range],
+        own: list[tuple[int, int]] = (),  # type: ignore[assignment]
+        end: int = 600,
+        page_lasts: int = 40,
+    ) -> None:
+        self.bad = sorted(second for span in bad for second in span)
+        self.own, self.end, self.page_lasts = list(own), end, page_lasts
+        self.t, self.published = 5.0, 0
+        self.out = tmp_path / "out"
+        self.traffic = self.out / "traffic.jsonl"
+        self.standby = tmp_path / "standby"
+        self.out.mkdir()
+        self.traffic.touch()
+        self.pages: list[tuple[float, dict[str, Any]]] = []
+        #: (time, whether the standby file existed) at every sleep.
+        self.standing: list[tuple[float, bool]] = []
+        monkeypatch.setenv("FUZZOPS_TRAFFIC", str(self.traffic))
+        monkeypatch.setenv("FUZZOPS_OUT", str(self.out))
+        monkeypatch.setenv("FUZZOPS_STANDBY", str(self.standby))
+        monkeypatch.setenv("FUZZOPS_DEADLINE", _at(end))
+        monkeypatch.setattr(observe.time, "time", lambda: START.timestamp() + self.t)
+        monkeypatch.setattr(observe.time, "monotonic", lambda: self.t)
+        monkeypatch.setattr(observe.time, "sleep", self.sleep)
+        monkeypatch.setattr(observe, "read_state", lambda *_: self.state())
+        monkeypatch.setattr(observe, "kubectl_apply", lambda manifest, *_: self.pages.append((self.t, manifest)))
+        self.sleep(0)
+
+    def sleep(self, seconds: float) -> None:
+        self.t += seconds
+        assert self.t < self.end + 60, "the watch did not end with the window"
+        self.standing.append((self.t, self.standby.exists()))
+        with self.traffic.open("a") as stream:
+            while self.published + 1 <= min(self.t, self.end):
+                self.published += 1
+                through = self.published - LAG
+                seen = [second for second in self.bad if second < through]
+                sample = {
+                    "inject_at": _at(0),
+                    "observed_at": _at(self.published),
+                    "through": _at(through),
+                    "requests": self.published,
+                    "first_bad": {"Start": _at(seen[0])} if seen else None,
+                    "last_bad": {"Start": _at(seen[-1])} if seen else None,
+                }
+                stream.write(json.dumps(sample) + "\n")
+
+    def incidents(self) -> list[tuple[str, float, float, bool]]:
+        """(id, opened, closed, opened by a page) for every incident."""
+        own = [(f"own-{i}", float(a), float(b), False) for i, (a, b) in enumerate(self.own)]
+        paged = [
+            (json.loads(m["data"]["incident.json"])["id"], at + 2, at + 2 + self.page_lasts, True)
+            for at, m in self.pages
+        ]
+        return sorted(own + paged, key=lambda incident: incident[1])
+
+    def state(self) -> dict[str, Any]:
+        closed = [i for i in self.incidents() if i[2] <= self.t]
+        for incident, opened, ends, paged in self.incidents():
+            if opened <= self.t < ends:
+                request: dict[str, Any] = {"incidentId": incident}
+                request.update({"page": PAGE} if paged else {"openingKeys": ["users/failing"]})
+                state = {"incidentOpen": True, "incidentDetectedAt": _at(int(opened)), "incidentRequest": request}
+                if closed:
+                    state["lastAcknowledgedIncidentId"] = closed[-1][0]
+                return state
+        return {"lastAcknowledgedIncidentId": closed[-1][0]} if closed else {}
+
+    def watch(self, fault: str = TRIPLE) -> dict[str, Any]:
+        argv = ["--control-namespace", "app-sdo", "--page-namespace", "app", "--fallback-page-after", "120"]
+        assert observe.main([*argv, "--fault", fault, "--linger", "0"]) == 0
+        assert not self.standby.exists(), "a watch that ended still stands by"
+        return json.loads((self.out / "sdo-page.json").read_text())
+
+    def page_times(self) -> list[float]:
+        return [at for at, _ in self.pages]
+
+
+def _episode_starts(record: dict[str, Any]) -> list[str]:
+    return [episode["at"] for episode in record["episodes"]]
+
+
+def test_a_later_harm_episode_sdo_missed_gets_the_plain_arms_page_after_the_fallback_delay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # SDO pages itself for the first episode and closes; users are hurt again from 100 s and SDO never notices.
+    run = Run(tmp_path, monkeypatch, bad=[range(50), range(100, 500)], own=[(15, 60)])
+    record = run.watch()
+    [(at, manifest)] = run.pages
+    assert at == 220  # the episode's first bad second plus the delay, as the first page's rule
+    alert = json.loads(manifest["data"]["incident.json"])
+    assert alert == {"id": alert["id"], "namespace": "app", "message": PAGE}
+    first, second = record["episodes"]
+    assert (first["at"], first["sdo_page_at"], first["fallback_id"]) == (_at(0), _at(15), None)
+    assert (second["at"], second["sdo_page_at"], second["open_incident"]) == (_at(100), None, None)
+    assert (second["fallback_id"], second["fallback_page_at"]) == (alert["id"], _at(220))
+    # The row's first page stays SDO's own; the page limit is the plain arm's.
+    assert (record["page_source"], record["sdo_page_at"], record["fallback_id"]) == ("own", _at(15), None)
+    assert record["page_limit"] == 4
+    # Standing by only after SDO's first close, while SDO is idle and no page is pending.
+    standing = [t for t, on in run.standing if on]
+    assert standing
+    assert 60 <= min(standing) < 100
+    # FuzzOps publishes the bad second 100 at 105; the watch sees it at its next poll (3 s).
+    assert not any(on for t, on in run.standing if 100 + LAG + 1 + 3 < t < 222 + run.page_lasts)
+    assert run.standing[-1][1], "idle and paged out: standing by until the window ends"
+
+
+def test_an_episode_sdo_pages_itself_for_gets_no_harness_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run = Run(tmp_path, monkeypatch, bad=[range(50), range(100, 500)], own=[(15, 60), (110, 200)])
+    record = run.watch()
+    assert run.pages == []
+    assert [e["sdo_page_at"] for e in record["episodes"]] == [_at(15), _at(110)]
+
+
+def test_an_episode_that_began_while_sdo_worked_is_paged_once_sdo_is_idle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # SDO's incident is still open when the second episode begins, and closes at 300 with users still hurt.
+    run = Run(tmp_path, monkeypatch, bad=[range(50), range(100, 500)], own=[(15, 300)])
+    record = run.watch()
+    [at] = run.page_times()
+    assert 300 <= at < 303  # the first poll after the close
+    assert record["episodes"][1]["open_incident"] == "own"
+
+
+def test_a_later_episode_that_ended_before_the_delay_is_not_paged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = Run(tmp_path, monkeypatch, bad=[range(50), range(100, 160)], own=[(15, 60)])
+    record = run.watch()
+    assert run.pages == []
+    assert _episode_starts(record) == [_at(0), _at(100)]
+
+
+def test_harness_pages_stop_at_the_plain_arms_limit_counting_sdos_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One fault: two pages at most. SDO missed every episode, so the harness pages the first two.
+    bad = [range(150), range(200, 350), range(400, 550)]
+    run = Run(tmp_path, monkeypatch, bad=bad, end=700)
+    record = run.watch(SINGLE)
+    assert run.page_times() == [120, 320]
+    # Paged out, the watch ends once SDO is idle, as the plain arm stops watching at its limit.
+    assert [bool(e["fallback_id"]) for e in record["episodes"]] == [True, True]
+    # The first page is the row's fallback page, as before.
+    assert (record["page_source"], record["fallback_page_at"]) == ("fallback", _at(120))
+    # SDO's own page takes one of the two.
+    (tmp_path / "own").mkdir()
+    run = Run(tmp_path / "own", monkeypatch, bad=bad, own=[(15, 100)], end=700)
+    run.watch(SINGLE)
+    assert run.page_times() == [320]
+
+
+def test_fallback_episodes_are_the_plain_arms_episodes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bad = [range(20), range(34, 40), range(56, 60), range(200, 210)]
+    run = Run(tmp_path, monkeypatch, bad=bad, own=[(5, 250)], end=300)
+    record = run.watch()
+    harm, starts = repage.Harm(), []
+    for line in run.traffic.read_text().splitlines():
+        harm.observe(json.loads(line))
+        if harm.episode is not None and (not starts or starts[-1] != harm.episode):
+            starts.append(harm.episode)
+    assert _episode_starts(record) == [s.isoformat().replace("+00:00", "Z") for s in starts]
+    assert len(starts) == 3  # 34 s is 14 quiet seconds after 19: the same episode
+
+
+def test_a_failed_inbox_write_is_retried_under_the_same_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run = Run(tmp_path, monkeypatch, bad=[range(50), range(100, 500)], own=[(15, 60)])
+    attempts: list[float] = []
+
+    def flaky(manifest: dict[str, Any], *_: str) -> None:
+        attempts.append(run.t)
+        if len(attempts) == 1:
+            raise observe.subprocess.TimeoutExpired("kubectl", 30)
+        run.pages.append((run.t, manifest))
+
+    monkeypatch.setattr(observe, "kubectl_apply", flaky)
+    record = run.watch()
+    [(at, manifest)] = run.pages
+    assert attempts == [220, at]
+    assert at < 224
+    second = record["episodes"][1]
+    assert second["fallback_id"] == json.loads(manifest["data"]["incident.json"])["id"]
+    assert second["fallback_page_at"] == _at(int(at))
+    assert not any(on for t, on in run.standing if 108 < t < at)
+
+
+def test_an_old_pin_still_pages_its_one_episode_after_an_earlier_incident_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The pin publishes no last_bad: one episode at most. An incident from before the inject closes at 20 s.
+    traffic = tmp_path / "traffic.jsonl"
+    traffic.write_text(
+        json.dumps({"inject_at": _at(0), "first_bad": None})
+        + "\n"
+        + json.dumps({"inject_at": _at(0), "first_bad": {"Start": _at(30)}})
+        + "\n"
+    )
+    t = 5.0
+    sent: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        nonlocal t
+        t += seconds
+        if t > 400:
+            raise KeyboardInterrupt
+
+    def state(*_: str) -> dict[str, Any]:
+        if t < 20:
+            request = {"incidentId": "old", "openingKeys": ["users/failing"]}
+            return {"incidentOpen": True, "incidentDetectedAt": _at(-200), "incidentRequest": request}
+        if sent and t >= sent[0] + 2:
+            request = {"incidentId": "paged", "page": PAGE}
+            return {"incidentOpen": True, "incidentDetectedAt": _at(int(sent[0]) + 2), "incidentRequest": request}
+        return {"lastAcknowledgedIncidentId": "old"}
+
+    monkeypatch.setenv("FUZZOPS_TRAFFIC", str(traffic))
+    monkeypatch.setenv("FUZZOPS_OUT", str(tmp_path))
+    monkeypatch.setattr(observe.time, "time", lambda: START.timestamp() + t)
+    monkeypatch.setattr(observe.time, "monotonic", lambda: t)
+    monkeypatch.setattr(observe.time, "sleep", sleep)
+    monkeypatch.setattr(observe, "read_state", state)
+    monkeypatch.setattr(observe, "kubectl_apply", lambda *_: sent.append(t))
+    argv = ["--control-namespace", "app-sdo", "--page-namespace", "app", "--fallback-page-after", "120"]
+    with pytest.raises(KeyboardInterrupt):
+        observe.main([*argv, "--fault", TRIPLE, "--linger", "0", "--lookback", "600"])
+    assert sent == [150]
+
+
+def test_an_own_incident_seen_only_after_its_close_still_counts_as_self_paged() -> None:
+    paging = observe.FallbackPaging(START, 120, 4)
+    sample = {"observed_at": _at(10), "through": _at(6), "first_bad": {"Start": _at(0)}, "last_bad": {"Start": _at(5)}}
+    paging.traffic(sample)
+    opened = f"app-{int(START.timestamp() + 3) * 10**9}"
+    paging.sdo({"last_acknowledged_incident_id": opened}, START + timedelta(seconds=40))
+    [episode] = paging.episodes
+    assert episode.sdo_page_at == _at(3)
+    assert paging.due(START + timedelta(seconds=200), busy=False) is None
+
+
+def test_a_self_paged_episode_records_no_open_incident_before_a_page() -> None:
+    paging = observe.FallbackPaging(START, 120, 4)
+    paging.traffic(
+        {"observed_at": _at(10), "through": _at(6), "first_bad": {"Start": _at(0)}, "last_bad": {"Start": _at(5)}}
+    )
+    request = {"incidentId": "own", "openingKeys": ["users/failing"]}
+    paging.sdo(
+        {"incidentOpen": True, "incidentDetectedAt": _at(8), "incidentRequest": request}, START + timedelta(seconds=9)
+    )
+    [episode] = paging.episodes
+    assert (episode.sdo_page_at, episode.open_incident) == (_at(8), None)
