@@ -163,6 +163,27 @@ func (r acceptedResource) renderDefaults(ctx context.Context, ref sdk.ObjectRef,
 	return decodeAcceptedObject(raw, probe)
 }
 
+// dryRunUpdate is the server's dry-run replacement of the object by object.
+// It is unconditional: the snapshot object may be older than the stored one,
+// and a dry run never persists, so no resourceVersion precondition is sent.
+func (r acceptedResource) dryRunUpdate(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	replacement := object.DeepCopy()
+	metadata, _ := replacement.Object["metadata"].(map[string]any)
+	for _, field := range []string{"resourceVersion", "managedFields", "creationTimestamp", "generation"} {
+		delete(metadata, field)
+	}
+	delete(replacement.Object, "status")
+	body, err := json.Marshal(replacement.Object)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := bodyOf(ctx, r.client.Put().AbsPath(r.path).Param("dryRun", metav1.DryRunAll).Param("fieldManager", sdk.DeployerFieldManager).Body(body))
+	if err != nil {
+		return nil, err
+	}
+	return decodeAcceptedObject(raw, ref)
+}
+
 func (r acceptedResource) applyAs(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool, manager string) (*unstructured.Unstructured, error) {
 	patch, err := json.Marshal(source.Object)
 	if err != nil {

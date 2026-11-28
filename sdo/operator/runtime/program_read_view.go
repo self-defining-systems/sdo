@@ -280,7 +280,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	left := accepted
 	right := projectSourceFields(actual, left)
 	if v.Client != nil {
-		normalized, normalizeErr := dryRunAcceptedSource(ctx, v.Client, ref, source)
+		normalized, normalizeErr := dryRunSourceReplacement(ctx, v.Client, ref, observed, source)
 		if normalizeErr != nil {
 			return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, normalizeErr)
 		}
@@ -289,9 +289,13 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		normalizeSourceWire(left, normalizedLive, source.GroupVersionKind())
 		right = normalizedLive
 	}
-	// Apply normalization answers whether reconciliation changes declared
-	// fields. It retains externally owned fields, so fields written after
-	// acceptance that source does not declare are checked separately.
+	// The server's dry-run update of the restore object answers whether
+	// replacing the object by accepted source changes it: a swapped union
+	// member, a foreign list entry and a removed declared field all differ,
+	// while server defaults come back as they are (replicas count unless an
+	// autoscaler targets the object). Without an acceptance record undeclared
+	// map keys are kept, so fields written after acceptance that source does
+	// not declare are checked separately.
 	// Keep the two complete, source-grounded sides even when Changed is false,
 	// so callers can compare individual fields (including source absence).
 	normalizedBefore, err := json.Marshal(left)
@@ -332,8 +336,27 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	return program.Diff{Changed: len(added) > 0, Text: text}, nil
 }
 
+// dryRunAcceptedSource validates accepted source for an object that does not
+// exist live: an apply of an absent object is a create, never a merge.
 func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	return applyAcceptedSource(ctx, client, ref, source, true)
+}
+
+// dryRunSourceReplacement is what observed would be if ReconcileFromSource
+// replaced it by accepted source: the server's dry-run update of the same
+// restore object the plan executor writes. Live values another manager wrote
+// are compared, never merged, so a swapped union member cannot make an
+// invalid merge and a foreign list entry cannot survive it.
+func dryRunSourceReplacement(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, observed, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	resource, err := resolveAcceptedResource(client, ref)
+	if err != nil {
+		return nil, fmt.Errorf("source diff does not support %s/%s: %w", ref.APIVersion, ref.Kind, err)
+	}
+	next, err := sourceRestoreObject(observed.DeepCopy(), observed, source, ref)
+	if err != nil {
+		return nil, err
+	}
+	return resource.dryRunUpdate(ctx, ref, next)
 }
 
 func applyAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool) (*unstructured.Unstructured, error) {

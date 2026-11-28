@@ -33,7 +33,7 @@ func TestReadSnapshotDiscoveryBudget(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(metav1.APIResourceList{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: "pods", Kind: "Pod", Namespaced: true}, {Name: "services", Kind: "Service", Namespaced: true}, {Name: "deployments", Kind: "Deployment", Namespaced: true}}})
 			return
 		}
-		if r.Method != http.MethodPatch || r.URL.Query().Get("dryRun") != "All" {
+		if r.Method != http.MethodPut || r.URL.Query().Get("dryRun") != "All" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 		}
 		normalizations.Add(1)
@@ -60,7 +60,7 @@ func TestReadSnapshotDiscoveryBudget(t *testing.T) {
 			t.Errorf("discovery must be once per API version per fresh snapshot: got %d want %d", got, cycle)
 		}
 		if got := normalizations.Load(); got != 30*cycle {
-			t.Errorf("live SSA must remain once per watched Deployment per fresh snapshot: got %d", got)
+			t.Errorf("the dry-run replacement must remain once per watched Deployment per fresh snapshot: got %d", got)
 		}
 	}
 }

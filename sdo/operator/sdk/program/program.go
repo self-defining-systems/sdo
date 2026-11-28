@@ -178,7 +178,7 @@ type ReadView interface {
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
 	// ProbeHTTP sends one recorded HTTP request to a Service, on its first TCP port (HTTPProbePort).
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
-	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
+	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA. Changed is whether replacing the object by accepted source (a server dry-run update, the object ReconcileFromSource writes) would change it, so a swapped probe handler, a foreign list entry and a removed declared field are drift.
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
 	DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error)
 	// DatabaseUsers lists nonsecret user names and direct roles of one database catalog.

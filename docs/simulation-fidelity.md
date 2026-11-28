@@ -352,7 +352,7 @@ incident-open capture still run on the step pass and are not simulated.
 Reuse audit (any frozen observation used after the controller wrote): `matchedViews` is re-snapshotted once anything was applied
 (`responder_loop.go`, `l.appliedAny()`); the stage's post-apply diagnosis and `verify` call `snapshotView`, and the plan verifier calls
 `Provider.Snapshot`. `lastDiagnosisView` is read only for topology relations (selectors, labels), never for field values. Cost note: frozen diffs
-now make one dry-run apply per object that has an accepted manifest per snapshot (cached across detectors and programs of that snapshot).
+now make one dry-run update per object that has an accepted manifest per snapshot (cached across detectors and programs of that snapshot).
 
 ### Controller end-to-end: fake kubelet and limits
 

@@ -252,6 +252,13 @@ func sourceResidualPaths(observed, source *unstructured.Unstructured) ([]string,
 // Controller exclusions come from the same managed-field and annotation
 // policies as source comparison. No list of manager names or new allowlist.
 func preserveSourceControllerFields(next, observed *unstructured.Unstructured) {
+	preserveSubresourceFields(next, observed)
+	preserveSourceBookkeeping(next, observed)
+}
+
+// preserveSubresourceFields keeps what controllers wrote through a
+// subresource (an autoscaler's replicas) across a restore.
+func preserveSubresourceFields(next, observed *unstructured.Unstructured) {
 	owned := ownedBySubresourceWriters(observed)
 	var preserve func(string, map[string]any, map[string]any)
 	preserve = func(prefix string, target, live map[string]any) {
@@ -272,6 +279,11 @@ func preserveSourceControllerFields(next, observed *unstructured.Unstructured) {
 		}
 	}
 	preserve("", next.Object, observed.Object)
+}
+
+// preserveSourceBookkeeping keeps the annotations and labels that comparison
+// never compares (rollout revision, restart stamp, source tree).
+func preserveSourceBookkeeping(next, observed *unstructured.Unstructured) {
 	for _, location := range [][]string{{"metadata", "annotations"}, {"spec", "template", "metadata", "annotations"}} {
 		annotations, _, _ := unstructured.NestedMap(next.Object, location...)
 		live, _, _ := unstructured.NestedMap(observed.Object, location...)

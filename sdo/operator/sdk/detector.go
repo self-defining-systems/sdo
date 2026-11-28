@@ -267,7 +267,7 @@ type DetectionContext interface {
 
 	// DiffAgainstSource compares a captured resource with accepted source, including
 	// source absence. Runtime reads are frozen per snapshot and recorded for replay.
-	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
+	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA. Changed is whether replacing the object by accepted source (a server dry-run update, the object ReconcileFromSource writes) would change it, so a swapped probe handler, a foreign list entry and a removed declared field are drift.
 	DiffAgainstSource(ref ObjectRef) (SourceDiff, error)
 	// PodAdmission returns the frozen dry-run result, false when unobserved.
 	PodAdmission() (PodAdmissionResult, bool)

@@ -764,12 +764,11 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if err != nil {
 			return nil, err
 		}
-		next, err = sourceFields(next, source, a.Ref)
+		next, err = sourceRestoreObject(next, current, source, a.Ref)
 		if err != nil {
 			return nil, err
 		}
-		removeAddedFields(next, current, source)
-		preserveSourceControllerFields(next, current)
+		preserveSubresourceFields(next, current)
 		// A source repair owns the revision it applies. Carry the original
 		// UID-bound acceptance baseline across that repair; never accept an
 		// unknown incarnation or absorb another writer's added/changed fields.
@@ -951,6 +950,22 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 	default:
 		return nil, fmt.Errorf("unsupported plan action %T", action)
 	}
+	return next, nil
+}
+
+// sourceRestoreObject is current replaced by accepted source: declared values
+// restored (lists whole) and fields added since acceptance removed, keeping
+// SDO's bookkeeping. ReconcileFromSource writes it and also keeps what
+// controllers wrote through a subresource; source comparison compares with
+// the server's dry-run update of it, where a declared field such as replicas
+// stays compared unless an autoscaler targets the object.
+func sourceRestoreObject(next, current, source *unstructured.Unstructured, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	next, err := sourceFields(next, source, ref)
+	if err != nil {
+		return nil, err
+	}
+	removeAddedFields(next, current, source)
+	preserveSourceBookkeeping(next, current)
 	return next, nil
 }
 
