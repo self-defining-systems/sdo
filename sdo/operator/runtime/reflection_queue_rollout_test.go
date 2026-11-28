@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 type rolloutQueue struct {
@@ -43,4 +44,52 @@ func TestQueuedRolloutActivatesTheReflectionCommit(t *testing.T) {
 	if c.reflections.rollout != "" || len(c.reflections.queued) != 0 {
 		t.Fatalf("rollout %q queued %v: the incident should leave the queue", c.reflections.rollout, c.reflections.queued)
 	}
+}
+
+// A closing turn that ends while the next incident is open does not swap the
+// memory that incident opened on: its rollout is activated once that
+// incident's closure was acknowledged.
+func TestQueuedRolloutWaitsForTheOpenIncident(t *testing.T) {
+	c := &Controller{}
+	c.config.SourceCommit = "outcome"
+	c.reflections.queued = []string{"inc"}
+	c.reflections.rollout = "inc"
+	c.broker = &rolloutBroker{rolloutQueue: rolloutQueue{commit: "reflection", pending: true}}
+	activations := 0
+	c.memoryRefresh = func(context.Context) (bool, error) {
+		activations++
+		c.broker.(*rolloutBroker).pending = false
+		return true, nil
+	}
+	c.incidentOpen = true
+	if err := c.driveQueuedReflections(context.Background(), time.Unix(1000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if activations != 0 || c.CurrentAcceptedCommit() != "outcome" {
+		t.Fatalf("activations=%d commit=%q: memory changed under the open incident", activations, c.CurrentAcceptedCommit())
+	}
+	// Its closure in flight (a withdrawn recovery can still reopen it) holds too.
+	c.incidentOpen, c.pendingClosure = false, &IncidentClosure{}
+	if !c.closureBlocksNextLocked() {
+		t.Fatal("a pending closure must block the next work")
+	}
+	if err := c.driveQueuedReflections(context.Background(), time.Unix(1001, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if activations != 0 {
+		t.Fatalf("activations=%d: memory changed while the incident's closure was in flight", activations)
+	}
+	c.pendingClosure = nil
+	if err := c.driveQueuedReflections(context.Background(), time.Unix(1002, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if activations != 1 || c.CurrentAcceptedCommit() != "reflection" || c.reflections.rollout != "" {
+		t.Fatalf("activations=%d commit=%q rollout=%q: the rollout did not run after the incident", activations, c.CurrentAcceptedCommit(), c.reflections.rollout)
+	}
+}
+
+// rolloutBroker is rolloutQueue as the controller's broker.
+type rolloutBroker struct {
+	riskBroker
+	rolloutQueue
 }

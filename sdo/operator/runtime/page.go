@@ -136,9 +136,9 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 		c.mu.Unlock()
 		return nil
 	}
-	// A page waits, retained in the inbox, while the previous incident's
-	// closure or its work (closing turn, cleanup, source publication) runs.
-	busy := c.earlyReportPendingLocked() || c.closureBlocksNextLocked() || c.priorIncidentWorkLocked() != ""
+	// A page waits, retained in the inbox, only while the previous incident's
+	// closure is in flight; its closing turn never holds a page.
+	busy := c.earlyReportPendingLocked() || c.closureBlocksNextLocked()
 	c.mu.Unlock()
 	if busy {
 		return ErrExternalIncidentBusy
