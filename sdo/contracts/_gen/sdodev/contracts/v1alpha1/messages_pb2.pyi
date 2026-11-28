@@ -78,7 +78,7 @@ class DriftField(_message.Message):
     def __init__(self, path: _Optional[str] = ..., old: _Optional[str] = ..., new: _Optional[str] = ..., source: _Optional[str] = ...) -> None: ...
 
 class DriftEvent(_message.Message):
-    __slots__ = ("ref", "fields", "source", "manager", "operation", "observed_at", "classification", "program_id", "manager_at", "investigation_status", "investigation_verdict", "investigation_reason", "investigation_evidence", "investigation_capture_id", "seen_healthy")
+    __slots__ = ("ref", "fields", "source", "manager", "operation", "observed_at", "classification", "program_id", "manager_at", "investigation_status", "investigation_verdict", "investigation_reason", "investigation_evidence", "investigation_capture_id", "healthy_content", "healthy_content_since")
     REF_FIELD_NUMBER: _ClassVar[int]
     FIELDS_FIELD_NUMBER: _ClassVar[int]
     SOURCE_FIELD_NUMBER: _ClassVar[int]
@@ -93,7 +93,8 @@ class DriftEvent(_message.Message):
     INVESTIGATION_REASON_FIELD_NUMBER: _ClassVar[int]
     INVESTIGATION_EVIDENCE_FIELD_NUMBER: _ClassVar[int]
     INVESTIGATION_CAPTURE_ID_FIELD_NUMBER: _ClassVar[int]
-    SEEN_HEALTHY_FIELD_NUMBER: _ClassVar[int]
+    HEALTHY_CONTENT_FIELD_NUMBER: _ClassVar[int]
+    HEALTHY_CONTENT_SINCE_FIELD_NUMBER: _ClassVar[int]
     ref: _common_pb2.ObjectRef
     fields: _containers.RepeatedCompositeFieldContainer[DriftField]
     source: str
@@ -108,8 +109,9 @@ class DriftEvent(_message.Message):
     investigation_reason: str
     investigation_evidence: _containers.RepeatedCompositeFieldContainer[DriftEvidence]
     investigation_capture_id: str
-    seen_healthy: bool
-    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., fields: _Optional[_Iterable[_Union[DriftField, _Mapping]]] = ..., source: _Optional[str] = ..., manager: _Optional[str] = ..., operation: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., classification: _Optional[str] = ..., program_id: _Optional[str] = ..., manager_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., investigation_status: _Optional[str] = ..., investigation_verdict: _Optional[str] = ..., investigation_reason: _Optional[str] = ..., investigation_evidence: _Optional[_Iterable[_Union[DriftEvidence, _Mapping]]] = ..., investigation_capture_id: _Optional[str] = ..., seen_healthy: _Optional[bool] = ...) -> None: ...
+    healthy_content: str
+    healthy_content_since: _timestamp_pb2.Timestamp
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., fields: _Optional[_Iterable[_Union[DriftField, _Mapping]]] = ..., source: _Optional[str] = ..., manager: _Optional[str] = ..., operation: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., classification: _Optional[str] = ..., program_id: _Optional[str] = ..., manager_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., investigation_status: _Optional[str] = ..., investigation_verdict: _Optional[str] = ..., investigation_reason: _Optional[str] = ..., investigation_evidence: _Optional[_Iterable[_Union[DriftEvidence, _Mapping]]] = ..., investigation_capture_id: _Optional[str] = ..., healthy_content: _Optional[str] = ..., healthy_content_since: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class DriftEvidence(_message.Message):
     __slots__ = ("kind", "observation")

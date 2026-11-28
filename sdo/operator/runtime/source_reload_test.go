@@ -242,3 +242,25 @@ func TestReloadIsJudgedByContentNotAnyLaterWrite(t *testing.T) {
 		t.Fatalf("a label-only change names start-only readers: %+v", got)
 	}
 }
+
+// Pods still running changed content are left by the automatic restore only if
+// the application was healthy with them: the content was written back before
+// the healthy stretch and is unchanged since. A healthy stretch before that
+// write says nothing about what they run.
+func TestNotReloadedIsSeenHealthyOnlyWhenWrittenBackBeforeTheHealthyStretch(t *testing.T) {
+	view := reloadWorld("subPath", reloadChanged.Add(10*time.Second), reloadChanged.Add(-time.Hour), sdk.SourceDiff{}, reloadRestored)
+	for name, test := range map[string]struct {
+		since time.Time
+		want  bool
+	}{
+		"written back before the stretch": {reloadRestored.Add(time.Minute), true},
+		"written back after the stretch":  {reloadRestored.Add(-time.Second), false},
+	} {
+		events := reloadEvents()
+		events[0].HealthyContent, events[0].HealthyContentSince = objectContent(view, events[0].Ref), &test.since
+		got := SourceDepartures(DepartureInput{View: view, Events: events, Onset: detectOnset}, []sdk.ObjectRef{dref("ConfigMap", "cfg")})
+		if len(got) != 1 || got[0].Kind != DepartureNotReloaded || got[0].SeenHealthy != test.want {
+			t.Fatalf("%s: %+v, want seen healthy %t", name, got, test.want)
+		}
+	}
+}

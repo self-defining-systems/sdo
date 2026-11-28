@@ -316,12 +316,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			return
 		}
 		for _, event := range events {
-			c.mu.Lock()
-			c.driftEvents = append(c.driftEvents, event)
-			if len(c.driftEvents) > 40 {
-				c.driftEvents = append([]sdk.DriftEvent(nil), c.driftEvents[len(c.driftEvents)-40:]...)
-			}
-			c.mu.Unlock()
+			c.appendDriftEvent(event)
 			if event.Classification == sdk.DriftUnexplained {
 				c.queueUnexplainedFinding(now, event)
 			}

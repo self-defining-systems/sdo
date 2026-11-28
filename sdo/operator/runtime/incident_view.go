@@ -59,7 +59,7 @@ func (c *Controller) refreshIncidentView(now time.Time, evaluated bool) {
 		return
 	}
 	active := c.blockingFindingsLocked()
-	driftEvents := c.driftEventsLocked(c.currentIncidentRequest.Findings)
+	driftEvents := driftEventsForFindings(c.driftEvents, c.currentIncidentRequest.Findings)
 	c.mu.Unlock()
 
 	findings := make([]sdk.Finding, 0, len(active))

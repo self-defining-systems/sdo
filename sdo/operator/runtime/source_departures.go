@@ -41,8 +41,8 @@ type SourceDeparture struct {
 	Manager string
 	// At is when the manager wrote; zero when the object is gone and nothing records it.
 	At time.Time
-	// SeenHealthy is a change already present while the application then stayed
-	// healthy (sdk.DriftEvent).
+	// SeenHealthy: what departs now is what the application stayed healthy
+	// with for a settle window (seen_healthy.go).
 	SeenHealthy bool
 	// Unattributed is a missing object no drift event explains: shown as plain
 	// information, with no claim about who removed it and no restore command.
@@ -220,7 +220,7 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 			}
 			continue
 		}
-		departure.Manager, departure.SeenHealthy = event.Manager, event.SeenHealthy
+		departure.Manager, departure.SeenHealthy = event.Manager, seenHealthy(in.View, ref, event)
 		departure.At = event.ObservedAt
 		if event.ManagerAt != nil {
 			departure.At = *event.ManagerAt
@@ -283,7 +283,10 @@ func notReloaded(in DepartureInput, ref sdk.ObjectRef, late func(time.Time) bool
 		return SourceDeparture{}, false
 	}
 	consumers, data := splitDataStores(in.View, stale)
-	return SourceDeparture{Ref: ref, Kind: DepartureNotReloaded, Manager: event.Manager, At: at, SeenHealthy: event.SeenHealthy, Consumers: consumers, DataConsumers: data}, true
+	// The stale Pods were seen healthy only if the content was already written
+	// back, and has not changed since, for a whole healthy window.
+	healthy := seenHealthy(in.View, ref, event) && !restored.After(*event.HealthyContentSince)
+	return SourceDeparture{Ref: ref, Kind: DepartureNotReloaded, Manager: event.Manager, At: at, SeenHealthy: healthy, Consumers: consumers, DataConsumers: data}, true
 }
 
 // driftEventTime is when the manager wrote, else when the controller observed it.

@@ -92,9 +92,12 @@ type DriftEvent struct {
 	InvestigationReason    string              `json:"investigation_reason,omitempty"`
 	InvestigationEvidence  []DriftEvidence     `json:"investigation_evidence,omitempty"`
 	InvestigationCaptureID string              `json:"investigation_capture_id,omitempty"`
-	// SeenHealthy: the change was present while the application then stayed
-	// healthy for a settle window, so it did not break it then.
-	SeenHealthy bool `json:"seen_healthy,omitempty"`
+	// HealthyContent is the digest of the object's content that the application
+	// stayed healthy with for a whole settle window, and HealthyContentSince
+	// the start of that window. Content that matches it did not break the
+	// application then; any other content is not covered.
+	HealthyContent      string     `json:"healthy_content,omitempty"`
+	HealthyContentSince *time.Time `json:"healthy_content_since,omitempty"`
 }
 
 type DriftEvidence struct {
