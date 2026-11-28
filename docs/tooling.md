@@ -30,7 +30,7 @@ Use existing gates when extending a contract. New agent implementations and comm
 
 Run `scripts/format_code.sh` and `scripts/check_errors.sh` after code edits. Focused validation commands and cost boundaries live in [the testing guide](testing-guide.md).
 
-The local gate runs every static check that pull-request CI runs: `tests/unit/scripts/test_local_gate_parity.py` fails when a `scripts/check_*` entry point, or a script the CI static job names, is not reachable from `check_errors.sh` and is not listed with a reason in its `NOT_LOCAL` table (checks that need a CI log, an image or provider credentials).
+The local gate runs every static check that pull-request CI runs: `tests/unit/scripts/test_local_gate_parity.py` fails when a `scripts/check_*` entry point, or a script the CI static job names, is not reachable from `check_errors.sh` and is not listed with a reason in its `NOT_LOCAL` table (checks that need a CI log, an image or provider credentials). It also runs every Go `//ci:whole-tree` guard (`scripts/test_go_ci.sh guards`), which pull request CI always runs; Python `CI_WHOLE_TREE` files run locally only where `check_errors.sh` names them.
 
 `scripts/check_pytest_imports.py` maps test files to pytest prepend-mode package names and rejects collisions before collection. `scripts/check_errors.sh` runs it before any Python test; its subprocess tests cover flat modules, distinct packages and matching package names in separate roots. Rename conflicting tests or make their package identity distinct.
 

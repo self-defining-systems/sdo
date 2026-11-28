@@ -334,8 +334,7 @@ def run_command(env: Mapping[str, str], box: Path, command: str, limit: float) -
 def apply(env: Mapping[str, str], target: Path, plan: Mapping[str, Any], deadline: float) -> dict[str, Any]:
     """Run the plan's prepare and apply commands as written, in order; the first failed apply command ends it."""
     todo = instructions(plan)
-    if not vanilla.credentials_work(env):
-        vanilla.refresh_token(env)
+    vanilla.refresh_token(env)  # a fresh scoped token for every apply, whatever the run's age
     secrets = [kube_token(env)]
     commands: list[dict[str, Any]] = []
     result: dict[str, Any] = {

@@ -211,6 +211,9 @@ message TrafficRequest {
     OPERATION_BURST = 5;
     OPERATION_PROBE = 6;
     OPERATION_DIALS = 7;
+    // Runs every health probe's full onboarding journey checks once (passes,
+    // a second prober, altered answers); the answer is the report.
+    OPERATION_JOURNEY_CHECK = 8;
   }
   Operation operation = 1;
   string workload = 2;
@@ -235,6 +238,8 @@ message TrafficResponse {
   int32 http_status = 6;
   // The scalars an HTTP probe extracted by pointer; the body is dropped.
   google.protobuf.Struct fields = 7;
+  // The journey-check report (journeycheck.Report JSON).
+  google.protobuf.Struct journey_check = 8;
 }
 
 message TrafficDialTarget {

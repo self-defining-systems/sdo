@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk/podtext"
@@ -26,6 +27,7 @@ import (
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/telemetry"
+	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -400,7 +402,7 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	pod.InitContainers = []corev1.Container{{
 		Name: "prepare-build-cache", Image: c.ControllerImage,
-		Command:         []string{"mkdir", "-p", "/workspace/.sdo-runtime/build/tmp", "/workspace/.sdo-runtime/build/go-tmp", "/workspace/.sdo-runtime/build/go-cache"},
+		Command:         []string{"mkdir", "-p", "/workspace/.sdo-runtime/build/tmp", "/workspace/.sdo-runtime/build/go-tmp", path.Join("/workspace", toolchain.ControllerBuildCacheSubPath)},
 		SecurityContext: containerSecurity(),
 		Resources:       limits("10m", "16Mi", "100m", "64Mi"),
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}},
@@ -415,7 +417,7 @@ func controllerJob(c Config) *batchv1.Job {
 			{Name: "CLAUDE_CONFIG_DIR", Value: "/workspace/.sdo-runtime/claude"},
 			{Name: "TMPDIR", Value: "/workspace/.sdo-runtime/build/tmp"},
 			{Name: "GOTMPDIR", Value: "/workspace/.sdo-runtime/build/go-tmp"},
-			{Name: "GOCACHE", Value: "/workspace/.sdo-runtime/build/go-cache"},
+			{Name: "GOCACHE", Value: path.Join("/workspace", toolchain.ControllerBuildCacheSubPath)},
 			{Name: observation.CeilingEnvironment, Value: string(policyJSON)},
 			{Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
 			{Name: "SDO_TURN_USAGE_LOG", Value: "/workspace/.sdo-runtime/usage/controller-turns.jsonl"},

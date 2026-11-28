@@ -17,7 +17,7 @@ const (
 	ItemProbe = "probe-checks-result"
 	// ItemPointers is red for an operation whose path lists a component with no
 	// metrics or logs pointer.
-	ItemPointers = "map-pointers"
+	ItemPointers = appmap.ItemMapPointers
 	// ItemMapAccuracy compares, per broken component, the operations that
 	// failed with the operations whose path lists it: a missing edge is red, a
 	// spurious one a note.
@@ -367,7 +367,7 @@ func journeyTable(js []Journey) string {
 func pointersDetail(missing []string) string {
 	return fmt.Sprintf("components on the path without observe metrics and logs pointers: %s; give each component a line such as "+
 		"`observe: {metrics: \"<where its metrics are>\", logs: \"container <name>: <what it logs>\"}`, or add under `reasons:` "+
-		"`- {item: %s, subject: <operation>, reason: <why>}`", strings.Join(missing, ", "), ItemPointers)
+		"`- {item: %s, subject: <operation>, reason: <why>}` (%s)", strings.Join(missing, ", "), ItemPointers, mapDoc)
 }
 
 // excusable are the map items a recorded reason may turn into a note

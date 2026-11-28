@@ -254,8 +254,13 @@ func (w Workload) WithDefaults() Workload {
 		}
 	}
 	w.Links = links
-	maxAgeSet := w.SLO.MaxAge != 0
+	maxAgeSet, latencySet := w.SLO.MaxAge != 0, w.SLO.MaxLatency != 0
 	w.SLO = mergeSLO(defaultSLO(), w.SLO)
+	if !latencySet {
+		// Unset stays unset, so LatencyBoundAuthored still tells: the
+		// effective SLO applies DefaultMaxLatency until SDO calibrates one.
+		w.SLO.MaxLatency = 0
+	}
 	if !maxAgeSet && w.Purpose == PurposeHealthProbe {
 		// A sample is stamped when its iteration starts and is seen when it
 		// ends. The window holds minSamples intervals plus the running
@@ -314,7 +319,7 @@ func (w Workload) Validate() error {
 	if w.IterationTimeout.Duration() < w.Timeout.Duration() || w.IterationTimeout.Duration() > MaxIterationTimeout {
 		return fmt.Errorf("traffic workload %s: iterationTimeout must be in [timeout, %s]", w.Name, MaxIterationTimeout)
 	}
-	if err := validateSLO(w.SLO); err != nil {
+	if err := validateSLO(mergeSLO(defaultSLO(), w.SLO)); err != nil {
 		return fmt.Errorf("traffic workload %s: %w", w.Name, err)
 	}
 	if err := w.validateSampleInterval(); err != nil {

@@ -30,7 +30,7 @@ once per remaining interval, within 10–120 s. Explicit workload fields overrid
 Check the worst detection time and the requests/s cap with `onboarding journeys --plan`.
 Give each scenario one home workload. Spend remaining budget on the most used journeys, adding faster workloads
 for core paths when their planned time is too long.
-- Set `maxLatency` to about three times the slowest healthy run, at least 1 s. A run over budget starts confirmation.
+- Leave `maxLatency` out: after install SDO sets it from the soak to three times the slowest healthy run, at least 1 s.
 
 ## Checks
 
@@ -38,9 +38,20 @@ for core paths when their planned time is too long.
 |---|---|
 | `sdo-operator onboarding journeys --repo DIR --namespace NS --plan` | first, and after each map or workload edit (no cluster) |
 | `sdo-operator onboarding journeys --repo DIR --namespace NS --only ID --quick` | after each edit of one probe: one iteration, each request and answer printed |
-| same without `--quick` | once it passes: repeatability, concurrency, cleanup and memory check for that probe |
-| same with `--alter` | then: does it fail on wrong answers; rerun only the IDs you changed |
+| `--only ID`, with `--alter` for an altered-answers red | in the follow-up, to re-check a scenario SDO named red |
 | `sdo-operator onboarding check --metrics --repo DIR --namespace NS` | once, when a request counter is mapped |
 
-Every run also runs `memory check` (red `memory-check` lines), so it needs no separate call. Reports give one line per scenario with details for failures. Use `--verbose` for every check. Run long checks in
-the background and write the next probe meanwhile.
+Every run but `--quick` also runs `memory check` (red `memory-check` lines), so it needs no separate call. SDO runs
+every probe's repeatability, concurrency, cleanup and altered-answer checks after the session.
+
+## SDK details
+
+- Paths, `WithJSON` bodies, `JSONEquals` and `ExactSet` fill `{key}` from State (query and form values take
+  `FromPrevious`); `Contains` and `Each` use their text and pattern as written.
+- State holds only what `SaveJSON`, `SaveCookie` and `FromSeedPair` stored this iteration. A generated value
+  (`Unique`) is not kept: save it from the answer to use it in a later step.
+- `Eventually(read)` sends a GET again while its checks fail with an answer below 500, until they pass or the
+  `iterationTimeout` nears; a custom `Check` returns `NotYet` for the same.
+- `ReadsExistingRecords` passes on an empty list; a member that contains the scenario's Marker is the probe's own.
+- Every write of a write scenario carries its Marker (path, body, query or a header; a parameter the application
+  ignores is fine), or names a record a marked write saved.

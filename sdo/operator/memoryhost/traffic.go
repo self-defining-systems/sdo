@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// JourneyCheckTimeout bounds one run of every health probe's full journey
+// checks on the installed application.
+const JourneyCheckTimeout = 15 * time.Minute
+
 // TrafficRPC never exposes a cluster mutation capability.
 type TrafficRPC interface {
 	Traffic(context.Context, *pb.TrafficRequest) (*pb.TrafficResponse, error)
@@ -41,8 +45,12 @@ func (m *Manager) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.Traffi
 	timeout := m.timeout
 	// Accepted verification workloads may run for sixty seconds. Keep their
 	// transport budget separate from short detector RPCs, while honoring caller cancellation.
-	if r.GetOperation() == pb.TrafficRequest_OPERATION_BURST {
+	switch r.GetOperation() {
+	case pb.TrafficRequest_OPERATION_BURST:
 		timeout = max(timeout, 90*time.Second)
+	case pb.TrafficRequest_OPERATION_JOURNEY_CHECK:
+		// Every probe's passes, second prober and altered answers, once.
+		timeout = max(timeout, JourneyCheckTimeout)
 	}
 	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, timeout)

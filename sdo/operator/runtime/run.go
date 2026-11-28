@@ -38,6 +38,7 @@ import (
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/evaluation"
+	"sdo.dev/operator/journeycheck"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/observation"
@@ -748,6 +749,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			loop.IncidentStatus = func() *apihistory.IncidentVerified { return controller.incidentVerificationWarning(request.IncidentID) }
 			loop.RecoveryWaiting = func() string { return controller.recoveryWaitingLine(request.IncidentID) }
+			loop.AlertProgress = func() bool { return controller.alertSetProgressed(request.IncidentID) }
 			if options.NativeBroker != nil {
 				gate, err := controller.incidentGate(request.IncidentID)
 				if err != nil {
@@ -1044,6 +1046,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		controller.config.StartupWarmupSettled = trafficObserver.WarmupSettled
 		trafficObserver.UseUserTests(controller.userTests)
+		trafficObserver.UseLatencyBounds(controller.latencyBounds)
 	}
 	// Promoted store baselines are controller state below the repository
 	// mount, so a restart (an accepted upgrade among them) keeps them.
@@ -1069,8 +1072,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}); err != nil {
 		return fmt.Errorf("load install start-up record: %w", err)
 	}
+	var journeyCheck JourneyCheck
+	if checker, ok := proberAPI.(interface {
+		JourneyCheck(context.Context) (journeycheck.Report, error)
+	}); ok && syntheticTraffic {
+		journeyCheck = checker.JourneyCheck
+	}
 	if err := retryStartup(func() error {
-		return controller.AttachOnboardingSoak(ctx, lifecycleio.NewOnboardingSoakStore(stateClient, *controlNamespace))
+		return controller.AttachOnboardingSoak(ctx, lifecycleio.NewOnboardingSoakStore(stateClient, *controlNamespace), journeyCheck)
 	}); err != nil {
 		return fmt.Errorf("load onboarding soak record: %w", err)
 	}

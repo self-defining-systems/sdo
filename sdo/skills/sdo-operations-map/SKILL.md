@@ -36,7 +36,8 @@ memory check enforces the [rules](references/rules.md).
 - **Probes**: each scenario, its kind and the operations it exercises. An operation's tests are the probes
   that list it ([detectors](../sdo-detectors/SKILL.md)).
 - **Reasons**: for a red check item you cannot fix: item, subject and one line why. Never for
-  `deployed-healthy` or `quiet-when-healthy`.
+  `deployed-healthy` or `quiet-when-healthy`. A component that counts no requests: see the
+  [worked example](references/request-metrics.md).
 
 ## Schema of the new parts
 

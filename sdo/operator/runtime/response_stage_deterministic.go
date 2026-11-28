@@ -1358,7 +1358,7 @@ func (l *ResponderLoop) readDetectorsOnce(ctx context.Context, detectors []sdk.D
 			answering = append(answering, detector)
 		}
 	}
-	results := evaluateDetectors(ctx, answering, view)
+	results := evaluateAdmittedDetectors(ctx, answering, view)
 	for _, detector := range answering {
 		id := detector.Spec().ID
 		result := results[id]

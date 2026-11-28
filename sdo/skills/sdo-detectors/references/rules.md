@@ -40,6 +40,9 @@ diagnostic; look it up here.
   `sdo.dev/v1alpha1 ServiceReachability` (detectors over Service reachability dials). Watches are unique and
   non-empty. The synthetic `sdo.dev/v1alpha1 ResourceUsage` watch exposes kubelet usage windows. Memory check runs the controller's own startup validation, so a detector it rejects can never be
   accepted. Enforced by: `manifest.invalid`, `detector.controller-start`.
+- Every finding a learned detector returns on the incident's captures passes the controller's
+  own finding validation (rule ID, severity, summary, evidence, a primary resource with kind and name), or the
+  controller refuses it on every evaluation. Enforced by: `detector.finding-admission`.
 - The interval-driven `sdo.dev/v1alpha1 Logs` watch exposes bounded container-log counts and excerpts through
   `logs.Consumer` and `logs.Require`; declarations validate RE2 patterns and query limits at registration.
   Source errors must propagate as detector errors. Enforced by: `manifest.invalid`, `detector.compile`, `detector.test`.

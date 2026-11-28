@@ -242,7 +242,12 @@ type ResponderLoop struct {
 	IncidentStatus  func() *apihistory.IncidentVerified
 	// RecoveryWaiting is what Recovered waits on, for `sdo detect`; "" when unknown.
 	RecoveryWaiting func() string
-	WaitClosure     func(context.Context, time.Duration) ToolResponse
+	// AlertProgress reports whether an alert of the incident's set cleared since detection (the investigator gate).
+	AlertProgress func() bool
+	// firstCall closes on the responder's first own tool call (firstToolCall); the investigator delay counts from it.
+	firstCallInit, firstCallMark sync.Once
+	firstCall                    chan struct{}
+	WaitClosure                  func(context.Context, time.Duration) ToolResponse
 	// WaitClock paces `sdo detect --wait`; nil uses production timers.
 	WaitClock kclock.WithTicker
 	// effectShown is the newest known change whose result a `sdo detect --wait`
@@ -556,6 +561,9 @@ func (l *ResponderLoop) Exhausted() bool {
 type toolTiming struct{ capture, refresh, persist time.Duration }
 
 func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
+	if !request.isolatedRead {
+		l.markFirstToolCall()
+	}
 	if !request.isolatedRead && concurrentRead(request.Command) {
 		return l.handleRead(ctx, request)
 	}
@@ -1209,7 +1217,7 @@ func (l *ResponderLoop) refresh(ctx context.Context, diagnose bool) ([]sdk.Findi
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	endDetectors := l.phase("detectors")
-	results := evaluateDetectors(ctx, l.Detectors, view)
+	results := evaluateAdmittedDetectors(ctx, l.Detectors, view)
 	endDetectors()
 	for _, detector := range l.Detectors {
 		result := results[detector.Spec().ID]
@@ -1217,6 +1225,14 @@ func (l *ResponderLoop) refresh(ctx context.Context, diagnose bool) ([]sdk.Findi
 		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending
+		}
+		// A finding the controller refuses fails only its detector, as in the
+		// controller; the other detectors' findings are still the read.
+		var refused findingAdmissionError
+		if errors.As(err, &refused) {
+			state.Status, state.Error = DetectorEvaluationError, err.Error()
+			states = append(states, state)
+			continue
 		}
 		if err != nil {
 			state.Status, state.Error = DetectorEvaluationError, err.Error()
@@ -1567,7 +1583,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	endDetectors := l.phase("detectors")
-	results := evaluateDetectors(ctx, l.Detectors, view)
+	results := evaluateAdmittedDetectors(ctx, l.Detectors, view)
 	endDetectors()
 	for _, detector := range l.Detectors {
 		result := results[detector.Spec().ID]
@@ -1576,9 +1592,13 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending
 		}
+		var refused findingAdmissionError
 		if err != nil {
 			state.Status, state.Error = DetectorEvaluationError, err.Error()
-			response.Error = err.Error()
+			// A refused finding fails its detector, not the write.
+			if !errors.As(err, &refused) {
+				response.Error = err.Error()
+			}
 		}
 		for _, finding := range observed {
 			if finding.Status == sdk.FindingActive {

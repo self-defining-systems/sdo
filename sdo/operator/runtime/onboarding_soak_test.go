@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +36,13 @@ func (s *memorySoakStore) Save(_ context.Context, record journeycheck.SoakRecord
 // whose snapshot carries one health-probe window with the given samples.
 func soakController(t *testing.T, store *memorySoakStore, samples []traffic.Sample, detectors ...sdk.Detector) *Controller {
 	t.Helper()
+	return checkedSoakController(t, store, nil, samples, detectors...)
+}
+
+// checkedSoakController is soakController whose install also runs check, the
+// probes' full journey checks.
+func checkedSoakController(t *testing.T, store *memorySoakStore, check JourneyCheck, samples []traffic.Sample, detectors ...sdk.Detector) *Controller {
+	t.Helper()
 	cfg := testControllerConfig()
 	cfg.StartupBound, cfg.OnboardingSoak = 30*time.Minute, 5*time.Minute
 	cfg.Namespace, cfg.SourceCommit, cfg.RepositoryWorktree = "app", "synthetic-accepted", "synthetic-worktree"
@@ -48,7 +57,7 @@ func soakController(t *testing.T, store *memorySoakStore, samples []traffic.Samp
 	if err := c.AttachStateStore(context.Background(), &memoryStateStore{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.AttachOnboardingSoak(context.Background(), store); err != nil {
+	if err := c.AttachOnboardingSoak(context.Background(), store, check); err != nil {
 		t.Fatal(err)
 	}
 	return c
@@ -116,5 +125,92 @@ func TestInstallWithASoakRecordDoesNotSoakAgain(t *testing.T) {
 func TestControllerTakesItsOnboardingSoakFromTheOnboardingSection(t *testing.T) {
 	if got := (ControllerConfig{}).WithSettings(settings.Default()).OnboardingSoak; got != 5*time.Minute {
 		t.Fatalf("OnboardingSoak = %s, want 5m", got)
+	}
+}
+
+// The install runs the probes' full journey checks (passes, a second prober,
+// altered answers) once, beside the soak: the checks an onboarding session no
+// longer waits for. Their reds join the soak's in the one record and the one
+// follow-up; the record waits for them, and they never open an incident.
+func TestSoakRecordCarriesTheProbesFullJourneyChecks(t *testing.T) {
+	store := &memorySoakStore{}
+	release, calls := make(chan struct{}), 0
+	check := func(ctx context.Context) (journeycheck.Report, error) {
+		calls++
+		<-release
+		return journeycheck.Report{Results: []journeycheck.Result{
+			{Item: journeycheck.ItemPasses, Subject: "sign-in", Status: journeycheck.Green, Detail: "3 runs passed"},
+			{Item: journeycheck.ItemAltered, Subject: "sign-in", Status: journeycheck.Red, Detail: "passed an empty answer of GET /session"},
+		}}, nil
+	}
+	ok := []traffic.Sample{{At: at(10), Iteration: 1, Outcome: traffic.OutcomeOK}}
+	c := checkedSoakController(t, store, check, ok, probeSamples(1, func(int) bool { return false }))
+	runSeconds(t, c, 0, 330)
+	if store.record != nil {
+		t.Fatalf("judged before the journey checks finished: %+v", store.record)
+	}
+	if holders := strings.Join(startupState(t, c).GetHolders(), "; "); !strings.Contains(holders, "journey checks") {
+		t.Fatalf("holders = %q, want the running journey checks named", holders)
+	}
+	close(release)
+	<-c.soak.checkDone
+	runSeconds(t, c, 331, 340)
+	message := journeycheck.SoakFollowUp(*store.record)
+	if calls != 1 || len(store.record.Red()) != 1 || !strings.Contains(message, "sign-in: altered-answers: passed an empty answer") {
+		t.Fatalf("calls %d, record %+v, follow-up %q", calls, store.record, message)
+	}
+	if c.IncidentOpen() {
+		t.Fatal("a journey-check red must never open an incident")
+	}
+}
+
+// A journey check SDO could not run is recorded, never sent to the agent.
+func TestSoakRecordsAJourneyCheckThatCouldNotRun(t *testing.T) {
+	store := &memorySoakStore{}
+	check := func(context.Context) (journeycheck.Report, error) {
+		return journeycheck.Report{}, errors.New("memory host restarted")
+	}
+	ok := []traffic.Sample{{At: at(10), Iteration: 1, Outcome: traffic.OutcomeOK}}
+	c := checkedSoakController(t, store, check, ok, probeSamples(1, func(int) bool { return false }))
+	runSeconds(t, c, 0, 20)
+	<-c.soak.checkDone
+	runSeconds(t, c, 21, 310)
+	if store.record == nil || len(store.record.Red()) != 0 || !strings.Contains(fmt.Sprint(store.record.Results), "memory host restarted") {
+		t.Fatalf("record = %+v", store.record)
+	}
+}
+
+// After the soak the detectors judge each scenario whose workload sets no
+// maxLatency against the bound SDO calibrated from the soak (three times its
+// slowest healthy sample): a slow healthy endpoint does not page on the
+// default bound, and an authored bound is left alone. A restart keeps the
+// calibration, since it reads the recorded soak.
+func TestSoakCalibratedLatencyBoundsReachTheDetectorsWindows(t *testing.T) {
+	store := &memorySoakStore{}
+	slow := []traffic.Sample{{At: at(10), Iteration: 1, Outcome: traffic.OutcomeOK, Latency: 2740 * time.Millisecond}}
+	c := soakController(t, store, slow, probeSamples(1, func(int) bool { return false }))
+	observer := NewTrafficObserver(&fixedProber{}, []string{"probe-call"}, nil, 0)
+	observer.UseLatencyBounds(c.latencyBounds)
+	authored := probeWindow(nil, "sign-in", "bounded")
+	authored.Workload.Name = "probe-call"
+	authored.Workload = authored.Workload.WithScenarioMaxLatency("bounded", 2*time.Second)
+	observer.windows = map[string]traffic.Window{"probe-call": authored}
+	if got := observer.Windows()["probe-call"].Workload.ScenarioSLO("sign-in").MaxLatency.Duration(); got != traffic.DefaultMaxLatency {
+		t.Fatalf("before the soak sign-in is bounded at %s, want the default", got)
+	}
+	runSeconds(t, c, 0, 310)
+	if store.record == nil || len(store.record.LatencyBounds) != 1 {
+		t.Fatalf("record = %+v, want sign-in calibrated", store.record)
+	}
+	window := observer.Windows()["probe-call"]
+	if got := window.Workload.ScenarioSLO("sign-in").MaxLatency.Duration(); got != 8300*time.Millisecond {
+		t.Fatalf("sign-in bounded at %s, want 8.3s", got)
+	}
+	if got := window.Workload.ScenarioSLO("bounded").MaxLatency.Duration(); got != 2*time.Second {
+		t.Fatalf("authored bound became %s", got)
+	}
+	restarted := soakController(t, store, slow)
+	if got := restarted.latencyBounds()["probe-call/sign-in"]; got != 8300*time.Millisecond {
+		t.Fatalf("after a restart sign-in is calibrated at %s", got)
 	}
 }

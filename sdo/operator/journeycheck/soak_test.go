@@ -122,3 +122,33 @@ func TestSoakSettlesWhenEveryScenarioIsRedOrHasEnoughGreens(t *testing.T) {
 		t.Fatal("an empty run has decided nothing")
 	}
 }
+
+// A scenario whose workload sets no maxLatency is not judged against the
+// default bound in the soak: SDO calibrates its bound from the soak's healthy
+// samples instead. A bound the author wrote is still judged.
+func TestSoakCalibratesTheLatencyBoundsTheAuthorLeftOut(t *testing.T) {
+	workload := traffic.Workload{Name: "probe-call", Purpose: traffic.PurposeHealthProbe, IterationTimeout: traffic.Duration(20 * time.Second),
+		Scenarios: []traffic.WorkloadScenario{{ID: "simulate"}, {ID: "bounded", SLO: &traffic.SLO{MaxLatency: traffic.Duration(time.Second)}}}}
+	began := time.Date(2026, 11, 28, 5, 0, 0, 0, time.UTC)
+	samples := func(latencies ...time.Duration) []traffic.Sample {
+		var out []traffic.Sample
+		for i, latency := range latencies {
+			out = append(out, traffic.Sample{At: began.Add(time.Duration(i+1) * 10 * time.Second), Iteration: uint64(i + 1), Outcome: traffic.OutcomeOK, Latency: latency})
+		}
+		return out
+	}
+	soak := NewInstalledSoak(began, 5*time.Minute)
+	soak.Observe(map[string]traffic.Window{"probe-call": {Workload: workload, Scenarios: []traffic.ScenarioObservations{
+		{Scenario: traffic.Descriptor{ID: "simulate"}, Qualified: true, Samples: samples(1300*time.Millisecond, 2740*time.Millisecond, 1400*time.Millisecond)},
+		{Scenario: traffic.Descriptor{ID: "bounded"}, Qualified: true, Samples: samples(400*time.Millisecond, 1200*time.Millisecond)},
+	}}})
+	record := soak.Judge(began.Add(5 * time.Minute))
+	red := record.Red()
+	if len(red) != 1 || red[0].Subject != "probe-call/bounded" {
+		t.Fatalf("red = %+v, want only the authored bound judged", red)
+	}
+	bounds := record.LatencyBoundsByScenario()
+	if len(bounds) != 1 || bounds["probe-call/simulate"] != 8300*time.Millisecond {
+		t.Fatalf("calibrated = %v, want simulate at 3x its slowest 2.74s", bounds)
+	}
+}

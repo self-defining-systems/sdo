@@ -288,7 +288,7 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 			detectors = append(detectors, detector)
 		}
 	}
-	results := evaluateDetectors(ctx, detectors, view)
+	results := evaluateAdmittedDetectors(ctx, detectors, view)
 	for _, detector := range detectors {
 		id := detector.Spec().ID
 		if len(selected) > 0 && !selected[id] {

@@ -12,10 +12,10 @@ the [worked example](references/example.md), [probe design](references/probe-des
 
 1. Read the manifests, README and API: how users enter, sign in and tell a result is correct. Try requests with curl.
 2. Run `sdo-operator onboarding init --repo DIR --namespace NS`; fill in routes, paths and exact assertions.
-3. Write one scenario; run `onboarding journeys --only ID --quick` after each edit (one pass, each request and
-   answer printed). Then the next scenario. Run the full `journeys` once all pass, and after a fix rerun only
-   that ID (`--only ID`).
-4. If the app counts requests by route, method and status, map that metric (`onboarding check --metrics`).
+3. Write one scenario at a time; run `onboarding journeys --only ID --quick` after each edit (one pass, every
+   request and answer). SDO runs the full checks after the session.
+4. `init` maps request counters SDO's Prometheus scrapes; map others (`onboarding check --metrics`,
+   [example](../sdo-operations-map/references/request-metrics.md)).
 
 What the checks require, so plan for it: every operation in a `call` probe; a writing one also in a `write-read`
 probe that reads the write back, and its data read by a `read-later` probe (Setup writes a fixture once, later
@@ -23,7 +23,7 @@ iterations read it); and one step of a `call` or `read-later` probe lists record
 (`ReadsExistingRecords`, templating no id the probe wrote).
 
 `onboarding journeys --plan` sends nothing. Fix `missing-map`, `missing-probe`, then `failing` and `unchecked`.
-Keep every journey ID. Dotted JSON paths name keys and array indexes (`data.items.0.id`); `""` is the whole body.
+Keep every journey ID. Dotted JSON paths name keys and indexes (`data.items.0.id`); `""` is the whole body.
 
 <!-- probe-sdk:begin -->
 ## Probe SDK
@@ -94,6 +94,6 @@ Map evidence: `config`, `manifest`, `observed`. Use `config` for application sou
 
 ## Finish line
 
-Do not soak: SDO runs the installed probes for 5 minutes after you finish and sends one follow-up if one fails.
+Do not soak or run the full set: SDO runs both after you finish and sends one follow-up if a probe fails.
 As an ordinary user, check default lists show no probe records. With ten minutes left, remove edits still red and
 report uncovered journeys. Commit, run `onboarding journeys --plan`, fix rejections and commit again.

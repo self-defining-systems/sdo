@@ -45,9 +45,10 @@ func TestOnboardingInitScaffoldsGoalJourneysWithoutReplacingAuthoredFiles(t *tes
 		t.Fatalf("generator = %s, error = %v", source, err)
 	}
 	// The call probes run at once: init writes their workload, and the map's
-	// probe lines place them in it.
+	// probe lines place them in it. It sets no maxLatency: the install's soak
+	// calibrates each scenario's bound.
 	workload, err := os.ReadFile(filepath.Join(root, initCallWorkload))
-	if err != nil || !strings.Contains(string(workload), "name: probe-call") || strings.Contains(string(workload), "scenarios") {
+	if err != nil || !strings.Contains(string(workload), "name: probe-call") || strings.Contains(string(workload), "scenarios") || strings.Contains(string(workload), "maxLatency") {
 		t.Fatalf("call workload = %s, error = %v", workload, err)
 	}
 	testArch, err := os.ReadFile(filepath.Join(root, ".sdo/arch.md"))
@@ -140,8 +141,73 @@ func TestOnboardingInitKeepsTheMapCompact(t *testing.T) {
 }
 
 func writeOnboardingScaffoldOnly(root string, candidates []initEntry, requested string) error {
-	_, err := writeOnboardingScaffold(root, candidates, requested)
+	_, err := writeOnboardingScaffold(root, candidates, requested, nil)
 	return err
+}
+
+// initRepo writes a seeded map with the given components and a one-journey goal.
+func initRepo(t *testing.T, components string) string {
+	t.Helper()
+	root := t.TempDir()
+	arch := appmap.BeginMarker + "\n```yaml\nversion: 1\ncomponents:\n" + components + "edges: []\noperations: []\nprobes: []\n```\n" + appmap.EndMarker + "\n"
+	goal := "---\nschema_version: 1\njourneys:\n  - {id: browse, what: Browse items}\n---\nKeep the application healthy.\n"
+	for path, content := range map[string]string{".sdo/arch.md": arch, ".sdo/goal.md": goal} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+const apiCounter = "# TYPE http_requests_total counter\nhttp_requests_total{handler=\"/api/items\",method=\"GET\",status=\"2xx\"} 3\n"
+
+// init maps the request counter a component's scraped pods expose (the
+// entries record and its observe metrics pointer), so the author does not;
+// a component exposing none is left to the author.
+func TestOnboardingInitMapsTheRequestCounterItScrapes(t *testing.T) {
+	root := initRepo(t, "  - {name: web, workload: Deployment/web, services: [web], holds_data: false}\n  - {name: api, workload: Deployment/api, services: [api], holds_data: false}\n")
+	scrape := func(service string) ([]byte, string) {
+		if service == "api" {
+			return []byte(apiCounter), "pod :8000/metrics"
+		}
+		return nil, ""
+	}
+	note, err := writeOnboardingScaffold(root, []initEntry{{service: "web", port: 80}, {service: "api", port: 8000}}, "web:80", scrape)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, m, mapErr, err := journeyGoalAndMap(root)
+	if err != nil || mapErr != "" || len(m.Entries) != 1 {
+		t.Fatalf("map entries %+v, %s, %v", m.Entries, mapErr, err)
+	}
+	if e := m.Entries[0]; e.Service != "api" || e.Metric != "http_requests_total" || e.Labels.Route != "handler" || e.Labels.Status != "status" || e.Errors != "5.." {
+		t.Fatalf("entry %+v", e)
+	}
+	for _, c := range m.Components {
+		if pointer := c.Observe; (c.Name == "api") != (pointer != nil && strings.Contains(pointer.Metrics, "http_requests_total")) {
+			t.Fatalf("component %s observe %+v", c.Name, pointer)
+		}
+	}
+	if !strings.Contains(note, "request metrics mapped: api") {
+		t.Fatalf("note %q does not say what init mapped", note)
+	}
+}
+
+// Two services exposing the same counter name cannot be told apart without
+// a selector Go cannot know, so init maps neither.
+func TestOnboardingInitLeavesASharedCounterNameToTheAuthor(t *testing.T) {
+	root := initRepo(t, "  - {name: a, workload: Deployment/a, services: [a], holds_data: false}\n  - {name: b, workload: Deployment/b, services: [b], holds_data: false}\n")
+	scrape := func(string) ([]byte, string) { return []byte(apiCounter), "pod :8000/metrics" }
+	if _, err := writeOnboardingScaffold(root, []initEntry{{service: "a", port: 80}}, "", scrape); err != nil {
+		t.Fatal(err)
+	}
+	if _, m, _, err := journeyGoalAndMap(root); err != nil || len(m.Entries) != 0 {
+		t.Fatalf("entries %+v, %v", m.Entries, err)
+	}
 }
 
 // The onboarding help is a short index: each command's own --help has the

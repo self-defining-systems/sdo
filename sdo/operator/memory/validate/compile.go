@@ -28,6 +28,10 @@ var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?(?:(?:[^\r\n:]*/)?sd
 // telemetryBindingViolation is one generated query-to-source binding failure.
 var telemetryBindingViolation = regexp.MustCompile(`(?m)(telemetry\.(?:unbound|kind))(?:\[[a-z0-9][a-z0-9_.-]*\])?: .+?$`)
 
+// findingAdmissionViolation is one generated finding-admission test failure:
+// the learned detector ID and the controller's refusal.
+var findingAdmissionViolation = regexp.MustCompile(`(?m)` + regexp.QuoteMeta(RuleDetectorFindingAdmission) + `\[([a-z0-9][a-z0-9_.-]*)\]: (.+?)\s*$`)
+
 // healthyBaselineViolation is one generated healthy-baseline test failure:
 // the learned detector ID and the violation.
 var healthyBaselineViolation = regexp.MustCompile(`(?m)detector\.healthy-baseline\[([a-z0-9][a-z0-9_.-]*)\]: (.+?)\s*$`)
@@ -211,6 +215,17 @@ func (s *run) compile(ctx context.Context) error {
 		}
 		return nil
 	}
+	if violations := findingAdmissionViolation.FindAllStringSubmatch(stage.Output, -1); len(violations) > 0 {
+		const hint = "the controller refuses this finding on every evaluation, so it never alerts or links a playbook; set every field it names, then run memory check again"
+		seen := map[string]bool{}
+		for _, match := range violations {
+			if key := match[1] + "\x00" + match[2]; !seen[key] {
+				seen[key] = true
+				s.add(Compile, Diagnostic{Rule: RuleDetectorFindingAdmission, Path: layout.DetectorDir(layout.ClassLearned, match[1]), Message: match[2], Hint: hint})
+			}
+		}
+		return nil
+	}
 	if violations := ownIncidentViolation.FindAllStringSubmatch(stage.Output, -1); len(violations) > 0 {
 		const hint = "a new playbook's Diagnose must Match the incident capture it was written for; run sdo-operator memory test <id> and fix what it tests"
 		seen := map[string]bool{}
@@ -257,11 +272,11 @@ func (s *run) compile(ctx context.Context) error {
 		case strings.HasPrefix(m[1], "generated/"):
 			path = m[1]
 		}
-		s.add(Compile, Diagnostic{Rule: rule, Path: path, Line: line, Message: strings.TrimSpace(m[3]), Hint: "go " + stage.Stage + " failed"})
+		s.add(Compile, Diagnostic{Rule: rule, Path: path, Line: line, Message: strings.TrimSpace(m[3]), Hint: stageFailed(stage)})
 	}
 	if len(located) == 0 && rule == RuleDetectorTest {
 		if message, path := summarizeGoTest(goTestDuration.ReplaceAllString(stage.Output, "")); message != "" {
-			s.add(Compile, Diagnostic{Rule: rule, Path: path, Message: message, Hint: "go " + stage.Stage + " failed; fix the failing test or the code it exercises, the useful lines are the failing tests, the panic and the first frame in your source"})
+			s.add(Compile, Diagnostic{Rule: rule, Path: path, Message: message, Hint: stageFailed(stage) + "; fix the failing test or the code it exercises, the useful lines are the failing tests, the panic and the first frame in your source"})
 			return nil
 		}
 	}
@@ -270,7 +285,7 @@ func (s *run) compile(ctx context.Context) error {
 		if len(output) > maxCompileOutput {
 			output = "..." + output[len(output)-maxCompileOutput:]
 		}
-		s.add(Compile, Diagnostic{Rule: rule, Path: layout.DiagnosticsDir, Message: "go " + stage.Stage + " failed: " + output})
+		s.add(Compile, Diagnostic{Rule: rule, Path: layout.DiagnosticsDir, Message: stageFailed(stage) + ": " + output})
 	}
 	return nil
 }
@@ -343,4 +358,13 @@ func (s *run) incidentCapture() string {
 		return ""
 	}
 	return dir
+}
+
+// stageFailed names the Go stage that rejected the candidate. The compile stage is `go list -export ./...` (it compiles
+// every package without linking), which is a compile failure to the reader, not a listing.
+func stageFailed(stage *builder.StageError) string {
+	if strings.HasPrefix(stage.Stage, "list ") {
+		return "compiling ./... failed"
+	}
+	return "go " + stage.Stage + " failed"
 }

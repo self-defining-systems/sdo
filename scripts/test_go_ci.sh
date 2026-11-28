@@ -2,6 +2,7 @@
 # All modules use Go's content-addressed compiler/module caches. No per-module
 # cache or serial preparation job; package parallelism uses the runner's CPUs.
 # Usage: test_go_ci.sh [pr|nightly] [validate|cli|rest]
+#        test_go_ci.sh guards    only the //ci:whole-tree tests of every module (the local gate)
 # The optional shard selects packages by directory using .github/ci_selection.json.
 # Without a shard, one invocation schedules every package.
 set -euo pipefail
@@ -13,6 +14,9 @@ if [[ "${1:-pr}" == nightly ]]; then
     args=(-tags=integration -json -timeout=40m -race)
     # Seeded simulation campaigns run their full seed counts here; PRs run a fixed prefix.
     export SDO_SIM_FULL=1
+elif [[ "${1:-pr}" == guards ]]; then
+    # Guards read sources outside their module, which Go's test cache does not track.
+    args=(-tags=integration -timeout=5m -short -count=1)
 else
     # -short skips the few tests that compile generated programs for 10 s or more
     # (they call testing.Short); nightly runs them. Every fuzz seed still runs here.
@@ -40,7 +44,13 @@ patterns=()
 cd "$root"
 # A pull request run names the packages its changes can affect (scripts/ci_select.py);
 # without a plan, or when the plan is the full suite, every package runs.
-if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO_CI_PLAN")" == selected ]]; then
+if [[ "${1:-pr}" == guards ]]; then
+    guard_out="$(python3 scripts/ci_select.py all-go-guards)"
+    mapfile -t guard_lines <<< "$guard_out"
+    guard_run="${guard_lines[0]}"
+    guard_patterns=("${guard_lines[@]:1}")
+    patterns=()
+elif [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO_CI_PLAN")" == selected ]]; then
     # Capture first so a selector crash aborts (set -e) instead of silently dropping the selection.
     selected_out="$(python3 scripts/ci_select.py go-patterns --plan "$SDO_CI_PLAN" --shard "${2:?a selected run needs a shard}")"
     mapfile -t patterns <<< "$selected_out"

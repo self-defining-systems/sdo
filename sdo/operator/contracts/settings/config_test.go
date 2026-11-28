@@ -113,6 +113,7 @@ func TestValidateIsTheOnePlaceValuesAreChecked(t *testing.T) {
 		"response.repair_policy":        func(c *settings.Config) { c.Response.RepairPolicy = "yolo" },
 		"learning.replay":               func(c *settings.Config) { c.Learning.Replay = "maybe" },
 		"learning.reflection_guidance":  func(c *settings.Config) { c.Learning.ReflectionGuidance = "other" },
+		"learning.closing_effort":       func(c *settings.Config) { c.Learning.ClosingEffort = "extreme" },
 		"force_reflection":              func(c *settings.Config) { c.Mode = settings.ModeFrozen; c.Learning.ForceReflection = true },
 		"deployment.max_attempts":       func(c *settings.Config) { c.Deployment.MaxAttempts = 0 },
 		"build_timeout":                 func(c *settings.Config) { c.Deployment.BuildTimeout = settings.Duration(2 * time.Hour) },

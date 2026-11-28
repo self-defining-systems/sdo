@@ -12,9 +12,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/kubernetes"
 
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
@@ -28,6 +31,8 @@ const OnboardingInitUsage = `usage: sdo-operator onboarding init --repo DIR --na
   List live Service ports and scaffold the map and one Go probe per journey
   in .sdo/goal.md. The entry is the sole exposed Service port, else one no other
   component calls; it names the other ports, or pass --entry. Edit routes and assertions before scheduling the probes.
+  It maps the request counter (entries, observe metrics) of each Service whose pods SDO's Prometheus
+  scrapes (prometheus.io annotations), reading their metrics once through the API server.
   Run before authoring operations, probes or generators. No app requests are sent.`
 
 const initGenerator = layout.TrafficGeneratorsDir + "/generators.go"
@@ -42,7 +47,7 @@ name: probe-call
 purpose: health-probe
 timeout: 5s
 iterationTimeout: 20s
-slo: {window: 4, minSamples: 1, maxAge: 10m, maxErrorRate: 1, maxTimeoutRate: 1, maxLatency: 2s}
+slo: {window: 4, minSamples: 1, maxAge: 10m, maxErrorRate: 1, maxTimeoutRate: 1}
 `
 
 type initEntry struct {
@@ -100,7 +105,10 @@ func onboardingInit(ctx context.Context, args []string, stdout io.Writer) error 
 			*entry = exposed[0].String()
 		}
 	}
-	note, err := writeOnboardingScaffold(*repo, candidates, *entry)
+	scrape := func(service string) ([]byte, string) {
+		return scrapeServiceMetrics(ctx, cluster.Kube(), *namespace, service)
+	}
+	note, err := writeOnboardingScaffold(*repo, candidates, *entry, scrape)
 	if err != nil {
 		return err
 	}
@@ -157,7 +165,7 @@ func selectInitEntry(candidates []initEntry, requested string, m appmap.Map) (en
 
 // writeOnboardingScaffold writes the map's operations and probes and one Go
 // stub per goal journey, and says which entry it chose.
-func writeOnboardingScaffold(repo string, candidates []initEntry, requested string) (string, error) {
+func writeOnboardingScaffold(repo string, candidates []initEntry, requested string, scrape metricsScraper) (string, error) {
 	journeys, err := goalJourneys(repo)
 	if err != nil {
 		return "", err
@@ -229,6 +237,7 @@ Steps: []traffic.Step{{Name: "todo", Endpoint: traffic.GET("/{replace-with-journ
 	if err != nil {
 		return "", err
 	}
+	mapped := mapRequestMetrics(&m, scrape)
 	header := ""
 	if found {
 		header = appmap.Header(region.YAML)
@@ -256,8 +265,96 @@ Steps: []traffic.Step{{Name: "todo", Endpoint: traffic.GET("/{replace-with-journ
 		return "", errors.Join(err, safefs.Remove(repo, initGenerator))
 	}
 	note := "entry " + entry.String()
+	if len(mapped) > 0 {
+		note += "; request metrics mapped: " + strings.Join(mapped, ", ")
+	}
 	if others != "" {
 		note += "; other Service ports: " + others + " (move an operation's entry if one fits better)"
 	}
 	return note, nil
+}
+
+// metricsScraper returns the Prometheus exposition one of a Service's pods
+// serves where SDO's Prometheus scrapes it, and that place in a few words;
+// nil when none does.
+type metricsScraper func(service string) (exposition []byte, where string)
+
+// mapRequestMetrics adds an entries record (appmap.RequestCounter) and an
+// observe metrics pointer for each component Service whose scraped metrics
+// carry a request counter, and returns the Services mapped. A counter name two
+// Services share needs a selector only the author knows, so neither is mapped.
+func mapRequestMetrics(m *appmap.Map, scrape metricsScraper) []string {
+	if scrape == nil {
+		return nil
+	}
+	type found struct {
+		component int
+		entry     appmap.MetricEntry
+		where     string
+	}
+	var all []found
+	names := map[string]int{}
+	for i, component := range m.Components {
+		for _, service := range component.Services {
+			if _, has := m.EntryFor(service); has {
+				continue
+			}
+			exposition, where := scrape(service)
+			if entry, ok := appmap.RequestCounter(service, exposition); ok {
+				all = append(all, found{i, entry, where})
+				names[entry.Metric]++
+			}
+		}
+	}
+	var mapped []string
+	for _, f := range all {
+		if names[f.entry.Metric] > 1 {
+			continue
+		}
+		m.Entries = append(m.Entries, f.entry)
+		component := &m.Components[f.component]
+		if component.Observe == nil {
+			component.Observe = &appmap.Observe{}
+		}
+		if component.Observe.Metrics == "" {
+			component.Observe.Metrics = fmt.Sprintf("%s, counter %s", f.where, f.entry.Metric)
+		}
+		mapped = append(mapped, f.entry.Service)
+	}
+	return mapped
+}
+
+// scrapeTimeout bounds one metrics read through the API server.
+const scrapeTimeout = 5 * time.Second
+
+// scrapeServiceMetrics reads, through the API server's pod proxy, the
+// metrics of the first running pod of the Service that SDO's Prometheus
+// scrapes (annotations prometheus.io/scrape, port and path).
+func scrapeServiceMetrics(ctx context.Context, client kubernetes.Interface, namespace, service string) ([]byte, string) {
+	svc, err := client.CoreV1().Services(namespace).Get(ctx, service, metav1.GetOptions{})
+	if err != nil || len(svc.Spec.Selector) == 0 {
+		return nil, ""
+	}
+	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labels.SelectorFromSet(svc.Spec.Selector).String()})
+	if err != nil {
+		return nil, ""
+	}
+	for _, pod := range pods.Items {
+		annotations := pod.Annotations
+		port := annotations["prometheus.io/port"]
+		if pod.Status.Phase != corev1.PodRunning || annotations["prometheus.io/scrape"] != "true" || port == "" {
+			continue
+		}
+		path := annotations["prometheus.io/path"]
+		if !strings.HasPrefix(path, "/") {
+			path = "/metrics"
+		}
+		read, cancel := context.WithTimeout(ctx, scrapeTimeout)
+		body, err := client.CoreV1().Pods(namespace).ProxyGet("http", pod.Name, port, path, nil).DoRaw(read)
+		cancel()
+		if err == nil {
+			return body, fmt.Sprintf("pod :%s%s", port, path)
+		}
+	}
+	return nil, ""
 }

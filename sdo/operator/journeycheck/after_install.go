@@ -3,6 +3,7 @@ package journeycheck
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -29,8 +30,30 @@ type SoakRecord struct {
 	BeganAt  time.Time        `json:"began_at"`
 	EndedAt  time.Time        `json:"ended_at"`
 	Duration traffic.Duration `json:"duration"`
-	// Results has one healthy-run line per scenario sampled, sorted.
+	// Results has one healthy-run line per scenario sampled, sorted, then
+	// the full journey checks run beside the soak.
 	Results []Result `json:"results"`
+	// LatencyBounds are the maxLatency SDO calibrated, from the soak's
+	// healthy samples, for each scenario whose workload sets none.
+	LatencyBounds []LatencyBound `json:"latency_bounds,omitempty"`
+}
+
+// LatencyBound is one calibrated bound: traffic.CalibratedMaxLatency of the
+// slowest healthy sample of the scenario in the soak.
+type LatencyBound struct {
+	Workload   string           `json:"workload"`
+	Scenario   string           `json:"scenario"`
+	Slowest    traffic.Duration `json:"slowest"`
+	MaxLatency traffic.Duration `json:"max_latency"`
+}
+
+// LatencyBoundsByScenario is the calibrated bounds by "workload/scenario".
+func (r SoakRecord) LatencyBoundsByScenario() map[string]time.Duration {
+	bounds := make(map[string]time.Duration, len(r.LatencyBounds))
+	for _, bound := range r.LatencyBounds {
+		bounds[bound.Workload+"/"+bound.Scenario] = bound.MaxLatency.Duration()
+	}
+	return bounds
 }
 
 // Red is the record's red lines.
@@ -135,7 +158,35 @@ func (s *InstalledSoak) Judge(now time.Time) SoakRecord {
 		}
 		windows[name] = window
 	}
-	return SoakRecord{BeganAt: s.began, EndedAt: now, Duration: traffic.Duration(s.duration), Results: Soaked(windows)}
+	return SoakRecord{BeganAt: s.began, EndedAt: now, Duration: traffic.Duration(s.duration), Results: Soaked(windows), LatencyBounds: s.calibrate()}
+}
+
+// calibrate is the calibrated bound of every scenario whose workload sets no
+// maxLatency and that passed at least once in the soak, sorted.
+func (s *InstalledSoak) calibrate() []LatencyBound {
+	var bounds []LatencyBound
+	for name, w := range s.windows {
+		for id, scenario := range w.scenarios {
+			if w.workload.LatencyBoundAuthored(id) {
+				continue
+			}
+			var slowest time.Duration
+			for _, sample := range slices.Concat(scenario.samples, scenario.confirmations) {
+				if sample.Outcome == traffic.OutcomeOK {
+					slowest = max(slowest, sample.Latency)
+				}
+			}
+			if slowest == 0 {
+				continue
+			}
+			bound := traffic.CalibratedMaxLatency(slowest, w.workload.IterationTimeout.Duration())
+			bounds = append(bounds, LatencyBound{Workload: name, Scenario: id, Slowest: traffic.Duration(slowest), MaxLatency: traffic.Duration(bound)})
+		}
+	}
+	sort.Slice(bounds, func(i, j int) bool {
+		return bounds[i].Workload+"/"+bounds[i].Scenario < bounds[j].Workload+"/"+bounds[j].Scenario
+	})
+	return bounds
 }
 
 // soakFollowUpBudget bounds the red lines of the follow-up message, in bytes.
@@ -152,6 +203,9 @@ func SoakFollowUp(record SoakRecord) string {
 	size := 0
 	for i, result := range red {
 		line := fmt.Sprintf("- %s: %s", result.Subject, result.Detail)
+		if result.Item != ItemSoak {
+			line = fmt.Sprintf("- %s: %s: %s", result.Subject, result.Item, result.Detail)
+		}
 		if size+len(line)+1 > soakFollowUpBudget {
 			lines = append(lines, fmt.Sprintf("+%d more red scenarios", len(red)-i))
 			break
@@ -159,10 +213,10 @@ func SoakFollowUp(record SoakRecord) string {
 		lines = append(lines, line)
 		size += len(line) + 1
 	}
-	return fmt.Sprintf("SDO installed your export and ran its probes on their schedule for %s while the application was healthy. "+
-		"These were red:\n%s\n\n"+
+	return fmt.Sprintf("SDO installed your export, ran every probe's full checks (three passes, a second prober, altered answers) "+
+		"and ran the probes on their schedule for %s while the application was healthy. These were red:\n%s\n\n"+
 		"Fix each one, or remove a probe you cannot make reliable and say so. Re-check what you changed with "+
-		"`onboarding journeys --only ID`, commit, pass `sdo-operator memory check`, and reply with one line. "+
+		"`onboarding journeys --only ID` (add `--alter` for an altered-answers red), commit, pass `sdo-operator memory check`, and reply with one line. "+
 		"This is the only follow-up: SDO does not soak again.", record.Duration.Duration(), strings.Join(lines, "\n"))
 }
 

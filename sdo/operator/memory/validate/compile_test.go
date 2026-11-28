@@ -84,7 +84,7 @@ func TestCompileSkipsRepositoriesWithoutDetectors(t *testing.T) {
 // each Go failure stage. Real compiler fixtures still run in nightly CI.
 func TestCompileStageDiagnostics(t *testing.T) {
 	for _, stage := range []struct{ name, rule string }{
-		{"build", RuleDetectorCompile}, {"vet", RuleDetectorVet}, {"test", RuleDetectorTest},
+		{"list", RuleDetectorCompile}, {"vet", RuleDetectorVet}, {"test", RuleDetectorTest},
 	} {
 		t.Run(stage.name, func(t *testing.T) {
 			bin := t.TempDir()
@@ -133,5 +133,21 @@ func TestMissingHealthyReplayInputIsInformational(t *testing.T) {
 				t.Fatalf("missing replay input was hidden: %v", observations)
 			}
 		})
+	}
+}
+
+// A learned detector whose finding the controller would refuse fails memory
+// check on that detector's path, with the controller's reason.
+func TestFindingAdmissionFailureNamesTheDetector(t *testing.T) {
+	bin := t.TempDir()
+	line := `detector.finding-admission[kindless]: on capture open@detect.json the controller refuses its finding (rule "bad"): primary resource: kind is required`
+	script := "#!/bin/sh\nif [ \"$1\" = \"test\" ]; then\n printf '%s\\n' '" + line + "'\n exit 1\nfi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	got := diagnose(t, compileRequest(compileTree(t)))
+	if len(got) != 1 || got[0].Rule != RuleDetectorFindingAdmission || got[0].Path != ".sdo/diagnostics/detectors/learned/kindless" || !strings.Contains(got[0].Message, "kind is required") {
+		t.Fatalf("diagnostics %+v", got)
 	}
 }

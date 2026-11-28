@@ -148,5 +148,9 @@ def test_scripted_agent_steps_are_named_bash_calls() -> None:
     names = [name for name, _ in steps]
     assert names[0] == "scaffold"
     assert names[-1] == "commit"
-    assert "journeys" in names
+    assert "quick" in names
     assert all(command.strip() for _, command in steps)
+    # SDO runs the full and altered-answer checks after the session: the script, like a good agent, runs none.
+    calls = [line for _, command in steps for line in command.splitlines() if "onboarding journeys" in line]
+    assert calls
+    assert all("--plan" in line or "--quick" in line for line in calls)

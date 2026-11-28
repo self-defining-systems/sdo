@@ -97,6 +97,7 @@ def test_scan_covers_the_prompt_builders_and_templates() -> None:
         "sdo/skills/sdo-detectors/references/cause-catalog.md",
         "sdo/skills/sdo-detectors/references/methods.md",
         "sdo/skills/sdo-operations-map/references/map.md",
+        "sdo/skills/sdo-operations-map/references/request-metrics.md",
         "sdo/skills/sdo-detectors/references/probes.md",
         "sdo/skills/sdo-detectors/assets/restart-loop/detector_test.go",
         "sdo/operator/runtime/deploy/rbac.yaml",
