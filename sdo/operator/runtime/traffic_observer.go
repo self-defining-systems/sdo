@@ -316,12 +316,12 @@ func (o *TrafficObserver) WaitWarm(ctx context.Context, timeout time.Duration) b
 // before its caller's limit, so it judges what it observed by then.
 func (o *TrafficObserver) AwaitWarm(ctx context.Context, floor time.Duration) bool {
 	o.Poll(ctx)
-	first := o.capped(max(floor, o.WarmupBudget()), 0)
+	first := o.capped(max(floor, o.fillableBudget()), 0)
 	if o.WaitWarm(ctx, first) {
 		return true
 	}
 	if wait := o.IdentityWait(); wait > 0 && ctx.Err() == nil {
-		if second := o.capped(wait+o.WarmupBudget(), first); second > 0 {
+		if second := o.capped(wait+o.fillableBudget(), first); second > 0 {
 			return o.WaitWarm(ctx, second)
 		}
 	}
@@ -360,11 +360,23 @@ func (o *TrafficObserver) Failure() string {
 // poll: the declared minimum samples at the workload's own rate, plus slack
 // for scheduling. Zero before any window was read.
 func (o *TrafficObserver) WarmupBudget() time.Duration {
+	return o.budget(false)
+}
+
+// fillableBudget is WarmupBudget over the workloads that can fill within the
+// Ceiling.
+func (o *TrafficObserver) fillableBudget() time.Duration {
+	return o.budget(true)
+}
+
+func (o *TrafficObserver) budget(fillableOnly bool) time.Duration {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	var longest time.Duration
 	for _, name := range o.workloads {
-		longest = max(longest, o.windows[name].WarmupHorizon())
+		if window := o.windows[name]; !fillableOnly || !o.beyondCeiling(window) {
+			longest = max(longest, window.WarmupHorizon())
+		}
 	}
 	if longest == 0 {
 		return 0
@@ -372,12 +384,41 @@ func (o *TrafficObserver) WarmupBudget() time.Duration {
 	return 2*longest + 5*time.Second
 }
 
+// Unfillable lists, sorted, the consumed workloads that are not warm and
+// whose declared warm-up is longer than the Ceiling: a bounded evaluation can
+// never gather their samples, however long it is repeated. Empty without a
+// Ceiling.
+func (o *TrafficObserver) Unfillable() []string {
+	if o.Ceiling <= 0 {
+		return nil
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var names []string
+	for _, name := range o.workloads {
+		if window, ok := o.windows[name]; ok && !window.Ready() && o.beyondCeiling(window) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// beyondCeiling reports whether window's declared warm-up is longer than the
+// Ceiling. The caller holds mu.
+func (o *TrafficObserver) beyondCeiling(window traffic.Window) bool {
+	return o.Ceiling > 0 && 2*window.WarmupHorizon()+5*time.Second > o.Ceiling
+}
+
+// warm reports whether every consumed workload holds its declared samples.
+// Under a Ceiling, a workload that cannot fill within it does not hold the
+// wait (Unfillable names it).
 func (o *TrafficObserver) warm() bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for _, name := range o.workloads {
 		window, ok := o.windows[name]
-		if !ok || !window.Ready() {
+		if !ok || (!window.Ready() && !o.beyondCeiling(window)) {
 			return false
 		}
 	}
