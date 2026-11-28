@@ -311,3 +311,16 @@ func TestCadenceThatMeetsTheHumanTargetDoesNotRequireSpendingTheWholeBudget(t *t
 		t.Fatalf("a low-load plan that meets the target should pass: %+v", r.Results)
 	}
 }
+
+// TestAlteredRunsKeepTheWorkloadRequestTimeout: the altered run shortens the
+// iteration bound to a few healthy runs, but never below the workload's
+// request timeout, which a valid workload must not undercut.
+func TestAlteredRunsKeepTheWorkloadRequestTimeout(t *testing.T) {
+	c := config(&store{items: map[string]string{}}, scenario(true))
+	c.Workloads[0].Timeout = traffic.Duration(10 * time.Second)
+	c.Workloads[0].IterationTimeout = traffic.Duration(30 * time.Second)
+	r := Run(context.Background(), c)
+	if got := find(r, ItemAltered); got.Status != Green {
+		t.Fatalf("altered run with a 10s request timeout: %+v", got)
+	}
+}

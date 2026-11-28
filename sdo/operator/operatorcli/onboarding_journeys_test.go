@@ -168,15 +168,8 @@ func TestJourneysSkipsTheMemoryCheckWithoutItsEnvironment(t *testing.T) {
 
 func TestMemoryFlagErrorsAreOneShortLine(t *testing.T) {
 	var out, errOut bytes.Buffer
-	code := RunMemory(context.Background(), []string{"check", "--repo", "/work"}, nil, &out, &errOut)
-	line := strings.TrimSpace(errOut.String())
-	if code != exitInfra || out.Len() != 0 || strings.Contains(line, "\n") || strings.Contains(line, "usage:") ||
-		!strings.Contains(line, "--root DIR") || !strings.Contains(line, "--help") {
-		t.Fatalf("code %d, stdout %q, stderr %q", code, &out, line)
-	}
-	errOut.Reset()
 	RunMemory(context.Background(), []string{"check", "--nope"}, nil, &out, &errOut)
-	line = strings.TrimSpace(errOut.String())
+	line := strings.TrimSpace(errOut.String())
 	if strings.Contains(line, "\n") || !strings.Contains(line, "--replay") || !strings.Contains(line, "--help") {
 		t.Fatalf("stderr %q", line)
 	}

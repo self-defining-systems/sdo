@@ -130,10 +130,49 @@ func TestMemoryRootDefaultsToTheCheckoutContainingTheCurrentDirectory(t *testing
 	}
 }
 
+// TestMemoryCommandsTakeRepoLikeOnboarding pins one flag name for the
+// checkout across SDO's agent-facing commands: --repo, with --root kept as an
+// alias for existing callers.
+func TestMemoryCommandsTakeRepoLikeOnboarding(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		".git/HEAD":                      "ref: refs/heads/main\n",
+		".sdo/schema-version":            "14\n",
+		".sdo/playbooks/fix/README.md":   "---\nschema_version: 1\nowner: responder\nfault_class: fix\noriginating_incident: synthetic\n---\n# Fix\n",
+		".sdo/playbooks/fix/diagnose.go": "package fix\n",
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(t.TempDir())
+	for _, flagName := range []string{"--repo", "--root"} {
+		code, stdout, stderr := runMemory(t, nil, "ls", flagName, root, "--json")
+		listing := &contracts.MemoryListing{}
+		if err := wire.UnmarshalDurable([]byte(stdout), listing); err != nil || code != 0 || len(listing.Artifacts) == 0 {
+			t.Fatalf("ls %s: %d %v %s %s", flagName, code, err, stdout, stderr)
+		}
+	}
+	for _, command := range []string{"check", "test", "ls", "outcomes", "new"} {
+		if !strings.Contains(MemoryUsage, "  "+command+" ") {
+			continue
+		}
+		for _, line := range strings.Split(MemoryUsage, "\n") {
+			if strings.HasPrefix(line, "  "+command+" ") && strings.Contains(line, "--root") {
+				t.Errorf("memory usage still shows --root for %s: %q", command, line)
+			}
+		}
+	}
+}
+
 func TestMemoryCheckOutsideAnyCheckoutNamesTheFix(t *testing.T) {
 	t.Chdir(t.TempDir())
 	code, _, stderr := runMemory(t, memoryCheckEnv(t), "check")
-	if code != 2 || !strings.Contains(stderr, "pass --root") {
+	if code != 2 || !strings.Contains(stderr, "pass --repo") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
 }
