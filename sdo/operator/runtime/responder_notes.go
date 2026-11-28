@@ -224,7 +224,8 @@ func appendNote(response *ToolResponse, note string) {
 }
 
 // liveRequest is the loop's request with the alert set the controller holds
-// now: user tests that joined the incident after the request was taken.
+// now: user tests that joined the incident after the request was taken, and
+// the automatic stage's report as it stands.
 func (l *ResponderLoop) liveRequest() IncidentRequest {
 	request := l.Request
 	if l.CurrentEvidence == nil {
@@ -235,6 +236,9 @@ func (l *ResponderLoop) liveRequest() IncidentRequest {
 		return request
 	}
 	request.JoinedKeys = current.JoinedKeys
+	if len(current.PriorStages) > 0 {
+		request.PriorStages = current.PriorStages
+	}
 	request.Findings = append(slices.Clone(request.Findings), current.Findings...)
 	var seen []string
 	request.Findings = slices.DeleteFunc(request.Findings, func(finding sdk.Finding) bool {

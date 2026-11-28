@@ -2079,6 +2079,9 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		recovery = c.recoveryCheck(observationCtx, snapshot, *request, result, detected, stability)
 		recovery.observed = safe && (guard == nil || !guard.Pending) && !restorePending
 		c.observeStageSettled(now, snapshot, *request, recovery)
+		if recovery.observed {
+			recovery.untouchedJoiners = c.untouchedStageJoiners(observationCtx, snapshot, *request)
+		}
 		if recovery.observed && recovery.record.GetWritesSettled() && len(source.Rollouts) == 0 {
 			recovery.beyondStage = c.beyondStageAlerts(observationCtx, now, snapshot, *request, recovery)
 			recovery.uncoveredCauses = c.uncoveredStageCauses(observationCtx, snapshot, *request)

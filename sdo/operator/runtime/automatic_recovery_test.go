@@ -60,6 +60,11 @@ func automaticRecoveryWorld(t *testing.T, tc settlingCase, policy string, extra 
 	if err != nil {
 		t.Fatal(err)
 	}
+	if tc.builtinOnly {
+		for _, attempt := range report.GetMitigations() {
+			attempt.PlaybookId = SourceRestoreID
+		}
+	}
 	state.PriorStages = []*contracts.StageReport{report}
 	result, err := responsePipelineResult(state, now, world.clock.Now())
 	if err != nil {

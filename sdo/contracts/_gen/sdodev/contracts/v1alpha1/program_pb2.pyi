@@ -514,6 +514,7 @@ class RecoveryWait(_message.Message):
         EXIT_REASON_FAILED: _ClassVar[RecoveryWait.ExitReason]
         EXIT_REASON_UNCOVERED: _ClassVar[RecoveryWait.ExitReason]
         EXIT_REASON_NOTHING_APPLIED: _ClassVar[RecoveryWait.ExitReason]
+        EXIT_REASON_BUILTIN_ONLY: _ClassVar[RecoveryWait.ExitReason]
     EXIT_REASON_UNSPECIFIED: RecoveryWait.ExitReason
     EXIT_REASON_CLEARED: RecoveryWait.ExitReason
     EXIT_REASON_DEADLINE: RecoveryWait.ExitReason
@@ -521,6 +522,7 @@ class RecoveryWait(_message.Message):
     EXIT_REASON_FAILED: RecoveryWait.ExitReason
     EXIT_REASON_UNCOVERED: RecoveryWait.ExitReason
     EXIT_REASON_NOTHING_APPLIED: RecoveryWait.ExitReason
+    EXIT_REASON_BUILTIN_ONLY: RecoveryWait.ExitReason
     EXIT_REASON_FIELD_NUMBER: _ClassVar[int]
     DURATION_FIELD_NUMBER: _ClassVar[int]
     exit_reason: RecoveryWait.ExitReason

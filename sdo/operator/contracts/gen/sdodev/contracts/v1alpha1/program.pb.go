@@ -196,6 +196,9 @@ const (
 	RecoveryWait_EXIT_REASON_UNCOVERED RecoveryWait_ExitReason = 5
 	// No learned playbook applied, so the stage had nothing to wait for.
 	RecoveryWait_EXIT_REASON_NOTHING_APPLIED RecoveryWait_ExitReason = 6
+	// The stage bound no learned plan: only SDO's built-in restore wrote, so
+	// the agent starts as its apply returns, with no recovery wait.
+	RecoveryWait_EXIT_REASON_BUILTIN_ONLY RecoveryWait_ExitReason = 7
 )
 
 // Enum value maps for RecoveryWait_ExitReason.
@@ -208,6 +211,7 @@ var (
 		4: "EXIT_REASON_FAILED",
 		5: "EXIT_REASON_UNCOVERED",
 		6: "EXIT_REASON_NOTHING_APPLIED",
+		7: "EXIT_REASON_BUILTIN_ONLY",
 	}
 	RecoveryWait_ExitReason_value = map[string]int32{
 		"EXIT_REASON_UNSPECIFIED":     0,
@@ -217,6 +221,7 @@ var (
 		"EXIT_REASON_FAILED":          4,
 		"EXIT_REASON_UNCOVERED":       5,
 		"EXIT_REASON_NOTHING_APPLIED": 6,
+		"EXIT_REASON_BUILTIN_ONLY":    7,
 	}
 )
 
@@ -6517,11 +6522,11 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12%\n" +
 	"\x0ewarning_events\x18\x03 \x03(\tR\rwarningEvents\x12;\n" +
-	"\arelease\x18\x04 \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\arelease\"\xfa\x02\n" +
+	"\arelease\x18\x04 \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\arelease\"\x98\x03\n" +
 	"\fRecoveryWait\x12]\n" +
 	"\vexit_reason\x18\x01 \x01(\x0e22.sdodev.contracts.v1alpha1.RecoveryWait.ExitReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\n" +
 	"exitReason\x12?\n" +
-	"\bduration\x18\x02 \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\bduration\"\xc9\x01\n" +
+	"\bduration\x18\x02 \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\bduration\"\xe7\x01\n" +
 	"\n" +
 	"ExitReason\x12\x1b\n" +
 	"\x17EXIT_REASON_UNSPECIFIED\x10\x00\x12\x17\n" +
@@ -6530,7 +6535,8 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x13EXIT_REASON_BLOCKER\x10\x03\x12\x16\n" +
 	"\x12EXIT_REASON_FAILED\x10\x04\x12\x19\n" +
 	"\x15EXIT_REASON_UNCOVERED\x10\x05\x12\x1f\n" +
-	"\x1bEXIT_REASON_NOTHING_APPLIED\x10\x06\"\xca\f\n" +
+	"\x1bEXIT_REASON_NOTHING_APPLIED\x10\x06\x12\x1c\n" +
+	"\x18EXIT_REASON_BUILTIN_ONLY\x10\a\"\xca\f\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
