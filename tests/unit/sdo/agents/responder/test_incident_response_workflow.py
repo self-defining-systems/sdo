@@ -70,7 +70,10 @@ def test_the_first_message_carries_the_pacing_principle() -> None:
     """The agent reads the first message before any skill: waiting on effects, not time, must be there."""
 
     template = (PROMPTS / "incident_prompt.md").read_text(encoding="utf-8")
-    assert "Wait on a change's effect with `sdo detect --wait`, not a sleep." in template
+    assert "After a change, wait for its effect, not a fixed time." in template
+    # A principle, not a recipe: the command that waits lives in the skill and the tool help.
+    assert "--wait" not in template
+    assert "sdo detect" not in template
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])
