@@ -195,6 +195,13 @@ written then) and follows that task; alarm tasks arriving later are recorded, no
 `paged_by` (`alarm`, `fallback`, `harness`), the alarm name and transition from the relay ledger (JSON lines keyed by
 `incident_id` = the task's `reference.referenceId`), and `late_alarm_tasks`; `done.json` carries `paged_by`.
 
+`journey_alarms.py` is the lane host side of alarm paging, outside the hooks: `publish` tails the per-request journey
+outcomes FuzzOps appends to `$FUZZOPS_JOURNEY_OUTCOMES` and puts 10 s `UserJourneys` `Requests`/`Failed`/`Latency`
+metrics (dimensions `Lane`, `Journey`); `apply`/`teardown` own one failure-ratio alarm per journey
+(`<lane>-journey-<journey>`), the default-bus rule on their ALARM transitions and its SQS queue; `relay` sends each
+transition once to the Agent Space's HMAC webhook (incident id sha256 of alarm ARN and transition time) and writes the
+relay ledger the hook reads. Nothing on these paths names a fault, position or grade.
+
 ## Cell evidence manifest and validator
 
 `collect` writes `operator/build.json`, `host-load.json`, `observability.json` (receipt: `prometheus`, `jaeger`, `applogs`
