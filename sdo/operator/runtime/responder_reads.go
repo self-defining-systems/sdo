@@ -6,6 +6,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"maps"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"slices"
 
 	"sdo.dev/operator/sdk"
 )
@@ -53,7 +54,8 @@ func (l *ResponderLoop) readOnce(ctx context.Context, request ToolRequest) (read
 			ExternalReceipts: l.ExternalReceipts, applicationsLog: append([]RecordedPlanApplication(nil), l.applicationsLog...),
 			CorpusSessionRoot: l.CorpusSessionRoot, sessionID: l.sessionID, MaxBatches: l.MaxBatches,
 			batches: l.batches, loopOpen: l.loopOpen, applySeq: l.applySeq, continuation: l.continuation,
-			findings: append([]sdk.Finding(nil), l.findings...), preApplyCaptured: l.preApplyCaptured,
+			findings: append([]sdk.Finding(nil), l.findings...), preApplyCaptured: l.preApplyCaptured, handoffKeys: l.handoffKeys,
+			archivedApplications: slices.Clone(l.archivedApplications),
 		}
 		read.sourceCompared = maps.Clone(l.sourceCompared)
 		if l.menuSession != nil {
@@ -94,6 +96,15 @@ func (l *ResponderLoop) publishRead(ctx context.Context, request ToolRequest, re
 		if request.Command == "detect" && request.Name == "" && request.Finding == "" && len(request.DetectorIDs) == 0 && response.Error == "" {
 			appendNote(&response, l.detectNote(response.Findings))
 			appendNote(&response, l.Investigations.DetectLine())
+		}
+		if request.Command == "detect" && prepared && response.Error == "" && showsNewFindings(request, response.Text) {
+			live := l.liveRequest()
+			for _, key := range newKeys(newSinceHandoff(response.Findings, l.handoffKeys, alertKeys(&live))) {
+				if l.newShown == nil {
+					l.newShown = map[string]bool{}
+				}
+				l.newShown[key] = true
+			}
 		}
 		if request.Command == "detect" {
 			l.appendReportNotes(&response)

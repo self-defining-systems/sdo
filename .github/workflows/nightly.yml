@@ -238,7 +238,8 @@ jobs:
             tests/unit/benchmarks/sregym/fastloop/test_request_envelope_real_go.py \
             tests/unit/benchmarks/sregym/fastloop/test_idempotent_helm_real_sregym.py \
             tests/unit/benchmarks/sregym/fastloop/test_wrk2_replacement.py \
-            tests/unit/benchmarks/sregym/fastloop/test_worker_imports_real_sregym.py
+            tests/unit/benchmarks/sregym/fastloop/test_worker_imports_real_sregym.py \
+            tests/unit/benchmarks/fuzzops/test_check_input_upgrade.py
       - name: Property tests at full example counts (pull requests sample fewer)
         env:
           SDO_PROPERTY_EXAMPLES: "300"

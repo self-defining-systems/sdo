@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -58,6 +60,11 @@ type lab struct {
 	cap     string // the cap of the experiments added next; labCap unless a test shortens it
 	staging string // the host's staging directory
 	ready   string // their ready_timeout; labReadyTimeout unless a test needs a check to turn clean over time
+	drained bool   // drain ran: nothing of the lab is left writing
+	// alive reads a pipe whose write end (aliveFD) every process started while the lab runs inherits: it is at end of
+	// file only when the last of them has exited.
+	alive   *os.File
+	aliveFD int
 }
 
 // The spec's cap is a budget a run must stay inside; a test that waits for an
@@ -128,18 +135,97 @@ hook_command: {test: "` + hook + `"}
 	rev := strings.TrimSuffix(strings.TrimPrefix(l.hooked, "{hooks: test, revision: "), ", baseline: base, settings: {startup_bound: 0s}}")
 	must(t, os.WriteFile(l.root.path("hosts.yaml"), []byte(strings.Replace(inv, "HEAD", rev, 1)), 0o644))
 	l.m = &Manager{Root: l.root, Poll: 50 * time.Millisecond, Bin: benchBin}
-	// Before the temporary directories go: let the lane's last step (a release) finish.
-	t.Cleanup(func() {
-		for end := giveUp(t); time.Now().Before(end); time.Sleep(50 * time.Millisecond) {
-			if lf := l.lane(); lf.Step == nil && (lf.State == LaneFree || lf.State == LaneDown || lf.State == LaneRetired) && (lf.Prepared == nil || lf.Prepared.Hooks == "" || lf.Prepared.Reset || lf.State == LaneDown || lf.State == LaneRetired) {
-				return
-			} else if l.held(lf) { // a pool lane stays ready for good: nothing is left to wait for
-				return
-			}
-			_ = l.m.Reconcile(context.Background())
-		}
-	})
+	r, w, err := os.Pipe()
+	must(t, err)
+	l.alive = r
+	l.aliveFD, err = syscall.Dup(int(w.Fd())) // unlike w, the duplicate is not close-on-exec
+	must(t, err)
+	must(t, w.Close())
+	t.Cleanup(func() { _ = r.Close() })
+	t.Cleanup(l.drain) // before the temporary directories go (cleanups run last-in first-out)
 	return l
+}
+
+// drain ends every writer of the lab's directories: it reconciles until every lane's last step (a release) is
+// collected, waits for the grading jobs, then for every process the lab started to exit (a step is detached: it can
+// outlive both the test and the manager's record of it). newLab registers it as a cleanup; a test that sets
+// environment after newLab which the lab's steps need registers it again after that. It runs once.
+func (l *lab) drain() {
+	l.t.Helper()
+	if l.drained {
+		return
+	}
+	l.drained = true
+	for end := giveUp(l.t); !l.settled() && time.Now().Before(end); time.Sleep(50 * time.Millisecond) {
+		_ = l.m.Reconcile(context.Background())
+	}
+	l.m.planGrading.Wait()
+	must(l.t, syscall.Close(l.aliveFD))
+	if l.exited(time.Until(giveUp(l.t))) {
+		return
+	}
+	for _, pid := range pipeHolders(l.alive) {
+		cmd, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		l.t.Errorf("the lab left a process running (killed): %d %s", pid, strings.ReplaceAll(string(cmd), "\x00", " "))
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+	if !l.exited(5 * time.Second) {
+		l.t.Error("the lab's processes did not all exit")
+	}
+}
+
+// exited waits up to d (at least a second) for the last process holding the lab's pipe to exit.
+func (l *lab) exited(d time.Duration) bool {
+	must(l.t, l.alive.SetReadDeadline(time.Now().Add(max(d, time.Second))))
+	_, err := l.alive.Read(make([]byte, 1))
+	return errors.Is(err, io.EOF)
+}
+
+// pipeHolders lists the other processes that have an end of f's pipe open (none where there is no /proc).
+func pipeHolders(f *os.File) []int {
+	st, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	want := fmt.Sprintf("pipe:[%d]", st.Sys().(*syscall.Stat_t).Ino)
+	var out []int
+	fds, _ := filepath.Glob("/proc/[0-9]*/fd/*")
+	for _, fd := range fds {
+		pid, err := strconv.Atoi(strings.Split(fd, "/")[2])
+		if to, _ := os.Readlink(fd); to == want && err == nil && pid != os.Getpid() && !slices.Contains(out, pid) {
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
+// settled reports that no lane of the lab has a step in flight or one still to come.
+func (l *lab) settled() bool {
+	files, err := filepath.Glob(l.root.LanePath("*"))
+	must(l.t, err)
+	for _, f := range files {
+		var lf LaneFile
+		if readJSON(f, &lf) != nil {
+			return false
+		}
+		rest := lf.Step == nil && (lf.State == LaneFree || lf.State == LaneDown || lf.State == LaneRetired) &&
+			(lf.State != LaneFree || lf.Prepared == nil || lf.Prepared.Hooks == "" || lf.Prepared.Reset)
+		if !rest && !l.held(lf) { // a pool lane stays ready for good: nothing is left to wait for
+			return false
+		}
+	}
+	return true
+}
+
+// The lab's cleanup removes its directories, so drain leaves nothing running that writes into them: here a writer
+// that no lane records, detached as a step is.
+func TestBenchLabDrainWaitsForDetachedWriters(t *testing.T) {
+	l := newLab(t)
+	must(t, exec.Command("sh", "-c", `setsid -f sh -c 'sleep 0.3; echo done > "$FAKE_STATE/late"' >/dev/null 2>&1`).Run())
+	l.drain()
+	if _, err := os.Stat(filepath.Join(l.state, "late")); err != nil {
+		t.Fatalf("drain returned with the writer still running: %v", err)
+	}
 }
 
 // ageStep makes a killed step count as dead now. A step that does not hold its

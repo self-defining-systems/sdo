@@ -257,6 +257,15 @@ type ResponderLoop struct {
 	WaitClosure                  func(context.Context, time.Duration) ToolResponse
 	// WaitClock paces `sdo detect --wait`; nil uses production timers.
 	WaitClock kclock.WithTicker
+	// effectShown is the newest known change whose result a `sdo detect --wait`
+	// returned, so the next wait waits for a newer one.
+	effectShown time.Time
+	// lastView is the snapshot the last detect read ran on (set on a read copy).
+	lastView sdk.DetectionContext
+	// handoffKeys are the finding keys the agent was handed at dispatch (nil
+	// before one); newShown are the new findings a detect has already shown.
+	handoffKeys map[string]bool
+	newShown    map[string]bool
 	// ExternalReceipts is the write recording the responder's writes are read from; nil when no recording
 	// exists, in which case the contradiction notes omit their write clause.
 	ExternalReceipts func() ([]RepairActionReceipt, bool, string, error)
@@ -428,6 +437,13 @@ func (l *ResponderLoop) initializeDispatch(trust map[string]ProgramTrust, maxBat
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.Trust = trust
+	l.handoffKeys = map[string]bool{}
+	for _, finding := range l.Request.Findings {
+		l.handoffKeys[findingKey(finding)] = true
+	}
+	for _, key := range alertKeys(&l.Request) {
+		l.handoffKeys[key] = true
+	}
 	if maxBatches > 0 {
 		l.MaxBatches = maxBatches
 	}

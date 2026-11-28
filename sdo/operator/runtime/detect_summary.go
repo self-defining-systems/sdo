@@ -63,6 +63,9 @@ type detectInput struct {
 	// AppState supplies the app-state changes placed on the candidates; nil lists none.
 	AppState    AppStateChangeSource
 	LiveMatches []*contracts.PlaybookMatch
+	// HandoffKeys are the finding keys the agent was handed at dispatch; nil
+	// before a dispatch. Active findings outside them lead the summary.
+	HandoffKeys map[string]bool
 }
 
 // detectSummary is the compact text and the full text of each item a `more:`
@@ -849,6 +852,8 @@ func slicesContainsFunc(f []sdk.Finding, fn func(sdk.Finding) bool) bool {
 
 func buildDetectSummary(in detectInput) detectSummary {
 	items := map[string]string{}
+	fresh := newSinceHandoff(in.Findings, in.HandoffKeys, alertKeys(&in.Request))
+	in.Findings = withoutFindings(in.Findings, fresh)
 	set := buildSuspectSet(in)
 	failing, passing, unevaluated := set.failing, set.passing, set.unevaluated
 	openingFindings, onset := set.openingFindings, set.onset
@@ -969,10 +974,17 @@ func buildDetectSummary(in detectInput) detectSummary {
 	}
 	items["background"] = backgroundAll.String()
 
+	shownNew := min(len(fresh), detectShownNew)
+	newDetail := true
+	if _, item := newSinceHandoffBlock(fresh, in.Request.DriftEvents, 0, true); item != "" {
+		items["new"] = item
+	}
 	shownOps := min(len(opBlocks), detectShownTests)
 	shownTests, shownConditions, shownAlso := min(len(testBlocks), detectShownTests), min(len(conditionBlocks), detectShownTests), min(len(alsoBlocks), 2)
 	observation := func() string {
 		out := slices.Clone(header)
+		block, _ := newSinceHandoffBlock(fresh, in.Request.DriftEvents, shownNew, newDetail)
+		out = append(out, block...)
 		if len(testBlocks)+len(conditionBlocks)+len(opBlocks) > 0 {
 			out = append(out, "", "OPENED ON")
 		}
@@ -1011,6 +1023,10 @@ shrink:
 		switch {
 		case shownAlso > 0:
 			shownAlso--
+		case shownNew > 1:
+			shownNew--
+		case newDetail:
+			newDetail = false
 		case len(clearedLines) > 1:
 			clearedLines = clearedLines[:1]
 		case shownOps > 2:

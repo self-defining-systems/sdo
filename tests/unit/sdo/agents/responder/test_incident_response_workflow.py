@@ -66,6 +66,16 @@ def test_the_first_message_template_renders_strictly() -> None:
             template.substitute(missing)
 
 
+def test_the_first_message_carries_the_pacing_principle() -> None:
+    """The agent reads the first message before any skill: waiting on effects, not time, must be there."""
+
+    template = (PROMPTS / "incident_prompt.md").read_text(encoding="utf-8")
+    assert "After a change, wait for its effect, not a fixed time." in template
+    # A principle, not a recipe: the command that waits lives in the skill and the tool help.
+    assert "--wait" not in template
+    assert "sdo detect" not in template
+
+
 @pytest.mark.parametrize("provider", ["codex", "claude"])
 def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypatch, provider: str) -> None:
     import json
@@ -172,4 +182,4 @@ def test_the_responder_is_told_to_work_signals_in_parallel_and_wait_on_condition
     text = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8").lower()
 
     assert "every failing signal in parallel" in text
-    assert "wait on a specific condition, not a fixed sleep" in text
+    assert "wait on its effect (`sdo detect --wait`), not a sleep" in text

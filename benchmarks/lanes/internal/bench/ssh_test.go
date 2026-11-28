@@ -27,6 +27,7 @@ func TestBenchRemoteHost(t *testing.T) {
 	fakeSSH := filepath.Join(dir, "ssh")
 	must(t, os.WriteFile(fakeSSH, []byte("#!/bin/sh\nshift\nexec sh -c \"$*\"\n"), 0o755))
 	t.Setenv("FUZZOPS_BENCH_SSH", fakeSSH)
+	t.Cleanup(l.drain) // while the stand-in ssh is still set
 	// The remote host's own fuzzops checkout, with fuzzops-bench built beside bin/fuzzops.
 	src := testdata("fakefuzzops")
 	remote := filepath.Join(dir, "remote-fuzzops")
