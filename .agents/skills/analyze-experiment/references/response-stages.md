@@ -55,8 +55,13 @@ The stage works in turns. A turn diagnoses and plans every match on one live vie
 bindings as a batch: one application per plan, back to back, each with a single rollout sample, plans that only
 write Kubernetes objects (source restores) before plans with a data or command effect, and then one verify (each
 plan's post-apply Diagnose plus one detector round) for the whole batch; the executor's own per-apply health check
-is skipped for batched applies. A plan that writes an object an earlier plan of the turn writes is skipped for that
-turn as `object_shared_in_turn` and diagnosed again in the next one (a restart before that turn redoes it). Runs
+is skipped for batched applies. A plan that reaches an object an earlier plan of the turn writes (a data repair's
+reach includes the controller owner chain of the Pods it acts on), or whose write set is unknown, is skipped for that
+turn as `object_shared_in_turn` and diagnosed again in the next one; a source restore displaces a data repair it
+conflicts with, so restores never wait behind data repairs. `planned_in_turn` marks a planned attempt its batch had
+not applied yet, and `findings_cleared` one dropped because every finding cleared before the batch applied; a restart
+redoes `object_shared_in_turn` and `planned_in_turn` attempts. The ordering holds within a turn: a restore deferred to
+a later turn (its Diagnose did not match yet) runs after that earlier turn's data repairs. Runs
 before this rule applied bindings one at a time with a verify after each, re-running Diagnose after every write. It then observes all pending applications under one durable shared recovery deadline (up to 90 seconds, bounded by the response deadline). A pending handoff
 (`admission_blocked`, stalled or bounded rollout) keeps the pass: later matches
 still get their fresh diagnosis and may unblock it. A failed application does not starve independent matches. After writes, uncovered faults, execution failures and verified admission dependencies hand off to another actor. Runs before this rule ended the pass at the first pending handoff. A nonmatching or

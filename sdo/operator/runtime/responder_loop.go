@@ -102,6 +102,9 @@ type ToolRequest struct {
 	// the whole turn's batchApplications.
 	batchVerify       bool
 	batchApplications []string
+	// afterBatchWrite marks a batched apply that follows another write of the
+	// same batch: its plan's snapshot predates that write.
+	afterBatchWrite bool
 }
 
 // VerificationBlocker names observation work that cannot yet establish health.
@@ -1490,7 +1493,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	// between, so its plan's snapshot is the pre-write state; an agent may
 	// have written between its plan and apply, so its apply reads afresh.
 	var preWrite sdk.DetectionContext
-	if request.stage && len(selected) == 1 {
+	if request.stage && len(selected) == 1 && !request.afterBatchWrite {
 		preWrite = selected[0].snapshot
 	}
 	endPreApply := l.phase("preapply_capture")
@@ -1644,7 +1647,7 @@ func (l *ResponderLoop) verifyStageBatch(ctx context.Context, ids []string, resp
 		}
 		delete(l.batchVerified, entry.ID)
 		plans := plansOf[entry.ID]
-		entry.Result.VerificationCompleted = response.Error == ""
+		entry.Result.VerificationCompleted = executed && response.Error == ""
 		entry.Result.VerificationPassed = executed && response.Error == "" && len(plans) > 0 &&
 			boundPlansNoMatch(plans, response.ProgramRuns) &&
 			targetedFindingsClear(l.mitigationIncident(plans).Findings, response.Findings)

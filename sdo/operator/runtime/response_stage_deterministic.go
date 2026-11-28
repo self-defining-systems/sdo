@@ -231,7 +231,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		key := stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))
 		// A plan that waited for a shared object's earlier write wrote nothing
 		// either; a restart before its turn redoes it.
-		if attempt.Result == "skipped" && (state.Refresh && attempt.SkipReason != stagePlanNotExecutable || attempt.SkipReason == stageObjectShared) {
+		if attempt.Result == "skipped" && (state.Refresh && attempt.SkipReason != stagePlanNotExecutable || stageSkipRetryable(attempt.SkipReason)) {
 			retry[key] = attempt
 			continue
 		}
@@ -315,9 +315,10 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	// (a failure part-way compensates only its own plan), with one verify for
 	// the whole batch. Only diagnoses that wrote nothing receive a second turn,
 	// and only after a turn that wrote or cleared something: an unchanged
-	// cluster would give the same diagnoses again. A plan that writes an object
-	// an earlier plan of the turn writes waits for the next turn, so it is
-	// diagnosed and planned on the state that write left. Keep the opening
+	// cluster would give the same diagnoses again. A plan that reaches an object
+	// an earlier plan of the turn writes (or whose write set is unknown) waits
+	// for the next turn, so it is diagnosed and planned on the state that write
+	// left. Keep the opening
 	// order; dependencies are learned from live state, never names.
 	deferred, shared := map[string]bool{}, map[string]bool{}
 	for start := 0; start < len(matches); {
@@ -325,6 +326,26 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		var batch []stagePlanned
 		var turnView program.ReadView
 		var stopErr error
+		// requeue gives a match one more try in the next turn, once per seen.
+		requeue := func(seen map[string]bool, key string, match stageCandidate, attempt *contracts.StageMitigation) bool {
+			if seen[key] {
+				return false
+			}
+			seen[key] = true
+			delete(attempted, key)
+			retry[key] = attempt
+			matches = append(matches, match)
+			return true
+		}
+		// waitTurn moves a planned binding to the next turn: it wrote nothing.
+		waitTurn := func(item stagePlanned) error {
+			if requeue(shared, item.key, item.match, item.attempt) {
+				waiting = true
+			}
+			item.attempt.Result, item.attempt.SkipReason = "skipped", stageObjectShared
+			recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
+			return save(false)
+		}
 		for index := start; index < turnEnd && stopErr == nil; index++ {
 			match := matches[index]
 			if len(state.Findings) == 0 && !page {
@@ -357,18 +378,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				recordStageFindingProgress(attempt, match.targets, state.Findings)
 				return save(false)
 			}
-			// requeue gives the match one more try in the next turn.
-			requeue := func(seen map[string]bool) bool {
-				if seen[key] {
-					return false
-				}
-				seen[key] = true
-				delete(attempted, key)
-				retry[key] = attempt
-				matches = append(matches, match)
-				return true
-			}
-
 			recordRefusal := func(err error) {
 				attempt.Result = "apply_error"
 				attempt.SkipReason = stagePlanNotExecutable
@@ -447,19 +456,24 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			// giving the playbook up, and keep the reason either way.
 			for try := 1; !page && before.Result == program.Unknown && try < stageDiagnoseTries; try++ {
 				if err := stage.diagnoseBackoff(ctx); err != nil {
-					return report, err
+					// Plans already made are this turn's writes: they are applied below.
+					stopErr = err
+					break
 				}
 				if fresh, viewErr := loop.snapshotView(ctx); viewErr == nil {
 					view = fresh
 				}
 				before = program.RunDiagnose(ctx, diagnoser, view, bindings, loop.deadline())
 			}
+			if stopErr != nil {
+				break
+			}
 			if before.Result == program.Unknown {
 				attempt.Error = diagnosisFailure(before)
 			}
 			if before.Result != program.Match {
 				if len(matches) > 1 {
-					requeue(deferred)
+					requeue(deferred, key, match, attempt)
 				}
 				reason := "diagnose_unavailable"
 				if before.Result == program.NoMatch {
@@ -547,7 +561,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 				continue
 			}
-			planned := stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}
+			planned := stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID, key: key}
 			plan := loop.plans[planResponse.PlanID].plan
 			if loop.sameWriteInProgress(ctx, loop.clock(), report, plan) {
 				if err := skip(stageAlreadyAttempted); err != nil {
@@ -555,18 +569,46 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 				continue
 			}
-			planned.refs, _ = loop.menuPlanWriteRefs(plan)
-			planned.data = planwire.HasNonObjectEffect(plan.Actions)
-			if slices.ContainsFunc(batch, func(other stagePlanned) bool { return refsOverlap(other.refs, planned.refs) }) {
-				if requeue(shared) {
-					waiting = true
+			loop.stagePlanReach(ctx, plan, &planned)
+			// A plan that reaches what an earlier plan of the turn writes waits
+			// for the next turn, so it is diagnosed and planned on the state that
+			// write left. A source restore keeps its place over a data repair it
+			// conflicts with: restores go first.
+			var conflicts []int
+			for i, other := range batch {
+				if other.reaches(planned) {
+					conflicts = append(conflicts, i)
 				}
-				if err := skip(stageObjectShared); err != nil {
+			}
+			displace := len(conflicts) > 0 && !planned.data && !planned.unknown && !slices.ContainsFunc(conflicts, func(i int) bool { return !batch[i].data || batch[i].unknown })
+			if len(conflicts) > 0 && !displace {
+				if err := waitTurn(planned); err != nil {
 					return report, err
 				}
 				continue
 			}
+			for i := len(conflicts) - 1; i >= 0; i-- {
+				displaced := batch[conflicts[i]]
+				batch = slices.Delete(batch, conflicts[i], conflicts[i]+1)
+				if err := waitTurn(displaced); err != nil {
+					return report, err
+				}
+			}
+			// Planned and not yet written: a restart before the batch applies
+			// redoes it.
+			attempt.SkipReason = stagePlannedInTurn
 			batch = append(batch, planned)
+		}
+		// A turn whose findings all cleared while it planned writes nothing more.
+		if len(batch) > 0 && len(state.Findings) == 0 && !page {
+			for _, item := range batch {
+				item.attempt.SkipReason = stageFindingsCleared
+				recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
+			}
+			if err := save(false); err != nil {
+				return report, err
+			}
+			batch = nil
 		}
 		if len(batch) > 0 {
 			if err := stage.applyBatch(applyCtx, loop, state, batch, save); err != nil {
@@ -861,19 +903,53 @@ type stagePlanned struct {
 	attempt  *contracts.StageMitigation
 	bindings program.Bindings
 	planID   string
-	// refs are the objects the plan writes, when known; data marks a plan with
-	// an effect beyond Kubernetes objects (a data repair, a command, a script).
-	refs []sdk.ObjectRef
-	data bool
+	key      string
+	// reach is what the plan writes or acts on: its written objects and, for
+	// a plan with an effect beyond Kubernetes objects (data marks a data
+	// repair, a command, a script), the objects it acts on and their
+	// controller owner chain, so a repair on a Pod reaches the Deployment
+	// that would replace it. unknown marks a write set that cannot be listed.
+	reach   []sdk.ObjectRef
+	data    bool
+	unknown bool
 }
 
-// stageObjectShared skips, for this turn, a plan that writes an object an
-// earlier plan of the same turn writes. The next turn diagnoses it afresh.
-const stageObjectShared = "object_shared_in_turn"
+const (
+	// stageObjectShared skips, for this turn, a plan that reaches an object
+	// an earlier plan of the same turn writes. The next turn diagnoses it afresh.
+	stageObjectShared = "object_shared_in_turn"
+	// stagePlannedInTurn marks a planned attempt whose batch has not applied it yet.
+	stagePlannedInTurn = "planned_in_turn"
+	// stageFindingsCleared skips planned attempts of a turn whose findings
+	// all cleared before its batch applied.
+	stageFindingsCleared = "findings_cleared"
+)
 
-func refsOverlap(a, b []sdk.ObjectRef) bool {
-	for _, x := range a {
-		if slices.ContainsFunc(b, func(y sdk.ObjectRef) bool { return sameResource(x, y) }) {
+// stageSkipRetryable reports a skip that wrote nothing and decided nothing
+// about its binding: a restart before the binding's turn redoes it.
+func stageSkipRetryable(reason string) bool {
+	return reason == stageObjectShared || reason == stagePlannedInTurn
+}
+
+// stagePlanReach fills the planned binding's reach.
+func (l *ResponderLoop) stagePlanReach(ctx context.Context, plan program.Plan, planned *stagePlanned) {
+	refs, err := l.menuPlanWriteRefs(plan)
+	planned.unknown = err != nil
+	planned.data = planwire.HasNonObjectEffect(plan.Actions)
+	planned.reach = slices.Clone(refs)
+	if planned.data {
+		planned.reach = l.recoveryOwnerRefs(ctx, append(planned.reach, planCaptureRefs(plan)...), nil)
+	}
+}
+
+// reaches reports whether two planned bindings of one turn may touch the
+// same object: an unknown write set reaches everything.
+func (p stagePlanned) reaches(other stagePlanned) bool {
+	if p.unknown || other.unknown {
+		return true
+	}
+	for _, x := range p.reach {
+		if slices.ContainsFunc(other.reach, func(y sdk.ObjectRef) bool { return sameResource(x, y) }) {
 			return true
 		}
 	}
@@ -889,6 +965,8 @@ func refsOverlap(a, b []sdk.ObjectRef) bool {
 func (stage *DeterministicResponseStage) applyBatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, batch []stagePlanned, save func(bool) error) error {
 	batch = slices.Clone(batch)
 	sort.SliceStable(batch, func(i, j int) bool { return !batch[i].data && batch[j].data })
+	// An interrupted batch leaves no execution flags behind.
+	defer func() { loop.batchVerified = nil }()
 	applied := make([]ToolResponse, len(batch))
 	var ids []string
 	for index, item := range batch {
@@ -896,7 +974,7 @@ func (stage *DeterministicResponseStage) applyBatch(ctx context.Context, loop *R
 		item.attempt.PlanId = item.planID
 		item.attempt.PlanActionCount = int32(len(plan.plan.Actions))
 		// Persist intent before mutation. Interrupted writes are never replayed.
-		item.attempt.Result = "apply_error"
+		item.attempt.Result, item.attempt.SkipReason = "apply_error", ""
 		item.attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
 		if err := save(false); err != nil {
 			return err
@@ -907,7 +985,7 @@ func (stage *DeterministicResponseStage) applyBatch(ctx context.Context, loop *R
 		// Apply through the ordinary tool boundary: mutation fences, recorded
 		// writes, immutable receipts and compensation have one owner.
 		if err := withoutResponderLocks(loop, "apply", true, func() {
-			applied[index] = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{item.planID}, stage: true, batchVerify: true, rolloutTimeout: stage.RolloutTimeout})
+			applied[index] = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{item.planID}, stage: true, batchVerify: true, afterBatchWrite: index > 0, rolloutTimeout: stage.RolloutTimeout})
 		}); err != nil {
 			return err
 		}

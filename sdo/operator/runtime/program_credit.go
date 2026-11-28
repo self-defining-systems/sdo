@@ -90,13 +90,14 @@ func ProgramCreditIndex(outcomes []*contracts.OutcomeRecord) ProgramCredits {
 
 func bindingKeyRef(ref sdk.ObjectRef) string { return ref.Kind + "/" + ref.Namespace + "/" + ref.Name }
 
-// finalApplications are the applications that may earn a credited pair: the
-// final application and, when it is the automatic stage's, every other stage
-// application of that report that verified with no later write other than the
-// stage's own. Each stage application is credited on its own settlement: its
-// own Diagnose, never the batch it shared.
+// finalApplications are the applications that may earn a credited pair. When
+// the last application is the automatic stage's, it is each stage application
+// of that report that verified, judged on its own: no later write other than
+// the stage's own, and its own settlement (its own Diagnose) passed. One
+// plan's failure never decides another's credit. Otherwise it is the final
+// application alone.
 func finalApplications(outcome *contracts.OutcomeRecord) []*contracts.PlanApplication {
-	last := finalApplication(outcome)
+	last := lastApplication(outcome)
 	if last == nil {
 		return nil
 	}
@@ -106,9 +107,11 @@ func finalApplications(outcome *contracts.OutcomeRecord) []*contracts.PlanApplic
 			stage[id] = true
 		}
 	}
-	result := []*contracts.PlanApplication{last}
 	if !stage[last.GetApplicationId()] {
-		return result
+		if final := finalApplication(outcome); final != nil {
+			return []*contracts.PlanApplication{final}
+		}
+		return nil
 	}
 	var stageApps []*contracts.PlanApplication
 	for _, application := range outcome.GetPlanApplications() {
@@ -116,17 +119,30 @@ func finalApplications(outcome *contracts.OutcomeRecord) []*contracts.PlanApplic
 			stageApps = append(stageApps, application)
 		}
 	}
+	own := func(receipt *contracts.RepairActionReceipt) bool {
+		return slices.ContainsFunc(stageApps, func(app *contracts.PlanApplication) bool { return validate.ApplicationOwnsRepair(app, receipt) })
+	}
+	var result []*contracts.PlanApplication
 	for _, application := range stageApps {
-		if application == last || !verifiedApplication(application) {
-			continue
-		}
-		if !laterWrites(outcome, application, func(receipt *contracts.RepairActionReceipt) bool {
-			return slices.ContainsFunc(stageApps, func(own *contracts.PlanApplication) bool { return validate.ApplicationOwnsRepair(own, receipt) })
-		}) {
+		if verifiedApplication(application) && !laterWrites(outcome, application, own) {
 			result = append(result, application)
 		}
 	}
 	return result
+}
+
+// lastApplication is the applied plan application that completed last.
+func lastApplication(outcome *contracts.OutcomeRecord) *contracts.PlanApplication {
+	var last *contracts.PlanApplication
+	for _, application := range outcome.GetPlanApplications() {
+		if application.GetDryRun() || !application.GetApplied() || application.GetCompletedAt() == nil {
+			continue
+		}
+		if last == nil || application.GetCompletedAt().AsTime().After(last.GetCompletedAt().AsTime()) {
+			last = application
+		}
+	}
+	return last
 }
 
 func verifiedApplication(application *contracts.PlanApplication) bool {
@@ -154,15 +170,7 @@ func laterWrites(outcome *contracts.OutcomeRecord, application *contracts.PlanAp
 // finalApplication is the last applied plan application, when it verified and
 // no write that is not its own started after it completed.
 func finalApplication(outcome *contracts.OutcomeRecord) *contracts.PlanApplication {
-	var last *contracts.PlanApplication
-	for _, application := range outcome.GetPlanApplications() {
-		if application.GetDryRun() || !application.GetApplied() || application.GetCompletedAt() == nil {
-			continue
-		}
-		if last == nil || application.GetCompletedAt().AsTime().After(last.GetCompletedAt().AsTime()) {
-			last = application
-		}
-	}
+	last := lastApplication(outcome)
 	if last == nil || !verifiedApplication(last) || laterWrites(outcome, last, func(receipt *contracts.RepairActionReceipt) bool {
 		return validate.ApplicationOwnsRepair(last, receipt)
 	}) {

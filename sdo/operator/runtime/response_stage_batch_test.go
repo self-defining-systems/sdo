@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"sync"
@@ -50,13 +51,14 @@ type batchWorld struct {
 
 func newBatchWorld(t *testing.T, names []string, failPatch string) *batchWorld {
 	t.Helper()
-	replicas := int32(1)
+	replicas, controller := int32(1), true
 	var objects []kruntime.Object
 	for _, name := range names {
 		labels := map[string]string{"app": name}
 		objects = append(objects,
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app", UID: types.UID("synthetic-deployment-" + name), Generation: 1}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: name, Image: name + ":v1"}}}}}, Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}},
-			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name + "-pod", Namespace: "app", UID: types.UID("synthetic-pod-" + name), Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: name, Image: name + ":v1"}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}})
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name + "-pod", Namespace: "app", UID: types.UID("synthetic-pod-" + name), Labels: labels,
+				OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: name, UID: types.UID("synthetic-deployment-" + name), Controller: &controller}}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: name, Image: name + ":v1"}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}})
 	}
 	w := &batchWorld{client: fake.NewSimpleClientset(objects...), flushed: map[string]bool{}, dirty: map[string]bool{}}
 	w.client.PrependReactor("*", "deployments", func(action ktesting.Action) (bool, kruntime.Object, error) {
@@ -172,14 +174,16 @@ func batchRestarted(deployment appsv1.Deployment) bool {
 // round costs batchDetectorRound.
 type batchDetector struct {
 	world     *batchWorld
-	playbooks map[string]string // Deployment name -> playbook
-	rounds    *atomic.Int32
+	playbooks map[string][]string // Deployment name -> playbooks
+	// restore names the Deployments whose fault a restart fixes.
+	restore map[string]bool
+	rounds  *atomic.Int32
 }
 
 func (d batchDetector) Spec() sdk.DetectorSpec {
 	var ids []string
-	for _, id := range d.playbooks {
-		ids = append(ids, id)
+	for _, list := range d.playbooks {
+		ids = append(ids, list...)
 	}
 	slices.Sort(ids)
 	return sdk.DetectorSpec{ID: "workload-health", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
@@ -193,17 +197,14 @@ func (d batchDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]s
 	d.world.sleep(batchDetectorRound)
 	var findings []sdk.Finding
 	for _, deployment := range view.Deployments() {
-		id, ok := d.playbooks[deployment.Name]
+		ids, ok := d.playbooks[deployment.Name]
 		if !ok {
 			continue
 		}
-		stalled := !batchRestarted(deployment)
-		if _, data := d.world.dirty[deployment.Name+"-pod"]; data {
-			stalled = d.world.dataDirty(deployment.Name + "-pod")
-		}
+		stalled := d.restore[deployment.Name] && !batchRestarted(deployment) || d.world.dataDirty(deployment.Name+"-pod")
 		if stalled {
 			findings = append(findings, sdk.Finding{DetectorID: "workload-health", RuleID: "request-stall", Status: sdk.FindingActive, Severity: sdk.SeverityCritical,
-				PrimaryResource: sdk.ObjectRefFrom("Deployment", "apps/v1", &deployment), Summary: "requests stall", Evidence: "synthetic stall", Playbooks: []string{id}})
+				PrimaryResource: sdk.ObjectRefFrom("Deployment", "apps/v1", &deployment), Summary: "requests stall", Evidence: "synthetic stall", Playbooks: ids})
 		}
 	}
 	return findings, nil
@@ -280,14 +281,15 @@ func newBatchStage(t *testing.T, now func() time.Time, sleep func(time.Duration)
 	}
 	diagnosers := programs(world)
 	var mitigators []program.Mitigator
-	playbooks := map[string]string{}
+	playbooks, restore := map[string][]string{}, map[string]bool{}
 	for _, d := range diagnosers {
 		mitigators = append(mitigators, d.(program.Mitigator))
 		switch p := d.(type) {
 		case targetRestart:
-			playbooks[p.target] = p.id
+			playbooks[p.target] = append(playbooks[p.target], p.id)
+			restore[p.target] = true
 		case targetFlush:
-			playbooks[p.target] = p.id
+			playbooks[p.target] = append(playbooks[p.target], p.id)
 		}
 	}
 	registry, err := program.NewRegistry(diagnosers, mitigators)
@@ -295,7 +297,7 @@ func newBatchStage(t *testing.T, now func() time.Time, sleep func(time.Duration)
 		t.Fatal(err)
 	}
 	rounds := &atomic.Int32{}
-	detector := batchDetector{world: world, playbooks: playbooks, rounds: rounds}
+	detector := batchDetector{world: world, playbooks: playbooks, restore: restore, rounds: rounds}
 	snapshot, err := world.Snapshot(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -496,8 +498,8 @@ func TestProgramCreditIndexCreditsEachVerifiedStageApplication(t *testing.T) {
 		}
 		return app
 	}
-	outcome := func(bPassed bool) *contracts.OutcomeRecord {
-		apps := []*contracts.PlanApplication{application("app-1", "fix-a", 10, true), application("app-2", "fix-b", 11, bPassed), application("app-3", "fix-c", 12, true)}
+	outcome := func(passed ...bool) *contracts.OutcomeRecord {
+		apps := []*contracts.PlanApplication{application("app-1", "fix-a", 10, passed[0]), application("app-2", "fix-b", 11, passed[1]), application("app-3", "fix-c", 12, passed[2])}
 		report := &contracts.StageReport{Stage: "deterministic", ApplyCompletedAt: at(12), RecoveryWait: &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_CLEARED}}
 		for i, name := range []string{"a", "b", "c"} {
 			report.Mitigations = append(report.Mitigations, &contracts.StageMitigation{PlaybookId: "fix-" + name, Bindings: component(name), ApplyReceipt: apps[i], Result: "applied_cleared"})
@@ -506,8 +508,90 @@ func TestProgramCreditIndexCreditsEachVerifiedStageApplication(t *testing.T) {
 			RecoveryVerification: &contracts.RecoveryVerification{OpeningKeys: []string{"workload-health/request-stall"}, WritesSettled: true},
 			Timestamps:           &contracts.OutcomeTimestamps{VerifiedAt: at(40)}}
 	}
-	credits := ProgramCreditIndex([]*contracts.OutcomeRecord{outcome(false)})
+	credits := ProgramCreditIndex([]*contracts.OutcomeRecord{outcome(true, false, true)})
 	if !credits.Has("fix-a") || !credits.Has("fix-c") || credits.Has("fix-b") {
 		t.Fatalf("credits = %v, want fix-a and fix-c (each verified on its own) and not fix-b", credits)
 	}
+	// The last application failing does not decide the others' credit.
+	credits = ProgramCreditIndex([]*contracts.OutcomeRecord{outcome(true, true, false)})
+	if !credits.Has("fix-a") || !credits.Has("fix-b") || credits.Has("fix-c") {
+		t.Fatalf("credits = %v, want fix-a and fix-b although the last application failed", credits)
+	}
+}
+
+// A data repair on a Pod whose Deployment the same turn restarts waits for
+// the next turn, even when it comes first in match order: the restart goes
+// first, and the repair is diagnosed and planned again on the Pods the
+// restart left, never run against the ones it replaces.
+func TestDeterministicStageDefersADataRepairOnAWorkloadTheTurnRestores(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := newBatchStage(t, time.Now, time.Sleep, []string{"a"}, []string{"a"}, "", func(w *batchWorld) []program.Diagnoser {
+			return []program.Diagnoser{targetFlush{id: "a-flush", target: "a", world: w}, targetRestart{id: "z-restore", target: "a"}}
+		})
+		report, _ := b.run(t)
+		if got := b.world.writeOrder(); !slices.Equal(got, []string{"restart a", "flush a-pod"}) {
+			t.Fatalf("writes = %v, want the restart, then the repair in the next turn", got)
+		}
+		if got := b.rounds.Load(); got != 2 {
+			t.Fatalf("detector rounds = %d, want one verify per turn", got)
+		}
+		for _, id := range []string{"a-flush", "z-restore"} {
+			if attempt := attemptFor(report, id); !attempt.GetApplyReceipt().GetApplied() || attempt.GetSkipReason() != "" {
+				t.Fatalf("%s must apply: %v", id, attempt)
+			}
+		}
+	})
+}
+
+// A restart that lands after the batch's first write but before the others
+// redoes the planned ones it had not applied, and never repeats the write
+// that began.
+func TestDeterministicStageRestartMidBatchRedoesThePlansNotApplied(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := newBatchStage(t, time.Now, time.Sleep, []string{"a", "b", "c"}, nil, "", restarts("a", "b", "c"))
+		var saved [][]byte
+		b.loop.saveToolState = func(_ context.Context, payload []byte) error {
+			saved = append(saved, slices.Clone(payload))
+			return nil
+		}
+		b.run(t)
+		// The journal as a controller that died during the first apply's rollout left it.
+		var checkpoint []byte
+		for _, payload := range saved {
+			var tool responderToolState
+			if err := json.Unmarshal(payload, &tool); err != nil {
+				t.Fatal(err)
+			}
+			if len(tool.ApplicationEvidence) != 1 {
+				continue
+			}
+			for _, progress := range tool.StageProgress {
+				planned := 0
+				for _, attempt := range progress.Report.GetMitigations() {
+					if attempt.GetSkipReason() == stagePlannedInTurn {
+						planned++
+					}
+				}
+				if planned == 2 && checkpoint == nil {
+					checkpoint = payload
+				}
+			}
+		}
+		if checkpoint == nil {
+			t.Fatalf("no journal entry with one write and two planned bindings (%d saves)", len(saved))
+		}
+		resumed := newBatchStage(t, time.Now, time.Sleep, []string{"a", "b", "c"}, nil, "", restarts("a", "b", "c"))
+		if err := resumed.loop.restoreToolSnapshot(checkpoint); err != nil {
+			t.Fatal(err)
+		}
+		report, _ := resumed.run(t)
+		if got := resumed.world.writeOrder(); !slices.Equal(got, []string{"restart b", "restart c"}) {
+			t.Fatalf("resumed writes = %v, want the two planned restarts and no repeat of the first", got)
+		}
+		for _, id := range []string{"fix-b", "fix-c"} {
+			if !attemptFor(report, id).GetApplyReceipt().GetApplied() {
+				t.Fatalf("%s must apply after the restart: %v", id, attemptFor(report, id))
+			}
+		}
+	})
 }

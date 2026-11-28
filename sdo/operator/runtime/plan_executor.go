@@ -120,7 +120,8 @@ type PlanExecutor struct {
 	// PollRollouts returns pending after one observation instead of waiting.
 	PollRollouts bool
 	// batchVerify leaves terminal health verification to the automatic
-	// stage's one verify after its batch: VerificationCompleted stays false.
+	// stage's one verify after its batch: VerificationCompleted stays false
+	// and MitigationHealth (agent tool feedback) is not sampled.
 	batchVerify  bool
 	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error
 	// RolloutTimeout can shorten the default ninety-second rollout budget.
