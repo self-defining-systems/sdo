@@ -1,0 +1,21 @@
+operations:
+  - id: sign-in
+    journey: sign-in
+    correct: A seeded account gets a token; a wrong password is 401.
+    entry: {service: notes, port: 8080, method: POST, path: /api/login}
+    path: [notes]
+  - id: list-notes
+    journey: browse-notes
+    correct: The signed-in user's list holds exactly its seeded notes.
+    entry: {service: notes, port: 8080, method: GET, path: /api/notes}
+    path: [notes]
+  - id: create-note
+    journey: create-note
+    correct: A created note reads back with its title and is gone after delete.
+    writes: true
+    entry: {service: notes, port: 8080, method: POST, path: /api/notes}
+    path: [notes]
+probes:
+  - {scenario: call-sign-in, kind: call, operations: [sign-in]}
+  - {scenario: call-notes, kind: call, operations: [list-notes]}
+  - {scenario: write-note, kind: write-read, operations: [create-note]}

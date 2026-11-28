@@ -1,0 +1,7 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: probe-write
+purpose: health-probe
+timeout: 5s
+iterationTimeout: 20s
+scenarios: [{id: write-note}]
