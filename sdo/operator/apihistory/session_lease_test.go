@@ -115,7 +115,10 @@ func TestAFencedSessionIsHeldUntilTheFenceIsWithdrawnOrSealed(t *testing.T) {
 		}
 		observation.Close()
 	}
-	// tick feeds the poll (Forward's and the watcher's) until done.
+	// tick feeds the poll (Forward's and the watcher's) until done. The two
+	// share it, so the one awaited may get few of the ticks: expecting done
+	// takes a bound that only a stuck session can use up.
+	const untilDone = 1 << 20
 	tick := func(done <-chan struct{}, most int) bool {
 		for range most {
 			select {
@@ -144,7 +147,7 @@ func TestAFencedSessionIsHeldUntilTheFenceIsWithdrawnOrSealed(t *testing.T) {
 	if err := gate.Reopen(); err != nil {
 		t.Fatal(err)
 	}
-	if !tick(forwarded, 100) || forwardErr != nil || len(wrote) != 1 {
+	if !tick(forwarded, untilDone) || forwardErr != nil || len(wrote) != 1 {
 		t.Fatalf("a withdrawn fence still holds the session: %v", forwardErr)
 	}
 
@@ -158,7 +161,7 @@ func TestAFencedSessionIsHeldUntilTheFenceIsWithdrawnOrSealed(t *testing.T) {
 	if _, err := session.Forward(nil, func() (int, error) { called = true; return 1, nil }); !errors.Is(err, ErrSessionFenced) || called {
 		t.Fatalf("a sealed session forwarded bytes: %v", err)
 	}
-	if !tick(session.Ended(), 100) {
+	if !tick(session.Ended(), untilDone) {
 		t.Fatal("the seal did not end the session")
 	}
 }
