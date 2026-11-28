@@ -162,3 +162,22 @@ def test_live_lifecycle_callers_use_the_pod_boundary(
 
     with pytest.raises(Observed):
         invoke()
+
+
+def test_deployer_turn_uses_the_configured_lifecycle_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The deployer is a lifecycle session like the designer: its turn limit is agent.lifecycle_timeout.
+
+    Builds run inside the turn, so a fixed shorter cap ends a turn that is still fixing an image.
+    """
+    from types import SimpleNamespace
+
+    limits: list[object] = []
+
+    def turn(_provider: str, _prompt: str, **kwargs: object) -> SimpleNamespace:
+        limits.append(kwargs["timeout_seconds"])
+        return SimpleNamespace(output_json='{"proposed":true,"summary":"ok"}', session_id="s-1")
+
+    monkeypatch.setattr("sdo.agents.source_deployment.worker.run_structured_turn", turn)
+    monkeypatch.setenv("SDO_LIFECYCLE_TIMEOUT_SECONDS", "5400")
+    propose_source(SourceDeploymentRequest(application="demo", namespace="demo", attempt=1), tmp_path)
+    assert limits == [5400]
