@@ -82,6 +82,8 @@ echo "==> lanes layering (what the lanes packages may name)"
 
 if [[ "$run_parity" == 1 ]]; then
     "$SCRIPT_DIR/check_contracts_fast.sh" --go-only
+    echo "==> Go whole-tree guards (//ci:whole-tree; pull request CI always runs them)"
+    bash "$SCRIPT_DIR/test_go_ci.sh" guards
 fi
 
 print_skipped_stages

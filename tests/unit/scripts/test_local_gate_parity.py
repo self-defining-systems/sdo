@@ -31,11 +31,11 @@ STATIC_JOB_PLUMBING = ("ci_go_cache.sh", "ci_cache_guard.sh", "ci_cache_budget.p
 
 
 def _reachable(script: str, seen: set[str]) -> set[str]:
-    """Scripts named, directly or through other scripts, by `script`."""
+    """Scripts named, directly or through other scripts, by `script`'s code; a comment runs nothing."""
     if script in seen or not (SCRIPTS / script).is_file():
         return seen
     seen.add(script)
-    text = (SCRIPTS / script).read_text()
+    text = re.sub(r"(?m)^\s*#.*$", "", (SCRIPTS / script).read_text())
     for name in re.findall(r"[A-Za-z0-9_]+\.(?:sh|py)", text):
         _reachable(name, seen)
     return seen

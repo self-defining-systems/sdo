@@ -529,8 +529,13 @@ def shard_go_guards(plan: Plan, config: Config, shard: str) -> tuple[str, list[s
     chosen = {
         d: names for d, names in plan.go_guards.items() if d not in plan.go_packages and go_shard_of(d, config) == shard
     }
-    names = sorted({n for ns in chosen.values() for n in ns})
-    return ("^(" + "|".join(names) + ")$" if names else ""), [f"./{d}" for d in chosen]
+    return go_guard_run(chosen)
+
+
+def go_guard_run(guards: dict[str, list[str]]) -> tuple[str, list[str]]:
+    """The ``go test -run`` regex and package patterns for these guards."""
+    names = sorted({n for ns in guards.values() for n in ns})
+    return ("^(" + "|".join(names) + ")$" if names else ""), [f"./{d}" for d in guards]
 
 
 def partition_go_packages(listing: str, root: Path, config: Config, shard: str) -> list[str]:
@@ -587,6 +592,7 @@ def main(argv: list[str] | None = None) -> int:
         if name == "skip":
             cmd.add_argument("--kind", choices=["go", "python"], required=True)
     sub.add_parser("check-marks")
+    sub.add_parser("all-go-guards")
     partition_cmd = sub.add_parser("partition-go")
     partition_cmd.add_argument("--shard", required=True)
     partition_cmd.add_argument("--root", type=Path, default=ROOT)
@@ -606,6 +612,11 @@ def main(argv: list[str] | None = None) -> int:
         bad = unmarked_tree_walkers(ROOT, tracked_files(ROOT))
         print("\n".join(bad))
         return 1 if bad else 0
+
+    if args.command == "all-go-guards":
+        regex, patterns = go_guard_run(go_whole_tree_tests(ROOT, tracked_files(ROOT)))
+        print("\n".join([regex, *patterns]))
+        return 0 if regex else 1
 
     if args.command in {"mode", "go-patterns", "go-guards", "python-paths", "skip"}:
         plan = load_plan(args.plan)

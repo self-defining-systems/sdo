@@ -5,6 +5,7 @@
 #   arch  — AST facade imports and ownership rules (tests/unit/test_architecture.py)
 #   types — pyright (scripts/type_check.sh)
 #   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
+#   guards — every Go //ci:whole-tree test (scripts/test_go_ci.sh guards)
 #   deadline — no short Execute deadlines or counted sleep-poll budgets in tests
 #   schema — validator fingerprint and CLI binding contract tests
 #   parity — fast Go/Python/proto contract parity (scripts/check_contracts_fast.sh)

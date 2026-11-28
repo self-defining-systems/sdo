@@ -6,6 +6,8 @@ This file scans the real tree, so it is itself a whole-tree guard: a pull reques
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -42,3 +44,24 @@ def test_an_operatorcli_only_selection_still_runs_the_safefs_writer_guard() -> N
     regex, packages = select.shard_go_guards(plan, config, "rest")
     assert "TestCheckoutWritersGoThroughSafefs" in regex
     assert "./sdo/operator/safefs" in packages
+
+
+def test_the_local_gate_runs_every_go_whole_tree_guard(tmp_path: Path) -> None:
+    """Pull request CI always runs the guards, so a local gate that skips them passes code CI then rejects.
+
+    A recording ``go`` stands in for the toolchain: what matters is which tests the gate asks it to run."""
+    calls = tmp_path / "go-calls"
+    (tmp_path / "go").write_text(f'#!/bin/bash\necho "$@" >> "{calls}"\n')
+    (tmp_path / "go").chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    env.pop("SDO_CI_PLAN", None)
+    env.pop("SDO_GO_TEST_LOG", None)
+    subprocess.run(["bash", str(ROOT / "scripts/test_go_ci.sh"), "guards"], env=env, check=True, capture_output=True)
+
+    run = calls.read_text().split()
+    selected = run[run.index("-run") + 1]
+    for directory, names in select.go_whole_tree_tests(ROOT, select.tracked_files(ROOT)).items():
+        assert f"./{directory}" in run
+        assert all(name in selected for name in names)
+    assert "-count=1" in run, "a guard reads sources outside its module, which the test cache does not track"
+    assert 'test_go_ci.sh" guards' in (ROOT / "scripts/check_go_errors.sh").read_text()
