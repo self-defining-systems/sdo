@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -307,7 +308,8 @@ func truncateDetectText(text string, n int) string {
 }
 
 // waitDetect answers `sdo detect [NAME] --wait SECONDS`: it reads the state
-// now, reads again every detectPollInterval and returns as soon as a failing
+// now, reads again every detectPollInterval and returns as soon as the result
+// of the agent's latest known change is in (newEffectCheck), a failing
 // alert-set member clears or raises again, a user test joins the alert set, the incident recovers or the time
 // passes; a failed read is skipped and an idle tick never returns early. A user-test NAME sends its request once, at the start. The call is
 // recorded once, with the last read.
@@ -343,9 +345,30 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 	if prepared && response.Error == "" {
 		before := l.watchState(response, request.Name)
 		poll.noSend = true
+		var shown time.Time
+		var handoff, newShown map[string]bool
+		l.locked(func() { shown, handoff, newShown = l.effectShown, l.handoffKeys, maps.Clone(l.newShown) })
+		effect := l.newEffectCheck(shown, request.Name, clock.Now)
+		waitedFor := ""
 		for {
 			if l.detectIncidentRecovered() {
 				change = detectRecoveredMessage
+				break
+			}
+			live := read.liveRequest()
+			if fresh := unshownNew(response.Findings, handoff, alertKeys(&live), newShown); fresh != "" {
+				change = "new since the handoff: " + fresh
+				break
+			}
+			result, at := effect(read, response)
+			waitedFor = result.line
+			if result.in {
+				change = result.line
+				l.locked(func() {
+					if at.After(l.effectShown) {
+						l.effectShown = at
+					}
+				})
 				break
 			}
 			remaining := deadline.Sub(clock.Now())
@@ -374,6 +397,9 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 		}
 		elapsed := int64(clock.Now().Sub(started).Round(time.Second) / time.Second)
 		line := fmt.Sprintf("wait: no change in %ds", elapsed)
+		if waitedFor != "" {
+			line += "; " + waitedFor
+		}
 		if change != "" {
 			line = fmt.Sprintf("wait: after %ds, %s", elapsed, change)
 		}
@@ -409,4 +435,40 @@ func (l *ResponderLoop) cancelOnRecovered(ctx context.Context, clock kclock.With
 		}
 	}()
 	return watched, cancel
+}
+
+// newEffectCheck returns the per-read check of one wait: whether the result
+// of the newest write SDO knows the session made after shown (and after the
+// incident's detection) is in. It reports nothing while no alert-set member
+// fails, since a clearing already ends the wait, and never reports the same
+// change twice: at is the change's time, which the caller marks shown.
+func (l *ResponderLoop) newEffectCheck(shown time.Time, name string, now func() time.Time) func(*ResponderLoop, ToolResponse) (effectResult, time.Time) {
+	var watch effectWatch
+	return func(read *ResponderLoop, response ToolResponse) (effectResult, time.Time) {
+		active := l.watchState(response, name)
+		if len(active.active) == 0 || read == nil || read.lastView == nil {
+			return effectResult{}, time.Time{}
+		}
+		after := shown
+		if read.Request.DetectedAt.After(after) {
+			after = read.Request.DetectedAt
+		}
+		change, ok := latestKnownChange(read.lastView, read.applicationsLog, after)
+		if !ok {
+			return effectResult{line: "waited for an alert change (no write of yours since " + hms(after) + ")"}, time.Time{}
+		}
+		return watch.evaluate(read.lastView, change, failingAlertTests(active), now()), change.At
+	}
+}
+
+// unshownNew names the new-since-handoff findings no detect has shown yet;
+// "" when there are none, so a wait returns once per new finding.
+func unshownNew(findings []sdk.Finding, handoff map[string]bool, alerts []string, shown map[string]bool) string {
+	var labels []string
+	for _, finding := range newSinceHandoff(findings, handoff, alerts) {
+		if !shown[findingKey(finding)] {
+			labels = append(labels, detectFindingLabel(finding))
+		}
+	}
+	return truncateDetectText(strings.Join(slices.Compact(labels), ", "), 200)
 }

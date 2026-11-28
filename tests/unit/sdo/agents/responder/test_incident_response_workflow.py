@@ -66,6 +66,13 @@ def test_the_first_message_template_renders_strictly() -> None:
             template.substitute(missing)
 
 
+def test_the_first_message_carries_the_pacing_principle() -> None:
+    """The agent reads the first message before any skill: waiting on effects, not time, must be there."""
+
+    template = (PROMPTS / "incident_prompt.md").read_text(encoding="utf-8")
+    assert "Fix every cause you can see, then wait on the effect with `sdo detect --wait`, never a fixed sleep." in template
+
+
 @pytest.mark.parametrize("provider", ["codex", "claude"])
 def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypatch, provider: str) -> None:
     import json

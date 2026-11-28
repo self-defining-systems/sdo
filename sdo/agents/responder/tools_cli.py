@@ -128,8 +128,10 @@ def _parser() -> argparse.ArgumentParser:
             "Probe results use SDO's own test accounts. Request-metrics counts may include probes. "
             "NAME is a user test (SDO sends that test's scheduled request now, the same "
             "request its prober sends, and shows the result), a detector (runs it alone), or an item of the "
-            "summary (a component, clue ID, tests, conditions or background). --wait SECONDS returns early only when "
-            "the incident's alert set changes or Recovered holds, else after SECONDS; use it, not sleep. "
+            "summary (a component, clue ID, tests, conditions, background or new). Findings new since the handoff lead. "
+            "--wait SECONDS returns early when the result of your last change is in (its rollouts done and one "
+            "fresh sample of each failing user test after them), a finding is new since the handoff, the alert set "
+            "changes or Recovered holds, else after SECONDS; its first line says what it waited for. Use it, not sleep. "
             "SDO ends detector-opened incident work when its alerts stay clear after writes settle. "
             "For a page-opened incident, verify the reported operation and return the result."
         ),
