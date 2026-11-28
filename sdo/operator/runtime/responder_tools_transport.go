@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	kclock "k8s.io/utils/clock"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -34,6 +36,19 @@ type SessionToolServer struct {
 
 	requests  *os.Root
 	responses *os.Root
+}
+
+// handle answers one tool request. A panic in a handler (for example a page
+// renderer on an input it did not expect) becomes that request's error, so a
+// bug behind one command can never stop the controller.
+func (s *SessionToolServer) handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("responder_tool_panic", "command", request.Command, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			response = ToolResponse{Command: request.Command, Error: fmt.Sprintf("sdo %s failed inside SDO (%v); retry it, or use another command for the same facts", request.Command, r)}
+		}
+	}()
+	return s.Handle(ctx, request)
 }
 
 func (s *SessionToolServer) Serve(ctx context.Context) error {
@@ -206,7 +221,7 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 			if err := json.Unmarshal(data, &request); err != nil {
 				response.Error = "invalid tool request: " + err.Error()
 			} else {
-				response = s.Handle(ctx, request)
+				response = s.handle(ctx, request)
 			}
 		}
 		if response.Summary == "" {
