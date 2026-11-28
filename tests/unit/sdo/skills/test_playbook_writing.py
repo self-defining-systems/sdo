@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 SKILL = ROOT / "sdo/skills/playbook-writing"
 PROGRAM = ROOT / "sdo/operator/sdk/program"
-BUDGET_BYTES = 2944
+BUDGET_BYTES = 3072
 
 
 def _declared() -> set[str]:
@@ -91,3 +91,9 @@ def test_a_playbook_for_app_managed_state_encodes_the_apps_own_path() -> None:
     """A learned playbook must not turn a hand schema edit into the default repair for state the app maintains."""
     text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     assert "A playbook that writes app internals by hand says so in its README" in text
+
+
+def test_a_matched_but_unfit_playbook_is_generalized() -> None:
+    """A playbook that matched a repeat but did not fix it is widened, not shadowed by a narrower sibling."""
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    assert "generalize it (parameterize what varied) rather than adding a narrower sibling" in text

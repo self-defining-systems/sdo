@@ -12,6 +12,7 @@ Start from `examples/template-drift/` or `examples/stuck-pods/`. Write `diagnose
 - Signatures, `program.EnsureExec` (SQL/CLI): [sdk-card.md](../sdo-playbook-authoring/references/sdk-card.md).
 - Use the fastest equivalent action. Verify serving processes use the new state.
 - Scope absence claims to where you looked. Before recreating or overwriting lost data, require a live check for the authoritative copy; restore it if found, else leave the write to the responder.
+- When a learned playbook matched but did not fit, generalize it (parameterize what varied) rather than adding a narrower sibling.
 - Bind which items changed and restore each to its prior value; a blanket default overmatches deliberate settings.
 - Repair app-owned state through the app's own tools. A playbook that writes app internals by hand says so in its README.
 - Set the known-good value directly, not from controller history a repeat may lack.
