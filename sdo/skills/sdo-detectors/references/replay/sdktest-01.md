@@ -104,14 +104,14 @@ func HealthyBaselineViolations(detector sdk.Detector, snapshots []Snapshot) []st
 
 func IsJoinCapturePhase(phase string) bool
     IsJoinCapturePhase reports whether phase (without the "open@" prefix) names
-    an alert-join capture.
+    a join capture.
 
 func JoinCapturePhase(n int) string
-    JoinCapturePhase is the phase of the nth alert-join capture.
+    JoinCapturePhase is the phase of the nth join capture.
 
 func JoinCapturePhases(dir string) []string
-    JoinCapturePhases lists the alert-join captures in an incident capture
-    directory, in the order they were taken.
+    JoinCapturePhases lists the join captures in an incident capture directory,
+    in the order they were taken.
 
 func ProjectCapturedObject(raw []byte) ([]byte, error)
     ProjectCapturedObject preserves arbitrary Kubernetes fields, including
@@ -183,6 +183,11 @@ type CorpusProvenance struct {
 type JoinCaptureContext struct {
 	// JoinedKeys are the alerts that joined the incident in this pass.
 	JoinedKeys []string `json:"joined_keys"`
+	// NewFindings are the findings that first became active in the open
+	// incident in this pass without joining its alert set (clues such as a
+	// store's state or a drift, Kubernetes conditions, a learned detector's
+	// finding). A cause that starts later may show only in them.
+	NewFindings []string `json:"new_findings,omitempty"`
 	// KnownWritesBefore is true when a write Go knows of preceded the
 	// capture. False means none known, not none made: with the agent recording
 	// off, the agent's direct Kubernetes writes are invisible.
@@ -197,10 +202,12 @@ type JoinCaptureContext struct {
 	// readable for this capture (the recording on and a responder running).
 	Recording bool `json:"recording"`
 }
-    JoinCaptureContext is what Go knew when it took an alert-join capture
-    (open@join-n). Unlike the opening captures, a join capture can follow SDO's
-    or the agent's writes, so a Diagnose that matches it may be matching state a
-    write made rather than the fault. It is evidence for readers, never a gate.
+    JoinCaptureContext is what Go knew when it took a join capture
+    (open@join-n): the state alerts joined the incident in, or new findings
+    first appeared in. Unlike the opening captures, a join capture can follow
+    SDO's or the agent's writes, so a Diagnose that matches it may be matching
+    state a write made rather than the fault. It is evidence for readers,
+    never a gate.
 
 type MitigationReplayResult struct {
 	ProgramID string                 `json:"program_id"`
@@ -210,12 +217,4 @@ type MitigationReplayResult struct {
 }
     MitigationReplayResult is informational. A skipped effect proves no repair
     and must never substitute for independently verified live trust credits.
-
-func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (MitigationReplayResult, error)
-    CheckMitigation validates every plan. SetField-only plans must repair the
-    faulted fixture; plans with external effects return an explicit skipped
-    note. Diagnosis replay is an analysis helper; its outcome never gates
-    publication.
-
-type MitigationReplayStatus string
 ```

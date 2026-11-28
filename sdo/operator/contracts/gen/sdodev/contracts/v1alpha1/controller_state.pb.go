@@ -831,8 +831,13 @@ type ControllerState struct {
 	// Recent healthy start-to-Ready times per workload, so a restart keeps what
 	// the install has learned about how long its workloads take to start.
 	StartupObservations []*StartupObservation `protobuf:"bytes,53,rep,name=startup_observations,json=startupObservations,proto3" json:"startup_observations,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// The join captures (open@join-n) the incident join_capture_incident_id has
+	// taken; the next is numbered one past it. Kept here, never derived from the
+	// incident's session directory, which the responder can write.
+	JoinCaptureIncidentId string `protobuf:"bytes,55,opt,name=join_capture_incident_id,json=joinCaptureIncidentId,proto3" json:"join_capture_incident_id,omitempty"`
+	JoinCaptures          int32  `protobuf:"varint,56,opt,name=join_captures,json=joinCaptures,proto3" json:"join_captures,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *ControllerState) Reset() {
@@ -1164,6 +1169,20 @@ func (x *ControllerState) GetStartupObservations() []*StartupObservation {
 		return x.StartupObservations
 	}
 	return nil
+}
+
+func (x *ControllerState) GetJoinCaptureIncidentId() string {
+	if x != nil {
+		return x.JoinCaptureIncidentId
+	}
+	return ""
+}
+
+func (x *ControllerState) GetJoinCaptures() int32 {
+	if x != nil {
+		return x.JoinCaptures
+	}
+	return 0
 }
 
 // StartupObservation is one workload's recent healthy starts: the time from a
@@ -2166,7 +2185,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
 	"\x06action\x18\t \x01(\tR\x06action\x12Q\n" +
 	"\x06reason\x18\n" +
-	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\x83&\n" +
+	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xea&\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -2215,7 +2234,9 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\flast_page_id\x183 \x01(\tR\n" +
 	"lastPageId\x12:\n" +
 	"\x19dispatch_failure_attempts\x184 \x01(\x05R\x17dispatchFailureAttempts\x12`\n" +
-	"\x14startup_observations\x185 \x03(\v2-.sdodev.contracts.v1alpha1.StartupObservationR\x13startupObservations\x1aa\n" +
+	"\x14startup_observations\x185 \x03(\v2-.sdodev.contracts.v1alpha1.StartupObservationR\x13startupObservations\x127\n" +
+	"\x18join_capture_incident_id\x187 \x01(\tR\x15joinCaptureIncidentId\x12,\n" +
+	"\rjoin_captures\x188 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\fjoinCaptures\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +

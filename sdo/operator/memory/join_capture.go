@@ -10,7 +10,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// JoinCaptureContext is what Go knew when it took an alert-join capture; the
+// JoinCaptureContext is what Go knew when it took a join capture; the
 // format lives with the other capture formats in sdktest.
 type JoinCaptureContext = sdktest.JoinCaptureContext
 
