@@ -63,8 +63,8 @@ exec rootlesskit buildkitd --addr "tcp://0.0.0.0:$SDO_BUILDKITD_PORT" --addr ` +
 		Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyAlways, ServiceAccountName: b.ServiceAccount, AutomountServiceAccountToken: &no,
 			SecurityContext: &corev1.PodSecurityContext{RunAsUser: ptr64(1000), RunAsGroup: ptr64(1000), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}},
 			Containers: []corev1.Container{{Name: "buildkitd", Image: b.BuildKitImage, Command: []string{"/bin/sh", "-ec"}, Args: []string{script},
-				Env:   []corev1.EnvVar{{Name: "SDO_BUILDKITD_CONFIG", Value: config}, {Name: "SDO_BUILDKITD_PORT", Value: fmt.Sprint(daemonPort)}},
-				Ports: []corev1.ContainerPort{{Name: "buildkitd", ContainerPort: daemonPort}},
+				Env:            []corev1.EnvVar{{Name: "SDO_BUILDKITD_CONFIG", Value: config}, {Name: "SDO_BUILDKITD_PORT", Value: fmt.Sprint(daemonPort)}},
+				Ports:          []corev1.ContainerPort{{Name: "buildkitd", ContainerPort: daemonPort}},
 				ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"buildctl", "--addr", daemonSocket, "debug", "workers"}}}, PeriodSeconds: 2},
 				// Enough to stay off the eviction list; builds burst to the node.
 				Resources:    corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("1Gi")}},
