@@ -326,8 +326,12 @@ def render_onboarding_card() -> str:
             head = declaration[0]
             if re.match(pattern, head):
                 # The endpoint's fields are set through its chainable methods.
-                compact = "type HTTPEndpoint struct{...}" if head.startswith("type HTTPEndpoint ") else _compact(declaration)
-                lines.append(_with_doc(compact, head, docs[id(declaration)], title == "HTTP") if title in DOC_GROUPS else compact)
+                compact = (
+                    "type HTTPEndpoint struct{...}" if head.startswith("type HTTPEndpoint ") else _compact(declaration)
+                )
+                lines.append(
+                    _with_doc(compact, head, docs[id(declaration)], title == "HTTP") if title in DOC_GROUPS else compact
+                )
             elif title == "Scenarios" and head == "const (":
                 values = [
                     " ".join(line.split())
