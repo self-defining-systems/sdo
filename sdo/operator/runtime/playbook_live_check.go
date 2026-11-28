@@ -21,18 +21,17 @@ import (
 const liveCheckPlanDeadline = time.Minute
 
 // LivePlaybookCheckRule is the memory-check rule of a new playbook whose
-// read-only check cannot run on the live cluster.
+// read-only check fails, or cannot run, on the live cluster.
 const LivePlaybookCheckRule = "playbook.check-cannot-run"
 
 // LivePlaybookCheckNote is the memory-check note of a changed playbook whose
-// live check could not run (a timeout, a Pod replaced during the check, a
-// Diagnose error, no captured bindings for its roles). It never blocks: only
-// the check's own exit code says the check is wrong.
+// live check was not run: it declares object roles this incident did not
+// bind, or its Mitigate planned nothing it could check. It never blocks.
 const LivePlaybookCheckNote = "playbook.check-not-run-live"
 
 // LiveCheckReport is what a live check found: Blocking diagnostics for checks
-// whose own exit code answered neither "holds" nor "needs the change", and
-// non-blocking Notes for checks that could not run.
+// whose own exit code answered neither "holds" nor "needs the change" or that
+// could not run twice, and non-blocking Notes for checks that were not run.
 type LiveCheckReport struct {
 	Blocking []*contracts.MemoryDiagnostic
 	Notes    []*contracts.MemoryDiagnostic
@@ -131,18 +130,21 @@ func liveCheckTargets(root, incidentID string, ids []string) []liveCheckTarget {
 // the bindings this incident captured and, for the plan its Mitigate returns,
 // every Ensure action's observation, which is read only by contract. When the
 // plan on the recovered cluster has no observation (a Mitigate that plans
-// nothing once healthy), the plan it made on the incident's captured
-// fault-time snapshot is checked instead.
+// nothing, or refuses, once healthy), the plan it made on the incident's
+// captured fault-time snapshot is checked instead.
 //
-// Only an observation's own exit code blocks: it must answer "holds" (Expect)
-// or "needs the change". A check that cannot run (an exec or transport error
-// such as a Pod replaced mid-check, a timeout, a Diagnose error) is retried
-// once and then reported as a note, so one hiccup never costs the playbook.
+// An observation must answer "holds" (Expect) or "needs the change". A step
+// that cannot run (an exec or transport error, a timeout, a Diagnose error)
+// is retried once, so a Pod replaced mid-check never costs the playbook, and
+// then blocks: the automatic stage runs the same reads through the same
+// transport and would fail the same way on first reuse. A Mitigate that fails
+// on both views is a note: it may refuse healthy state by design.
 func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveCheckTarget) (blocking, notes []validate.Diagnostic) {
-	fail := func(id, message string) {
-		blocking = append(blocking, validate.Diagnostic{Rule: LivePlaybookCheckRule, Path: layout.PlaybookDir(id), Message: message,
-			Hint: "the check ran read only on the recovered cluster; fix it so it exits Expect when the state holds and the needs-change code otherwise, then run memory check again"})
+	fail := func(id, message, hint string) {
+		blocking = append(blocking, validate.Diagnostic{Rule: LivePlaybookCheckRule, Path: layout.PlaybookDir(id), Message: message, Hint: hint})
 	}
+	const wrongCode = "the check ran read only on the recovered cluster; fix it so it exits Expect when the state holds and the needs-change code otherwise, then run memory check again"
+	const cannotRun = "it failed twice on the recovered cluster through the transport the automatic stage uses, so the stage would fail the same way on first reuse; fix the read (target, container, binary, timeout, output parsing) or remove the program and keep the playbook README-only, then run memory check again"
 	note := func(id, message string) {
 		notes = append(notes, validate.Diagnostic{Rule: LivePlaybookCheckNote, Path: layout.PlaybookDir(id), Message: message})
 	}
@@ -153,7 +155,7 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 			continue
 		}
 		if err := loop.loadWorkingPrograms(ctx, id); err != nil {
-			fail(id, fmt.Sprintf("playbook %s did not build for the live check: %v", id, err))
+			fail(id, fmt.Sprintf("playbook %s did not build for the live check: %v", id, err), "fix the build error, then run memory check again")
 			continue
 		}
 		bindings := target.Bindings
@@ -172,7 +174,7 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 			}
 			return err
 		}); err != nil {
-			note(id, fmt.Sprintf("playbook %s was not run live: its Diagnose did not complete twice: %v", id, err))
+			fail(id, fmt.Sprintf("playbook %s: its Diagnose did not complete twice on the live cluster: %v", id, err), cannotRun)
 			continue
 		}
 		mitigator, ok := loop.programs().Mitigator(id)
@@ -183,9 +185,22 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 		if !ok {
 			continue
 		}
-		actions := liveCheckActions(ctx, mitigator, view, bindings)
+		var actions []program.Action
+		liveErr := retryOnce(ctx, func() error {
+			var err error
+			actions, err = liveCheckActions(ctx, mitigator, view, bindings)
+			return err
+		})
 		if len(actions) == 0 && target.Open != nil {
-			actions = liveCheckActions(ctx, mitigator, target.Open, bindings)
+			var openErr error
+			actions, openErr = liveCheckActions(ctx, mitigator, target.Open, bindings)
+			if liveErr != nil && openErr != nil {
+				note(id, fmt.Sprintf("playbook %s: its Mitigate failed on the recovered cluster (%v) and on the fault-time capture (%v); its checks were not run", id, liveErr, openErr))
+				continue
+			}
+		} else if liveErr != nil && len(actions) == 0 {
+			note(id, fmt.Sprintf("playbook %s: its Mitigate failed on the recovered cluster twice (%v); its checks were not run", id, liveErr))
+			continue
 		}
 		for index, action := range actions {
 			observe, _, expect := externalPair(action)
@@ -195,11 +210,11 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 				code, err = client.RunOperation(ctx, observe)
 				return err
 			}); err != nil {
-				note(id, fmt.Sprintf("playbook %s action %d: its check %s could not run live twice: %v", id, index+1, operationText(observe), err))
+				fail(id, fmt.Sprintf("playbook %s action %d: its check %s could not run live twice: %v", id, index+1, operationText(observe), err), cannotRun)
 				continue
 			}
 			if code != expect && !program.ObservationNeedsChange(action, code) {
-				fail(id, fmt.Sprintf("playbook %s action %d: its read-only check %s exited %d live; it must exit %d when the state holds or the needs-change code when it does not", id, index+1, operationText(observe), code, expect))
+				fail(id, fmt.Sprintf("playbook %s action %d: its read-only check %s exited %d live; it must exit %d when the state holds or the needs-change code when it does not", id, index+1, operationText(observe), code, expect), wrongCode)
 			}
 		}
 	}
@@ -207,11 +222,11 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 }
 
 // liveCheckActions is the Ensure actions, with an observation, of the plan
-// mitigator makes on view; a Mitigate that errors or plans nothing gives none.
-func liveCheckActions(ctx context.Context, mitigator program.Mitigator, view program.ReadView, bindings program.Bindings) []program.Action {
+// mitigator makes on view, or the error that made the plan fail.
+func liveCheckActions(ctx context.Context, mitigator program.Mitigator, view program.ReadView, bindings program.Bindings) ([]program.Action, error) {
 	plan, err := BuildMitigationPlan(ctx, mitigator, view, bindings, liveCheckPlanDeadline)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var actions []program.Action
 	for _, action := range plan.Actions {
@@ -220,7 +235,7 @@ func liveCheckActions(ctx context.Context, mitigator program.Mitigator, view pro
 			actions = append(actions, action)
 		}
 	}
-	return actions
+	return actions, nil
 }
 
 // retryOnce runs try and, if it fails while ctx is still live, once more.

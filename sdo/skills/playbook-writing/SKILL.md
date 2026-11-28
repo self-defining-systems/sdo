@@ -23,6 +23,6 @@ Start from `examples/template-drift/` or `examples/stuck-pods/`. Write `diagnose
 A cause with its own signal gets a detector naming the playbook: [detector.md](detector.md).
 
 Check against recorded evidence in the foreground: `sdo-operator memory check`, then `sdo-operator memory test <id>`.
-At closing, `memory check` also runs new or edited playbooks' read-only checks live with this incident's bindings: exit 0 = state holds, 1 = needs change, else failure; can't run = note only.
+At closing, `memory check` also runs new or edited playbooks' read-only checks live, bound to this incident: exit 0 = holds, 1 = needs change; another exit or a read failing twice fails it.
 
 Reply in one line: what it does, or why none.
