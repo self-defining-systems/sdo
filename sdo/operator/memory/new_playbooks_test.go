@@ -58,3 +58,31 @@ func TestNewPlaybooksAreTheOnesWithoutProgramSourceAtTheBase(t *testing.T) {
 		t.Fatal("a directory with no history cannot say what is new")
 	}
 }
+
+// A changed playbook is a new one or one whose program source differs from the
+// base, committed, staged or not; a README or test edit changes no program.
+func TestChangedPlaybooksAreNewOrHaveEditedProgramSource(t *testing.T) {
+	root := t.TempDir()
+	gitIn(t, root, "init", "-q")
+	writeIn(t, root, ".sdo/playbooks/edited/diagnose.go")
+	writeIn(t, root, ".sdo/playbooks/added-file/diagnose.go")
+	writeIn(t, root, ".sdo/playbooks/same/diagnose.go")
+	writeIn(t, root, ".sdo/playbooks/docs/diagnose.go")
+	gitIn(t, root, "add", "-A")
+	gitIn(t, root, "commit", "-q", "-m", "base")
+	if err := os.WriteFile(filepath.Join(root, ".sdo/playbooks/edited/diagnose.go"), []byte("package x\n\nconst y = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeIn(t, root, ".sdo/playbooks/added-file/mitigate.go")
+	writeIn(t, root, ".sdo/playbooks/docs/README.md")
+	writeIn(t, root, ".sdo/playbooks/docs/diagnose_test.go")
+	writeIn(t, root, ".sdo/playbooks/fresh/diagnose.go")
+
+	got, err := ChangedPlaybooks(context.Background(), root, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"added-file", "edited", "fresh"}) {
+		t.Fatalf("changed playbooks = %v, want [added-file edited fresh]", got)
+	}
+}

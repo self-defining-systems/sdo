@@ -176,7 +176,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		directory := filepath.Join(config.GetRepositoryMountPath(), relative, "tools")
 		executor.Environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
 		executor.Environment["SDO_MEMORY_CHECK_DIR"] = "/sdo/session/tools"
-		return reflectionCheckExecutor{Executor: executor, Directory: directory, Handle: reflectionCheckHandler(native.Repository, config.GetRepositoryMountPath(), incidentID, time.Duration(policy.Agent.MemoryCheckTimeout))}, nil
+		return reflectionCheckExecutor{Executor: executor, Directory: directory, Handle: reflectionCheckHandler(native.Repository, func() LivePlaybookCheck { return native.LiveCheck }, config.GetRepositoryMountPath(), incidentID, time.Duration(policy.Agent.MemoryCheckTimeout))}, nil
 
 	}
 	catalog := memory.OpenCatalogReader(config.GetAppRoot())

@@ -58,7 +58,7 @@ func (e reflectionCheckExecutor) RecoverCompleted(ctx context.Context, task *con
 
 // reflectionCheckHandler runs one memory check for a reflection worker, bounded by agent.memory_check_timeout (the
 // same limit the worker receives as SDO_MEMORY_CHECK_TIMEOUT_SECONDS).
-func reflectionCheckHandler(repository *broker.Broker, sessionRoot, incidentID string, limit time.Duration) func(context.Context, ToolRequest) ToolResponse {
+func reflectionCheckHandler(repository *broker.Broker, live func() LivePlaybookCheck, sessionRoot, incidentID string, limit time.Duration) func(context.Context, ToolRequest) ToolResponse {
 	return func(ctx context.Context, request ToolRequest) ToolResponse {
 		response := ToolResponse{Command: request.Command}
 		if request.Command != "memory-check" {
@@ -93,10 +93,25 @@ func reflectionCheckHandler(repository *broker.Broker, sessionRoot, incidentID s
 			response.Error = err.Error()
 			return response
 		}
+		if check := liveCheck(live); check != nil && len(report.GetDiagnostics()) == 0 {
+			live, err := check(bounded, incidentID, report.GetRoot(), report.GetBase())
+			if err != nil {
+				slog.Warn("reflection_live_check_unavailable", "incident_id", incidentID, "error", err)
+			}
+			report.Diagnostics = append(report.Diagnostics, live.Blocking...)
+			report.CoverageGaps = append(report.CoverageGaps, live.Notes...)
+		}
 		response.MemoryCheckReport, err = protojson.Marshal(report)
 		if err != nil {
 			response.Error = err.Error()
 		}
 		return response
 	}
+}
+
+func liveCheck(live func() LivePlaybookCheck) LivePlaybookCheck {
+	if live == nil {
+		return nil
+	}
+	return live()
 }

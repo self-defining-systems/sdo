@@ -71,6 +71,10 @@ const (
 )
     Bounds of one structured read.
 
+const CurlHTTPErrorExit int32 = 22
+    CurlHTTPErrorExit is curl's exit code when the server answered an HTTP error
+    status (curl --fail), the needs-change answer of an EnsureHTTP observation.
+
 const DefaultLogTailLines = 1000
     DefaultLogTailLines is how many of the newest lines a read returns when the
     program names no tail.
@@ -220,6 +224,14 @@ func MergeObject(object map[string]any, ref sdk.ObjectRef, desired json.RawMessa
 func NewestLogBytes(data string, limit int64) string
     NewestLogBytes keeps the newest whole lines of data that fit in limit bytes.
 
+func ObservationNeedsChange(action Action, code int32) bool
+    ObservationNeedsChange reports whether an Ensure action's observation exit
+    code says the state needs the change. An EnsureExec observation needs it
+    when it exits 1 (0 when Expect is 1); an EnsureHTTP observation when the
+    server answered an HTTP error (CurlHTTPErrorExit). Expect means the state
+    holds. Any other code means the check did not run as written (an uncaught
+    script error, a missing command, an unreachable server): neither answer.
+
 func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
     ProjectPatch is the shared atomic projection used by production and replay.
     Errors leave the input untouched. The API server still validates its schema.
@@ -239,19 +251,4 @@ func ScriptEnvText(value any) (string, error)
 
 func ValidateBindings(spec ProgramSpec, b Bindings) error
 func ValidateGeneralRef(ref sdk.ObjectRef) error
-func ValidateJSONPointer(pointer string) error
-    ValidateJSONPointer checks an RFC 6901 pointer to a value inside a body:
-    it begins with "/", has at most 8 segments and no segment is named like a
-    credential.
-
-func ValidateKubernetesRead(r KubernetesRequest) error
-func ValidateLogMatchRequest(since time.Duration, pattern string, max int) (*regexp.Regexp, error)
-    ValidateLogMatchRequest checks the arguments of LogMatches.
-
-func ValidateRemoveServicePort(a RemoveServicePort) error
-    ValidateRemoveServicePort checks the target and exclusive port identity.
-
-func ValidateResolvedSetField(f SetField, value any) error
-    ValidateResolvedSetField checks the resolved schema without changing
-    provenance.
 ```
