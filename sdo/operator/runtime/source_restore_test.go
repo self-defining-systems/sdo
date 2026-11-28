@@ -34,6 +34,16 @@ func (v restoreView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, erro
 	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": map[string]any{"name": ref.Name, "namespace": ref.Namespace}}}, nil
 }
 
+// markSeenHealthy records the content the canned restore views serve for the
+// event's object, or other content, as seen healthy.
+func markSeenHealthy(event *sdk.DriftEvent, current bool) {
+	since := event.ObservedAt
+	event.HealthyContent, event.HealthyContentSince = "sha256:other", &since
+	if current {
+		event.HealthyContent = objectContent(restoreViewOf(nil), event.Ref)
+	}
+}
+
 func newRestoreEvidence(request IncidentRequest) *sourceRestoreEvidence {
 	evidence := &sourceRestoreEvidence{}
 	evidence.set(request)
@@ -236,27 +246,27 @@ func TestStageAppliesTheBuiltInRestoreWhenTheSwitchIsOn(t *testing.T) {
 	}
 }
 
-// A change that was already there while the application then stayed healthy did
+// Content that was already there while the application then stayed healthy did
 // not break it: the automatic stage leaves it, the responder can still see and
-// restore it.
+// restore it. Other content than what was seen healthy is restored.
 func TestStageRestoresOnlyDeparturesNotSeenHealthy(t *testing.T) {
-	for name, seenHealthy := range map[string]bool{"seen healthy": true, "made since": false} {
+	for name, seen := range map[string]bool{"seen healthy": true, "other content seen healthy": false} {
 		t.Run(name, func(t *testing.T) {
 			_, stage, state := restoreStage(t, true)
-			state.Request.DriftEvents[0].SeenHealthy = seenHealthy
+			markSeenHealthy(&state.Request.DriftEvents[0], seen)
 			report, err := stage.Run(context.Background(), state)
 			if err != nil {
 				t.Fatal(err)
 			}
 			attempt := restoreAttempt(report)
 			planned := attempt != nil && attempt.GetSkipReason() == ""
-			if planned == seenHealthy {
-				t.Fatalf("automatic restore attempted=%t with seen_healthy=%t: %v", planned, seenHealthy, attempt)
+			if planned == seen {
+				t.Fatalf("automatic restore attempted=%t with seen healthy=%t: %v", planned, seen, attempt)
 			}
 		})
 	}
 	request := restoreRequest("kubectl")
-	request.DriftEvents[0].SeenHealthy = true
+	markSeenHealthy(&request.DriftEvents[0], true)
 	manual := sourceRestoreProgram{evidence: newRestoreEvidence(request)}
 	view := restoreViewOf(map[string]sdk.SourceDiff{"Service/api": {Changed: true}})
 	if verdict, err := manual.Diagnose(context.Background(), view, restoreAPI()); err != nil || verdict.Result != program.Match {

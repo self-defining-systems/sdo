@@ -56,7 +56,8 @@ func driftEventsContract(events []sdk.DriftEvent) []*contracts.DriftEvent {
 	for _, event := range events {
 		item := &contracts.DriftEvent{Ref: objectRefContract(event.Ref), Source: event.Source, Manager: event.Manager,
 			Operation: event.Operation, ManagerAt: optionalContractTimestamp(event.ManagerAt), ObservedAt: contractTimestamp(event.ObservedAt), Classification: string(event.Classification), ProgramId: event.ProgramID,
-			InvestigationStatus: event.InvestigationStatus, InvestigationVerdict: event.InvestigationVerdict, InvestigationReason: event.InvestigationReason, InvestigationCaptureId: event.InvestigationCaptureID, SeenHealthy: event.SeenHealthy}
+			InvestigationStatus: event.InvestigationStatus, InvestigationVerdict: event.InvestigationVerdict, InvestigationReason: event.InvestigationReason, InvestigationCaptureId: event.InvestigationCaptureID,
+			HealthyContent: event.HealthyContent, HealthyContentSince: optionalContractTimestamp(event.HealthyContentSince)}
 		for _, field := range event.Fields {
 			item.Fields = append(item.Fields, &contracts.DriftField{Path: field.Path, Old: field.Old, New: field.New, Source: field.Source})
 		}

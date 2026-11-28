@@ -78,17 +78,28 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 		if event == nil {
 			continue
 		}
-		c.mu.Lock()
-		c.driftEvents = append(c.driftEvents, *event)
-		if len(c.driftEvents) > 40 {
-			c.driftEvents = append([]sdk.DriftEvent(nil), c.driftEvents[len(c.driftEvents)-40:]...)
-		}
-		c.mu.Unlock()
+		c.appendDriftEvent(*event)
 		if event.Classification == sdk.DriftUnexplained {
 			c.queueUnexplainedFinding(now, *event)
 		}
 	}
 
+}
+
+// appendDriftEvent adds an event to the bounded history. It keeps what was seen
+// healthy for the object: a new write does not change what that content was.
+func (c *Controller) appendDriftEvent(event sdk.DriftEvent) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, earlier := range c.driftEvents {
+		if earlier.Ref == event.Ref && earlier.HealthyContent != "" {
+			event.HealthyContent, event.HealthyContentSince = earlier.HealthyContent, earlier.HealthyContentSince
+		}
+	}
+	c.driftEvents = append(c.driftEvents, event)
+	if len(c.driftEvents) > 40 {
+		c.driftEvents = append([]sdk.DriftEvent(nil), c.driftEvents[len(c.driftEvents)-40:]...)
+	}
 }
 
 func safeDriftText(value string) string {
