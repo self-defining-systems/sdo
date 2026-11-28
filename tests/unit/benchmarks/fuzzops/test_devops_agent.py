@@ -50,12 +50,15 @@ class FakeService:
         self.plan, self.statuses = plan, list(statuses)
         self.created, self.cancelled, self.queries = [], [], []
         self.listed = []
+        self.by_id: dict = {}
 
     def create(self, title, description, token):
         self.created.append((title, description, token))
         return {"taskId": "t1", "status": "PENDING_START"}
 
     def task(self, task_id):
+        if task_id in self.by_id:
+            return dict(self.by_id[task_id])
         status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
         if status == "ERROR":
             raise HookError("throttled")
@@ -362,6 +365,50 @@ def test_alarm_task_is_followed_without_a_harness_page(alarm_env):
     assert (paged["alarm_name"], paged["alarm_transition"]) == ("web-5xx", "ALARM")
     assert paged["late_alarm_tasks"] == []
     assert not (vanilla.run_dir(alarm_env) / "page.json").exists()
+
+
+def test_a_linked_alarm_task_follows_its_primary_when_the_primary_is_from_this_episode(alarm_env):
+    service = FakeService([step("apply", "kubectl patch x")])
+    now = datetime.now(timezone.utc)
+    service.listed = [
+        {**alarm_task(created=now + timedelta(seconds=1)), "status": "LINKED", "primaryTaskId": "primary-t"}
+    ]
+    service.by_id = {
+        "primary-t": {
+            "taskId": "primary-t",
+            "status": "COMPLETED",
+            "createdAt": (now + timedelta(seconds=0.5)).isoformat(),
+        },
+    }
+    done = respond(alarm_env, service, time.time() - 1)
+    assert done["task_status"] == "COMPLETED"
+    paged = evidence(alarm_env, "paging.json")
+    assert (paged["task_id"], paged["linked_from_task_id"]) == ("primary-t", "alarm-t")
+
+
+def test_a_linked_alarm_task_with_a_primary_from_before_the_inject_is_not_followed(alarm_env):
+    service = FakeService()
+    now = datetime.now(timezone.utc)
+    service.listed = [{**alarm_task(created=now + timedelta(seconds=1)), "status": "LINKED", "primaryTaskId": "old-t"}]
+    service.by_id = {
+        "old-t": {"taskId": "old-t", "status": "COMPLETED", "createdAt": (now - timedelta(hours=1)).isoformat()},
+    }
+    done = respond(alarm_env, service, time.time() - 1)
+    assert done["task_status"] == "LINKED"
+    assert "linked_from_task_id" not in evidence(alarm_env, "paging.json")
+
+
+def test_the_ledger_entry_of_an_alarm_task_is_its_created_record_not_the_resolution(alarm_env, tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(
+        ledger.read_text()
+        + "\n"
+        + json.dumps({"incident_id": "inc-1", "alarm_name": "web-5xx", "transition": "OK", "action": "resolved"})
+    )
+    service = FakeService()
+    service.listed = [alarm_task()]
+    respond(alarm_env, service, time.time() - 1)
+    assert evidence(alarm_env, "paging.json")["alarm_transition"] == "ALARM"
 
 
 def test_alarm_task_without_ledger_match_leaves_alarm_fields_null(alarm_env, tmp_path):

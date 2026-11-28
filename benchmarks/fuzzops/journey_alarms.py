@@ -163,7 +163,7 @@ def render(config: Config) -> dict[str, Any]:
         "account": [config.account],
         "region": [config.region],
         "resources": [config.alarm_arn(journey) for journey in config.journeys],
-        "detail": {"state": {"value": ["ALARM"]}},
+        "detail": {"state": {"value": ["ALARM", "OK"]}},
     }
     return {"alarms": alarms, "rule": {"Name": config.rule_name, "EventPattern": pattern}, "queue": config.queue_name}
 
@@ -392,11 +392,17 @@ def incident_id(alarm_arn: str, transition: str) -> str:
     return hashlib.sha256(f"{alarm_arn}\n{transition}".encode()).hexdigest()
 
 
-def alarm_page(config: Config, event: Mapping[str, Any]) -> dict[str, Any] | None:
-    """The webhook payload for one of the lane's alarms entering ALARM, else None.
+def alarm_page(
+    config: Config, event: Mapping[str, Any], opened: Mapping[str, str] | None = None
+) -> dict[str, Any] | None:
+    """The webhook payload for one of the lane's alarms changing state, else None.
 
-    Only trusted fields are used: the alarm ARN must be one of the lane's, and CloudWatch's free-form reason is
-    dropped.
+    ALARM opens an incident (action ``created``; the id is the alarm ARN and the transition time). The return to OK
+    resolves that same incident (action ``resolved``): an on-call integration that never says an episode is over
+    makes the service treat a later episode as the same ongoing incident and link it to the first. ``opened`` maps
+    an alarm ARN to the incident it has open (the relay's ledger); without it the id is derived from the ALARM
+    state the OK event reports as previous. Only trusted fields are used: the alarm ARN must be one of the lane's,
+    and CloudWatch's free-form reason is dropped.
     """
     if (event.get("source"), event.get("detail-type"), event.get("account"), event.get("region")) != (
         "aws.cloudwatch",
@@ -408,12 +414,16 @@ def alarm_page(config: Config, event: Mapping[str, Any]) -> dict[str, Any] | Non
     detail = event.get("detail") or {}
     state = detail.get("state") or {}
     resources = event.get("resources")
-    if state.get("value") != "ALARM" or not isinstance(resources, list) or len(resources) != 1:
+    value = state.get("value")
+    if value not in ("ALARM", "OK") or not isinstance(resources, list) or len(resources) != 1:
         return None
     for journey, policy in config.journeys.items():
         arn = config.alarm_arn(journey)
-        if resources == [arn]:
-            transition = str(state["timestamp"])
+        if resources != [arn]:
+            continue
+        transition = str(state["timestamp"])
+        metrics = f"metrics {NAMESPACE} Failed/Requests/Latency, dimensions Lane={config.lane}, Journey={journey}"
+        if value == "ALARM":
             return {
                 "eventType": "incident",
                 "incidentId": incident_id(arn, transition),
@@ -424,11 +434,30 @@ def alarm_page(config: Config, event: Mapping[str, Any]) -> dict[str, Any] | Non
                     f"CloudWatch alarm {config.alarm_name(journey)} entered ALARM at {transition}: at least "
                     f"{policy.threshold:.0%} of the {journey} requests of the app's users failed in "
                     f"{policy.datapoints} of {policy.evaluation_periods} {policy.period_seconds}-second periods "
-                    f"(metrics {NAMESPACE} Failed/Requests/Latency, dimensions Lane={config.lane}, Journey={journey})."
+                    f"({metrics})."
                 ),
                 "timestamp": transition,
                 "service": config.lane,
             }
+        previous = detail.get("previousState") or {}
+        open_id = (opened or {}).get(arn)
+        if open_id is None and previous.get("value") == "ALARM" and previous.get("timestamp"):
+            open_id = incident_id(arn, str(previous["timestamp"]))
+        if open_id is None:
+            return None
+        return {
+            "eventType": "incident",
+            "incidentId": open_id,
+            "action": "resolved",
+            "priority": "HIGH",
+            "title": f"User journey failing: {journey}",
+            "description": (
+                f"CloudWatch alarm {config.alarm_name(journey)} returned to OK at {transition}: fewer than "
+                f"{policy.threshold:.0%} of the {journey} requests of the app's users failed ({metrics})."
+            ),
+            "timestamp": transition,
+            "service": config.lane,
+        }
     return None
 
 
@@ -472,18 +501,26 @@ def post(hook: Webhook, payload: Mapping[str, Any]) -> int:
         return int(response.status)
 
 
-def ledger_ids(ledger: Path) -> set[str]:
+def ledger_state(ledger: Path) -> tuple[set[str], dict[str, str]]:
+    """What the ledger says was delivered: ``<incident>:<action>`` keys, and the incident each alarm has open."""
+    sent: set[str] = set()
+    opened: dict[str, str] = {}
     if not ledger.is_file():
-        return set()
-    ids = set()
+        return sent, opened
     for line in ledger.read_text().splitlines():
         try:
             record = json.loads(line)
         except ValueError:
             continue
-        if record.get("status") == 200:
-            ids.add(record["incident_id"])
-    return ids
+        if record.get("status") != 200:
+            continue
+        action = record.get("action", "created")
+        sent.add(f"{record['incident_id']}:{action}")
+        if action == "created":
+            opened[record.get("alarm_arn", "")] = record["incident_id"]
+        else:
+            opened.pop(record.get("alarm_arn", ""), None)
+    return sent, opened
 
 
 def relay_once(
@@ -493,8 +530,10 @@ def relay_once(
     sent: set[str],
     out: IO[str],
     now: Callable[[], float] = time.time,
+    opened: dict[str, str] | None = None,
 ) -> list[str]:
-    """Send each new ALARM transition once; returns the receipt handles that are done (sent, duplicate or foreign)."""
+    """Send each new ALARM and OK transition once; returns the receipt handles done (sent, duplicate or foreign)."""
+    opened = {} if opened is None else opened
     done = []
     for message in messages:
         try:
@@ -502,8 +541,8 @@ def relay_once(
         except (ValueError, KeyError, TypeError):
             done.append(message["ReceiptHandle"])
             continue
-        payload = alarm_page(config, event)
-        if payload is None or payload["incidentId"] in sent:
+        payload = alarm_page(config, event, opened)
+        if payload is None or f"{payload['incidentId']}:{payload['action']}" in sent:
             done.append(message["ReceiptHandle"])
             continue
         received = now()
@@ -514,6 +553,7 @@ def relay_once(
             continue
         record = {
             "incident_id": payload["incidentId"],
+            "action": payload["action"],
             "alarm_name": event["detail"].get("alarmName"),
             "alarm_arn": event["resources"][0],
             "transition": payload["timestamp"],
@@ -525,7 +565,11 @@ def relay_once(
         out.write(json.dumps(record, sort_keys=True) + "\n")
         out.flush()
         if status == 200:
-            sent.add(payload["incidentId"])
+            sent.add(f"{payload['incidentId']}:{payload['action']}")
+            if payload["action"] == "created":
+                opened[event["resources"][0]] = payload["incidentId"]
+            else:
+                opened.pop(event["resources"][0], None)
             done.append(message["ReceiptHandle"])
     return done
 
@@ -533,7 +577,7 @@ def relay_once(
 def relay(config: Config, hook: Webhook, ledger: Path, aws: Callable[..., dict[str, Any]]) -> None:
     """Run until killed: long-poll the queue and relay each transition (at least once; the incident id dedups)."""
     url = aws("sqs", "get-queue-url", "--queue-name", config.queue_name)["QueueUrl"]
-    sent = ledger_ids(ledger)
+    sent, opened = ledger_state(ledger)
     with ledger.open("a") as out:
         while True:
             try:
@@ -553,7 +597,9 @@ def relay(config: Config, hook: Webhook, ledger: Path, aws: Callable[..., dict[s
                 print(f"relay: {exc}", file=sys.stderr, flush=True)
                 time.sleep(5)
                 continue
-            for handle in relay_once(config, got.get("Messages", []), lambda p: post(hook, p), sent, out):
+            for handle in relay_once(
+                config, got.get("Messages", []), lambda p: post(hook, p), sent, out, opened=opened
+            ):
                 try:
                     aws("sqs", "delete-message", "--queue-url", url, "--receipt-handle", handle)
                 except RuntimeError as exc:

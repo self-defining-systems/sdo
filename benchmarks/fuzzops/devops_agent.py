@@ -462,9 +462,28 @@ def ledger_entry(paging: Paging, reference_id: Any) -> dict[str, Any]:
             entry = json.loads(line)
         except ValueError:
             continue
-        if isinstance(entry, dict) and entry.get("incident_id") == reference_id:
+        if (
+            isinstance(entry, dict)
+            and entry.get("incident_id") == reference_id
+            and entry.get("action", "created") == "created"
+        ):
             return entry
     return {}
+
+
+def linked_primary(service: Service, task: Mapping[str, Any], injected: float) -> dict[str, Any] | None:
+    """The primary task a LINKED alarm task points to, when it was created at or after the inject."""
+    primary_id = task.get("primaryTaskId")
+    if not primary_id or primary_id == task.get("taskId"):
+        return None
+    try:
+        primary = service.task(primary_id)
+    except HookError:
+        return None
+    created = parse_time(primary.get("createdAt"))
+    if created is None or created < injected:
+        return None
+    return primary
 
 
 def page_by_alarm(service: Service, paging: Paging, injected: float, due: float, poll: float) -> dict[str, Any] | None:
@@ -524,7 +543,20 @@ def respond(env: Mapping[str, str], service: Service, injected: float, poll: flo
     atomic_write_json(target / "paging.json", clean(paging_evidence, secrets))
     atomic_write_json(target / "task.json", clean(task, secrets))
     capped, poll_errors = False, 0
-    while task["status"] not in TERMINAL:
+    while True:
+        if task["status"] == "LINKED":
+            # Triage folded this page into the investigation of an earlier one of the same incident: follow that
+            # primary (the work is done there). A primary from before the inject is another episode: not followed.
+            primary = linked_primary(service, task, injected)
+            if primary is not None:
+                paging_evidence["linked_from_task_id"] = task_id
+                task, task_id = primary, primary["taskId"]
+                paging_evidence["task_id"] = task_id
+                atomic_write_json(target / "paging.json", clean(paging_evidence, secrets))
+                atomic_write_json(target / "task.json", clean(task, secrets))
+                continue
+        if task["status"] in TERMINAL:
+            break
         if time.time() >= deadline:
             capped = True
             break
