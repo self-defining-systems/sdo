@@ -157,7 +157,7 @@ func TestApplicationMapGapsBlockTheDesignerAndAreNotesForOthers(t *testing.T) {
 	}{
 		{"read operation without a call probe", strings.ReplaceAll(strings.Replace(mapYAML, "kind: call, operations: [list-items, add-item]", "kind: call, operations: [add-item]", 1), "operations: [add-item, list-items]", "operations: [add-item]"), RuleMapUncoveredOp, "list-items", "call"},
 		{"writing operation without a write-read probe", strings.Replace(mapYAML, "operations: [add-item, list-items]", "operations: [list-items]", 1), RuleMapUncoveredWrite, "add-item", "write-read"},
-		{"data component without a read-later probe", strings.Replace(mapYAML, "path: [web, api, db]\n  - id: add-item", "path: [web, api]\n  - id: add-item", 1), RuleMapUncoveredData, "db", "read-later"},
+		{"data component without a read-later probe", strings.Replace(mapYAML, "  - {scenario: items-later, kind: read-later, operations: [list-items]}\n", "", 1), RuleMapUncoveredData, "db", "read-later"},
 		{"unknown component", strings.Replace(mapYAML, "to: cache", "to: queue", 1), RuleMapUnknownName, "queue", ""},
 		{"workload missing from the inventory", strings.Replace(mapYAML, "StatefulSet/db", "StatefulSet/dbx", 1), RuleMapUnknownName, "StatefulSet/dbx", ""},
 		{"entry service not of the entry component", strings.Replace(mapYAML, "entry: {service: web, port: 80, method: GET", "entry: {service: api, port: 80, method: GET", 1), RuleMapPathMismatch, "list-items", ""},

@@ -6,15 +6,18 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -64,13 +67,13 @@ var goBuildInput = map[string]bool{".s": true, ".S": true, ".sx": true, ".syso":
 
 var serviceNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
-func generateTraffic(root, module string, target time.Duration) (bool, error) {
+func generateTraffic(root, module string, target time.Duration, probes *appmap.Map) (bool, error) {
 	base := filepath.Join(root, "traffic")
 	files, err := goSourceFiles(filepath.Join(base, "generators"))
 	if err != nil {
 		return false, err
 	}
-	workloads, err := loadTrafficWorkloads(filepath.Join(base, "workloads"), target)
+	workloads, err := loadTrafficWorkloads(filepath.Join(base, "workloads"), target, probes)
 	if err != nil {
 		return false, err
 	}
@@ -110,7 +113,9 @@ func generateTraffic(root, module string, target time.Duration) (bool, error) {
 		items += "\t" + strconv.Quote(name) + ": []byte(" + strconv.Quote(string(workloads[name])) + "),\n"
 	}
 	source := "package generated\n\nimport (\n" + imports + ")\n\n" +
-		"func TrafficCatalog() traffic.Catalog {\n" + catalog + "\treturn traffic.CompleteCatalog(catalog, nil)\n}\n\n" +
+		"func TrafficCatalog() traffic.Catalog {\n" + catalog + "\treturn traffic.CompleteCatalog(catalog, probePaths)\n}\n\n" +
+		"// probePaths are, per scenario of the application map's probes, the Services of each component on its operations' paths.\n" +
+		"var probePaths = " + probePathsLiteral(probes) + "\n\n" +
 		"var TrafficWorkloads = map[string][]byte{\n" + items + "}\n"
 	if err := os.WriteFile(filepath.Join(root, "generated", "traffic.go"), []byte(source), 0o644); err != nil {
 		return false, err
@@ -138,8 +143,10 @@ func goSourceFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
-func loadTrafficWorkloads(dir string, target time.Duration) (map[string]json.RawMessage, error) {
+func loadTrafficWorkloads(dir string, target time.Duration, probes *appmap.Map) (map[string]json.RawMessage, error) {
 	workloads := map[string]json.RawMessage{}
+	values := map[string]map[string]any{}
+	files := map[string]string{}
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return workloads, nil
@@ -157,7 +164,7 @@ func loadTrafficWorkloads(dir string, target time.Duration) (map[string]json.Raw
 		if !serviceNamePattern.MatchString(stem) {
 			return nil, fmt.Errorf("traffic workload file name must be a DNS label: %s", name)
 		}
-		if _, exists := workloads[stem]; exists {
+		if _, exists := values[stem]; exists {
 			return nil, fmt.Errorf("duplicate traffic workload name: %s", stem)
 		}
 		data, err := os.ReadFile(filepath.Join(dir, name))
@@ -168,6 +175,13 @@ func loadTrafficWorkloads(dir string, target time.Duration) (map[string]json.Raw
 		if err := yaml.Unmarshal(data, &value); err != nil || value == nil {
 			return nil, fmt.Errorf("traffic workload %s must be a mapping: %v", name, err)
 		}
+		values[stem], files[stem] = value, name
+	}
+	if probes != nil {
+		addProbeMembership(values, *probes)
+	}
+	for _, stem := range slices.Sorted(maps.Keys(values)) {
+		value, name := values[stem], files[stem]
 		encoded, err := json.Marshal(value)
 		if err != nil {
 			return nil, fmt.Errorf("traffic workload %s: %w", name, err)
@@ -185,6 +199,69 @@ func loadTrafficWorkloads(dir string, target time.Duration) (map[string]json.Raw
 		workloads[stem] = encoded
 	}
 	return workloads, nil
+}
+
+// probePathsLiteral renders the map's probe paths as a Go literal.
+func probePathsLiteral(probes *appmap.Map) string {
+	if probes == nil {
+		return "map[string][][]string{}"
+	}
+	paths := probes.ProbePaths()
+	var b strings.Builder
+	b.WriteString("map[string][][]string{\n")
+	for _, id := range slices.Sorted(maps.Keys(paths)) {
+		b.WriteString("\t" + strconv.Quote(id) + ": {")
+		for _, services := range paths[id] {
+			b.WriteString("{")
+			for _, service := range services {
+				b.WriteString(strconv.Quote(service) + ", ")
+			}
+			b.WriteString("}, ")
+		}
+		b.WriteString("},\n")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+// addProbeMembership adds to each probe workload the scenarios the map's
+// probes place in it that no probe workload lists (appmap.WithProbeMembership).
+func addProbeMembership(values map[string]map[string]any, m appmap.Map) {
+	var listed []appmap.Workload
+	for stem, value := range values {
+		w := appmap.Workload{Name: stem}
+		entries, _ := value["scenarios"].([]any)
+		for _, entry := range entries {
+			if fields, ok := entry.(map[string]any); ok {
+				if id, ok := fields["id"].(string); ok {
+					w.Scenarios = append(w.Scenarios, id)
+				}
+			}
+		}
+		listed = append(listed, w)
+	}
+	for _, w := range m.WithProbeMembership(listed) {
+		value := values[w.Name]
+		entries, _ := value["scenarios"].([]any)
+		for _, id := range w.Scenarios[len(entriesWithID(entries)):] {
+			entries = append(entries, map[string]any{"id": id})
+		}
+		if len(entries) > 0 {
+			value["scenarios"] = entries
+		}
+	}
+}
+
+func entriesWithID(entries []any) []any {
+	var out []any
+	for _, entry := range entries {
+		if fields, ok := entry.(map[string]any); ok {
+			if _, ok := fields["id"].(string); ok {
+				out = append(out, entry)
+			}
+		}
+	}
+	return out
 }
 
 func validateGeneratorSources(base, module string) error {

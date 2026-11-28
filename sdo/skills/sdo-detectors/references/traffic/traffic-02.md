@@ -147,14 +147,16 @@ const (
 type Catalog []Scenario
     Catalog is the set of scenarios an application's generators provide.
 
-func CompleteCatalog(catalog Catalog, dependsOn map[string][]string) Catalog
+func CompleteCatalog(catalog Catalog, paths map[string][][]string) Catalog
     CompleteCatalog fills what Go derives instead of the author: an empty
     SideEffect from the steps' methods (InferSideEffect), and an empty DependsOn
-    from dependsOn, the Services the application map's probe line for the
-    scenario reaches. Scenarios whose side effect cannot be inferred keep it
-    empty, and Validate says what to declare. The generated catalog runs every
-    scenario through it, so the prober, the checks and the controller see the
-    same values.
+    from paths, the Services of each component on the operations' paths of the
+    application map's probe line for the scenario. DependsOn gets one Service
+    per component: the one the scenario's steps call, else the component's
+    first. Scenarios whose side effect cannot be inferred keep it empty,
+    and Validate says what to declare. The generated catalog runs every scenario
+    through it, so the prober, the checks and the controller see the same
+    values.
 
 func (c Catalog) Scenario(id string) (Scenario, bool)
     Scenario returns the scenario with the given ID.
@@ -224,8 +226,4 @@ type Duration time.Duration
     Duration is a time.Duration written as a Go duration string ("2s").
 
 func (d Duration) Duration() time.Duration
-
-func (d Duration) MarshalJSON() ([]byte, error)
-
-func (d *Duration) UnmarshalJSON(data []byte) error
 ```

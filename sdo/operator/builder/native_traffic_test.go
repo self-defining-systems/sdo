@@ -16,7 +16,7 @@ func TestStagedWorkloadsCarryTheObjectiveCadence(t *testing.T) {
 		t.Fatal(err)
 	}
 	const target = 45 * time.Second
-	documents, err := loadTrafficWorkloads(dir, target)
+	documents, err := loadTrafficWorkloads(dir, target, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

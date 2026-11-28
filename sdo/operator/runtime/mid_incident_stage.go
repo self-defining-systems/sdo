@@ -31,31 +31,35 @@ func (c *Controller) queueLearnedPassLocked() {
 	}
 }
 
-// attachLearnedActivation queues a pass for linked evidence while the
-// automatic stage still owns the incident. It reports whether it took the
-// finding. After handoff the ordinary alert-join path handles it.
-func (c *Controller) attachLearnedActivation(finding sdk.Finding) bool {
+// attachStageActivation joins a newly active finding to the incident while
+// the automatic stage owns the repair, so its recovery wait decides on it: a
+// pass is queued when a learned playbook links it (the stage applies what
+// matches), and a cause no applied program covers hands the incident to the
+// agent once the stage's writes settle (uncoveredStageCauses). It reports
+// whether it took the finding. After handoff the ordinary alert-join path
+// handles it.
+func (c *Controller) attachStageActivation(finding sdk.Finding) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	loop := c.responderLoop
-	if !c.incidentOpen || c.currentIncidentRequest == nil || c.incidentDispatchedAt.IsZero() || !c.learnedPassAllowedLocked() ||
-		!c.pendingStageCapacityLocked() ||
-		!learnedPlaybookExplains(loop, finding) {
+	if !c.incidentOpen || c.currentIncidentRequest == nil || c.incidentDispatchedAt.IsZero() || !c.learnedPassAllowedLocked() {
 		return false
 	}
 	request := c.currentIncidentRequest
 	finding.Fingerprint = FindingFingerprint(finding)
 	known := false
 	for _, existing := range request.Findings {
-		known = known || FindingFingerprint(existing) == finding.Fingerprint
+		known = known || FindingFingerprint(existing) == finding.Fingerprint && existing.DetectorID == finding.DetectorID
 	}
 	if !known {
 		request.Findings = append(request.Findings, finding)
 		sortFindings(request.Findings)
+		request.SurfacedPlaybooks = surfacedPlaybooks(request.Findings)
 		c.incidentFindingKeys = findingKeys(request.Findings)
 		c.noteBatchedLocked(request.IncidentID, []sdk.Finding{finding})
 	}
-	c.queueLearnedPassLocked()
+	if c.pendingStageCapacityLocked() && learnedPlaybookExplains(c.responderLoop, finding) {
+		c.queueLearnedPassLocked()
+	}
 	return true
 }
 

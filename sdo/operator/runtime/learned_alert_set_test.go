@@ -205,7 +205,7 @@ func TestHandoffWaitsForRunningPassAndPreservesItsReport(t *testing.T) {
 		t.Fatal("drained automatic stage did not select responder handoff")
 	}
 	c.mu.Unlock()
-	c.attachLearnedActivation(routeErrors(t, "route-fix"))
+	c.attachStageActivation(routeErrors(t, "route-fix"))
 	c.resumePendingLearnedPass(t.Context())
 	c.Wait()
 	if c.midStage.passes != 1 {
