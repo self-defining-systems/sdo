@@ -164,3 +164,12 @@ def test_the_responder_is_told_that_several_faults_can_be_active_at_once() -> No
 
     assert "faults can coexist" in text
     assert "explain every finding" in text
+
+
+def test_the_responder_is_told_to_work_signals_in_parallel_and_wait_on_conditions() -> None:
+    """Fixing one fault at a time with fixed sleeps stretches a multi-fault incident."""
+
+    text = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8").lower()
+
+    assert "every failing signal in parallel" in text
+    assert "wait on a specific condition, not a fixed sleep" in text
