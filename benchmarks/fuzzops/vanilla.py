@@ -216,6 +216,31 @@ def prepare(env: Mapping[str, str], version: str = f"{MODEL}/{EFFORT}") -> None:
     print(json.dumps({"pack": env["BENCH_PACK"], "operator_version": version, "memory": "none"}))
 
 
+def refresh_token(env: Mapping[str, str]) -> None:
+    """Mint a fresh scoped token into the state kubeconfig and prove it works (``prepare``'s token lives 2 h, a long
+    stream outlives it: an applier with an expired token runs every plan command to "must be logged in")."""
+    config = state(env) / "kubeconfig"
+    data = json.loads(config.read_text())
+    token = kubectl(env, None, "create", "token", IDENTITY, "--duration=2h")
+    if not token:
+        raise HookError("no scoped service-account token returned")
+    data["users"][0]["user"]["token"] = token
+    atomic_write_json(config, data)
+    if kubectl(env, config, "auth", "can-i", "get", "pods", "-n", env["FUZZOPS_NAMESPACE"]) != "yes":
+        raise HookError("the refreshed scoped token is not authorized")
+
+
+def credentials_work(env: Mapping[str, str]) -> bool:
+    """A no-op ``auth can-i`` with the scoped kubeconfig: false when the token expired or was revoked."""
+    try:
+        return (
+            kubectl(env, state(env) / "kubeconfig", "auth", "can-i", "get", "pods", "-n", env["FUZZOPS_NAMESPACE"])
+            == "yes"
+        )
+    except HookError:
+        return False
+
+
 def operator_settings(env: Mapping[str, str]) -> dict[str, Any]:
     settings = json.loads(Path(env["BENCH_OPERATOR"]).read_text())["settings"]
     window = settings.get("window_seconds")

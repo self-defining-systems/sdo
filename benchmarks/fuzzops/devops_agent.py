@@ -334,6 +334,8 @@ def run_command(env: Mapping[str, str], box: Path, command: str, limit: float) -
 def apply(env: Mapping[str, str], target: Path, plan: Mapping[str, Any], deadline: float) -> dict[str, Any]:
     """Run the plan's prepare and apply commands as written, in order; the first failed apply command ends it."""
     todo = instructions(plan)
+    if not vanilla.credentials_work(env):
+        vanilla.refresh_token(env)
     secrets = [kube_token(env)]
     commands: list[dict[str, Any]] = []
     result: dict[str, Any] = {
@@ -504,6 +506,7 @@ def page_by_alarm(service: Service, paging: Paging, injected: float, due: float,
 def respond(env: Mapping[str, str], service: Service, injected: float, poll: float = POLL_SECONDS) -> None:
     target, ns = vanilla.run_dir(env), env["FUZZOPS_NAMESPACE"]
     deadline = injected + vanilla.AGENT_SECONDS
+    vanilla.refresh_token(env)  # the prepare-time token lives 2 h; every run starts with a fresh one
     secrets = [kube_token(env)]
     paging = settings(env).paging
     started = time.time()
