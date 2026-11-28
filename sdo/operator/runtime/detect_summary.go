@@ -74,6 +74,13 @@ type detectSummary struct {
 	Text            string
 	Items           map[string]string
 	RequestCoverage string
+	// Recovered is the incident's verdict for its whole alert set, opening and joined.
+	Recovered bool
+	// Paged is set when a page opened the incident: Recovered is judged after the agent returns.
+	Paged bool
+	// AlertSet is the recovered line and, when alerts of the set fail now, the
+	// line naming them; a view scoped to one test carries it unchanged.
+	AlertSet string
 }
 
 var (
@@ -1050,7 +1057,55 @@ shrink:
 		}
 		text = cut + "\n+more: sdo detect --json"
 	}
-	return detectSummary{Text: text, Items: items, RequestCoverage: coverage}
+	alertSet := recoveredLine(state, active, in.RecoveryWaiting, in.Recovered)
+	paged := pageText(in.Request) != ""
+	if paged {
+		alertSet = "page: no detector clears a page; verify the reported operation and return"
+	}
+	failingTests := make([]string, 0, len(failing))
+	for _, test := range failing {
+		failingTests = append(failingTests, test.id)
+	}
+	if line := stillFailingLine(&in.Request, openingFindings, failingTests, in.Recovered); line != "" {
+		alertSet += "\n" + line
+	}
+	return detectSummary{Text: text, Items: items, RequestCoverage: coverage, Recovered: in.Recovered, Paged: paged, AlertSet: alertSet}
+}
+
+// stillFailingLine names each alert of the incident's set that fails now,
+// opening or joined; with no alert finding active it names the failing user
+// tests (which the active count then counts). "" when none fails or the
+// incident recovered.
+func stillFailingLine(request *IncidentRequest, active []sdk.Finding, failingTests []string, recovered bool) string {
+	if recovered {
+		return ""
+	}
+	if len(active) == 0 {
+		if len(failingTests) == 0 {
+			return ""
+		}
+		names := make([]string, 0, len(failingTests))
+		for _, id := range failingTests {
+			names = append(names, plainName(id, 60))
+		}
+		sort.Strings(names)
+		return "failing tests now: " + strings.Join(names, ", ")
+	}
+	opening := openingKeys(request)
+	names := make([]string, 0, len(active))
+	for _, finding := range active {
+		name := strings.TrimPrefix(finding.RuleID, traffic.RuleIDPrefix)
+		if !strings.HasPrefix(finding.RuleID, traffic.RuleIDPrefix) {
+			name = finding.DetectorID + " " + finding.RuleID
+		}
+		role := "joined"
+		if slices.Contains(opening, findingKey(finding)) {
+			role = "opening"
+		}
+		names = append(names, fmt.Sprintf("%s (%s)", plainName(name, 60), role))
+	}
+	sort.Strings(names)
+	return "still failing: " + strings.Join(names, ", ")
 }
 
 // freshnessLine says how current the summary is: the detectors ran on reads

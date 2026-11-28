@@ -121,7 +121,6 @@ func (l *ResponderLoop) detectUserTest(ctx context.Context, workload, name strin
 	fmt.Fprintln(&out, "SDO's own test accounts:")
 	if sent != nil {
 		writeSentSample(&out, name, *sent)
-		response.Healthy = sent.Outcome == traffic.OutcomeOK
 		response.Summary = fmt.Sprintf("%s sent now: %s", name, passWord(sent.Outcome == traffic.OutcomeOK))
 	}
 	detail := ""
@@ -132,7 +131,23 @@ func (l *ResponderLoop) detectUserTest(ctx context.Context, workload, name strin
 		detail = name + ": no failing samples in the window\n"
 	}
 	out.WriteString(detail)
+	if summary != nil {
+		// One test passing is not the incident recovering: the view keeps the
+		// full detect's health and says whether the whole alert set recovered,
+		// naming the alerts still failing.
+		out.WriteString(summary.AlertSet + "\n")
+		if !summary.Paged {
+			response.Summary += "; incident recovered: " + yesNo(summary.Recovered)
+		}
+	}
 	response.Text = out.String()
+}
+
+func yesNo(ok bool) string {
+	if ok {
+		return "yes"
+	}
+	return "no"
 }
 
 func passWord(ok bool) string {

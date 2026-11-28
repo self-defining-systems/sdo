@@ -59,7 +59,7 @@ def test_the_first_message_template_renders_strictly() -> None:
     template = Template((PROMPTS / "incident_prompt.md").read_text(encoding="utf-8"))
     rendered = template.substitute(values)
     assert "$" not in rendered
-    assert len(rendered.encode()) <= 520
+    assert len(rendered.encode()) <= 700
     for key in values:
         missing = {field: value for field, value in values.items() if field != key}
         with pytest.raises(KeyError, match=key):
@@ -74,6 +74,21 @@ def test_the_first_message_carries_the_pacing_principle() -> None:
     # A principle, not a recipe: the command that waits lives in the skill and the tool help.
     assert "--wait" not in template
     assert "sdo detect" not in template
+
+
+def test_the_first_message_names_several_root_causes_and_hypothesis_testing() -> None:
+    """Keywords that elicit the agent's own root-cause method; the commands that support it live in the skill."""
+
+    template = (PROMPTS / "incident_prompt.md").read_text(encoding="utf-8")
+    assert "several root causes that mask each other or arrive later" in template
+    assert "first principles" in template
+    assert "test each hypothesis" in template
+    assert "correlate failing user tests with the components on their path" in template
+    assert "sdo map" not in template
+    assert "sdo changes" not in template
+    skill = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8")
+    for command in ("`sdo map path OP`", "`sdo timeline --component NODE`", "`sdo changes`", "`sdo source`"):
+        assert command in skill
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])

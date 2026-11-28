@@ -129,6 +129,7 @@ def _parser() -> argparse.ArgumentParser:
             "NAME is a user test (SDO sends that test's scheduled request now, the same "
             "request its prober sends, and shows the result), a detector (runs it alone), or an item of the "
             "summary (a component, clue ID, tests, conditions, background or new). "
+            "A view of one test still says whether the whole alert set recovered and names the alerts still failing. "
             "Findings new since the handoff lead. "
             "--wait SECONDS returns early when the result of your last change is in (its rollouts done and one "
             "fresh sample of each failing user test after them), a finding is new since the handoff, the alert set "
