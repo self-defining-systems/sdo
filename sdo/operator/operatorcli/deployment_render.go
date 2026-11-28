@@ -21,6 +21,7 @@ import (
 
 // DeploymentUsage documents "sdo-operator deployment".
 const DeploymentUsage = `usage: sdo-operator deployment render [--root .] [--plan FILE] [--namespace NS] [--json]
+       sdo-operator deployment build [IMAGE...]
 
   render
         Render offline, with no cluster, what Go would deploy from your
@@ -31,7 +32,19 @@ const DeploymentUsage = `usage: sdo-operator deployment render [--root .] [--pla
         Go would hold the deployment on.
         --plan defaults to .sdo/deployment/plan.yaml in the checkout.
         Exit 0 on success, 1 when the render fails, 2 for usage or
-        infrastructure errors.`
+        infrastructure errors.
+
+  build [IMAGE...]
+        In a deployer task: build images of your last commit now, the way Go's
+        deploy builds them (same render, image rule, BuildKit and registry),
+        and print one line per image, then each failure with its failing step
+        and build-log tail. IMAGE is a rendered image reference, its
+        repository or the repository's last path segment; none builds every
+        image Go would build. Nothing is applied.
+        A passing build is cached, so Go's deploy of the same commit reuses it.
+        A build can take minutes. Exit 0 when every image built, 1 when one
+        failed, 2 when nothing could be built (render, unknown image, or not
+        a deployer task).`
 
 // RunDeployment runs "sdo-operator deployment <args>" and returns the exit code.
 func RunDeployment(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
@@ -47,6 +60,8 @@ func RunDeployment(ctx context.Context, args []string, getenv func(string) strin
 	switch args[0] {
 	case "render":
 		code, err = deploymentRender(ctx, args[1:], stdout, stderr)
+	case "build":
+		code, err = deploymentBuild(ctx, args[1:], getenv, stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, DeploymentUsage)
 		return exitClean

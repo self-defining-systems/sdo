@@ -61,6 +61,13 @@ SDO's operability report names each failing check as `<check id> [<cause>]: <det
 - `scope` and `allowlist`: an object outside the application namespace, a cluster-scoped kind or an unlisted
   registry. Fix the files.
 
-Check your last commit the way Go will, without a cluster, in seconds:
-`sdo-operator operability check --offline --registry-host <trusted registry>` (render, image rule, scope).
-Preview the render itself: `sdo-operator deployment render`.
+Try your last commit the way Go will before you reply:
+
+- `sdo-operator operability check --offline --registry-host <trusted registry>`: render, image rule and scope,
+  with no cluster, in seconds. Preview the render itself with `sdo-operator deployment render`.
+- `sdo-operator deployment build [IMAGE...]`: build images now through Go's own build path (same BuildKit,
+  registry and layer cache): one image (named by its repository's last path segment, its repository or the
+  rendered reference) or all of them. It prints one line per image and each failing step with its log tail;
+  nothing is applied. A build that passes here is a cache hit when Go deploys the same commit, so fix build
+  errors in your turn instead of in a deploy round. Builds can take minutes; independent images build in
+  parallel.
