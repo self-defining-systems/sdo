@@ -3,13 +3,12 @@ package apihistory
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
 	"sdo.dev/operator/apihistory/internal/apiio"
+	"sdo.dev/operator/safefs"
 )
 
 // ErrSessionFenced refuses a session's client bytes once the incident is sealed.
@@ -115,10 +114,8 @@ func (s *SessionLease) persistLocked(at time.Time) {
 	record.Active = at.UTC()
 	b, _ := json.Marshal(record)
 	gate := s.lease.gate
-	next := filepath.Join(gate.Directory, ".active-"+s.lease.name)
-	if os.WriteFile(next, b, 0644) == nil {
-		_ = os.Rename(next, filepath.Join(gate.Directory, s.lease.name))
-	}
+	// A lost activity update only ends the stability window early; the next one retries.
+	_ = safefs.WriteFile(gate.Directory, s.lease.name, b, 0644)
 }
 
 // Forward sends one client message under the shared lock. While a
