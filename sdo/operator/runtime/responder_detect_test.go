@@ -98,7 +98,7 @@ func (trafficDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]s
 	for _, window := range view.(traffic.WindowSet).TrafficWindows() {
 		for _, verdict := range traffic.Judge(window) {
 			if verdict.Evaluated && !verdict.Healthy {
-				findings = append(findings, sdk.Finding{RuleID: traffic.RuleIDPrefix + verdict.ScenarioID, Status: sdk.FindingActive, Summary: verdict.ScenarioID + " failing"})
+				findings = append(findings, sdk.Finding{RuleID: traffic.RuleIDPrefix + verdict.ScenarioID, Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: verdict.ScenarioID + " failing", Evidence: "synthetic", PrimaryResource: detectEntry})
 			}
 		}
 	}
@@ -268,13 +268,17 @@ func TestDetectWorksTheSameForAPagedIncident(t *testing.T) {
 // alert-set member whose text, counts or ages move with time is an idle tick.
 type tickingDetector struct{ reads *int }
 
+// detectEntry is the synthetic Service the detect tests' findings name: the
+// controller admits no finding without a resource.
+var detectEntry = sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "front"}
+
 func (tickingDetector) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{ID: "ticking.age", Interval: time.Second}
 }
 
 func (d tickingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	*d.reads++
-	return []sdk.Finding{{RuleID: "age", Status: sdk.FindingActive,
+	return []sdk.Finding{{RuleID: "age", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, PrimaryResource: detectEntry,
 		Summary:  fmt.Sprintf("%d errors, failing for %dm%ds since 07:%02d:10Z", 5+*d.reads, *d.reads/60, *d.reads%60, *d.reads),
 		Evidence: fmt.Sprintf("oldest error %dms ago", *d.reads*37)}}, nil
 }
@@ -316,13 +320,13 @@ func (d clueDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Findi
 	if *d.reads < 3 {
 		return nil, nil
 	}
-	return []sdk.Finding{{RuleID: "latency", Status: sdk.FindingActive, Summary: "Service/mongodb-rate latency"}}, nil
+	return []sdk.Finding{{RuleID: "latency", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "Service/mongodb-rate latency", Evidence: "synthetic", PrimaryResource: detectEntry}}, nil
 }
 
 func detectAlertSet(loop *ResponderLoop, detectorID string, scenarios ...string) []string {
 	var keys []string
 	for _, scenario := range scenarios {
-		finding := sdk.Finding{DetectorID: detectorID, RuleID: traffic.RuleIDPrefix + scenario, Status: sdk.FindingActive, Summary: scenario + " failing"}
+		finding := sdk.Finding{DetectorID: detectorID, RuleID: traffic.RuleIDPrefix + scenario, Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: scenario + " failing", Evidence: "synthetic", PrimaryResource: detectEntry}
 		keys = append(keys, FindingStateKey(detectorID, FindingFingerprint(finding)))
 	}
 	loop.Request.OpeningKeys = keys

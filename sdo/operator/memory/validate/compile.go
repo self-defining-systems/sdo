@@ -28,6 +28,10 @@ var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?(?:(?:[^\r\n:]*/)?sd
 // telemetryBindingViolation is one generated query-to-source binding failure.
 var telemetryBindingViolation = regexp.MustCompile(`(?m)(telemetry\.(?:unbound|kind))(?:\[[a-z0-9][a-z0-9_.-]*\])?: .+?$`)
 
+// findingAdmissionViolation is one generated finding-admission test failure:
+// the learned detector ID and the controller's refusal.
+var findingAdmissionViolation = regexp.MustCompile(`(?m)` + regexp.QuoteMeta(RuleDetectorFindingAdmission) + `\[([a-z0-9][a-z0-9_.-]*)\]: (.+?)\s*$`)
+
 // healthyBaselineViolation is one generated healthy-baseline test failure:
 // the learned detector ID and the violation.
 var healthyBaselineViolation = regexp.MustCompile(`(?m)detector\.healthy-baseline\[([a-z0-9][a-z0-9_.-]*)\]: (.+?)\s*$`)
@@ -208,6 +212,17 @@ func (s *run) compile(ctx context.Context) error {
 		}
 		if len(matches) == 0 {
 			s.add(Compile, Diagnostic{Rule: RuleDetectorHealthyBaseline, Path: layout.DiagnosticsDir, Message: goTestDuration.ReplaceAllString(stage.Output, ""), Hint: hint})
+		}
+		return nil
+	}
+	if violations := findingAdmissionViolation.FindAllStringSubmatch(stage.Output, -1); len(violations) > 0 {
+		const hint = "the controller refuses this finding on every evaluation, so it never alerts or links a playbook; set every field it names, then run memory check again"
+		seen := map[string]bool{}
+		for _, match := range violations {
+			if key := match[1] + "\x00" + match[2]; !seen[key] {
+				seen[key] = true
+				s.add(Compile, Diagnostic{Rule: RuleDetectorFindingAdmission, Path: layout.DetectorDir(layout.ClassLearned, match[1]), Message: match[2], Hint: hint})
+			}
 		}
 		return nil
 	}

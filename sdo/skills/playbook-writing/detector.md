@@ -16,4 +16,4 @@ Test with `sdktest` snapshots, in `detector_test.go` (shape: `/opt/sdo/sdo/skill
 1. a snapshot with the fault: one active finding whose `Playbooks` lists your playbook;
 2. a near miss: the look-alike symptom (same failing workload, different cause or healthy state) yields no finding.
 
-Check: `sdo-operator memory check`; it rejects a detector that names no playbook or one that does not exist.
+Check: `sdo-operator memory check`; it rejects a detector that names no playbook or one that does not exist, and one whose finding on this incident's captures the controller refuses: each needs `RuleID`, `Severity`, `Summary`, `Evidence` and a `PrimaryResource` with kind and name.

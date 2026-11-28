@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
 )
 
@@ -89,21 +88,13 @@ func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionCo
 	if err != nil {
 		return nil, DetectorEvaluationError, err
 	}
-	findings = append([]sdk.Finding(nil), findings...)
+	findings, err = admitFindings(detector.Spec(), findings)
+	if err != nil {
+		return nil, DetectorEvaluationError, err
+	}
 	status := DetectorEvaluationClear
-	for i := range findings {
-		f := &findings[i]
-		if f.DetectorID == "" {
-			f.DetectorID = detector.Spec().ID
-		}
-		if len(f.Playbooks) == 0 {
-			f.Playbooks = append([]string(nil), detector.Spec().Playbooks...)
-		}
-		f.Fingerprint = FindingFingerprint(*f)
-		if err := core.ValidateFinding(detector.Spec(), *f); err != nil {
-			return nil, DetectorEvaluationError, err
-		}
-		if f.Status == sdk.FindingActive && scope.holds(*f) {
+	for _, f := range findings {
+		if f.Status == sdk.FindingActive && scope.holds(f) {
 			status = DetectorEvaluationFiring
 		}
 	}

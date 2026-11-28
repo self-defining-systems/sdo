@@ -172,4 +172,7 @@ const (
 	// RuleDetectorControllerStart rejects detectors the controller would
 	// refuse at start; it runs the controller's own startup validation.
 	RuleDetectorControllerStart = "detector.controller-start"
+	// RuleDetectorFindingAdmission rejects a learned detector whose finding on
+	// a captured state the controller would refuse (core.ValidateFinding).
+	RuleDetectorFindingAdmission = "detector.finding-admission"
 )

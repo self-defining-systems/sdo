@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
 )
 
@@ -112,4 +113,38 @@ func readRecoveryDetectors(ctx context.Context, detectors []sdk.Detector, snapsh
 		reads[id] = recoveryRead{findings, status, err}
 	}
 	return reads
+}
+
+// findingAdmissionError is a detector result the controller refuses: one of
+// its findings fails core.ValidateFinding. The detector failed; no finding of
+// that evaluation is admitted. Its text is the validation's own.
+type findingAdmissionError struct{ err error }
+
+func (e findingAdmissionError) Error() string { return e.err.Error() }
+func (e findingAdmissionError) Unwrap() error { return e.err }
+
+// admitFindings is the controller's admission of one evaluation's findings
+// (core.AdmitFindings), its refusal typed as a findingAdmissionError.
+func admitFindings(spec sdk.DetectorSpec, findings []sdk.Finding) ([]sdk.Finding, error) {
+	admitted, err := core.AdmitFindings(spec, findings)
+	if err != nil {
+		return nil, findingAdmissionError{err}
+	}
+	return admitted, nil
+}
+
+// evaluateAdmittedDetectors is evaluateDetectors with the controller's
+// admission applied to each result. Every responder-loop and stage read uses
+// it, so the stage and the responder's tools never see, bind to or target a
+// finding the controller rejected.
+func evaluateAdmittedDetectors(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) map[string]setupDetection {
+	results := evaluateDetectors(ctx, detectors, snapshot)
+	for _, detector := range detectors {
+		id := detector.Spec().ID
+		if result, ok := results[id]; ok && result.err == nil {
+			result.findings, result.err = admitFindings(detector.Spec(), result.findings)
+			results[id] = result
+		}
+	}
+	return results
 }

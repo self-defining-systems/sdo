@@ -345,6 +345,13 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := generateControllerStartTest(directory); err != nil {
 		return nil, err
 	}
+	capture := config.IncidentCapture
+	if capture == "" {
+		capture = config.OwnIncidentCapture
+	}
+	if err := generateFindingAdmissionTest(capture, directory); err != nil {
+		return nil, err
+	}
 	var setupErrors []string
 	healthyBaseline := false
 	if config.HealthyBaseline != "" {

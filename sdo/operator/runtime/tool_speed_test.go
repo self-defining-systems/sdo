@@ -38,7 +38,7 @@ func (h *speedHost) Capture(_ context.Context, v sdk.DetectionContext) (memoryho
 	return h, 1, func() { h.releases.Add(1) }, nil
 }
 func (*speedHost) Evaluate(_ context.Context, r *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
-	return &pb.EvaluateResponse{Results: []*pb.MemoryDetectorResult{{DetectorId: r.DetectorIds[0], Findings: []*pb.Finding{{Status: "active"}}}}}, nil
+	return &pb.EvaluateResponse{Results: []*pb.MemoryDetectorResult{{DetectorId: r.DetectorIds[0], Findings: []*pb.Finding{{RuleId: "slow", Status: "active", Severity: "warn", Summary: "synthetic", Evidence: "synthetic", PrimaryResource: &pb.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "app", Name: "service-00"}}}}}}, nil
 }
 func (*speedHost) ExecuteProgram(_ context.Context, invocation *pb.MemoryProgramInvocation, _ func(programread.Message) programread.Message) (*pb.RunProgramResponse, error) {
 	if invocation.GetOperation() != pb.MemoryProgramInvocation_OPERATION_DIAGNOSE {
