@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter.healthy_baseline import capture_snapshots
 from benchmarks.sregym.fastloop import cli
 from benchmarks.sregym.fastloop.lane_guard import LaneGuard
 from benchmarks.sregym.fastloop.worker_client import SregymWorker
@@ -165,7 +166,7 @@ def test_lease_fenced_row_with_healthy_baseline_reaches_injection_without_secret
         return completed
 
     monkeypatch.setattr(cli, "kubectl", runner)
-    monkeypatch.setattr("benchmarks.sregym.adapter.healthy_baseline.time.sleep", lambda _: None)
+    monkeypatch.setitem(capture_snapshots.__kwdefaults__, "sleep", lambda _: None)  # no real sample spacing
     LaneGuard("synthetic-50", lane_kubeconfig, "fixture", coord="/bin/true").install()
     row = argparse.Namespace(inject_before_resume=False, healthy_baseline=True)
 
