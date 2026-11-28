@@ -121,6 +121,9 @@ type probe struct {
 	// warmUntil ends the warm-up that began when the probe started or was
 	// last reset (traffic.Workload.WarmupBound).
 	warmUntil time.Time
+	// sent is the probe's ledger of its own answered requests
+	// (traffic.Window.Sent), at most traffic.SentRetention old.
+	sent []traffic.SentRequest
 }
 
 // Prober continuously runs the health-probe workloads and runs verify bursts
@@ -136,6 +139,25 @@ type Prober struct {
 	// engine of this prober shares, so a verify burst never writes setup
 	// data the continuous probe already wrote (and may since have lost).
 	setups *traffic.Engine
+	// burstSent is the ledger of verify bursts' answered requests; Windows
+	// carries it on one health-probe window, so every request SDO sent is
+	// in the snapshot exactly once.
+	burstSent []traffic.SentRequest
+}
+
+// recordSent appends request to ledger and drops what is older than
+// traffic.SentRetention.
+func (p *Prober) recordSent(ledger *[]traffic.SentRequest, request traffic.SentRequest) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cutoff := request.At.Add(-traffic.SentRetention)
+	kept := (*ledger)[:0]
+	for _, old := range *ledger {
+		if old.At.After(cutoff) {
+			kept = append(kept, old)
+		}
+	}
+	*ledger = append(kept, request)
 }
 
 // New validates the catalog and workloads and prepares their engines.
@@ -222,6 +244,7 @@ func New(config Config) (*Prober, error) {
 		engine.UseWarmup(func() bool { return prober.warming(name) })
 		engine.UseConfirm(func(scenario string) bool { return prober.startsFailing(name, scenario) },
 			func(scenario string, sample traffic.Sample) { prober.recordConfirming(name, scenario, sample) })
+		engine.UseSentLog(func(request traffic.SentRequest) { prober.recordSent(&state.sent, request) })
 		prober.probes[name] = state
 	}
 	return prober, nil
@@ -343,8 +366,16 @@ func (p *Prober) Windows() map[string]traffic.Window {
 	defer p.mu.Unlock()
 	now := p.config.Clock.Now().UTC()
 	windows := make(map[string]traffic.Window, len(p.probes))
+	names := make([]string, 0, len(p.probes))
 	for name, state := range p.probes {
 		windows[name] = probeWindowLocked(state, now)
+		names = append(names, name)
+	}
+	if sort.Strings(names); len(names) > 0 && len(p.burstSent) > 0 {
+		first := windows[names[0]]
+		first.Sent = sentSince(append(append([]traffic.SentRequest(nil), first.Sent...), p.burstSent...), now)
+		sort.SliceStable(first.Sent, func(i, j int) bool { return first.Sent[i].At.Before(first.Sent[j].At) })
+		windows[names[0]] = first
 	}
 	for name, probe := range p.links {
 		windows[name] = p.linkWindowLocked(probe, now)
@@ -363,7 +394,19 @@ func probeWindowLocked(state *probe, now time.Time) traffic.Window {
 			Qualified:  scenario.qualified, Invalid: scenario.invalid, LastInvalid: scenario.lastInvalid, Defect: scenario.defect, ByteCap: scenario.byteCap, IdentityWait: scenario.identityWait,
 		})
 	}
-	return traffic.Window{Workload: state.engine.Workload(), ObservedAt: now, Scenarios: scenarios, Skipped: state.skipped}
+	return traffic.Window{Workload: state.engine.Workload(), ObservedAt: now, Scenarios: scenarios, Skipped: state.skipped, Sent: sentSince(state.sent, now)}
+}
+
+// sentSince copies the requests of ledger at most traffic.SentRetention
+// older than now.
+func sentSince(ledger []traffic.SentRequest, now time.Time) []traffic.SentRequest {
+	var out []traffic.SentRequest
+	for _, request := range ledger {
+		if now.Sub(request.At) <= traffic.SentRetention {
+			out = append(out, request)
+		}
+	}
+	return out
 }
 
 // Reset forgets recent observations, for example after a maintenance pause,
@@ -453,6 +496,7 @@ func (p *Prober) Burst(ctx context.Context, request BurstRequest) (BurstResult, 
 	}
 	engine.UsePasswords(p.config.Passwords)
 	engine.UseExec(p.config.Exec)
+	engine.UseSentLog(func(request traffic.SentRequest) { p.recordSent(&p.burstSent, request) })
 	p.mu.Lock()
 	p.shareSetup(engine)
 	p.mu.Unlock()

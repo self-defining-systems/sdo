@@ -13,6 +13,11 @@
 // raises nothing for it and names it in its coverage note
 // (ConfirmationReason while confirmed), so an application without request
 // metrics never fails acceptance, opens or holds an incident here.
+//
+// The application counts SDO's own probe requests with its users'. They are
+// never evidence that users are failing (the probe scenarios judge them), so
+// the detector subtracts the requests the prober sent (traffic.SentFrom, in
+// the snapshot's traffic windows) from each step before judging it.
 package requestmetrics
 
 import (
@@ -22,11 +27,13 @@ import (
 	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // Rule IDs of the findings.
@@ -144,6 +151,11 @@ type Entry struct {
 	// so the controller treats them as clues, never as failing user traffic.
 	Background bool
 }
+
+// MetaOwnFailedExcluded is the finding metadata key with how many failed
+// requests of the newest step were SDO's own probe requests, left out of the
+// judgement (traffic.SentFrom).
+const MetaOwnFailedExcluded = "own_failed_excluded"
 
 // MetaBackground is the finding metadata key set on findings of an entry only
 // background work enters.
@@ -277,6 +289,13 @@ func (d *detector) MetricQueries() []metrics.Query                      { return
 func (d *detector) Validate() error                                     { return d.err }
 
 type counts struct{ total, server, client float64 }
+
+// minus removes o from c, never below zero; the total keeps at least the
+// failures that remain.
+func (c counts) minus(o counts) counts {
+	server, client := math.Max(0, c.server-o.server), math.Max(0, c.client-o.client)
+	return counts{total: math.Max(c.total-o.total, server+client), server: server, client: client}
+}
 
 func (c counts) add(o counts) counts {
 	return counts{c.total + o.total, c.server + o.server, c.client + o.client}
@@ -541,6 +560,104 @@ func (d *detector) notInstrumented(ctx sdk.DetectionContext, op Operation, why s
 	}
 }
 
+// ownPerStep counts, per step time, the requests SDO's prober sent on op
+// (its entry service, method and route) and the application answered in the
+// window ending at that time, classified like the application's own series.
+// A route the detector cannot read as a path template matches none.
+func (p entryPlan) ownPerStep(op Operation, sent []traffic.SentRequest, times []time.Time, window time.Duration) map[time.Time]counts {
+	if len(sent) == 0 || len(times) == 0 {
+		return nil
+	}
+	route, ok := routePattern(op.Route)
+	if !ok {
+		return nil
+	}
+	var mine []traffic.SentRequest
+	for _, request := range sent {
+		if request.Service == op.Service && (op.Method == "" || strings.EqualFold(request.Method, op.Method)) && route.MatchString(request.Path) {
+			mine = append(mine, request)
+		}
+	}
+	if len(mine) == 0 {
+		return nil
+	}
+	out := map[time.Time]counts{}
+	for _, t := range times {
+		var c counts
+		for _, request := range mine {
+			if request.At.After(t.Add(-window)) && !request.At.After(t) {
+				c = c.add(p.classify(map[string]string{p.StatusLabel: p.statusValue(request.Status)}, 1))
+			}
+		}
+		if c.total > 0 {
+			out[t] = c
+		}
+	}
+	return out
+}
+
+// statusValue writes an HTTP status the way the entry's status label does:
+// the code, or its class ("5xx") when only the class matches the entry's
+// server-error pattern.
+func (p entryPlan) statusValue(status int) string {
+	code, class := strconv.Itoa(status), fmt.Sprintf("%dxx", status/100)
+	if !p.errors.MatchString(code) && p.errors.MatchString(class) {
+		return class
+	}
+	return code
+}
+
+// routePattern reads a route label as a path template (":id", "*path",
+// "{id}", "<id>" a parameter, "( … )" an optional part, as Rails, Grape,
+// Express, Go and Flask routers write them) and returns the expression a
+// concrete escaped path of that route matches.
+func routePattern(route string) (*regexp.Regexp, bool) {
+	if !strings.HasPrefix(route, "/") {
+		return nil, false
+	}
+	var b strings.Builder
+	b.WriteString("^")
+	ident := func(i int) int {
+		for i < len(route) && (route[i] == '_' || route[i] >= 'a' && route[i] <= 'z' || route[i] >= 'A' && route[i] <= 'Z' || route[i] >= '0' && route[i] <= '9') {
+			i++
+		}
+		return i
+	}
+	for i := 0; i < len(route); {
+		switch c := route[i]; {
+		case c == ':' && ident(i+1) > i+1:
+			b.WriteString("[^/]+")
+			i = ident(i + 1)
+		case c == '*':
+			b.WriteString(".+")
+			i = ident(i + 1)
+		case c == '{' || c == '<':
+			end := strings.IndexByte(route[i:], map[byte]byte{'{': '}', '<': '>'}[c])
+			if end < 0 {
+				return nil, false
+			}
+			if strings.HasSuffix(route[i:i+end], "...") {
+				b.WriteString(".+")
+			} else {
+				b.WriteString("[^/]+")
+			}
+			i += end + 1
+		case c == '(':
+			b.WriteString("(?:")
+			i++
+		case c == ')':
+			b.WriteString(")?")
+			i++
+		default:
+			b.WriteString(regexp.QuoteMeta(string(c)))
+			i++
+		}
+	}
+	b.WriteString("$")
+	re, err := regexp.Compile(b.String())
+	return re, err == nil
+}
+
 // perStep sums the operation's series per sample time.
 func (p entryPlan) perStep(op Operation, series []metrics.Series) map[time.Time]counts {
 	out := map[time.Time]counts{}
@@ -694,6 +811,15 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		times = append(times, t)
 	}
 	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+	// SDO's own probe requests are never evidence about users: the scenarios
+	// judge them. What the application counted is judged without them.
+	ownFailed := 0.0
+	for t, own := range plan.ownPerStep(op, traffic.SentFrom(ctx), times, r.Window) {
+		steps[t] = steps[t].minus(own)
+		if len(times) > 0 && t.Equal(times[len(times)-1]) {
+			ownFailed = own.server + own.client
+		}
+	}
 	// A finding that holds the open incident is judged against the share
 	// floor, not the baseline: an ongoing fault must never become its own
 	// healthy share, and it leaves only through confirmed recovery.
@@ -887,6 +1013,9 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	}
 	if plan.Background {
 		f.Metadata[MetaBackground] = true
+	}
+	if ownFailed > 0 {
+		f.Metadata[MetaOwnFailedExcluded] = ownFailed
 	}
 	return f, true
 }

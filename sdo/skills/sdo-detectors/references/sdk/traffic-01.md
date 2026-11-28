@@ -49,6 +49,7 @@ const MaxLinkExcerpt = 256
 const MaxRateLimitWait = 5 * time.Minute
 const MethodExec = "EXEC"
 const RuleIDPrefix = "scenario-slo."
+const SentRetention = 6 * time.Minute
 const StateNow = "sdo.now"
 const UniqueWidth = 16
 var RequiredFaultClasses = []FaultClass{ ... }
@@ -153,6 +154,8 @@ type Sample struct{ ... }
 type SamplingPlan struct{ ... }
 type Scenario struct{ ... }
 type ScenarioObservations struct{ ... }
+type SentRequest struct{ ... }
+    func SentFrom(ctx sdk.DetectionContext) []SentRequest
 type SetupLocker interface{ ... }
 type SideEffect string
     const SideEffectRead SideEffect = "read" ...
