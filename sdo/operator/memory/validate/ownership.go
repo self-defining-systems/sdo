@@ -2,7 +2,10 @@ package validate
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -181,6 +184,17 @@ func (s *run) ownership(ctx context.Context) error {
 		s.diags = append(s.diags, diagnostics...)
 		return nil
 	}
+	// A change no grant covers is denied, except that Upkeep's is held back:
+	// the registered schema migration's own rewrites are Upkeep's whatever
+	// artifact they touch, and upkeepMigration admits exactly those.
+	var migration []Diagnostic
+	deny := func(d Diagnostic) {
+		if actor == Upkeep {
+			migration = append(migration, d)
+			return
+		}
+		s.add(Ownership, d)
+	}
 	for _, p := range s.changed {
 		if p == "" || path.IsAbs(p) || strings.Contains(p, "\\") || path.Clean(p) != p || p == ".." || strings.HasPrefix(p, "../") {
 			s.add(Ownership, Diagnostic{Rule: RuleUnsafePath, Path: p, Message: "unsafe path"})
@@ -190,7 +204,7 @@ func (s *run) ownership(ctx context.Context) error {
 		if layout.IsMemoryPath(p) {
 			var ok bool
 			if kind, id, ok = s.req.classify(p); !ok {
-				s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s cannot change an unclassified path", actor), Hint: "only paths in the operational-memory layout can be changed"})
+				deny(Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s cannot change an unclassified path", actor), Hint: "only paths in the operational-memory layout can be changed"})
 				continue
 			}
 		}
@@ -203,13 +217,16 @@ func (s *run) ownership(ctx context.Context) error {
 			if kind == kindSource {
 				hint = sourceHint(actor, phase)
 			}
-			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s may not change %s files in the %s phase", actor, kind, phase), Hint: hint})
+			deny(Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s may not change %s files in the %s phase", actor, kind, phase), Hint: hint})
 		}
 	}
-	return s.ownershipPolicy(ctx)
+	return s.ownershipPolicy(ctx, migration)
 }
 
-func (s *run) ownershipPolicy(ctx context.Context) error {
+// ownershipPolicy runs the rules a per-file grant cannot express. migration
+// holds Upkeep's changes outside its grants, each admitted only when it is
+// the registered schema migration's own rewrite.
+func (s *run) ownershipPolicy(ctx context.Context, migration []Diagnostic) error {
 	actor, phase := s.req.Actor, s.req.Phase
 	if containsPath(s.changed, layout.ArchitectureFile) {
 		if err := s.architectureRegionOwnership(ctx); err != nil {
@@ -228,17 +245,23 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 			s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: message, Hint: hint})
 		}
 	}
-	needsBase := (actor == Upkeep && changesDetectors(s.changed)) || (actor == Responder || actor == HealthJudge || actor == Human && phase == ImportPhase) && manifests
+	needsBase := (actor == Upkeep && (changesDetectors(s.changed) || len(migration) > 0)) || (actor == Responder || actor == HealthJudge || actor == Human && phase == ImportPhase) && manifests
 	if !needsBase {
 		return nil
 	}
-	base, err := exportBase(ctx, s.req.Root, s.req.Base)
+	export := exportBase
+	if actor == Upkeep && len(migration) > 0 {
+		// The migration reads and rewrites application files too (a retired
+		// patch's targets, the moved views), so it runs on the whole base.
+		export = exportCheckout
+	}
+	base, err := export(ctx, s.req.Root, s.req.Base)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(base)
 	if actor == Upkeep {
-		return s.upkeepMigration(base)
+		return s.upkeepMigration(base, migration)
 	}
 	return s.detectorOwnership(base)
 }
@@ -266,33 +289,65 @@ func (s *run) candidateManifests() map[string]*detector {
 	return byPath
 }
 
-// upkeepMigration lets Upkeep touch detectors only as part of a schema
-// migration: the same change must stamp the new schema version, and the
-// accepted detector registrations must survive it unchanged, modulo the
-// normalization of playbook references to logical IDs.
-func (s *run) upkeepMigration(base string) error {
+// upkeepMigration admits Upkeep's schema migration: the same change must stamp
+// the new schema version, the accepted detector registrations must survive it
+// unchanged, modulo the normalization of playbook references to logical IDs,
+// and Upkeep's changes outside its grants (held in migration) must be exactly
+// the registered transformation's rewrites of the accepted tree outside those
+// grants: the same set of paths, each byte for byte.
+func (s *run) upkeepMigration(base string, migration []Diagnostic) error {
+	detectors := changesDetectors(s.changed)
+	const held = "; Upkeep changes it only as the registered schema migration rewrites it"
 	fail := func(message string) {
-		s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: layout.DetectorsDir, Message: message})
+		if detectors {
+			s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: layout.DetectorsDir, Message: message})
+		}
+		for _, d := range migration {
+			d.Hint += held
+			s.add(Ownership, d)
+		}
 	}
 	if !containsPath(s.changed, layout.SchemaVersionFile) {
 		fail("upkeep may change detectors only together with a schema-version migration")
 		return nil
 	}
+	var before map[string]string
+	if len(migration) > 0 {
+		var err error
+		if before, err = treeFingerprints(base); err != nil {
+			return fmt.Errorf("read accepted tree: %w", err)
+		}
+	}
 	// Recompute the registered transformation from the independently exported
 	// accepted tree. A schema stamp is not authority to change detector behavior,
 	// including when v1 packages move to their canonical ID directories.
 	changed, err := layout.Migrate(base)
+	if err == nil && changed {
+		// The migration also drops Go-installed generic detectors Go no longer
+		// plans (memory.WriteSchema); nothing else about a detector may change.
+		err = memory.PruneStrandedGenericDetectors(base)
+	}
 	if err != nil {
-		return fmt.Errorf("plan accepted migration: %w", err)
+		if len(migration) == 0 {
+			return fmt.Errorf("plan accepted migration: %w", err)
+		}
+		fail("the registered schema migration refuses the accepted tree: " + err.Error())
+		return nil
 	}
 	if !changed {
 		fail("upkeep requires an older accepted schema")
 		return nil
 	}
-	// The migration also drops Go-installed generic detectors Go no longer
-	// plans (memory.WriteSchema); nothing else about a detector may change.
-	if err := memory.PruneStrandedGenericDetectors(base); err != nil {
-		return fmt.Errorf("plan accepted migration: %w", err)
+	if len(migration) > 0 {
+		if err := s.migrationRewrites(base, before, migration, held); err != nil {
+			return err
+		}
+	}
+	if !detectors {
+		return nil
+	}
+	fail = func(message string) {
+		s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: layout.DetectorsDir, Message: message})
 	}
 	expected, err := migrationDetectorFiles(base)
 	if err != nil {
@@ -321,6 +376,110 @@ func (s *run) upkeepMigration(base string) error {
 		}
 	}
 	return nil
+}
+
+// migrationRewrites compares Upkeep's held changes with the migration's own
+// rewrites outside Upkeep's grants (base is the migrated accepted tree, before
+// its fingerprints from ahead of the migration): a held change the migration
+// does not make, or makes differently, is denied, and a rewrite the change
+// leaves out is a partial migration.
+func (s *run) migrationRewrites(base string, before map[string]string, migration []Diagnostic, held string) error {
+	after, err := treeFingerprints(base)
+	if err != nil {
+		return fmt.Errorf("read migrated tree: %w", err)
+	}
+	expected := map[string]bool{}
+	for _, paths := range []map[string]string{before, after} {
+		for p := range paths {
+			if before[p] != after[p] && !s.upkeepGranted(p) {
+				expected[p] = true
+			}
+		}
+	}
+	for _, d := range migration {
+		want, wantOK, err := fileFingerprint(base, d.Path)
+		if err != nil {
+			return err
+		}
+		got, gotOK, err := fileFingerprint(s.req.Root, d.Path)
+		if err != nil {
+			return err
+		}
+		if !expected[d.Path] || want != got || wantOK != gotOK {
+			d.Hint += held
+			s.add(Ownership, d)
+		}
+		delete(expected, d.Path)
+	}
+	left := make([]string, 0, len(expected))
+	for p := range expected {
+		left = append(left, p)
+	}
+	sort.Strings(left)
+	for _, p := range left {
+		s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: p, Message: "the registered schema migration rewrites this file, and the change leaves it as accepted", Hint: "commit the whole migration (`sdo-operator memory migrate`), not part of it"})
+	}
+	return nil
+}
+
+// upkeepGranted reports whether a grant lets Upkeep change p in this phase.
+func (s *run) upkeepGranted(p string) bool {
+	kind, id := kindSource, ""
+	if layout.IsMemoryPath(p) {
+		var ok bool
+		if kind, id, ok = s.req.classify(p); !ok {
+			return false
+		}
+	}
+	return allowed(Upkeep, s.req.Phase, kind, id)
+}
+
+// treeFingerprints fingerprints every file below root by its
+// slash-separated relative path.
+func treeFingerprints(root string) (map[string]string, error) {
+	out := map[string]string{}
+	err := filepath.WalkDir(root, func(full string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(root, full)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		fingerprint, _, err := fileFingerprint(root, rel)
+		out[rel] = fingerprint
+		return err
+	})
+	return out, err
+}
+
+// fileFingerprint is rel's type, executable bit and content digest (a
+// symlink's target), and whether it exists.
+func fileFingerprint(root, rel string) (string, bool, error) {
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	info, err := os.Lstat(full)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var content []byte
+	switch {
+	case info.Mode()&fs.ModeSymlink != 0:
+		target, err := os.Readlink(full)
+		if err != nil {
+			return "", false, err
+		}
+		content = []byte(target)
+	case info.Mode().IsRegular():
+		if content, err = os.ReadFile(full); err != nil {
+			return "", false, err
+		}
+	}
+	sum := sha256.Sum256(content)
+	return fmt.Sprintf("%v %o %x", info.Mode().Type(), info.Mode().Perm()&0o111, sum), true, nil
 }
 
 // detectorOwnership compares the candidate's registrations with the accepted
