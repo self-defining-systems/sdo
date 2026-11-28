@@ -32,9 +32,10 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
 
 - Every operation, writing ones too, is in a `call` probe; a write-read or read-later probe does not count.
   Enforced by: `map.uncovered-operation`.
-- Every writing operation is also in a write-read probe. Enforced by: `map.uncovered-write`.
-- Every data-holding component on a writing operation's path that another operation also reaches is on a
-  read-later probe's path. Enforced by: `map.uncovered-data`.
+- Advice, a note only: every writing operation is also in a write-read probe, and every data-holding component on
+  a writing operation's path that another operation also reaches is on a read-later probe's path. A later read
+  detects loss only if no other probe rewrites that record. Enforced by: `map.uncovered-write`, `map.uncovered-data`
+  (notes).
 - A health-probe scenario declared `knownBroken` (with a short `reason` and the baseline `failsWith`) covers the
   operations no gated probe exercises, without a write-read or read-later probe; it never gates health. Each such
   probe must exercise one operation no gated probe covers, and these operations are at most half of the map's.
@@ -54,11 +55,11 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
 - A component that owns a user entry Service cannot be `unprobed`: declare an operation entering at its Service
   (`EXEC` for SSH commands) and probe it. More than half of the user-path components `unprobed` is rejected.
   Enforced by: `map.unprobed-entry`, `map.unprobed-share`.
-- A map with a data component has at least one gated probe with a step built with
+- Advice, a note only: a map with a data component has at least one gated probe with a step built with
   `ReadsExistingRecords(path, field, pattern)`: it lists records users made or the deployment seeded (an empty
   list passes, a fresh install is healthy), checks every member's shape, and templates no key a write step of the
   scenario saved (open ids a list step saved). The one escape is the map-level `no_user_records: <why>`, recorded as a
-  note. Enforced by: `map.records-unread`, `map.no-user-records`.
+  note. Enforced by: `map.records-unread`, `map.no-user-records` (notes).
 - An operation that sets off background work (`triggers`, or an internal operation) has a probe that performs a
   user operation and reads the work's effect in a step wrapped in `traffic.Eventually`. A synchronous read-back
   passes while the worker is stopped or backed up, and a probe of an internal operation alone enters at no user

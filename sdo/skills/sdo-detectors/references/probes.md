@@ -63,8 +63,8 @@ filters out, a lock that never released). Two silent outages of that kind passed
 touched the affected records.
 
 - Mark the step that does this `ReadsExistingRecords(path, field, pattern)` (`path` is the JSON array, `field` the
-  member value, `pattern` its RE2 shape). The check requires one in a gated probe when the map holds data
-  (`map.records-unread`). An empty list passes, so a fresh install with no user data stays healthy; the engine
+  member value, `pattern` its RE2 shape). The check notes a map that holds data without one
+  (`map.records-unread`, advice). An empty list passes, so a fresh install with no user data stays healthy; the engine
   only notes whether the step ever saw a record the probe did not create. The step must not template a key a write
   step of its scenario saved: list live and save the id from the list, then open it. Only an app whose users keep
   no records sets `no_user_records: <why>` at the top level of the map.

@@ -156,8 +156,6 @@ func TestApplicationMapGapsBlockTheDesignerAndAreNotesForOthers(t *testing.T) {
 		hint    string
 	}{
 		{"read operation without a call probe", strings.ReplaceAll(strings.Replace(mapYAML, "kind: call, operations: [list-items, add-item]", "kind: call, operations: [add-item]", 1), "operations: [add-item, list-items]", "operations: [add-item]"), RuleMapUncoveredOp, "list-items", "call"},
-		{"writing operation without a write-read probe", strings.Replace(mapYAML, "operations: [add-item, list-items]", "operations: [list-items]", 1), RuleMapUncoveredWrite, "add-item", "write-read"},
-		{"data component without a read-later probe", strings.Replace(mapYAML, "  - {scenario: items-later, kind: read-later, operations: [list-items]}\n", "", 1), RuleMapUncoveredData, "db", "read-later"},
 		{"unknown component", strings.Replace(mapYAML, "to: cache", "to: queue", 1), RuleMapUnknownName, "queue", ""},
 		{"workload missing from the inventory", strings.Replace(mapYAML, "StatefulSet/db", "StatefulSet/dbx", 1), RuleMapUnknownName, "StatefulSet/dbx", ""},
 		{"entry service not of the entry component", strings.Replace(mapYAML, "entry: {service: web, port: 80, method: GET", "entry: {service: api, port: 80, method: GET", 1), RuleMapPathMismatch, "list-items", ""},
@@ -180,6 +178,33 @@ func TestApplicationMapGapsBlockTheDesignerAndAreNotesForOthers(t *testing.T) {
 				other, notes := staticMapCheck(t, root, actor)
 				if len(other) != 0 {
 					t.Fatalf("%s: a designer gap rejected another actor: %v", actor, other)
+				}
+				if !slices.ContainsFunc(notes, func(d Diagnostic) bool { return d.Rule == tc.rule }) {
+					t.Fatalf("%s: no %s note: %v", actor, tc.rule, notes)
+				}
+			}
+		})
+	}
+}
+
+// Write-read and read-later coverage is advice: measured live, those probes
+// caught no data-loss fault plain call probes missed, so a gap is a note for
+// every actor, the designer included.
+func TestReadBackCoverageIsAdviceForEveryActor(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		rule string
+	}{
+		{"writing operation without a write-read probe", strings.Replace(mapYAML, "operations: [add-item, list-items]", "operations: [list-items]", 1), RuleMapUncoveredWrite},
+		{"data component without a read-later probe", strings.Replace(mapYAML, "  - {scenario: items-later, kind: read-later, operations: [list-items]}\n", "", 1), RuleMapUncoveredData},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := mapTree(t, &tc.yaml)
+			for _, actor := range []Actor{HealthJudge, Responder, Upkeep} {
+				blocking, notes := staticMapCheck(t, root, actor)
+				if slices.ContainsFunc(blocking, func(d Diagnostic) bool { return d.Rule == tc.rule }) {
+					t.Fatalf("%s: read-back coverage rejected: %v", actor, blocking)
 				}
 				if !slices.ContainsFunc(notes, func(d Diagnostic) bool { return d.Rule == tc.rule }) {
 					t.Fatalf("%s: no %s note: %v", actor, tc.rule, notes)

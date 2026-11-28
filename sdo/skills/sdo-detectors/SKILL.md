@@ -19,8 +19,8 @@ only if it has a scenario):
 | Kind | Workload | One scenario per | It checks |
 |---|---|---|---|
 | call | `probe-call` | operation, writing ones too | status, latency and the exact content the healthy application returns |
-| write-read | `probe-write` | writing operation | a change the iteration just made, read back exactly |
-| read-later | `probe-read-later` | data-holding component on a write path | a fixture written once is still returned exactly |
+| write-read | `probe-write` | writing operation (optional) | a change the iteration just made, read back exactly |
+| read-later | `probe-read-later` | data-holding component on a write path (optional) | a fixture written once is still returned exactly |
 
 - Go installs one generic persistent-failure detector per health workload (`traffic-<workload>`). Do not write
   detector code for these probes, and do not lower their persistence.
@@ -33,8 +33,9 @@ only if it has a scenario):
   [probe identity](../sdo-operations-map/references/map.md#probe-identity).
 - Probes are self-contained: each passes on a freshly deployed application with nothing set up by hand.
   `Setup` steps are ensure steps (`OrExisting(status, text)` accepts the duplicate answer).
-- Read the records users already have, per health objective (`ReadsExistingRecords`), else declare
-  `no_user_records: <why>` ([Users' own records](references/probes.md#users-own-records)).
+- Advice: read the records users already have where a fixture cannot show their loss (`ReadsExistingRecords`,
+  [Users' own records](references/probes.md#users-own-records)); a later read detects loss only if no other probe
+  rewrites that record.
 - Clean up what a write creates when a delete route exists (`SideEffectWriteWithCleanup`); else bound its growth.
 - Every scenario is sampled at least every 10 s; keep probe requests under 5% of the app's request rate, else
   under 4 per second. Signatures and options: [traffic reference](references/traffic.md).
