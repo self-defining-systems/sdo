@@ -41,13 +41,13 @@ def _listing() -> dict[str, object]:
             _item("EndpointSlice", "frontend-x"),
             _item("NetworkPolicy", "np"),
             _item("Event", "ev"),
-            _item("Secret", "must-not-be-copied"),
+            _item("Secret", "must-not-be-copied", data={"key": "dmFsdWU="}),
         ],
     }
 
 
 def test_snapshot_document_uses_the_sdktest_shape_and_drops_other_kinds_and_managed_fields() -> None:
-    document = snapshot_document("app", _listing())
+    document = snapshot_document("app", _listing(), [{"name": "metadata-only"}])
 
     assert document["namespace"] == "app"
     assert set(document) == {
@@ -75,11 +75,11 @@ def test_snapshot_document_uses_the_sdktest_shape_and_drops_other_kinds_and_mana
     }
     assert [item["metadata"]["name"] for item in document["services"]] == ["frontend"]  # type: ignore[index]
     assert "managedFields" not in document["services"][0]["metadata"]  # type: ignore[index]
-    assert document["secrets"][0]["name"] == "must-not-be-copied"
+    assert document["secrets"] == [{"name": "metadata-only"}]  # a listed Secret object is never copied
 
 
 def test_snapshot_document_is_json_serialisable_with_empty_lists_for_absent_kinds() -> None:
-    document = snapshot_document("app", {"items": []})
+    document = snapshot_document("app", {"items": []}, [])
 
     assert document["pods"] == []
     json.dumps(document)
@@ -97,6 +97,8 @@ class _Kubectl:
         if self.fail:
             return subprocess.CompletedProcess(args, 1, "", "boom")
         listing = _listing()
+        if args[:2] == ["get", "secrets"]:
+            return subprocess.CompletedProcess(args, 0, '{"name":"credentials","dataKeys":[]}\n', "")
         if args[:2] == ["get", "nodes"]:
             listing = {"items": [{"apiVersion": "v1", "kind": "Node", "metadata": {"name": "worker"}}]}
         return subprocess.CompletedProcess(args, 0, json.dumps(listing), "")
@@ -110,7 +112,8 @@ def test_capture_takes_the_requested_number_of_spaced_snapshots_of_the_applicati
 
     assert sorted(snapshots) == ["healthy-0.json", "healthy-1.json", "healthy-2.json"]
     assert sleeps == [2.0, 2.0]
-    assert [namespace for _, namespace, _ in kubectl.calls] == ["app", None] * 3
+    assert [namespace for _, namespace, _ in kubectl.calls] == ["app", None, "app"] * 3
+    assert snapshots["healthy-0.json"]["secrets"] == [{"name": "credentials", "dataKeys": []}]
     assert all(call[0][0] == "get" and "-o" in call[0] for call in kubectl.calls)
     assert snapshots["healthy-0.json"]["namespace"] == "app"
     assert snapshots["healthy-0.json"]["nodes"][0]["metadata"]["name"] == "worker"
@@ -119,6 +122,21 @@ def test_capture_takes_the_requested_number_of_spaced_snapshots_of_the_applicati
 def test_capture_fails_loudly_when_kubectl_fails() -> None:
     with pytest.raises(HealthyBaselineCaptureError, match="boom"):
         capture_snapshots("app", kubectl_runner=_Kubectl(fail=True), count=1, interval_seconds=0, sleep=lambda _: None)
+
+
+def test_a_failed_secret_read_never_reports_stdout() -> None:
+    """kubectl's template printer writes the raw objects to stdout when a template fails."""
+
+    def failing(
+        args: list[str], *, namespace: str | None, input_text: str | None = None, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["get", "secrets"]:
+            return subprocess.CompletedProcess(args, 1, "raw data was: dmFsdWU=", "template failed")
+        return subprocess.CompletedProcess(args, 0, '{"items": []}', "")
+
+    with pytest.raises(HealthyBaselineCaptureError, match="template failed") as raised:
+        capture_snapshots("app", kubectl_runner=failing, count=1, interval_seconds=0)
+    assert "dmFsdWU=" not in str(raised.value)
 
 
 def test_capture_rejects_a_non_positive_count() -> None:
@@ -207,19 +225,6 @@ def test_ops_wrapper_does_not_inject_when_capture_fails() -> None:
     with pytest.raises(HealthyBaselineCaptureError):
         ops.inject_after_resume("ctl", "g1", lambda: events.append("inject"))
     assert "inject" not in events
-
-
-def test_secret_baseline_contains_only_metadata_and_sorted_keys() -> None:
-    secret = _item(
-        "Secret", "credentials", data={"z": "c2VjcmV0", "a": "c2VjcmV0"}, stringData={"b": "secret"}, type="Opaque"
-    )
-    secret["metadata"]["annotations"] = {"last-applied": "secret"}
-    document = snapshot_document("app", {"items": [secret]})
-    assert document["secrets"] == [
-        {"name": "credentials", "namespace": "app", "type": "Opaque", "labels": {}, "dataKeys": ["a", "b", "z"]}
-    ]
-    assert "c2VjcmV0" not in json.dumps(document)
-    assert "last-applied" not in json.dumps(document)
 
 
 @pytest.mark.parametrize("count", [0, 17])
