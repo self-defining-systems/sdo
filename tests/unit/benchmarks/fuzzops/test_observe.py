@@ -339,7 +339,12 @@ def test_watch_pages_only_if_sdo_has_not_opened_an_incident(
 
     message = "Users are reporting problems with the application in namespace app; investigate and fix it."
     traffic = tmp_path / "traffic.jsonl"
-    traffic.write_text(json.dumps({"inject_at": _at(0), "first_bad": None}) + "\n")
+    traffic.write_text(
+        json.dumps({"inject_at": _at(0), "first_bad": None})
+        + "\n"
+        + json.dumps({"inject_at": _at(0), "first_bad": {"Start": _at(0)}})
+        + "\n"
+    )
     monkeypatch.setenv("FUZZOPS_TRAFFIC", str(traffic))
     monkeypatch.setenv("FUZZOPS_OUT", str(tmp_path))
     monkeypatch.setattr(observe.time, "time", lambda: START.timestamp() + t)
@@ -381,6 +386,59 @@ def test_watch_pages_only_if_sdo_has_not_opened_an_incident(
         assert alert == {"id": record["fallback_id"], "namespace": "app", "message": message}
         assert record["page_source"] == "fallback"
         assert record["fallback_page_at"] == _at(120)
+
+
+def _watch_with_traffic(
+    lines: list[dict[str, Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, until: float
+) -> list[float]:
+    """Run the watch against a fixed traffic stream with no incident; the times a fallback page was sent."""
+    t = 10.0
+    sent: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        nonlocal t
+        t += seconds
+        if t > until:
+            raise KeyboardInterrupt
+
+    traffic = tmp_path / "traffic.jsonl"
+    traffic.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    monkeypatch.setenv("FUZZOPS_TRAFFIC", str(traffic))
+    monkeypatch.setenv("FUZZOPS_OUT", str(tmp_path))
+    monkeypatch.setattr(observe.time, "time", lambda: START.timestamp() + t)
+    monkeypatch.setattr(observe.time, "monotonic", lambda: t)
+    monkeypatch.setattr(observe.time, "sleep", sleep)
+    monkeypatch.setattr(observe, "read_state", lambda *_: {})
+    monkeypatch.setattr(observe, "kubectl_apply", lambda *_: sent.append(t))
+    argv = [
+        "--control-namespace",
+        "app-sdo",
+        "--page-namespace",
+        "app",
+        "--fallback-page-after",
+        "120",
+        "--linger",
+        "0",
+    ]
+    with pytest.raises(KeyboardInterrupt):
+        observe.main(argv)
+    return sent
+
+
+def test_fallback_page_waits_from_the_first_harmed_request_not_from_inject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lines = [
+        {"inject_at": _at(0), "first_bad": None},
+        {"inject_at": _at(0), "first_bad": {"Start": _at(40)}},
+    ]
+    [at] = _watch_with_traffic(lines, tmp_path, monkeypatch, until=200)
+    assert 160 <= at < 161
+
+
+def test_no_fallback_page_while_users_are_unharmed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lines = [{"inject_at": _at(0), "first_bad": None}]
+    assert _watch_with_traffic(lines, tmp_path, monkeypatch, until=400) == []
 
 
 def test_a_page_that_closed_between_polls_still_counts_as_own() -> None:

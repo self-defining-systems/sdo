@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from benchmarks.fuzzops import eks, vanilla
 from benchmarks.fuzzops.cellevidence import atomic_write_json
 from benchmarks.fuzzops.hooks import HookError
+from benchmarks.fuzzops.repage import first_bad_start
 from benchmarks.fuzzops.view import redact, redact_json_line
 
 if TYPE_CHECKING:
@@ -427,11 +428,10 @@ def first_bad_time(target: Path, default: float) -> float:
     """The first harmed user second, from the onset sample vanilla wrote (FuzzOps' first bad bucket, ``Start``); the
     supervisor's start when it has none."""
     try:
-        bad = json.loads((target / "onset.json").read_text()).get("first_bad")
-        found = parse_time(bad.get("Start") if isinstance(bad, dict) else bad)
+        found = first_bad_start(json.loads((target / "onset.json").read_text()))
     except (OSError, ValueError, AttributeError):
         found = None
-    return default if found is None else found
+    return default if found is None else found.timestamp()
 
 
 def alarm_tasks(service: Service, paging: Paging, injected: float) -> list[dict[str, Any]]:

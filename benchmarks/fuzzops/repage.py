@@ -46,6 +46,28 @@ def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(text)
 
 
+def first_bad_start(sample: Mapping[str, Any]) -> datetime | None:
+    """The first harmed user second in a traffic sample (FuzzOps' first bad bucket, ``Start``), None before any."""
+    bad = sample.get("first_bad")
+    value = bad.get("Start") if isinstance(bad, dict) else bad
+    try:
+        return parse_time(value) if isinstance(value, str) and value else None
+    except ValueError:
+        return None
+
+
+def traffic_first_bad(path: Path) -> datetime | None:
+    """The first harmed user second the traffic stream has published so far; None while users are unharmed."""
+    with path.open("rb") as traffic:
+        for line in traffic:
+            if not line.endswith(b"\n"):
+                break
+            found = first_bad_start(json.loads(line))
+            if found is not None:
+                return found
+    return None
+
+
 @dataclass
 class Harm:
     """The harm episodes seen in the traffic samples, fed in order."""
