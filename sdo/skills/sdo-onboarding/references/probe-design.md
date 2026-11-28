@@ -2,7 +2,8 @@
 
 - A journey is what a user does: write something with a fresh unique name, then read it back exactly through the
   route a user reads, including the background effect (wrap that read in `traffic.Eventually`, or return `NotYet`). Read journeys check exact content of
-  fixtures Setup made, and one step lists records users already have.
+  fixtures Setup made, and one step lists records users already have. Each invariant checked on fixtures
+  is also checked, read-only, on a sample of users' records: a fault in users' data never touches fixtures.
 - Write values the size and shape users write. The goal's `Test writes:` line says whose data probes act on:
   `own` (the default) means probe accounts and probe records only; `shared` also allows users' own records and
   the accounts the goal names, so a fault that hits only users' data is seen.
