@@ -14,9 +14,10 @@ import (
 )
 
 // RequestMetricsDetectorID names the generic detector that reads the
-// application's own request metrics per user operation. Its findings are
-// clues in shadow mode (the default) and open incidents only when
-// detection.request_metrics_shadow is off.
+// application's own request metrics per user operation. Its findings open
+// incidents by default; detection.request_metrics_shadow turns them into
+// clues. An operation whose entry service exports no request counter (no
+// entries record in the map) is not applicable and never fires.
 const RequestMetricsDetectorID = "request-metrics"
 
 // MaxRequestMetricEntries bounds the entry services the detector reads. Each

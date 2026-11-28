@@ -384,9 +384,15 @@ window, or after the responder returned) still pages at once (`pageLate`): the o
 re-prompts the responder and changes no Recovered decision; the open incident can stay open as long as its own alerts
 fail, so the page cannot wait for its close. Kubernetes conditions and clues never page late. An escalated incident with an opener waiting closes escalated, and every alert of it that
 still fails goes to the batcher with that opener, so the next incident opens on all of them. The next incident opens
-only after the previous closure and its queued reflection (closing and cleanup turns, source publication and deploy)
-finished (`priorIncidentWorkLocked`), so two incidents never write at once. A page or an external incident waits for
-the same work: it stays in the inbox and opens the next incident once that work finished. Only that handover keeps
+once the previous closure was acknowledged; its queued reflection never holds it. The closing and cleanup turns edit
+only `.sdo/` memory and app files in their checkout, and the closing session's live writes stay behind its own
+incident's mutation fence (the gate is per incident, and nothing lifts a closed incident's fence), so the next
+responder is the only live writer. The two steps that would conflict wait instead: the closure's source publication
+and deploy defers itself while an incident is open (`sourceDeployBusy`, checked before the maintenance pause so a
+retry never interrupts detection, and again under it), and the pause holds admission while it deploys; a memory
+rollout the closing turn accepted is activated only once no incident is open. A page or an external incident waits
+only for an in-flight closure: it stays in the inbox and opens the next incident once that closure was
+acknowledged. Only that handover keeps
 a closed incident's still-failing alerts in the batcher at acknowledgment; any other unverified close (a page, an
 external incident) acknowledges its alerts, so the same symptoms never re-prompt the agent at once.
 SDO dispatches the responder once and withholds learning credit on an escalated close. An applied learned

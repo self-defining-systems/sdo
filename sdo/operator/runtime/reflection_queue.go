@@ -56,6 +56,8 @@ type reflectionQueueState struct {
 // so a deterministic failure cannot hold open work forever. A reflection that
 // accepted a detector change activates the accepted memory in the memory host,
 // the same path a closure acknowledgment takes; the controller never restarts.
+// The queue runs while the next incident is open: the closing turn writes only
+// .sdo/ memory, and its source deploy defers itself (sourceDeployBusy).
 func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) error {
 	queue, ok := c.broker.(ReflectionQueue)
 	if !ok {
@@ -64,6 +66,12 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 	c.mu.Lock()
 	state := &c.reflections
 	if state.rollout != "" {
+		// The open incident keeps the memory it opened on: the accepted
+		// change is served once it closes.
+		if c.incidentOpen {
+			c.mu.Unlock()
+			return nil
+		}
 		incident := state.rollout
 		c.mu.Unlock()
 		return c.activateQueuedRollout(ctx, queue, incident)

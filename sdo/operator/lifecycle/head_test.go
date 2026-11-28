@@ -21,7 +21,7 @@ type headWorld struct {
 	recorded  []broker.SourceEvidence
 	busy      string
 	targetErr error
-	pause     *recordedPause
+	pause     lifecycle.MaintenanceWindow
 	holds     *memoryHolds
 }
 
@@ -128,8 +128,9 @@ func TestAHeadTheClusterRefusesIsHeldAndNotRecorded(t *testing.T) {
 	}
 }
 
-// With an open incident the deploy never starts: the pause is lifted and the
-// head is tried again later.
+// With an open incident the deploy never starts, and the deferral does not
+// pause the controller: a retry must not interrupt the observation of the
+// incident that defers it.
 func TestAHeadIsDeferredWhileAnIncidentIsOpen(t *testing.T) {
 	w := newHeadWorld(t, true)
 	w.pause, w.busy = &recordedPause{events: &w.events, acks: true}, "an incident is open"
@@ -137,9 +138,35 @@ func TestAHeadIsDeferredWhileAnIncidentIsOpen(t *testing.T) {
 	if err != nil || result.Outcome != lifecycle.HeadDeferred || result.Detail != "an incident is open" {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
+	if slices.Contains(w.events, "apply") || slices.Contains(w.events, "pause") {
+		t.Fatalf("events %q: nothing may be applied and a busy controller is not paused", w.events)
+	}
+}
+
+// An incident that opens before the controller acknowledges the pause still
+// defers the deploy: the check repeats under the pause, and the pause is lifted.
+func TestAHeadIsDeferredWhenAnIncidentOpensBeforeThePause(t *testing.T) {
+	w := newHeadWorld(t, true)
+	pause := &openingPause{recordedPause: recordedPause{events: &w.events, acks: true}, open: func() { w.busy = "an incident is open" }}
+	w.pause = pause
+	result, err := w.deployer().Deploy(context.Background(), repairConfig)
+	if err != nil || result.Outcome != lifecycle.HeadDeferred || result.Detail != "an incident is open" {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
 	if slices.Contains(w.events, "apply") || w.events[len(w.events)-1] != "resume" {
 		t.Fatalf("events %q: nothing may be applied and the pause must be lifted", w.events)
 	}
+}
+
+// openingPause opens an incident while the controller drains for the pause.
+type openingPause struct {
+	recordedPause
+	open func()
+}
+
+func (p *openingPause) Pause(ctx context.Context, reason string, until time.Time) error {
+	p.open()
+	return p.recordedPause.Pause(ctx, reason, until)
 }
 
 // A refused head is held by its effective source: the next poll does not apply

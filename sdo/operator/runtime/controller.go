@@ -1203,7 +1203,12 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.readPage(ctx, now, snapshot)
 	c.mu.Lock()
 	incidentOpen := c.incidentOpen || c.earlyReportPendingLocked()
-	closurePending := c.closureBlocksNextLocked() && c.broker != nil || c.priorIncidentWorkLocked() != ""
+	// The previous incident's queued closing and cleanup turns never hold the
+	// next incident: they write only .sdo/ memory in their checkout, and the
+	// session's live writes stay behind its own incident's fence. Its source
+	// deploy runs in a maintenance pause, which stops admission, and defers
+	// itself while an incident is open (sourceDeployBusy).
+	closurePending := c.closureBlocksNextLocked() && c.broker != nil
 	c.mu.Unlock()
 	if incidentOpen {
 		c.mu.Lock()
@@ -1400,7 +1405,7 @@ func (c *Controller) nextWake() (time.Time, string) {
 	// attached. Otherwise an expired deadline would spin the runtime loop for
 	// the whole incident.
 	startupHolding := c.startup.holding(c.clock())
-	batchActionable := !startupHolding && (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil) && c.priorIncidentWorkLocked() == "") ||
+	batchActionable := !startupHolding && (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil)) ||
 		c.canAttachBeforeLaunchLocked()
 	c.mu.Unlock()
 	if deadline, ok := c.batcher.Deadline(); ok && batchActionable {
@@ -2835,27 +2840,6 @@ func (c *Controller) SetIncidentBroker(broker IncidentBroker) error {
 		c.head = headPollState{poller: native.headPoller()}
 	}
 	return nil
-}
-
-// priorIncidentWorkLocked names the previous incident's work that may still
-// write: a queued or running reflection (its closing and cleanup turns and the
-// source publication and deploy it carries), a queue that has not been read,
-// or a rollout a restart must record. The next incident opens only after it,
-// so two incidents never write at once. Caller holds c.mu.
-func (c *Controller) priorIncidentWorkLocked() string {
-	if _, ok := c.broker.(ReflectionQueue); !ok {
-		return ""
-	}
-	state := &c.reflections
-	switch {
-	case state.rollout != "":
-		return "a reflection's rollout is pending"
-	case state.running != "" || len(state.queued) > 0:
-		return "a reflection is queued or running"
-	case state.unknown || state.rescan:
-		return "the reflection queue is unread"
-	}
-	return ""
 }
 
 // sourceDeployBusy is the work a source deploy after a closure must not

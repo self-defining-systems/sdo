@@ -172,6 +172,13 @@ func (r RepairDeployer) paused(ctx context.Context, deploy func() (RepairResult,
 	if r.Now == nil {
 		return RepairResult{}, errors.New("source repair with a maintenance window needs a clock")
 	}
+	// Busy work found before the pause defers without pausing: a retry must
+	// not interrupt the controller's observation of the work that defers it.
+	// The check repeats once the pause is acknowledged, which is what makes it
+	// exclusive.
+	if deferred, busy, err := r.busy(ctx); err != nil || busy {
+		return deferred, err
+	}
 	now := r.Now
 	advancer := pauseControl{maintenance: r.Maintenance, wait: r.Wait}
 	var cfg pauseBounds
@@ -195,16 +202,22 @@ func (r RepairDeployer) paused(ctx context.Context, deploy func() (RepairResult,
 	if !acknowledged {
 		return RepairResult{Outcome: RepairDeferred, Detail: "the controller did not acknowledge the maintenance pause in time"}, nil
 	}
-	if r.Busy != nil {
-		reason, err := r.Busy(ctx)
-		if err != nil {
-			return RepairResult{}, fmt.Errorf("controller activity: %w", err)
-		}
-		if reason != "" {
-			return RepairResult{Outcome: RepairDeferred, Detail: reason}, nil
-		}
+	if deferred, busy, err := r.busy(ctx); err != nil || busy {
+		return deferred, err
 	}
 	return deploy()
+}
+
+// busy is the deferral the controller's activity asks for, if any.
+func (r RepairDeployer) busy(ctx context.Context) (RepairResult, bool, error) {
+	if r.Busy == nil {
+		return RepairResult{}, false, nil
+	}
+	reason, err := r.Busy(ctx)
+	if err != nil {
+		return RepairResult{}, false, fmt.Errorf("controller activity: %w", err)
+	}
+	return RepairResult{Outcome: RepairDeferred, Detail: reason}, reason != "", nil
 }
 
 // changesDeploymentInputs reports a repair that shapes what is deployed: any

@@ -1,8 +1,6 @@
 package runtime
 
 import (
-	"context"
-	"errors"
 	"slices"
 	"testing"
 	"testing/synctest"
@@ -12,71 +10,10 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-// The page and external-incident entries open an incident only after the
-// previous incident's work (its closing turn, cleanup and source publication)
-// finished, like every other opener. A page that arrives meanwhile stays in
-// the inbox and opens the next incident once that work is done.
-
-// holdPriorReflection makes c look like the previous incident's queued
-// reflection is running and returns a function that finishes it.
-func holdPriorReflection(c *Controller) func() {
-	c.mu.Lock()
-	c.broker = &publishingQueue{release: make(chan struct{})}
-	c.reflections.running, c.reflections.rescan, c.reflections.unknown = "previous", false, false
-	c.mu.Unlock()
-	return func() {
-		c.mu.Lock()
-		c.reflections.running = ""
-		c.mu.Unlock()
-	}
-}
-
-func TestAPageWaitsForThePreviousIncidentsWork(t *testing.T) {
-	now := time.Unix(1000, 0).UTC()
-	c, _, reads := pageController(t, now)
-	finish := holdPriorReflection(c)
-	for range 3 {
-		c.readPage(context.Background(), now, nil)
-		if c.incidentOpen || c.currentIncidentRequest != nil {
-			t.Fatal("a page opened a second incident while the previous one's reflection ran")
-		}
-	}
-	if c.lastPageID != "" {
-		t.Fatalf("the blocked page was accepted: %q", c.lastPageID)
-	}
-	finish()
-	c.readPage(context.Background(), now, nil)
-	if !c.incidentOpen || c.currentIncidentRequest == nil || c.currentIncidentRequest.Page != syntheticPage {
-		t.Fatalf("the retained page did not open the next incident: reads=%d", *reads)
-	}
-}
-
-func TestAnExternalIncidentWaitsForThePreviousIncidentsWork(t *testing.T) {
-	now := time.Unix(1000, 0).UTC()
-	cfg := testControllerConfig()
-	cfg.ExternalIncidentsOnly = true
-	c, err := NewController(cfg, nil, externalUnavailableSnapshots{}, &recordingDispatcher{}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	finish := holdPriorReflection(c)
-	alert := ExternalIncident{ID: "external-next", Namespace: cfg.Namespace, Message: "investigate"}
-	if err := c.openExternalIncident(now, alert); !errors.Is(err, ErrExternalIncidentBusy) {
-		t.Fatalf("external incident during the previous reflection: err=%v open=%v", err, c.incidentOpen)
-	}
-	if c.incidentOpen {
-		t.Fatal("a second incident opened while the previous one's reflection ran")
-	}
-	finish()
-	if err := c.openExternalIncident(now, alert); err != nil || !c.incidentOpen || c.currentIncidentRequest.IncidentID != alert.ID {
-		t.Fatalf("the retained alert did not open the next incident: %v", err)
-	}
-}
-
-// A controller restart while the previous incident's reflection runs: the
-// restored controller rereads the durable queue, and the waiting opener opens
-// the next incident only after the reflection finished.
-func TestTheNextIncidentWaitsForAReflectionAcrossARestart(t *testing.T) {
+// A controller restart while the previous incident's closing turn runs: the
+// restored controller rereads the durable queue and resumes the closing turn,
+// and the waiting opener opens the next incident without waiting for it.
+func TestTheNextIncidentOpensDuringAResumedClosingTurnAfterARestart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := newLateWorld(t, false)
 		queue := &publishingQueue{release: make(chan struct{})}
@@ -92,7 +29,7 @@ func TestTheNextIncidentWaitsForAReflectionAcrossARestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		restarted, err := NewController(w.c.config, []sdk.Detector{w.cond, w.late}, staticProvider{}, &recordingDispatcher{}, w.now)
+		restarted, err := NewController(w.c.config, []sdk.Detector{w.cond, w.late}, staticProvider{}, &answeringDispatcher{}, w.now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,22 +39,16 @@ func TestTheNextIncidentWaitsForAReflectionAcrossARestart(t *testing.T) {
 		}
 		// The durable queue still holds the reflection the old process ran.
 		again := &publishingQueue{release: make(chan struct{}), queued: slices.Clone(queue.queued)}
+		t.Cleanup(func() { close(again.release) })
 		restarted.broker = again
 		w.c = restarted
-		for range 10 {
-			w.step()
-			if id := w.incidentID(); id != "" && id != first {
-				t.Fatal("the next incident opened while the previous reflection ran after a restart")
-			}
-		}
-		if !again.running.Load() {
-			t.Fatal("the restored controller did not resume the queued reflection")
-		}
-		close(again.release)
-		synctest.Wait()
 		w.drive(30, func() bool { id := w.incidentID(); return id != "" && id != first })
 		if id := w.incidentID(); id == "" || id == first {
-			t.Fatalf("the next incident did not open after the reflection: %q", id)
+			t.Fatalf("the next incident did not open during the resumed closing turn: %q", id)
+		}
+		w.drive(5, again.running.Load)
+		if !again.running.Load() {
+			t.Fatal("the restored controller did not resume the queued reflection")
 		}
 	})
 }

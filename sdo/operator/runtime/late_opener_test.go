@@ -17,7 +17,7 @@ import (
 // A user test that starts failing after the responder returned is a new
 // incident. These tests cover what happens to it and to the incident that is
 // still open: the first closes on its own alert set, the test opens the next
-// incident, and two incidents never write at once.
+// incident, and two incidents never write live objects at once.
 
 // lateWorld steps a controller whose first incident opened on a Kubernetes
 // condition and whose responder returned; late is a user test outside its set.
@@ -321,35 +321,4 @@ func (q *publishingQueue) AbandonQueuedReflection(context.Context, string, strin
 func (q *publishingQueue) QueuedReflectionRolloutPending(string) (bool, error)           { return false, nil }
 func (q *publishingQueue) QueuedReflectionServingCommit(context.Context, string) (string, error) {
 	return "", nil
-}
-
-// One writer at a time: the next incident opens only after the previous one's
-// queued reflection, with its closing turn and source publication, finished.
-func TestTheNextIncidentWaitsForThePreviousSourcePublication(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		w := newLateWorld(t, false)
-		queue := &publishingQueue{release: make(chan struct{})}
-		w.c.broker = queue
-		first := w.incidentID()
-		w.late.failing.Store(true)
-		w.drive(60, queue.running.Load)
-		if !queue.running.Load() || len(queue.closures()) != 1 || queue.closures()[0].Request.IncidentID != first {
-			t.Fatalf("the first closure's publication never started: closures=%d", len(queue.closures()))
-		}
-		for range 10 {
-			w.step()
-			if id := w.incidentID(); id != "" && id != first {
-				t.Fatal("the next incident opened while the previous source publication ran")
-			}
-		}
-		if !w.c.batcher.Ready(w.now) {
-			t.Fatal("the late user test is no longer waiting")
-		}
-		close(queue.release)
-		synctest.Wait()
-		w.drive(30, func() bool { id := w.incidentID(); return id != "" && id != first })
-		if !queue.finished.Load() || w.incidentID() == first || w.incidentID() == "" {
-			t.Fatalf("the next incident did not open after the publication: finished=%v incident=%q", queue.finished.Load(), w.incidentID())
-		}
-	})
 }
