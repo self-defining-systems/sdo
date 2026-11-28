@@ -35,18 +35,29 @@ type lateWorld struct {
 
 func newLateWorld(t *testing.T, conditionFailing bool) *lateWorld {
 	t.Helper()
+	return newLateWorldOpenedBy(t, conditionFailing, nil)
+}
+
+// newLateWorldOpenedBy is newLateWorld whose first incident opened on opener,
+// a user test, instead of the Kubernetes condition.
+func newLateWorldOpenedBy(t *testing.T, conditionFailing bool, opener *switchedProbe) *lateWorld {
+	t.Helper()
 	now := time.Unix(1000, 0).UTC()
 	cond := &switchedProbe{id: memory.KubernetesConditionDetectorIDs()[0], scenario: "not-ready"}
 	cond.failing.Store(conditionFailing)
 	late := &switchedProbe{id: memory.TrafficDetectorPrefix + "late", scenario: "clone"}
-	c, _ := alertSetController(t, now, cond, late)
-	opening := cond.finding()
+	probes := []*switchedProbe{cond, late}
+	if opener != nil {
+		probes = []*switchedProbe{opener, cond, late}
+	}
+	c, _ := alertSetController(t, now, probes...)
+	opening := probes[0].finding()
 	c.currentIncidentRequest.Findings, c.currentIncidentRequest.OpeningKeys = []sdk.Finding{opening}, findingKeys([]sdk.Finding{opening})
 	request := c.currentIncidentRequest
 	request.SchemaVersion, request.Namespace = ProtocolSchemaVersion, "demo"
 	request.SourceCommit, request.DeployedCommit, request.RepositoryWorktree = "source", "deployed", "synthetic-worktree"
 	request.RepositoryBaseCommit, request.CancellationToken, request.RepairPolicy = "source", "synthetic-token", "commit"
-	c.currentIncidentRequest.DetectorHistory = []DetectorEvaluation{{DetectorID: cond.id, EvaluatedAt: now.Add(-3 * time.Second), Status: DetectorEvaluationFiring}}
+	c.currentIncidentRequest.DetectorHistory = []DetectorEvaluation{{DetectorID: probes[0].id, EvaluatedAt: now.Add(-3 * time.Second), Status: DetectorEvaluationFiring}}
 	action := &c.currentIncidentResult.RepairActions[0]
 	action.Target, action.Summary, action.Details = "Deployment/web", "restart web", "synthetic"
 	action.StartedAt, action.CompletedAt = now.Add(-2*time.Second), now.Add(-time.Second)

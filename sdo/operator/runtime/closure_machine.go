@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
 
 	"google.golang.org/protobuf/proto"
@@ -36,6 +37,10 @@ func (c *Controller) applyClosureCoreLocked(state *contracts.ControllerState) {
 	c.lastAcknowledgedExternalIncidentID = state.LastAcknowledgedExternalIncidentId
 }
 
+// errUnconfirmedNoop reports an Unconfirmed step that left the closure
+// unchanged: the closure makes no health claim to withdraw.
+var errUnconfirmedNoop = errors.New("unconfirmed decision changed nothing: the closure makes no health claim to withdraw, so it commits as recorded")
+
 func (c *Controller) stepClosureLocked(event lifecyclecore.Event) ([]lifecyclecore.Effect, error) {
 	if event.Kind == lifecyclecore.Begin && event.Closure != nil && !event.Closure.GetVerifiedWhileResponderRunning() {
 		if err := c.bindClosureUsage(event.Closure); err != nil {
@@ -48,6 +53,16 @@ func (c *Controller) stepClosureLocked(event lifecyclecore.Event) ([]lifecycleco
 	}
 	event.Policy = lifecyclecore.RetryPolicy{MaxAttempts: int32(c.config.ClosureRetry.MaxAttempts), InitialBackoff: c.config.ClosureRetry.InitialBackoff, MaxBackoff: c.config.ClosureRetry.MaxBackoff}
 	next, effects := lifecyclecore.Step(state, event)
+	if event.Kind == lifecyclecore.Unconfirmed && proto.Equal(state, next) {
+		// The caller decided the closure is unconfirmed. A reducer that
+		// ignored that decision would leave the closure pending, to be
+		// rechecked and decided again on every pass.
+		incident := ""
+		if c.pendingClosure != nil {
+			incident = c.pendingClosure.Request.IncidentID
+		}
+		return nil, fmt.Errorf("%w: incident %q (%s)", errUnconfirmedNoop, incident, event.Error)
+	}
 	c.applyClosureCoreLocked(next)
 	c.publishHeldLocked()
 	return effects, nil
