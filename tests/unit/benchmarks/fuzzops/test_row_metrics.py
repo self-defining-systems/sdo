@@ -608,8 +608,8 @@ def test_sdo_rows_report_self_detected_episodes_apart_from_harness_pages(tmp_pat
     ]
     put(tmp_path, "operator/collect.json", {"page_source": "own", "sdo_page_at": at(8), "episodes": episodes})
     row = measure(tmp_path)
-    assert (row.harm_episodes, row.self_paged_episodes, row.external_pages) == (3, 1, 2)
-    # A page whose inbox write was never acknowledged still counts; only acknowledged times are listed.
+    # A page whose inbox write never landed reached nobody: it is not counted.
+    assert (row.harm_episodes, row.self_paged_episodes, row.external_pages) == (3, 1, 1)
     assert row.external_page_at == [at(180)]
     assert row.external_pages_after_open_incident == 1
     assert (row.page_source, row.inject_to_page_s) == ("own", 8)

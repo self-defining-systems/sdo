@@ -113,9 +113,9 @@ class PageEvidence:
         return True
 
 
-def live_incident(state: dict[str, Any], fallback_ids: set[str]) -> tuple[datetime, str] | None:
-    """The SDO incident open or awaiting closure in a state: its detection time and ``own`` or ``fallback`` (a page
-    incident, with no opening alerts, once the harness has sent a page)."""
+def live_incident(state: dict[str, Any], fallback_ids: set[str]) -> tuple[str, datetime, str] | None:
+    """The SDO incident open or awaiting closure in a state: its ID, detection time and ``own`` or ``fallback`` (a
+    page incident, with no opening alerts, once the harness has sent a page)."""
     closure = _get(state, "pending_closure") or {}
     if not (_get(state, "incident_open") or closure):
         return None
@@ -124,7 +124,8 @@ def live_incident(state: dict[str, Any], fallback_ids: set[str]) -> tuple[dateti
     if opened is None:
         return None
     paged = bool(_get(request, "page") and not _get(request, "opening_keys"))
-    return opened, "fallback" if paged and fallback_ids else "own"
+    incident = str(_get(request, "incident_id") or "")
+    return incident, opened, "fallback" if paged and fallback_ids else "own"
 
 
 @dataclass
@@ -146,6 +147,9 @@ class FallbackPaging:
     #: The newest traffic sample's ``observed_at``, and own SDO incident openings seen so far.
     observed: datetime | None = None
     own: set[datetime] = field(default_factory=set)
+    #: Incident IDs seen open, and harness pages sent whose incident has not been seen yet.
+    seen: set[str] = field(default_factory=set)
+    unseen_pages: int = 0
 
     def traffic(self, sample: dict[str, Any]) -> None:
         previous, last_bad = self.harm.episode, self.harm.last_bad
@@ -167,10 +171,16 @@ class FallbackPaging:
 
     def sdo(self, state: dict[str, Any], now: datetime) -> None:
         """A controller state read at ``now``."""
+        self._acknowledged(state)
         live = live_incident(state, {e.fallback_id for e in self.episodes if e.fallback_id})
         if live is None:
+            self._cover()
             return
-        opened, source = live
+        incident, opened, source = live
+        if incident and incident not in self.seen:
+            self.seen.add(incident)
+            if source == "fallback":
+                self.unseen_pages = max(0, self.unseen_pages - 1)
         if source == "own":
             self.own.add(opened)
         episode = self.episodes[-1] if self.episodes else None
@@ -179,25 +189,44 @@ class FallbackPaging:
         if episode.fallback_id and source == "fallback" and episode.fallback_page_at is None:
             # The inbox write can succeed even when kubectl timed out waiting.
             episode.fallback_page_at = _stamp(opened)
-        if not episode.fallback_id and not episode.sdo_page_at and now >= _when(episode.at):
-            episode.open_incident = episode.open_incident or source
         self._cover()
+        if not episode.fallback_page_at and not episode.sdo_page_at and now >= _when(episode.at):
+            episode.open_incident = episode.open_incident or source
+
+    def _acknowledged(self, state: dict[str, Any]) -> None:
+        """An incident that opened and closed between two reads: SDO's own unless a sent page is still unseen."""
+        incident = str(_get(state, "last_acknowledged_incident_id") or "")
+        if not incident or incident in self.seen:
+            return
+        self.seen.add(incident)
+        opened = incident_id_time(incident)
+        if opened is None or opened < self.inject:
+            return
+        if self.unseen_pages:
+            self.unseen_pages -= 1
+        else:
+            self.own.add(opened)
+
+    def sent(self, episode: Episode) -> None:
+        """The inbox write for ``episode`` was acknowledged."""
+        self.unseen_pages += 1
 
     def _cover(self) -> None:
         episode = self.episodes[-1] if self.episodes else None
-        if episode is None or episode.fallback_id or episode.sdo_page_at:
+        if episode is None or episode.fallback_page_at or episode.sdo_page_at:
             return
         covering = [at for at in self.own if at >= _when(episode.since)]
         if covering:
             episode.sdo_page_at = _stamp(min(covering))
 
     def paged(self) -> int:
-        return sum(1 for e in self.episodes if e.fallback_id or e.sdo_page_at)
+        return sum(1 for e in self.episodes if e.fallback_page_at or e.sdo_page_at)
 
     def pending(self, now: datetime) -> Episode | None:
-        """The newest episode while the harness will page it once its delay has passed and SDO is not busy."""
+        """The newest episode while the harness will page it once its delay has passed and SDO is not busy (again, under
+        the same inbox ID, when an earlier write failed)."""
         episode = self.episodes[-1] if self.episodes else None
-        if episode is None or episode.fallback_id or episode.sdo_page_at or self.paged() >= self.limit:
+        if episode is None or episode.fallback_page_at or episode.sdo_page_at or self.paged() >= self.limit:
             return None
         if len(self.episodes) == 1:
             return episode
@@ -217,8 +246,12 @@ class FallbackPaging:
 
     def exhausted(self) -> bool:
         """No later episode can be paged: the limit is reached, or the stream cannot show a later onset."""
-        # On such a pin any own SDO incident since the inject covers the one episode it can show.
-        return self.paged() >= self.limit or (self.harm.unsupported and bool(self.episodes or self.own))
+        # Such a pin shows one episode; any own SDO incident since the inject covers it.
+        if self.paged() >= self.limit:
+            return True
+        if not self.harm.unsupported:
+            return False
+        return self.paged() > 0 or (not self.episodes and any(at >= self.inject for at in self.own))
 
 
 def _when(value: str | None) -> datetime:
@@ -652,7 +685,12 @@ def start_pager(a: argparse.Namespace, context: str, out: Path) -> threading.Thr
 
 
 def submit_fallback(
-    paging: PageEvidence, episode: Episode, receipt: Path, args: argparse.Namespace, context: str
+    paging: PageEvidence,
+    episode: Episode,
+    receipt: Path,
+    args: argparse.Namespace,
+    context: str,
+    episodes: FallbackPaging | None = None,
 ) -> None:
     """Page SDO for one harm episode through its external-incident inbox (a new inbox id per episode)."""
     first = paging.sdo_page_at is None and paging.fallback_id in (None, episode.fallback_id)
@@ -673,6 +711,8 @@ def submit_fallback(
         print(f"fallback page failed: {exc}", file=sys.stderr, flush=True)
         return
     episode.fallback_page_at = _stamp(datetime.fromtimestamp(time.time(), UTC))
+    if episodes is not None:
+        episodes.sent(episode)
     if first:
         paging.fallback_page_at = episode.fallback_page_at
     atomic_write_json(receipt, asdict(paging))
@@ -783,7 +823,7 @@ def main(argv: list[str] | None = None) -> int:
                 now = datetime.fromtimestamp(read_started, UTC)
                 episodes.sdo(state, now)
                 if (episode := episodes.due(now, busy)) is not None:
-                    submit_fallback(paging, episode, receipt, a, context)
+                    submit_fallback(paging, episode, receipt, a, context, episodes)
                     busy = True
             raw = json.dumps(state, sort_keys=True)
             if raw != last_raw:

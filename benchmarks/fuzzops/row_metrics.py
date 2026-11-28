@@ -828,11 +828,12 @@ def _sdo(
     row.inject_to_page_s = _seconds(inject, page)
     if "episodes" in collect:
         episodes = list(_objects(collect.get("episodes")))
-        pages = [e for e in episodes if e.get("fallback_id")]
+        # A page whose inbox write never landed (an ID with no time) reached nobody.
+        pages = [e for e in episodes if e.get("fallback_page_at")]
         row.harm_episodes = len(episodes)
         row.self_paged_episodes = sum(1 for e in episodes if e.get("sdo_page_at"))
         row.external_pages = len(pages)
-        row.external_page_at = [str(e["fallback_page_at"]) for e in pages if e.get("fallback_page_at")]
+        row.external_page_at = [str(e["fallback_page_at"]) for e in pages]
         row.external_pages_after_open_incident = sum(1 for e in pages if e.get("open_incident"))
     if page is not None:
         row.page_source = page_source if page_source in {"own", "fallback"} else "own"

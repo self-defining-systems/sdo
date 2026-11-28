@@ -702,3 +702,90 @@ def test_fallback_episodes_are_the_plain_arms_episodes(tmp_path: Path, monkeypat
             starts.append(harm.episode)
     assert _episode_starts(record) == [s.isoformat().replace("+00:00", "Z") for s in starts]
     assert len(starts) == 3  # 34 s is 14 quiet seconds after 19: the same episode
+
+
+def test_a_failed_inbox_write_is_retried_under_the_same_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run = Run(tmp_path, monkeypatch, bad=[range(50), range(100, 500)], own=[(15, 60)])
+    attempts: list[float] = []
+
+    def flaky(manifest: dict[str, Any], *_: str) -> None:
+        attempts.append(run.t)
+        if len(attempts) == 1:
+            raise observe.subprocess.TimeoutExpired("kubectl", 30)
+        run.pages.append((run.t, manifest))
+
+    monkeypatch.setattr(observe, "kubectl_apply", flaky)
+    record = run.watch()
+    [(at, manifest)] = run.pages
+    assert attempts == [220, at]
+    assert at < 224
+    second = record["episodes"][1]
+    assert second["fallback_id"] == json.loads(manifest["data"]["incident.json"])["id"]
+    assert second["fallback_page_at"] == _at(int(at))
+    assert not any(on for t, on in run.standing if 108 < t < at)
+
+
+def test_an_old_pin_still_pages_its_one_episode_after_an_earlier_incident_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The pin publishes no last_bad: one episode at most. An incident from before the inject closes at 20 s.
+    traffic = tmp_path / "traffic.jsonl"
+    traffic.write_text(
+        json.dumps({"inject_at": _at(0), "first_bad": None})
+        + "\n"
+        + json.dumps({"inject_at": _at(0), "first_bad": {"Start": _at(30)}})
+        + "\n"
+    )
+    t = 5.0
+    sent: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        nonlocal t
+        t += seconds
+        if t > 400:
+            raise KeyboardInterrupt
+
+    def state(*_: str) -> dict[str, Any]:
+        if t < 20:
+            request = {"incidentId": "old", "openingKeys": ["users/failing"]}
+            return {"incidentOpen": True, "incidentDetectedAt": _at(-200), "incidentRequest": request}
+        if sent and t >= sent[0] + 2:
+            request = {"incidentId": "paged", "page": PAGE}
+            return {"incidentOpen": True, "incidentDetectedAt": _at(int(sent[0]) + 2), "incidentRequest": request}
+        return {"lastAcknowledgedIncidentId": "old"}
+
+    monkeypatch.setenv("FUZZOPS_TRAFFIC", str(traffic))
+    monkeypatch.setenv("FUZZOPS_OUT", str(tmp_path))
+    monkeypatch.setattr(observe.time, "time", lambda: START.timestamp() + t)
+    monkeypatch.setattr(observe.time, "monotonic", lambda: t)
+    monkeypatch.setattr(observe.time, "sleep", sleep)
+    monkeypatch.setattr(observe, "read_state", state)
+    monkeypatch.setattr(observe, "kubectl_apply", lambda *_: sent.append(t))
+    argv = ["--control-namespace", "app-sdo", "--page-namespace", "app", "--fallback-page-after", "120"]
+    with pytest.raises(KeyboardInterrupt):
+        observe.main([*argv, "--fault", TRIPLE, "--linger", "0", "--lookback", "600"])
+    assert sent == [150]
+
+
+def test_an_own_incident_seen_only_after_its_close_still_counts_as_self_paged() -> None:
+    paging = observe.FallbackPaging(START, 120, 4)
+    sample = {"observed_at": _at(10), "through": _at(6), "first_bad": {"Start": _at(0)}, "last_bad": {"Start": _at(5)}}
+    paging.traffic(sample)
+    opened = f"app-{int(START.timestamp() + 3) * 10**9}"
+    paging.sdo({"last_acknowledged_incident_id": opened}, START + timedelta(seconds=40))
+    [episode] = paging.episodes
+    assert episode.sdo_page_at == _at(3)
+    assert paging.due(START + timedelta(seconds=200), busy=False) is None
+
+
+def test_a_self_paged_episode_records_no_open_incident_before_a_page() -> None:
+    paging = observe.FallbackPaging(START, 120, 4)
+    paging.traffic(
+        {"observed_at": _at(10), "through": _at(6), "first_bad": {"Start": _at(0)}, "last_bad": {"Start": _at(5)}}
+    )
+    request = {"incidentId": "own", "openingKeys": ["users/failing"]}
+    paging.sdo(
+        {"incidentOpen": True, "incidentDetectedAt": _at(8), "incidentRequest": request}, START + timedelta(seconds=9)
+    )
+    [episode] = paging.episodes
+    assert (episode.sdo_page_at, episode.open_incident) == (_at(8), None)
