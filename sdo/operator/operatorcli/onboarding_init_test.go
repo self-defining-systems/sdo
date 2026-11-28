@@ -26,7 +26,7 @@ func TestOnboardingInitScaffoldsGoalJourneysWithoutReplacingAuthoredFiles(t *tes
 		}
 	}
 	entry := []initEntry{{service: "front", port: 8080}}
-	if err := writeOnboardingScaffold(root, entry, ""); err != nil {
+	if err := writeOnboardingScaffoldOnly(root, entry, ""); err != nil {
 		t.Fatal(err)
 	}
 	_, m, mapErr, err := journeyGoalAndMap(root)
@@ -48,7 +48,7 @@ func TestOnboardingInitScaffoldsGoalJourneysWithoutReplacingAuthoredFiles(t *tes
 	if err != nil || appmap.Outside(string(testArch)) != appmap.Outside(arch) {
 		t.Fatalf("architecture = %s, error = %v", testArch, err)
 	}
-	if err := writeOnboardingScaffold(root, entry, ""); err == nil {
+	if err := writeOnboardingScaffoldOnly(root, entry, ""); err == nil {
 		t.Fatal("init accepted a second write to an authored checkout")
 	}
 	if second, err := os.ReadFile(filepath.Join(root, initGenerator)); err != nil || string(second) != string(source) {
@@ -62,12 +62,24 @@ func TestOnboardingInitHelpAndAmbiguousEntry(t *testing.T) {
 		!strings.Contains(out.String(), "--entry SERVICE:PORT") || stderr.Len() != 0 {
 		t.Fatalf("code = %d, help = %q, stderr = %q", code, out.String(), stderr.String())
 	}
-	ports := []initEntry{{service: "web", port: 80}, {service: "api", port: 8080}}
-	if _, err := selectInitEntry(ports, ""); err == nil || !strings.Contains(err.Error(), "api:8080, web:80") {
-		t.Fatalf("ambiguous entry diagnostic: %v", err)
+	ports := []initEntry{{service: "web", port: 80}, {service: "api", port: 8080}, {service: "db", port: 5432}}
+	// With several ports, init takes the one no other component calls and
+	// that holds no data, and names the others: one run, no --entry needed.
+	seeded := appmap.Map{
+		Components: []appmap.Component{{Name: "web", Services: []string{"web"}}, {Name: "api", Services: []string{"api"}}, {Name: "db", Services: []string{"db"}, HoldsData: true}},
+		Edges:      []appmap.Edge{{From: "web", To: "api"}, {From: "api", To: "db"}},
 	}
-	if entry, err := selectInitEntry(ports, "api:8080"); err != nil || entry != ports[1] {
+	if entry, others, err := selectInitEntry(ports, "", seeded); err != nil || entry != ports[0] || !strings.Contains(others, "api:8080") {
+		t.Fatalf("selected %v, others %q, error = %v", entry, others, err)
+	}
+	if entry, _, err := selectInitEntry(ports, "", appmap.Map{}); err != nil || entry != ports[1] {
+		t.Fatalf("without a map the first port by name: %v, %v", entry, err)
+	}
+	if entry, _, err := selectInitEntry(ports, "api:8080", seeded); err != nil || entry != ports[1] {
 		t.Fatalf("selected %v, error = %v", entry, err)
+	}
+	if _, _, err := selectInitEntry(ports, "nope:1", seeded); err == nil || !strings.Contains(err.Error(), "api:8080") {
+		t.Fatalf("an unknown --entry names the choices: %v", err)
 	}
 }
 
@@ -90,7 +102,7 @@ func TestOnboardingInitKeepsTheMapCompact(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := writeOnboardingScaffold(root, []initEntry{{service: "front", port: 80}}, ""); err != nil {
+	if err := writeOnboardingScaffoldOnly(root, []initEntry{{service: "front", port: 80}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	written, err := os.ReadFile(filepath.Join(root, ".sdo/arch.md"))
@@ -118,5 +130,24 @@ func TestOnboardingInitKeepsTheMapCompact(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(written), "# Notes\n\n") || !strings.HasSuffix(string(written), appmap.EndMarker+"\n\nTrailing text.\n") {
 		t.Fatalf("text outside the region changed:\n%s", written)
+	}
+}
+
+func writeOnboardingScaffoldOnly(root string, candidates []initEntry, requested string) error {
+	_, err := writeOnboardingScaffold(root, candidates, requested)
+	return err
+}
+
+// The onboarding help is a short index: each command's own --help has the
+// details, so an agent reads only the page it needs.
+func TestOnboardingHelpIsAShortIndex(t *testing.T) {
+	var out, stderr bytes.Buffer
+	if code := RunOnboarding(context.Background(), []string{"--help"}, &out, &stderr); code != exitClean || out.Len() > 1500 {
+		t.Fatalf("code %d, %d bytes:\n%s", code, out.Len(), &out)
+	}
+	for _, command := range []string{"init", "journeys", "check", "soak"} {
+		if !strings.Contains(out.String(), "  "+command+" ") {
+			t.Errorf("index lacks %s", command)
+		}
 	}
 }

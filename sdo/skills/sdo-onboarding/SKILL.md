@@ -12,7 +12,9 @@ the [worked example](references/example.md), [probe design](references/probe-des
 
 1. Read the manifests, README and API: how users enter, sign in and tell a result is correct. Try requests with curl.
 2. Run `sdo-operator onboarding init --repo DIR --namespace NS`; fill in routes, paths and exact assertions.
-3. Write one scenario and run `onboarding journeys --only ID --quick`; then the rest; then the full run.
+3. Write one scenario; run `onboarding journeys --only ID --quick` after each edit (one pass, each request and
+   answer printed). Then the next scenario. Run the full `journeys` once all pass, and after a fix rerun only
+   that ID (`--only ID`).
 4. If the app counts requests by route, method and status, map that metric (`onboarding check --metrics`).
 
 `onboarding journeys --plan` sends nothing. Fix `missing-map`, `missing-probe`, then `failing` and `unchecked`.
@@ -56,20 +58,19 @@ func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint //
 const DateLayout = "2006-01-02" // layout DateRange and DaysAfter read and write
 const StateNow = "sdo.now" // State key holding the start time of the iteration, RFC 3339 in UTC
 const UniqueWidth = 16 // number of hex digits Unique appends
-func FromSeedPair(key string, count int, first func(index int) string, second func(index int) string) (Param, Param) // returns two parameters rendered from the same seeded record, such as a user name and its password
-type Param interface{Value(rng *rand.Rand, state State, generated map[string]string) (string, error)} // generates one request parameter from the iteration's random source, its shared State, and the parameters of the same request generated so far
+func FromSeedPair(key string, count int, first func(index int) string, second func(index int) string) (Param, Param) // returns two parameters rendered from the same seeded record
+type Param interface{Value(rng *rand.Rand, state State, generated map[string]string) (string, error)}
 func Const(value string) Param // fixed value
 func DateRange(from string, to string) Param // picks a calendar date (YYYY-MM-DD) in [from, to]
-func DaysAfter(param string, min int, max int) Param // date between min and max days after another date parameter of the same request, such as a check-out date after a check-in date
+func DaysAfter(param string, min int, max int) Param // date between min and max days after another date parameter of the same request
 func FloatBetween(low float64, high float64, decimals int) Param // picks a decimal in [low, high] rounded to decimals places
-func FromPrevious(key string) Param // value an earlier step of the same iteration saved in State, for example with SaveJSON
-func FromSeed(count int, render func(index int) string) Param // picks one of the count records the application seeds at startup and renders it, for example a seeded user name
+func FromPrevious(key string) Param // value an earlier step of the same iteration saved in State
+func FromSeed(count int, render func(index int) string) Param // picks one of the count records the application seeds at startup and renders it
 func IntBetween(low int, high int) Param // picks an integer in [low, high]
 func OneOf(values ...string) Param // picks one of values uniformly
 func Unique(prefix string) Param // prefix plus UniqueWidth lowercase hex digits drawn from the iteration's random source
 type Params map[string]Param // maps parameter names to generators
-func (p Params) Generate(rng *rand.Rand, state State) (map[string]string, error) // renders every parameter of one request to its string value
-type State map[string]string // carries values between the steps of one iteration, for example an ID a create step saved for the read and cleanup steps that follow
+type State map[string]string // carries values between the steps of one iteration
 // Custom checks and SSH
 const MethodExec = "EXEC"
 type Endpoint interface{Build(ctx context.Context, rng *rand.Rand, state State) (Request, error); Check(response Response, state State) Verdict}
@@ -80,7 +81,7 @@ func Fail(format string, args ...any) Verdict
 func NotYet(format string, args ...any) Verdict
 func Pass() Verdict
 ```
-Generator imports: the standard library and the SDK, except what reaches the network, files or processes or draws its own randomness: `net`, `crypto/tls`, `crypto/rand`, `math/rand`, `hash/maphash`, `mime/multipart`, `os`, `syscall`, `log`, `flag`, `io/ioutil`, `path/filepath`, `plugin`, `runtime`, `unsafe`, `embed`, `debug`, `go`, `testing`, `expvar`, `C` and below (`net/url`, `net/textproto`, `math/rand/v2` are fine; Build's rng is a math/rand/v2 `*rand.Rand`). Read the iteration's time from `state[traffic.StateNow]`, not `time.Now`.
+Imports: the standard library and the SDK, except network, files, processes and own randomness: net crypto/tls crypto/rand math/rand hash/maphash mime/multipart os syscall log flag io/ioutil path/filepath plugin runtime unsafe embed debug go testing expvar C and below (but net/url, net/textproto and math/rand/v2, whose `*rand.Rand` Build gets). Time: `state[traffic.StateNow]`, not `time.Now`.
 Map evidence: `config`, `manifest`, `observed`. Use `config` for application source.
 <!-- probe-sdk:end -->
 

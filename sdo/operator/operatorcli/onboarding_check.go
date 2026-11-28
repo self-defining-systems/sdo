@@ -34,7 +34,17 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// OnboardingUsage documents "sdo-operator onboarding".
+// OnboardingIndex is "sdo-operator onboarding --help": one line per command;
+// each command's --help has its details.
+const OnboardingIndex = `usage: sdo-operator onboarding <command> [flags]; sdo-operator onboarding <command> --help for details
+
+  init      scaffold the application map and one probe stub per goal journey from the live Services
+  journeys  run the probes against the live application: --quick --only ID tries one probe in seconds,
+            --plan checks memory and the schedule without sending, no flag runs every check
+  check     with --metrics, check the mapped request metrics tell operations apart
+  soak      (outside a session) watch an installed export's probes`
+
+// OnboardingUsage documents "sdo-operator onboarding check".
 const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS [--prometheus URL|NS/SERVICE:PORT] [--control-namespace NS]
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
                                     [--settle 90s] [--json] [--report FILE]
@@ -148,7 +158,7 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
 // RunOnboarding runs "sdo-operator onboarding <args>" and returns the exit code.
 func RunOnboarding(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(stdout, OnboardingInitUsage+"\n\n"+OnboardingJourneysUsage+"\n\n"+OnboardingSoakUsage+"\n\n"+OnboardingUsage)
+		fmt.Fprintln(stdout, OnboardingIndex)
 		return exitClean
 	}
 	if args[0] == "init" {

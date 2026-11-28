@@ -437,7 +437,7 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 	for _, op := range cfg.Map.Operations {
 		entry, ok := cfg.Map.EntryFor(op.Entry.Service)
 		if !ok {
-			add(ItemJourneys, op.ID, Red, fmt.Sprintf("no entries record for service %s: declare its request metric and route, method and status labels", op.Entry.Service))
+			add(ItemJourneys, op.ID, Red, noEntriesDetail(op.Entry.Service))
 			continue
 		}
 		st := &opState{op: op, entry: entry, route: op.RouteValue(), method: op.Entry.Method, internal: cfg.Map.Internal(op)}
@@ -595,7 +595,7 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 		case st.sendErr != nil:
 			result(ItemJourneys, st.op.ID, Red, "sending traffic failed: "+st.sendErr.Error())
 		case len(duplicate[st.entry.Service+"|"+st.method+"|"+st.route]) > 1:
-			result(ItemJourneys, st.op.ID, Red, fmt.Sprintf("route label value %q is shared by operations %s; operations need distinct route values", st.route, strings.Join(duplicate[st.entry.Service+"|"+st.method+"|"+st.route], ", ")))
+			result(ItemJourneys, st.op.ID, Red, fmt.Sprintf("route label value %q is shared by operations %s; operations need distinct route values: when one route serves several journeys, keep one operation for it and list every journey's checks in its probes, or add under `reasons:` `- {item: %s, subject: <operation>, reason: <why>}`", st.route, strings.Join(duplicate[st.entry.Service+"|"+st.method+"|"+st.route], ", "), ItemJourneys))
 		case !st.present:
 			result(ItemJourneys, st.op.ID, Red, fmt.Sprintf("no series of %s carries %s=%q; route values on this metric: %s", st.entry.Metric, st.entry.Labels.Route, st.route, keys(es.routesAfter)))
 		case st.sent == 0:
@@ -648,14 +648,14 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 		}
 		sort.Strings(stray)
 		if len(stray) > 0 {
-			result(ItemRoutes, name, Red, "route values moved that no operation declares: "+strings.Join(stray, ", "))
+			result(ItemRoutes, name, Red, "route values moved that no operation declares: "+strings.Join(stray, ", ")+"; map each as an operation, or list it under `routes: {excluded: [{route: <route>, why: <why>}]}` (health, metrics and static routes users never call)")
 		}
 	}
 	exposed := map[string]bool{}
 	for _, e := range cfg.Exposed {
 		exposed[e.Service] = true
 		if _, ok := cfg.Map.EntryFor(e.Service); !ok {
-			result(ItemRoutes, e.Service, Red, fmt.Sprintf("exposed entry (%s) has no entries record", e.Via))
+			result(ItemRoutes, e.Service, Red, fmt.Sprintf("exposed entry (%s) has no entries record; %s", e.Via, entriesHint(e.Service)))
 		}
 	}
 	for _, name := range services {
@@ -686,4 +686,13 @@ func mapKeys(m map[string]float64) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func noEntriesDetail(service string) string {
+	return fmt.Sprintf("no entries record for service %s: %s", service, entriesHint(service))
+}
+
+func entriesHint(service string) string {
+	return fmt.Sprintf("add under `entries:` `- {service: %s, metric: <request counter>, labels: {route: <label>, method: <label>, status: <label>}}`; "+
+		"a service that counts no requests gets `- {item: %s, subject: <operation>, reason: <why>}` under `reasons:`", service, ItemJourneys)
 }

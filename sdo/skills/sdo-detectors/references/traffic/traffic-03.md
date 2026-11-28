@@ -118,6 +118,10 @@ func (e *Engine) UsePasswords(source Passwords)
 func (e *Engine) UseSetupLock(l SetupLocker)
     UseSetupLock makes e serialize each setup request across processes with l.
 
+func (e *Engine) UseStepLog(log func(StepLog))
+    UseStepLog sends every request the engine sends, and its answer, to log.
+    It is for a person or agent trying one scenario; a prober leaves it unset.
+
 func (e *Engine) UseWarmup(warming func() bool)
     UseWarmup makes Run pace iterations at the workload's WarmupRate while
     warming reports true, and at Rate otherwise. The caller owns the predicate:
@@ -210,9 +214,4 @@ func MatchFailures(window Window, patterns ...logs.Pattern) ([]FailureMatch, err
     keys on the exact failure text instead of searching a finding's Evidence.
     Patterns are RE2 and use the same ID and size rules as log patterns;
     a malformed pattern is an error, never a non-match.
-
-type FaultClass string
-    FaultClass is a failure a scenario must detect. Every scenario must detect
-    FaultUnreachable and FaultErrorStatus; the others are declared when the
-    scenario's checks are strong enough to catch them.
 ```

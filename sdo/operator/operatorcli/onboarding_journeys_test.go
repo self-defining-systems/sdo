@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 	"testing"
 )
@@ -70,19 +69,18 @@ func TestQuickJourneysRequiresOneExactScenario(t *testing.T) {
 	}
 }
 
-func TestQuickJourneysStopsAtTheSharedMemoryCheck(t *testing.T) {
+// --quick is the seconds-long loop on one probe: it never waits for the
+// shared memory check (the full journeys run does that), so a memory
+// rejection does not stop it.
+func TestQuickJourneysSkipsTheSharedMemoryCheck(t *testing.T) {
 	repo := parityRepo(t)
 	t.Setenv("SDO_ACTOR", "invalid-actor")
 	t.Setenv("SDO_PHASE", "initial")
 	t.Setenv("SDO_BASE_COMMIT", "HEAD")
-	var check, quick, checkErr, quickErr bytes.Buffer
-	code := RunMemory(context.Background(), []string{"check", "--root", repo, "--replay", "off"}, processio.Environment, &check, &checkErr)
-	if code == exitClean {
-		t.Fatal("expected the shared check to reject an invalid actor")
-	}
-	got := RunOnboarding(context.Background(), []string{"journeys", "--repo", repo, "--namespace", "example", "--quick", "--only", "read"}, &quick, &quickErr)
-	if got != code || quickErr.String() != checkErr.String() || quick.String() != check.String() {
-		t.Fatalf("got (%d, %q, %q), want (%d, %q, %q)", got, &quickErr, &quick, code, &checkErr, &check)
+	var quick, quickErr bytes.Buffer
+	RunOnboarding(context.Background(), []string{"journeys", "--repo", repo, "--namespace", "example", "--quick", "--only", "read", "--kubeconfig", filepath.Join(t.TempDir(), "none")}, &quick, &quickErr)
+	if strings.Contains(quick.String()+quickErr.String(), "invalid-actor") {
+		t.Fatalf("--quick ran the memory check: %s %s", &quick, &quickErr)
 	}
 }
 
