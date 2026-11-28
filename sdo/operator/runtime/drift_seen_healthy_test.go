@@ -29,7 +29,7 @@ func (w healthyWorld) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, err
 	}
 	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind,
 		"metadata": map[string]any{"name": ref.Name, "namespace": ref.Namespace},
-		"spec":     map[string]any{"selector": w.content[ref.Name]}}}, nil
+		"spec":     map[string]any{"selector": map[string]any{"app": w.content[ref.Name]}}}}, nil
 }
 
 func healthyController(t *testing.T, start int64, world healthyWorld, probe sdk.Detector) *Controller {

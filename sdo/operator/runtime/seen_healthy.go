@@ -4,6 +4,10 @@ import (
 	"errors"
 	"time"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
+
 	"sdo.dev/operator/sdk"
 )
 
@@ -15,9 +19,7 @@ import (
 const absentContent = "absent"
 
 // objectContent is the digest of what the source comparison sees of an object.
-// Empty values are dropped so a typed and an unstructured read of one object
-// agree. A gone object has its own value; an unreadable one has none, as does a
-// Secret, which the restore never writes (SourceDepartures).
+// A gone object has its own value; an unreadable one, and a Secret, has none.
 func objectContent(view any, ref sdk.ObjectRef) string {
 	reader, ok := view.(sdk.ObjectReader)
 	if !ok || ref.Kind == "Secret" {
@@ -30,33 +32,30 @@ func objectContent(view any, ref sdk.ObjectRef) string {
 	case err != nil:
 		return ""
 	}
-	return digestJSON(withoutEmpty(comparableFields(object.Object)))
+	fields, err := typedEncoding(object)
+	if err != nil {
+		return ""
+	}
+	return digestJSON(comparableFields(fields))
 }
 
-func withoutEmpty(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		kept := map[string]any{}
-		for key, child := range typed {
-			if child = withoutEmpty(child); child != nil {
-				kept[key] = child
-			}
-		}
-		if len(kept) == 0 {
-			return nil
-		}
-		return kept
-	case []any:
-		if len(typed) == 0 {
-			return nil
-		}
-		items := make([]any, len(typed))
-		for index, child := range typed {
-			items[index] = withoutEmpty(child)
-		}
-		return items
+// typedEncoding gives a built-in object the one form its Go type encodes, so a
+// snapshot read and a direct read agree on what is written for an unset field.
+// No empty value is dropped here: an empty object or list item the type keeps
+// carries meaning ({} selects everything). A custom resource has only the
+// served form.
+func typedEncoding(object *unstructured.Unstructured) (map[string]any, error) {
+	typed, err := scheme.Scheme.New(object.GroupVersionKind())
+	if kruntime.IsNotRegisteredError(err) {
+		return object.Object, nil
 	}
-	return value
+	if err != nil {
+		return nil, err
+	}
+	if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err != nil {
+		return nil, err
+	}
+	return kruntime.DefaultUnstructuredConverter.ToUnstructured(typed)
 }
 
 // seenHealthy reports that the object's content now is the content the event
