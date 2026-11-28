@@ -30,12 +30,14 @@ active in the open incident without joining it (a clue such as a store's state
 or a drift, a Kubernetes condition, a learned detector's finding, a finding
 attached before launch), the controller stores the state of the observation
 they appeared in as `open@join-<n>.json` (with `open@join-<n>-recordings.json`),
-once per pass; `<n>` counts the join captures (one past the last stored). A
-finding is captured once per incident (deduplicated by finding key) and at most
-6 passes take new findings; joined alerts are bounded by the join window. A
+once per pass; `<n>` is a count the controller keeps in its persisted state
+(a failed capture uses up its number, so numbers can skip). A finding is
+captured once per incident (deduplicated by finding key) and at most 6 passes
+take new findings; a failed capture keeps its findings for the next of those
+passes. Joined alerts are bounded by the join window. A
 fault that started after the incident opened shows only there. Each has
 `join-<n>-context.json`: `joined_keys` (the alerts of that pass),
-`new_findings` (the findings that first appeared in it), `known_writes_before`,
+`new_findings` (the findings that first appeared in it, in key order), `known_writes_before`,
 `write_sources` (`automatic_stage`, `responder_plan`, `agent_recording`,
 `repair_action`) and `recording`. Unlike the opening captures, a join capture
 can follow SDO's or the agent's writes; `known_writes_before: false` means none

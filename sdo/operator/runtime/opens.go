@@ -239,7 +239,7 @@ func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
 	var found []sdk.Finding
 	if request != nil {
 		id, namespace = request.IncidentID, request.Namespace
-		found = c.takeFindingCapturesLocked(id)
+		found = c.dueFindingCapturesLocked(id)
 		refs = findingCaptureRefs(append(slices.Clone(request.Findings), found...))
 		stageWrote = playbookApplied(request.PriorStages)
 	}
@@ -247,23 +247,23 @@ func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
 	if result != nil {
 		resultPlans, resultActions = len(result.PlanApplications) > 0, slices.ContainsFunc(result.RepairActions, func(r RepairActionReceipt) bool { return r.Success })
 	}
-	c.mu.Unlock()
 	if len(due)+len(found) == 0 || id == "" || c.config.CorpusSessionRoot == "" || snapshot == nil {
+		c.mu.Unlock()
 		return
 	}
-	joined, err := memory.NextJoinCapture(c.config.CorpusSessionRoot, id)
-	if err != nil {
+	joined := c.nextJoinCaptureLocked(id)
+	c.mu.Unlock()
+	// One capture per pass holds every alert that joined and every finding
+	// that appeared in it.
+	if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, id, memory.JoinedCapturePhase(joined), snapshot, namespace, refs...); err != nil {
 		if c.OnError != nil {
-			c.OnError(fmt.Errorf("number the join capture: %w", err))
+			c.OnError(fmt.Errorf("capture joined alert open state: %w", err))
 		}
 		return
 	}
-	// One capture per pass holds every alert that joined and every finding
-	// that appeared in it.
-	if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, id, memory.JoinedCapturePhase(joined), snapshot, namespace, refs...); err != nil && c.OnError != nil {
-		c.OnError(fmt.Errorf("capture joined alert open state: %w", err))
-		return
-	}
+	c.mu.Lock()
+	c.findingCapturesTakenLocked(id, found)
+	c.mu.Unlock()
 	joinContext := memory.JoinCaptureContext{JoinedKeys: due}
 	for _, finding := range found {
 		joinContext.NewFindings = append(joinContext.NewFindings, FindingStateKey(finding.DetectorID, finding.Fingerprint))

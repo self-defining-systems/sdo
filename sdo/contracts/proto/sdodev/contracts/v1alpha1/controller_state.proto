@@ -239,6 +239,11 @@ message ControllerState {
   // Recent healthy start-to-Ready times per workload, so a restart keeps what
   // the install has learned about how long its workloads take to start.
   repeated StartupObservation startup_observations = 53;
+  // The join captures (open@join-n) the incident join_capture_incident_id has
+  // taken; the next is numbered one past it. Kept here, never derived from the
+  // incident's session directory, which the responder can write.
+  string join_capture_incident_id = 55;
+  int32 join_captures = 56 [(buf.validate.field).int32.gte = 0];
   reserved 32, 33, 34, 45, 54;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors", "verification_deadline_at", "healthy_since";
 }

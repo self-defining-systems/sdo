@@ -1,6 +1,9 @@
 package runtime
 
 import (
+	"slices"
+	"strings"
+
 	"sdo.dev/operator/sdk"
 )
 
@@ -43,18 +46,53 @@ func (c *Controller) queueFindingCapture(finding sdk.Finding) {
 	state.due = append(state.due, finding)
 }
 
-// takeFindingCapturesLocked returns the findings due a capture for incident
-// and clears them; past the bound it returns none. Caller holds c.mu.
-func (c *Controller) takeFindingCapturesLocked(incident string) []sdk.Finding {
+// dueFindingCapturesLocked returns the findings due a capture for incident,
+// in key order, and counts the pass against the bound; past it, it returns
+// none. They stay due until findingCapturesTakenLocked: a failed capture
+// retries them next pass. Caller holds c.mu.
+func (c *Controller) dueFindingCapturesLocked(incident string) []sdk.Finding {
 	state := &c.findingCaptures
-	if state.incident != incident || len(state.due) == 0 {
-		return nil
-	}
-	due := state.due
-	state.due = nil
-	if state.passes >= maxFindingCaptures {
+	if state.incident != incident || len(state.due) == 0 || state.passes >= maxFindingCaptures {
 		return nil
 	}
 	state.passes++
+	due := slices.Clone(state.due)
+	slices.SortFunc(due, func(a, b sdk.Finding) int {
+		return strings.Compare(FindingStateKey(a.DetectorID, a.Fingerprint), FindingStateKey(b.DetectorID, b.Fingerprint))
+	})
 	return due
+}
+
+// findingCapturesTakenLocked clears the findings a capture stored. Findings
+// queued since dueFindingCapturesLocked stay due. Caller holds c.mu.
+func (c *Controller) findingCapturesTakenLocked(incident string, taken []sdk.Finding) {
+	state := &c.findingCaptures
+	if state.incident != incident {
+		return
+	}
+	state.due = slices.DeleteFunc(state.due, func(finding sdk.Finding) bool {
+		return slices.ContainsFunc(taken, func(t sdk.Finding) bool {
+			return t.DetectorID == finding.DetectorID && t.Fingerprint == finding.Fingerprint
+		})
+	})
+}
+
+// joinCaptureCounter is how many join captures (open@join-n) incident has
+// taken. The controller keeps and persists it: the session directory the
+// captures live in is writable by the responder, so a file planted there
+// never decides a number.
+type joinCaptureCounter struct {
+	incident string
+	taken    int
+}
+
+// nextJoinCaptureLocked reserves incident's next join capture number. A
+// number is used once even when its capture fails, since a failed capture can
+// leave a write-once file behind. Caller holds c.mu.
+func (c *Controller) nextJoinCaptureLocked(incident string) int {
+	if c.joinCaptures.incident != incident {
+		c.joinCaptures = joinCaptureCounter{incident: incident}
+	}
+	c.joinCaptures.taken++
+	return c.joinCaptures.taken
 }

@@ -354,7 +354,9 @@ type Controller struct {
 	// findingCaptures are the open incident's new non-alert findings whose
 	// open state is due a join capture.
 	findingCaptures findingCaptureState
-	stateRestored   bool
+	// joinCaptures numbers the open incident's join captures.
+	joinCaptures  joinCaptureCounter
+	stateRestored bool
 
 	// CheckHealth refuses evaluation and effects while the compiled detector bundle
 	// lags the accepted health policy; the rebuilt controller resumes the work.
@@ -2686,8 +2688,9 @@ func (c *Controller) exportState(unencodable func(protoreflect.Name, error)) (*c
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
-		BusyUntil: optionalBusyUntil(c.busyUntilLocked(c.clock())),
-		Startup:   c.startup.contract(),
+		BusyUntil:             optionalBusyUntil(c.busyUntilLocked(c.clock())),
+		JoinCaptureIncidentId: c.joinCaptures.incident, JoinCaptures: int32(c.joinCaptures.taken),
+		Startup: c.startup.contract(),
 
 		StartupObservations: c.config.StartupObservations.contract(),
 	}
@@ -2787,6 +2790,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.lastAcknowledgedIncidentID = state.GetLastAcknowledgedIncidentId()
 	c.lastAcknowledgedExternalIncidentID = state.GetLastAcknowledgedExternalIncidentId()
 	c.lastPageID = state.GetLastPageId()
+	c.joinCaptures = joinCaptureCounter{incident: state.GetJoinCaptureIncidentId(), taken: int(state.GetJoinCaptures())}
 	c.evaluationIteration = int(state.GetEvaluationIteration())
 	c.stepCount = state.GetStepCount()
 	c.timeline = cloneTimeline(detectorTimelineState(state.GetDetectorTimeline()))
