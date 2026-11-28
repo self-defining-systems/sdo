@@ -123,9 +123,18 @@ def _proposal_with_image(image: str):
     return turn
 
 
-# The Go host validates --registry-host as host[:port] (buildkit.ValidateRegistryHost): the port is optional, so a
-# registry served on the default HTTPS port (a cloud registry) is a valid trusted host for the deployer too.
-@pytest.mark.parametrize("registry", ["registry.example.com", "registry.example.com:5000", "10.0.0.5:5000"])
+# The Go host validates --registry-host as host[:port][/path] (buildkit.ValidateRegistryHost): the port is optional, so
+# a registry served on the default HTTPS port (a cloud registry) is a valid trusted host, and a path prefix serves
+# registries that need a repository path (ECR).
+@pytest.mark.parametrize(
+    "registry",
+    [
+        "registry.example.com",
+        "registry.example.com:5000",
+        "10.0.0.5:5000",
+        "123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo/q2-deploy",
+    ],
+)
 def test_deployer_accepts_every_registry_host_the_go_host_accepts(
     registry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -142,7 +151,8 @@ def test_deployer_accepts_every_registry_host_the_go_host_accepts(
 @pytest.mark.parametrize(
     "registry",
     [
-        "registry.example.com/team",
+        "registry.example.com/Team",
+        "registry.example.com/",
         "https://registry.example.com",
         "Registry.example.com",
         "registry.example.com:0",

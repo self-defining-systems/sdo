@@ -32,7 +32,7 @@ func TestCatalogRegistersBuiltIns(t *testing.T) {
 func TestCatalogRejectsInvalidConfig(t *testing.T) {
 	for name, mutate := range map[string]func(*images.Config){
 		"no push host":    func(c *images.Config) { c.Builder.AllowedRegistryHost = "" },
-		"path as host":    func(c *images.Config) { c.Builder.AllowedRegistryHost = "reg.example/ns" },
+		"trailing slash":  func(c *images.Config) { c.Builder.AllowedRegistryHost = "reg.example/ns/" },
 		"negative budget": func(c *images.Config) { c.BuildBudget = -time.Second },
 	} {
 		t.Run(name, func(t *testing.T) {

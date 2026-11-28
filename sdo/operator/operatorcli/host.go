@@ -66,7 +66,7 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	repositoryPVC := flags.String("repository-pvc", "", "shared accepted repository PVC")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	registrySecret := flags.String("registry-push-secret", "", "separate image registry credentials Secret")
-	registryHost := flags.String("registry-host", "", "trusted source image registry host[:port]")
+	registryHost := flags.String("registry-host", "", "trusted push target for built images: registry host[:port] with an optional repository path prefix (host/team/app)")
 	registrationSource := flags.String("agent-registrations", "", "local registration JSON directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap name")
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")

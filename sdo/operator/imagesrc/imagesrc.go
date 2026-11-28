@@ -173,7 +173,7 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 		}
 		d, ok := choice[image]
 		if !ok {
-			if c.pushHost != "" && registryHost(image) == c.pushHost {
+			if UnderTarget(image, c.pushHost) {
 				return nil, fmt.Errorf("imagesrc: image %q is under the trusted push registry %q but no source is declared for it; images the operator pushes must be declared (a typo or a rewritten name would otherwise pin a stale earlier push)", image, c.pushHost)
 			}
 			if c.defaultID == "" {

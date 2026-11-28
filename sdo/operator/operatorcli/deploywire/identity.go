@@ -124,7 +124,7 @@ func (d Identity) Deployer(client kubernetes.Interface, target Target, environme
 func (d Identity) prebuiltSource(client kubernetes.Interface, controlNamespace string) *prebuilt.Source {
 	insecure := ""
 	if d.RegistryInsecure {
-		insecure = d.RegistryHost
+		insecure, _ = imagesrc.SplitRegistryTarget(d.RegistryHost)
 	}
 	source := &prebuilt.Source{InsecureHost: insecure, Cluster: NodeImages{Client: client}}
 	if d.RegistryPushSecret != "" {

@@ -55,7 +55,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	scriptImage := flags.String("script-image", "", "fixed slim RunScript tool image")
 	buildkitImage := flags.String("buildkit-image", "", "isolated source image builder")
 	registryPushSecret := flags.String("registry-push-secret", "", "image registry credentials Secret")
-	registryHost := flags.String("registry-host", "", "trusted source image registry host[:port]")
+	registryHost := flags.String("registry-host", "", "trusted push target for built images: registry host[:port] with an optional repository path prefix (host/team/app)")
 	repositoryPVC := flags.String("repository-pvc", "", "shared repository PVC")
 	repositoryMount := flags.String("repository-mount-path", "", "shared repository PVC mount")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")

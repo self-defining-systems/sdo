@@ -135,7 +135,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, se
 	var identity deployIdentity
 	flags.StringVar(&identity.BuildKitImage, "buildkit-image", "", "digest-pinned image builder for upstream advances")
 	flags.StringVar(&identity.RegistryPushSecret, "registry-push-secret", "", "image registry push Secret for upstream advances")
-	flags.StringVar(&identity.RegistryHost, "registry-host", "", "trusted source image registry host[:port]")
+	flags.StringVar(&identity.RegistryHost, "registry-host", "", "trusted push target for built images: registry host[:port] with an optional repository path prefix (host/team/app)")
 	flags.BoolVar(&identity.RegistryInsecure, "registry-insecure", false, "allow the explicitly configured HTTP image registry")
 	if err := flags.Parse(args[1:]); err != nil {
 		return fail(err)

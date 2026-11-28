@@ -111,9 +111,20 @@ var namespaceName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 var pinnedImage = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var registryDNSLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+var registryPathComponent = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 
+// validRegistryHost accepts the push target host[:port][/path] (the path
+// prefix serves registries that need a repository path).
 func validRegistryHost(value string) bool {
-	host, port, hasPort := strings.Cut(value, ":")
+	authority, prefix, hasPrefix := strings.Cut(value, "/")
+	if hasPrefix {
+		for _, component := range strings.Split(prefix, "/") {
+			if !registryPathComponent.MatchString(component) {
+				return false
+			}
+		}
+	}
+	host, port, hasPort := strings.Cut(authority, ":")
 	if hasPort {
 		number, err := strconv.Atoi(port)
 		if err != nil || number < 1 || number > 65535 {
