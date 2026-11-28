@@ -6,11 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// JoinCaptureContext is what Go knew when it took an alert-join capture; the
+// JoinCaptureContext is what Go knew when it took a join capture; the
 // format lives with the other capture formats in sdktest.
 type JoinCaptureContext = sdktest.JoinCaptureContext
 
@@ -45,4 +46,23 @@ func ReadJoinCaptureContext(dir string, n int) (JoinCaptureContext, error) {
 		return record, err
 	}
 	return record, json.Unmarshal(data, &record)
+}
+
+// NextJoinCapture is the number of an incident's next join capture: one past
+// the last one stored, so numbering survives a restart and never reuses a
+// write-once capture.
+func NextJoinCapture(repositoryMount, incidentID string) (int, error) {
+	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
+	if err != nil {
+		return 0, err
+	}
+	phases := sdktest.JoinCapturePhases(dir)
+	if len(phases) == 0 {
+		return 1, nil
+	}
+	last, err := strconv.Atoi(strings.TrimPrefix(phases[len(phases)-1], "join-"))
+	if err != nil {
+		return 0, err
+	}
+	return last + 1, nil
 }

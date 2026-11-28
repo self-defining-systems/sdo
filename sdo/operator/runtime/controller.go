@@ -351,6 +351,9 @@ type Controller struct {
 	// joinCapturesDue are the alerts that joined the open incident since the
 	// last observation captured the state they joined in.
 	joinCapturesDue []string
+	// findingCaptures are the open incident's new non-alert findings whose
+	// open state is due a join capture.
+	findingCaptures findingCaptureState
 	stateRestored   bool
 
 	// CheckHealth refuses evaluation and effects while the compiled detector bundle
@@ -1050,7 +1053,9 @@ func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
 // a user test or failing user traffic joins its alert set while the responder
 // or the automatic stage works it (joinAlertSet), and otherwise pages at once on
 // the open incident (pageLate). Every other opener waits in the batcher for the
-// next incident.
+// next incident. A finding new to the open incident that does not join its
+// alert set is due a join capture (queueFindingCapture); a joined alert takes
+// one through joinAlertSet.
 func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, now time.Time, spec sdk.DetectorSpec) {
 	if c.config.ExternalIncidentsOnly {
 		// External clues: tracked for the candidate view only.
@@ -1060,12 +1065,14 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 		return
 	}
 	if !c.opens(finding) {
+		c.queueFindingCapture(finding)
 		if !c.attachBeforeLaunch([]sdk.Finding{finding}, false) {
 			c.attachStageActivation(finding)
 		}
 		return
 	}
 	if c.attachBeforeLaunch([]sdk.Finding{finding}, true) {
+		c.queueFindingCapture(finding)
 		return
 	}
 	if c.joinAlertSet(finding, now) {
@@ -1074,6 +1081,9 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 		c.attachStageActivation(finding)
 		return
 	}
+	// A Kubernetes condition or an alert past the join window waits for the
+	// next incident, but its cause may already be this incident's.
+	c.queueFindingCapture(finding)
 	c.pageLate(finding, now)
 	if spec.Class == "" {
 		c.batcher.AddAt(finding, now)

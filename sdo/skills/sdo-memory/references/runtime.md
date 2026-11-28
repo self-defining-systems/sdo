@@ -137,7 +137,7 @@ Mutating commands always store complete per-action results, evidence, program ru
 
 - When captured, filename: open@detect.json; provenance open_at: detect.
 - When captured, filename: open@pre-apply.json; provenance open_at: pre-apply.
-- When alerts joined the open incident, filename: open@join-<n>.json; provenance open_at: join-<n>. It is the state a later fault first shows in. It can follow SDO's or the agent's writes: join-<n>-context.json says whether a known write preceded it, and a Diagnose matching there may be matching state a write made.
+- When alerts joined the open incident or a new finding first appeared in it, filename: open@join-<n>.json; provenance open_at: join-<n>. It is the state a later fault first shows in. It can follow SDO's or the agent's writes: join-<n>-context.json says whether a known write preceded it, and a Diagnose matching there may be matching state a write made.
 - Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.
 Select only files actually supplied by the controller. Supported phase values do not promise capture availability. Captures store each object once, in objects; capture_fields serves the typed sections.
 <!-- /replay:on -->

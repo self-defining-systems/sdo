@@ -8,19 +8,20 @@ import (
 	"strings"
 )
 
-// joinCapturePhase is the open state an alert joined an open incident in: the
-// capture of the nth join pass is open@join-n. A fault that starts while the
+// joinCapturePhase is the open state an alert joined an open incident in, or
+// a new finding first appeared in: the capture of the nth join pass is
+// open@join-n. A fault that starts while the
 // incident is open shows only there.
 var joinCapturePhase = regexp.MustCompile(`^join-[1-9][0-9]*$`)
 
 // IsJoinCapturePhase reports whether phase (without the "open@" prefix) names
-// an alert-join capture.
+// a join capture.
 func IsJoinCapturePhase(phase string) bool { return joinCapturePhase.MatchString(phase) }
 
-// JoinCapturePhase is the phase of the nth alert-join capture.
+// JoinCapturePhase is the phase of the nth join capture.
 func JoinCapturePhase(n int) string { return "join-" + strconv.Itoa(n) }
 
-// JoinCapturePhases lists the alert-join captures in an incident capture
+// JoinCapturePhases lists the join captures in an incident capture
 // directory, in the order they were taken.
 func JoinCapturePhases(dir string) []string {
 	paths, _ := filepath.Glob(filepath.Join(dir, "open@join-*.json"))
@@ -39,13 +40,19 @@ func JoinCapturePhases(dir string) []string {
 	return phases
 }
 
-// JoinCaptureContext is what Go knew when it took an alert-join capture
-// (open@join-n). Unlike the opening captures, a join capture can follow SDO's
+// JoinCaptureContext is what Go knew when it took a join capture
+// (open@join-n): the state alerts joined the incident in, or new findings
+// first appeared in. Unlike the opening captures, a join capture can follow SDO's
 // or the agent's writes, so a Diagnose that matches it may be matching state a
 // write made rather than the fault. It is evidence for readers, never a gate.
 type JoinCaptureContext struct {
 	// JoinedKeys are the alerts that joined the incident in this pass.
 	JoinedKeys []string `json:"joined_keys"`
+	// NewFindings are the findings that first became active in the open
+	// incident in this pass without joining its alert set (clues such as a
+	// store's state or a drift, Kubernetes conditions, a learned detector's
+	// finding). A cause that starts later may show only in them.
+	NewFindings []string `json:"new_findings,omitempty"`
 	// KnownWritesBefore is true when a write Go knows of preceded the
 	// capture. False means none known, not none made: with the agent recording
 	// off, the agent's direct Kubernetes writes are invisible.

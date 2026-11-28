@@ -23,20 +23,26 @@ snapshot and protected capture write per incident, plus the existing tool
 request/response round trip for a typed plan application. Existing `responder_tool_timing`
 `capture_ms` and `total_ms` include this work.
 
-## Alert-join captures
+## Join captures (joined alerts and new findings)
 
-When alerts join an open incident's alert set, the controller stores the state
-of the observation they joined in as `open@join-<n>.json` (with
-`open@join-<n>-recordings.json`), once per pass; `<n>` is the number of joined
-keys after that pass, so numbers can skip. A fault that started after the
-incident opened shows only there. Each has `join-<n>-context.json`:
-`joined_keys` (the alerts of that pass), `known_writes_before`, `write_sources`
-(`automatic_stage`, `responder_plan`, `agent_recording`, `repair_action`) and
-`recording`. Unlike the opening captures, a join capture can follow SDO's or the
-agent's writes; `known_writes_before: false` means none known, not none made
-(with `agent.recording` off the agent's direct writes are invisible). A
-Diagnose that matches a join capture taken after writes may be matching state a
-write made. Nothing gates on this; read it when a learned playbook misfires.
+When alerts join an open incident's alert set, or a finding first becomes
+active in the open incident without joining it (a clue such as a store's state
+or a drift, a Kubernetes condition, a learned detector's finding, a finding
+attached before launch), the controller stores the state of the observation
+they appeared in as `open@join-<n>.json` (with `open@join-<n>-recordings.json`),
+once per pass; `<n>` counts the join captures (one past the last stored). A
+finding is captured once per incident (deduplicated by finding key) and at most
+6 passes take new findings; joined alerts are bounded by the join window. A
+fault that started after the incident opened shows only there. Each has
+`join-<n>-context.json`: `joined_keys` (the alerts of that pass),
+`new_findings` (the findings that first appeared in it), `known_writes_before`,
+`write_sources` (`automatic_stage`, `responder_plan`, `agent_recording`,
+`repair_action`) and `recording`. Unlike the opening captures, a join capture
+can follow SDO's or the agent's writes; `known_writes_before: false` means none
+known, not none made (with `agent.recording` off the agent's direct writes are
+invisible). A Diagnose that matches a join capture taken after writes may be
+matching state a write made. Nothing gates on this; read it when a learned
+playbook misfires.
 
 Every reader of open captures includes join captures: the own-incident replay
 and incident-plan test (all `open@*`), the match-key origin of a playbook that

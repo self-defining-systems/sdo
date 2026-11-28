@@ -222,13 +222,13 @@ func (c *Controller) pageLate(finding sdk.Finding, now time.Time) {
 	})
 }
 
-// captureJoinedAlerts stores the open state alerts joined the incident in, from
-// the observation they activated in. A fault that starts while the incident is
-// open is absent from the opening captures; without this one the closing turn's
-// own-incident check rejects a playbook written for it. A join capture can
-// follow SDO's or the agent's writes, so it also records whether a known write
-// preceded it. Evidence only, never a gate: a failure is reported and the
-// incident goes on.
+// captureJoinedAlerts stores the open state alerts joined the incident in, or
+// new findings first appeared in, from the observation they activated in. A
+// fault that starts while the incident is open is absent from the opening
+// captures; without this one the closing turn's own-incident check rejects a
+// playbook written for it. A join capture can follow SDO's or the agent's
+// writes, so it also records whether a known write preceded it. Evidence
+// only, never a gate: a failure is reported and the incident goes on.
 func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
 	c.mu.Lock()
 	due, request, result, loop := c.joinCapturesDue, c.currentIncidentRequest, c.currentIncidentResult, c.responderLoop
@@ -236,9 +236,11 @@ func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
 	var id, namespace string
 	var refs []sdk.ObjectRef
 	var stageWrote bool
-	joined := 0
+	var found []sdk.Finding
 	if request != nil {
-		id, namespace, refs, joined = request.IncidentID, request.Namespace, findingCaptureRefs(request.Findings), len(request.JoinedKeys)
+		id, namespace = request.IncidentID, request.Namespace
+		found = c.takeFindingCapturesLocked(id)
+		refs = findingCaptureRefs(append(slices.Clone(request.Findings), found...))
 		stageWrote = playbookApplied(request.PriorStages)
 	}
 	var resultPlans, resultActions bool
@@ -246,15 +248,26 @@ func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
 		resultPlans, resultActions = len(result.PlanApplications) > 0, slices.ContainsFunc(result.RepairActions, func(r RepairActionReceipt) bool { return r.Success })
 	}
 	c.mu.Unlock()
-	if len(due) == 0 || id == "" || c.config.CorpusSessionRoot == "" || snapshot == nil {
+	if len(due)+len(found) == 0 || id == "" || c.config.CorpusSessionRoot == "" || snapshot == nil {
 		return
 	}
-	// One capture per pass holds every alert that joined in it.
+	joined, err := memory.NextJoinCapture(c.config.CorpusSessionRoot, id)
+	if err != nil {
+		if c.OnError != nil {
+			c.OnError(fmt.Errorf("number the join capture: %w", err))
+		}
+		return
+	}
+	// One capture per pass holds every alert that joined and every finding
+	// that appeared in it.
 	if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, id, memory.JoinedCapturePhase(joined), snapshot, namespace, refs...); err != nil && c.OnError != nil {
 		c.OnError(fmt.Errorf("capture joined alert open state: %w", err))
 		return
 	}
 	joinContext := memory.JoinCaptureContext{JoinedKeys: due}
+	for _, finding := range found {
+		joinContext.NewFindings = append(joinContext.NewFindings, FindingStateKey(finding.DetectorID, finding.Fingerprint))
+	}
 	if stageWrote {
 		joinContext.WriteSources = append(joinContext.WriteSources, "automatic_stage")
 	}
