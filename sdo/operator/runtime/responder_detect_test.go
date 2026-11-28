@@ -483,31 +483,57 @@ func TestDetectWaitReturnsWhenTheIncidentRecoversDuringARead(t *testing.T) {
 
 // A passing test scoped by name does not mean the incident recovered: the
 // scoped view still says whether the whole alert set cleared and names the
-// alerts still failing.
-func TestDetectAPassingTestStillReportsTheFailingAlertSet(t *testing.T) {
-	world := &detectWorld{sendOK: true}
-	loop, _ := detectWorldLoop(world)
-	opening := loop.Handle(context.Background(), ToolRequest{Command: "detect"})
-	if len(opening.Findings) != 1 {
-		t.Fatalf("findings = %+v, want the create test's", opening.Findings)
-	}
-	loop.Request.Findings = opening.Findings
-	loop.Request.OpeningKeys = []string{findingKey(opening.Findings[0])}
-	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "list"})
-	if response.Error != "" {
-		t.Fatal(response.Error)
-	}
-	if response.Healthy {
-		t.Fatalf("scoped detect reported healthy while the alert set fails:\n%s", response.Text)
-	}
-	for _, want := range []string{"list sent now: PASS", "incident recovered: no"} {
-		if !strings.Contains(response.Summary, want) {
-			t.Fatalf("summary %q lacks %q", response.Summary, want)
-		}
-	}
-	for _, want := range []string{"recovered: no", "still failing: create (opening)"} {
-		if !strings.Contains(response.Text, want) {
-			t.Fatalf("scoped detect lacks %q:\n%s", want, response.Text)
-		}
+// alerts still failing, opening or joined; a page-opened incident says how
+// it ends instead.
+func TestDetectAPassingTestStillReportsTheAlertSet(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		setup        func(loop *ResponderLoop, world *detectWorld, key string)
+		healthy      bool
+		summary      string
+		want, unwant []string
+	}{
+		{name: "opening fails", setup: func(loop *ResponderLoop, _ *detectWorld, key string) { loop.Request.OpeningKeys = []string{key} },
+			summary: "list sent now: PASS; incident recovered: no", want: []string{"recovered: no (1 alerts active)", "still failing: create (opening)"}},
+		{name: "joined fails", setup: func(loop *ResponderLoop, _ *detectWorld, key string) {
+			loop.Request.OpeningKeys, loop.Request.JoinedKeys = []string{"traffic.health/synthetic-other"}, []string{key}
+		}, summary: "incident recovered: no", want: []string{"still failing: create (joined)"}},
+		{name: "recovered", setup: func(loop *ResponderLoop, world *detectWorld, key string) {
+			loop.Request.OpeningKeys, world.healed = []string{key}, true
+			loop.IncidentStatus = func() *apihistory.IncidentVerified { return &apihistory.IncidentVerified{} }
+		}, healthy: true, summary: "incident recovered: yes", want: []string{"recovered: yes (0 alerts active)"}, unwant: []string{"still failing"}},
+		{name: "page", setup: func(loop *ResponderLoop, _ *detectWorld, _ string) { loop.Request.Page = "users report failed orders" },
+			summary: "list sent now: PASS", want: []string{"page: no detector clears a page"}, unwant: []string{"incident recovered", "still failing"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			world := &detectWorld{sendOK: true}
+			loop, _ := detectWorldLoop(world)
+			opening := loop.Handle(context.Background(), ToolRequest{Command: "detect"})
+			if len(opening.Findings) != 1 {
+				t.Fatalf("findings = %+v, want the create test's", opening.Findings)
+			}
+			loop.Request.Findings = opening.Findings
+			tc.setup(loop, world, findingKey(opening.Findings[0]))
+			response := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "list"})
+			if response.Error != "" {
+				t.Fatal(response.Error)
+			}
+			if response.Healthy != tc.healthy {
+				t.Fatalf("healthy = %v, want %v:\n%s", response.Healthy, tc.healthy, response.Text)
+			}
+			if !strings.Contains(response.Summary, tc.summary) {
+				t.Fatalf("summary %q lacks %q", response.Summary, tc.summary)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(response.Text, want) {
+					t.Fatalf("scoped detect lacks %q:\n%s", want, response.Text)
+				}
+			}
+			for _, unwant := range tc.unwant {
+				if strings.Contains(response.Text+response.Summary, unwant) {
+					t.Fatalf("scoped detect has %q:\n%s\n%s", unwant, response.Summary, response.Text)
+				}
+			}
+		})
 	}
 }

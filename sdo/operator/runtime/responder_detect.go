@@ -132,11 +132,13 @@ func (l *ResponderLoop) detectUserTest(ctx context.Context, workload, name strin
 	}
 	out.WriteString(detail)
 	if summary != nil {
-		// One test passing is not the incident recovering: health is the whole
-		// alert set's verdict, and the alerts still failing are named.
-		response.Healthy = summary.Recovered
+		// One test passing is not the incident recovering: the view keeps the
+		// full detect's health and says whether the whole alert set recovered,
+		// naming the alerts still failing.
 		out.WriteString(summary.AlertSet + "\n")
-		response.Summary = strings.TrimPrefix(response.Summary+"; incident recovered: "+yesNo(summary.Recovered), "; ")
+		if !summary.Paged {
+			response.Summary += "; incident recovered: " + yesNo(summary.Recovered)
+		}
 	}
 	response.Text = out.String()
 }

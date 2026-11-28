@@ -76,6 +76,8 @@ type detectSummary struct {
 	RequestCoverage string
 	// Recovered is the incident's verdict for its whole alert set, opening and joined.
 	Recovered bool
+	// Paged is set when a page opened the incident: Recovered is judged after the agent returns.
+	Paged bool
 	// AlertSet is the recovered line and, when alerts of the set fail now, the
 	// line naming them; a view scoped to one test carries it unchanged.
 	AlertSet string
@@ -1056,6 +1058,10 @@ shrink:
 		text = cut + "\n+more: sdo detect --json"
 	}
 	alertSet := recoveredLine(state, active, in.RecoveryWaiting, in.Recovered)
+	paged := pageText(in.Request) != ""
+	if paged {
+		alertSet = "page: no detector clears a page; verify the reported operation and return"
+	}
 	failingTests := make([]string, 0, len(failing))
 	for _, test := range failing {
 		failingTests = append(failingTests, test.id)
@@ -1063,12 +1069,13 @@ shrink:
 	if line := stillFailingLine(&in.Request, openingFindings, failingTests, in.Recovered); line != "" {
 		alertSet += "\n" + line
 	}
-	return detectSummary{Text: text, Items: items, RequestCoverage: coverage, Recovered: in.Recovered, AlertSet: alertSet}
+	return detectSummary{Text: text, Items: items, RequestCoverage: coverage, Recovered: in.Recovered, Paged: paged, AlertSet: alertSet}
 }
 
 // stillFailingLine names each alert of the incident's set that fails now,
 // opening or joined; with no alert finding active it names the failing user
-// tests, as the active count does. "" when none fails or the incident recovered.
+// tests (which the active count then counts). "" when none fails or the
+// incident recovered.
 func stillFailingLine(request *IncidentRequest, active []sdk.Finding, failingTests []string, recovered bool) string {
 	if recovered {
 		return ""
@@ -1082,7 +1089,7 @@ func stillFailingLine(request *IncidentRequest, active []sdk.Finding, failingTes
 			names = append(names, plainName(id, 60))
 		}
 		sort.Strings(names)
-		return "still failing: " + strings.Join(names, ", ")
+		return "failing tests now: " + strings.Join(names, ", ")
 	}
 	opening := openingKeys(request)
 	names := make([]string, 0, len(active))
