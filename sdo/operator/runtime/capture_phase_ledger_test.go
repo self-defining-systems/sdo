@@ -88,6 +88,9 @@ func roundTripCapturePhase(t *testing.T, phase string) error {
 	return nil
 }
 
+// Every open capture phase the operator names is one the broker ledger stores.
+//
+//ci:whole-tree
 func TestEveryOpenCapturePhaseRoundTripsThroughTheBrokerLedger(t *testing.T) {
 	phases := producedOpenPhases(t)
 	for _, want := range []string{"detect", "pre-apply", "join-1"} {
