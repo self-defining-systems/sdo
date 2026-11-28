@@ -272,6 +272,8 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		if scriptPlan {
 			l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: applicationID, ProgramIDs: []string{entry.programID}, Result: PlanApplicationResult{Plan: plan}, StartedAt: started, Pending: true})
 			if err := l.persistToolState(ctx); err != nil {
+				// Nothing was written: leave no started record behind.
+				l.applicationsLog = l.applicationsLog[:journalIndex]
 				response.Error = err.Error()
 				return
 			}

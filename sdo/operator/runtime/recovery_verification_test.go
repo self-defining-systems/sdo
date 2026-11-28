@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -317,4 +318,39 @@ func TestProbeRecoveryRequiresAlertIdentity(t *testing.T) {
 	if check.verdict != recoveryPending {
 		t.Fatal("recovery treated a missing probe identity as a condition")
 	}
+}
+
+// A write with no rollout to wait for settles when it completes, and a record
+// whose completion was lost (started, never completed: a checkpoint restored
+// after the completing save failed) is not running anywhere, since snapshots
+// are taken under the loop's lock. Neither holds Recovered forever. A workload
+// such a record may have written still gates on its revision.
+func TestWriteWithNoRolloutSettles(t *testing.T) {
+	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "db-0"}
+	repair := program.RepairData{Target: program.StoreTarget{Component: "db", Engine: "redis", Pod: pod}, Statement: "DEL k"}
+	exec := program.EnsureExec{Ensure: program.Command{Pod: pod, Args: []string{"true"}}}
+	started := verifyT0.Add(10 * time.Second)
+	for name, app := range map[string]RecordedPlanApplication{
+		"applied data repair awaiting users": {ID: "repair", Pending: true, StartedAt: started, CompletedAt: started.Add(time.Second), Result: PlanApplicationResult{Applied: true, Plan: program.Plan{Actions: []program.Action{repair}}, ActionsApplied: []program.Action{repair}}},
+		"completion lost":                    {ID: "lost", Pending: true, StartedAt: started, Result: PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{exec}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			view := verifyWorld{now: verifyT0.Add(time.Minute)}.view()
+			writes, since, settled := sdoWrites(verificationInput{view: view, result: &IncidentResult{PlanApplications: []RecordedPlanApplication{app}}, detected: verifyT0})
+			if !settled || len(writes) != 1 || since.Before(started) {
+				t.Fatalf("writes=%+v since=%s settled=%v", writes, since, settled)
+			}
+		})
+	}
+	t.Run("lost completion on a rolling workload", func(t *testing.T) {
+		world := verifyWorld{now: verifyT0.Add(time.Minute)}
+		view := world.view()
+		view.StatefulSetList[0].Generation = 2
+		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "app", Name: "db"}
+		patch := program.PatchObject{Ref: ref}
+		app := RecordedPlanApplication{ID: "lost", Pending: true, StartedAt: started, Result: PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{patch}}}}
+		if _, _, settled := sdoWrites(verificationInput{view: view, result: &IncidentResult{PlanApplications: []RecordedPlanApplication{app}}, detected: verifyT0}); settled {
+			t.Fatal("a lost-completion write settled while the workload it targets rolls out")
+		}
+	})
 }
