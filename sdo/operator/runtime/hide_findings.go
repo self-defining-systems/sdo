@@ -50,7 +50,9 @@ func hiddenFindingsRequest(request IncidentRequest) IncidentRequest {
 }
 
 // hiddenToolResponse answers one sdo command under hide_findings_from_agent.
-// Allowed commands run as usual and lose every structured detector field;
+// Allowed and playbook-scoped commands run as usual and lose every structured
+// detector field (the loop never refreshes its findings from the controller's
+// evidence, so a menu or diagnose sees none);
 // verify keeps only its healthy bit; detect --wait waits only for Recovered;
 // every other command answers FindingsHiddenText.
 func (l *ResponderLoop) hiddenToolResponse(ctx context.Context, request ToolRequest) ToolResponse {
@@ -71,8 +73,30 @@ func (l *ResponderLoop) hiddenToolResponse(ctx context.Context, request ToolRequ
 		return response
 	case request.Command == "detect" && request.WaitSeconds != 0:
 		return l.hiddenWait(ctx, request)
+	case playbookScoped(request):
+		// The named playbook's own runs (its diagnose verdict) are what the agent asked for.
+		response := l.handle(ctx, request)
+		runs := response.ProgramRuns
+		response = withoutDetectorFields(response)
+		response.ProgramRuns = runs
+		return response
 	}
 	return ToolResponse{Command: request.Command, Text: FindingsHiddenText, Summary: FindingsHiddenText}
+}
+
+// playbookScoped reports a command that runs or lists one learned playbook the
+// agent named (`sdo diagnose NAME`, `sdo menu NAME`, `sdo mitigate NAME`): the
+// way an agent uses a playbook by hand. It stays available with findings hidden
+// and answers without detector fields; with no NAME these commands show
+// detector output and stay hidden.
+func playbookScoped(request ToolRequest) bool {
+	switch request.Command {
+	case "diagnose", "menu":
+		return request.ProgramID != ""
+	case "mitigate":
+		return request.Selection != nil || request.SelectionSet != nil
+	}
+	return false
 }
 
 // hiddenWait is `sdo detect --wait` with findings hidden: it returns when the

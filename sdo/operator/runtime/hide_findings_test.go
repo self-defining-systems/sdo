@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/apihistory"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
@@ -116,7 +117,7 @@ func TestHideFindingsNamesTheControlNamespaceOnlyWhenOn(t *testing.T) {
 // allowed ones never return a structured finding field.
 func TestHideFindingsSdoCommands(t *testing.T) {
 	hidden := []string{"status", "detect", "diagnose", "menu", "mitigate", "plan", "apply", "rollback", "act-result", "report",
-		"changes", "timeline", "map", "investigations", "check", "unknown-future-command"}
+		"changes", "timeline", "map", "investigations", "check", "unknown-future-command"} // none names a playbook
 	loop := &ResponderLoop{HideFindings: true}
 	for _, command := range hidden {
 		response := loop.Handle(context.Background(), ToolRequest{Command: command})
@@ -233,5 +234,74 @@ func TestHideFindingsSettings(t *testing.T) {
 	off.Response.Investigators = 2
 	if off.DetectionDigest() != digest {
 		t.Fatal("the default detection digest changed")
+	}
+}
+
+// A playbook the agent names runs as usual with findings hidden (the agent's
+// way to use learned memory by hand); without a name the same commands stay
+// hidden. The loop never pulls the controller's current findings in.
+func TestHideFindingsNamedPlaybookCommandsRun(t *testing.T) {
+	refreshed := false
+	loop := &ResponderLoop{HideFindings: true, CurrentEvidence: func() *IncidentRequest {
+		refreshed = true
+		return &IncidentRequest{IncidentID: "synthetic", Findings: []sdk.Finding{{DetectorID: "synthetic"}}}
+	}}
+	loop.Request.IncidentID = "synthetic"
+	for _, request := range []ToolRequest{
+		{Command: "diagnose", ProgramID: "synthetic-playbook"},
+		{Command: "menu", ProgramID: "synthetic-playbook"},
+		{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: "synthetic-playbook"}},
+	} {
+		response := loop.Handle(context.Background(), request)
+		if response.Text == FindingsHiddenText || response.Summary == FindingsHiddenText {
+			t.Errorf("%s %s was hidden", request.Command, request.ProgramID)
+		}
+		if len(response.Findings) != 0 || len(loop.Request.Findings) != 0 {
+			t.Errorf("%s pulled findings into the loop or response", request.Command)
+		}
+	}
+	if refreshed {
+		t.Fatal("the loop read the controller's current evidence with findings hidden")
+	}
+	if !playbookScoped(ToolRequest{Command: "diagnose", ProgramID: "x"}) || playbookScoped(ToolRequest{Command: "diagnose"}) ||
+		playbookScoped(ToolRequest{Command: "menu"}) || playbookScoped(ToolRequest{Command: "mitigate"}) {
+		t.Fatal("playbookScoped misclassifies a command")
+	}
+}
+
+// countingStage is an automatic stage that records whether it ran.
+type countingStage struct{ runs *int }
+
+func (countingStage) Name() string { return "deterministic" }
+func (s countingStage) Run(context.Context, *IncidentState) (*contracts.StageReport, error) {
+	*s.runs++
+	return &contracts.StageReport{}, nil
+}
+
+// The 'Generic page + manual playbooks' arm: with the code path's response
+// stages overridden to the agent alone (agent.code_path_overrides), a page with
+// findings hidden goes straight to the agent and the automatic playbook stage
+// never runs; with both stages it runs first.
+func TestHideFindingsAgentOnlyStagesNeverRunTheAutomaticStage(t *testing.T) {
+	for _, stages := range [][]string{{"agent"}, {"deterministic", "agent"}} {
+		runs := 0
+		cfg := testControllerConfig()
+		cfg.PagesOnly, cfg.HideFindings = true, true
+		dispatcher := &stagedDispatcher{recordingDispatcher: recordingDispatcher{requests: make(chan IncidentRequest, 4)}, stage: countingStage{&runs}}
+		c, err := NewController(cfg, nil, staticProvider{}, dispatcher, time.Unix(1000, 0).UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.codePath = &CodePath{Selection: CodePathSelection{ResponseStages: stages}}
+		request := IncidentRequest{IncidentID: "synthetic-page", Application: "demo", Namespace: cfg.Namespace, Page: syntheticPage,
+			ResponseDeadline: time.Now().Add(time.Hour)}
+		c.incidentOpen, c.currentIncidentRequest = true, cloneIncidentRequest(&request)
+		if _, _, err := c.runResponsePipeline(context.Background(), request); err != nil {
+			t.Fatal(err)
+		}
+		wantRuns := map[int]int{1: 0, 2: 1}[len(stages)]
+		if dispatcher.calls != 1 || runs != wantRuns {
+			t.Fatalf("stages %v: agent dispatched %d times, automatic stage ran %d times; want 1 and %d", stages, dispatcher.calls, runs, wantRuns)
+		}
 	}
 }

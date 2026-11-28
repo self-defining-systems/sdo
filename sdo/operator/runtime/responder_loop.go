@@ -581,7 +581,7 @@ func (l *ResponderLoop) handle(ctx context.Context, request ToolRequest) (respon
 		l.trace = nil
 	}()
 	defer func() { l.capturePhase = "" }()
-	if l.CurrentEvidence != nil {
+	if l.CurrentEvidence != nil && !l.HideFindings {
 		if current := l.CurrentEvidence(); current != nil && current.IncidentID == l.Request.IncidentID {
 			l.Request.Findings = append([]sdk.Finding(nil), current.Findings...)
 			l.Request.DriftEvents = append([]sdk.DriftEvent(nil), current.DriftEvents...)
