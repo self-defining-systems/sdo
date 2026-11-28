@@ -917,7 +917,11 @@ func buildDetectSummary(in detectInput) detectSummary {
 			header = append(header, "match now: "+match.GetMitigateCommand())
 		}
 	}
-	header = append(header, diagnosisLines(in.Request.PriorStages)...)
+	diagnoses := diagnosisLines(in.Request.PriorStages)
+	shownDiagnoses := len(diagnoses)
+	if len(diagnoses) > 0 {
+		items["tried"] = strings.Join(diagnoses, "\n")
+	}
 
 	testBlock := func(test failingTest, role string) ([]string, string) {
 		since := test.history()
@@ -990,6 +994,10 @@ func buildDetectSummary(in detectInput) detectSummary {
 	shownTests, shownConditions, shownAlso := min(len(testBlocks), detectShownTests), min(len(conditionBlocks), detectShownTests), min(len(alsoBlocks), 2)
 	observation := func() string {
 		out := slices.Clone(header)
+		out = append(out, diagnoses[:shownDiagnoses]...)
+		if dropped := len(diagnoses) - shownDiagnoses; dropped > 0 {
+			out = append(out, fmt.Sprintf("+%d more tried by sdo: sdo detect tried", dropped))
+		}
 		block, _ := newSinceHandoffBlock(fresh, in.Request.DriftEvents, shownNew, newDetail)
 		out = append(out, block...)
 		if len(testBlocks)+len(conditionBlocks)+len(opBlocks) > 0 {
@@ -1030,6 +1038,8 @@ shrink:
 		switch {
 		case shownAlso > 0:
 			shownAlso--
+		case shownDiagnoses > 2:
+			shownDiagnoses--
 		case shownNew > 1:
 			shownNew--
 		case newDetail:
@@ -1047,6 +1057,7 @@ shrink:
 		}
 	}
 	text := observation()
+	// render returns "" when the observation leaves it no room.
 	if rest := view.render(detectSummaryCap - len(text) - 2); rest != "" {
 		text += "\n\n" + rest
 	}

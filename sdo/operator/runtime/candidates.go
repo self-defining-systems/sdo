@@ -713,6 +713,9 @@ func (v candidateView) elsewhereLines(detail bool) []string {
 // elsewhere detail, then evidence lines, then trailing node titles; the top
 // two nodes keep their evidence longest.
 func (v candidateView) render(cap int) string {
+	if cap <= 0 {
+		return ""
+	}
 	header := v.header()
 	if header == "" && len(v.in.MapLines) == 0 && v.in.MapNote == "" && len(v.elsewhere)+len(v.unplaced) == 0 && v.notObserved() == "" {
 		return ""
@@ -777,13 +780,7 @@ func (v candidateView) render(cap int) string {
 			full--
 			shown = max(shown, full)
 		default:
-			text := assemble()[:cap-3]
-			if line := strings.LastIndexByte(text, '\n'); line > 0 {
-				text = text[:line+1] // whole lines only
-			} else if word := strings.LastIndexByte(text, ' '); word > 0 {
-				text = text[:word+1]
-			}
-			return text + "…"
+			return truncateText(assemble(), cap)
 		}
 	}
 	return assemble()
@@ -831,4 +828,24 @@ func (c *Controller) boundRecentChanges(lines []string) []string {
 		c.OnError(fmt.Errorf("incident_request.recent_changes exceeded its contract (%d lines); sent %d", len(lines), len(kept)))
 	}
 	return kept
+}
+
+// truncateText cuts text to at most cap bytes at a line or word boundary and
+// marks the cut with an ellipsis. It never splits a multi-byte character and
+// returns "" for a budget of zero or less.
+func truncateText(text string, cap int) string {
+	const ellipsis = "…"
+	if len(text) <= cap {
+		return text
+	}
+	if cap < len(ellipsis) {
+		return strings.ToValidUTF8(text[:max(cap, 0)], "")
+	}
+	text = text[:cap-len(ellipsis)]
+	if line := strings.LastIndexByte(text, '\n'); line > 0 {
+		text = text[:line+1] // whole lines only
+	} else if word := strings.LastIndexByte(text, ' '); word > 0 {
+		text = text[:word+1]
+	}
+	return strings.ToValidUTF8(text, "") + ellipsis
 }
