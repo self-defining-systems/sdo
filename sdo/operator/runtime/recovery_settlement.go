@@ -78,7 +78,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 	}
 	for _, stage := range stages {
 		automatic := stage.GetStage() == "deterministic" && stage.GetApplyCompletedAt() != nil
-		creditedApplication := ""
+		var creditedApplications map[string]bool
 		if automatic {
 			var receipts []*contracts.PlanApplication
 			for _, app := range applications {
@@ -86,7 +86,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					receipts = append(receipts, receipt)
 				}
 			}
-			creditedApplication = automaticCreditApplication(stage, receipts, result.AgentChanges, through)
+			creditedApplications = automaticCreditApplications(stage, receipts, result.AgentChanges, through)
 		}
 		for _, attempt := range stage.Mitigations {
 			id := attempt.GetApplyReceipt().GetApplicationId()
@@ -111,7 +111,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 						attempt.Result = "applied_still_matching"
 					}
 				}
-				if automatic && id != creditedApplication {
+				if automatic && !creditedApplications[id] {
 					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SUPERSEDED)
 					continue
 				}

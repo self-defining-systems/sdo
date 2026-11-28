@@ -382,7 +382,11 @@ func TestAnEarlyHandoffWithoutAnAgentWriteKeepsTheCredit(t *testing.T) {
 		"a page":          {report(contracts.RecoveryWait_EXIT_REASON_UNCOVERED), nil, ""},
 		"at the deadline": {report(contracts.RecoveryWait_EXIT_REASON_DEADLINE, "k"), nil, ""},
 	} {
-		if got := automaticCreditApplication(tc.report, []*contracts.PlanApplication{app}, tc.changes, recovered); got != tc.want {
+		got := ""
+		for id := range automaticCreditApplications(tc.report, []*contracts.PlanApplication{app}, tc.changes, recovered) {
+			got = id
+		}
+		if got != tc.want {
 			t.Errorf("%s: credit = %q, want %q", name, got, tc.want)
 		}
 	}

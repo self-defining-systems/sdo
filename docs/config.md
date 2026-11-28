@@ -116,7 +116,7 @@ the onboarding agent discovers them (production requires them; a harness that ha
 
 | Key | Env | Type | Default | Description |
 |---|---|---|---|---|
-| `deployment.max_attempts` | `SDO_DEPLOYMENT_MAX_ATTEMPTS` | int | `3` | maximum deployment attempts |
+| `deployment.max_attempts` | `SDO_DEPLOYMENT_MAX_ATTEMPTS` | int | `3` | deployer correction rounds after its first task, and architecture and health-judge rounds |
 | `deployment.build_timeout` | `SDO_DEPLOYMENT_BUILD_TIMEOUT` | duration | `30m0s` | deadline of one source image build |
 | `deployment.build_budget` | `SDO_DEPLOYMENT_BUILD_BUDGET` | duration | `1h0m0s` | deadline of all source image builds of one deployment attempt |
 | `deployment.rollout_timeout` | `SDO_DEPLOYMENT_ROLLOUT_TIMEOUT` | duration | `10m0s` | how long to wait for each applied workload to finish rolling out |

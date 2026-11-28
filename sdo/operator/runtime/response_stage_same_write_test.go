@@ -265,7 +265,11 @@ func TestDeterministicStageSkipsSameWriteAfterRestore(t *testing.T) {
 		}
 		if len(tool.ApplicationEvidence) == 1 {
 			for _, progress := range tool.StageProgress {
-				if mitigations := progress.Report.GetMitigations(); len(mitigations) == 1 && mitigations[0].GetResult() == "rollout_pending_at_handoff" {
+				// The second restart writes the same Deployment, so it waits for
+				// the next turn: skipped for this one, never written.
+				mitigations := progress.Report.GetMitigations()
+				if len(mitigations) == 2 && mitigations[0].GetResult() == "rollout_pending_at_handoff" &&
+					mitigations[1].GetResult() == "skipped" && mitigations[1].GetSkipReason() == stageObjectShared {
 					checkpoint = payload
 				}
 			}

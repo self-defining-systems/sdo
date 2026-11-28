@@ -18,6 +18,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
@@ -228,7 +229,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	retry := map[string]*contracts.StageMitigation{}
 	for _, attempt := range report.Mitigations {
 		key := stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))
-		if state.Refresh && attempt.Result == "skipped" && attempt.SkipReason != stagePlanNotExecutable {
+		// A plan that waited for a shared object's earlier write wrote nothing
+		// either; a restart before its turn redoes it.
+		if attempt.Result == "skipped" && (state.Refresh && attempt.SkipReason != stagePlanNotExecutable || stageSkipRetryable(attempt.SkipReason)) {
 			retry[key] = attempt
 			continue
 		}
@@ -307,238 +310,328 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	defer loop.mu.Unlock()
 	matches := stageCandidates(state)
 	ineffective := ineffectiveStageTargets(report.Mitigations)
-	// Only diagnoses that wrote nothing receive a second turn, and only after a
-	// turn that wrote or cleared something: an unchanged cluster would give the
-	// same diagnoses again. Keep the opening order; dependencies are learned
-	// from live state, never names.
-	deferred := map[string]bool{}
-	turnEnd, turnFindings, progressed := len(matches), len(state.Findings), false
-	for index := 0; index < len(matches); index++ {
-		if index == turnEnd {
-			if !progressed && len(state.Findings) >= turnFindings {
-				break
+	// A turn diagnoses and plans every match on live state before it writes,
+	// then applies the planned ones as a batch, each as its own application
+	// (a failure part-way compensates only its own plan), with one verify for
+	// the whole batch. Only diagnoses that wrote nothing receive a second turn,
+	// and only after a turn that wrote or cleared something: an unchanged
+	// cluster would give the same diagnoses again. A plan that reaches an object
+	// an earlier plan of the turn writes (or whose write set is unknown) waits
+	// for the next turn, so it is diagnosed and planned on the state that write
+	// left. Keep the opening
+	// order; dependencies are learned from live state, never names.
+	deferred, shared := map[string]bool{}, map[string]bool{}
+	for start := 0; start < len(matches); {
+		turnEnd, turnFindings, progressed, waiting := len(matches), len(state.Findings), false, false
+		var batch []stagePlanned
+		var turnView program.ReadView
+		var stopErr error
+		// requeue gives a match one more try in the next turn, once per seen.
+		requeue := func(seen map[string]bool, key string, match stageCandidate, attempt *contracts.StageMitigation) bool {
+			if seen[key] {
+				return false
 			}
-			turnEnd, turnFindings, progressed = len(matches), len(state.Findings), false
+			seen[key] = true
+			delete(attempted, key)
+			retry[key] = attempt
+			matches = append(matches, match)
+			return true
 		}
-		match := matches[index]
-		if len(state.Findings) == 0 && !page {
-			break
-		}
-		if err := ctx.Err(); err != nil {
-			return report, err
-		}
-		bindings := programBindingsState(match.Bindings)
-		key := stageAttemptKey(match.PlaybookId, bindings)
-		if attempted[key] {
-			continue
-		}
-		attempted[key] = true
-		attempt := &contracts.StageMitigation{PlaybookId: match.PlaybookId, ProgramRevision: match.ProgramRevision, Bindings: programBindingsContract(bindings), Result: "skipped"}
-		if attempt.ProgramRevision == "" {
-			attempt.ProgramRevision = loop.programRevision(match.PlaybookId)
-		}
-		if earlier := retry[key]; earlier != nil {
-			proto.Reset(earlier)
-			proto.Merge(earlier, attempt)
-			attempt = earlier
-		} else {
-			report.Mitigations = append(report.Mitigations, attempt)
-		}
-		skip := func(reason string) error {
-			attempt.SkipReason = reason
-			recordStageFindingProgress(attempt, match.targets, state.Findings)
+		// waitTurn moves a planned binding to the next turn: it wrote nothing.
+		waitTurn := func(item stagePlanned) error {
+			if requeue(shared, item.key, item.match, item.attempt) {
+				waiting = true
+			}
+			item.attempt.Result, item.attempt.SkipReason = "skipped", stageObjectShared
+			recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
 			return save(false)
 		}
-
-		recordRefusal := func(err error) {
-			attempt.Result = "apply_error"
-			attempt.SkipReason = stagePlanNotExecutable
-			attempt.Error = err.Error()
-			recordStageFindingProgress(attempt, match.targets, state.Findings)
-		}
-		if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
-			if err := skip(stageIneffective); err != nil {
-				return report, err
+		for index := start; index < turnEnd && stopErr == nil; index++ {
+			match := matches[index]
+			if len(state.Findings) == 0 && !page {
+				break
 			}
-			continue
-		}
-		if loop.Credits.Has(match.PlaybookId) && loop.earlierRepairUnsettled(ctx, report, attempt) {
-			if err := skip(stageAlreadyAttempted); err != nil {
-				return report, err
+			if err := ctx.Err(); err != nil {
+				// Plans already made are this turn's writes: they are applied below.
+				stopErr = err
+				break
 			}
-			continue
-		}
-		if match.PlaybookId == SourceRestoreID && !loop.BuiltinRestoreAuto {
-			if err := skip(stageBuiltinRestoreManual); err != nil {
-				return report, err
+			bindings := programBindingsState(match.Bindings)
+			key := stageAttemptKey(match.PlaybookId, bindings)
+			if attempted[key] {
+				continue
 			}
-			continue
-		}
-		if state.Request.RepairPolicy != "recorded-actions" {
-			if err := skip("repair_policy"); err != nil {
-				return report, err
+			attempted[key] = true
+			attempt := &contracts.StageMitigation{PlaybookId: match.PlaybookId, ProgramRevision: match.ProgramRevision, Bindings: programBindingsContract(bindings), Result: "skipped"}
+			if attempt.ProgramRevision == "" {
+				attempt.ProgramRevision = loop.programRevision(match.PlaybookId)
 			}
-			continue
-		}
-		if loop.Programs == nil {
-			if err := skip("no_mitigation"); err != nil {
-				return report, err
+			if earlier := retry[key]; earlier != nil {
+				proto.Reset(earlier)
+				proto.Merge(earlier, attempt)
+				attempt = earlier
+			} else {
+				report.Mitigations = append(report.Mitigations, attempt)
 			}
-			continue
-		}
-		count := 0
-		for _, spec := range loop.Programs.List() {
-			if spec.ID == match.PlaybookId {
-				count++
+			skip := func(reason string) error {
+				attempt.SkipReason = reason
+				recordStageFindingProgress(attempt, match.targets, state.Findings)
+				return save(false)
 			}
-		}
-		if count > 1 {
-			if err := skip("multiple_entry_points"); err != nil {
-				return report, err
+			recordRefusal := func(err error) {
+				attempt.Result = "apply_error"
+				attempt.SkipReason = stagePlanNotExecutable
+				attempt.Error = err.Error()
+				recordStageFindingProgress(attempt, match.targets, state.Findings)
 			}
-			continue
-		}
-		// A Diagnose-only playbook still runs: an out-of-reach diagnosis
-		// escalates without a mitigation.
-		mitigator, canMitigate := loop.Programs.Mitigator(match.PlaybookId)
-		diagnoser, ok := loop.Programs.Diagnoser(match.PlaybookId)
-		if !ok {
-			if err := skip("diagnose_unavailable"); err != nil {
-				return report, err
+			if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
+				if err := skip(stageIneffective); err != nil {
+					return report, err
+				}
+				continue
 			}
-			continue
-		}
-		view, err := loop.snapshotView(ctx)
-		if err != nil {
-			attempt.Error = err.Error()
-			if err := skip("diagnose_unavailable"); err != nil {
-				return report, err
+			if loop.Credits.Has(match.PlaybookId) && loop.earlierRepairUnsettled(ctx, report, attempt) {
+				if err := skip(stageAlreadyAttempted); err != nil {
+					return report, err
+				}
+				continue
 			}
-			continue
-		}
-		before := program.RunDiagnose(diagnoseCtx, diagnoser, view, bindings, loop.deadline())
-		// An Unknown verdict is a read that did not answer (a memory host
-		// restart, a cancelled stream), not a diagnosis: ask again before
-		// giving the playbook up, and keep the reason either way.
-		for try := 1; !page && before.Result == program.Unknown && try < stageDiagnoseTries; try++ {
-			if err := stage.diagnoseBackoff(ctx); err != nil {
-				return report, err
+			if match.PlaybookId == SourceRestoreID && !loop.BuiltinRestoreAuto {
+				if err := skip(stageBuiltinRestoreManual); err != nil {
+					return report, err
+				}
+				continue
 			}
-			if fresh, viewErr := loop.snapshotView(ctx); viewErr == nil {
-				view = fresh
+			if state.Request.RepairPolicy != "recorded-actions" {
+				if err := skip("repair_policy"); err != nil {
+					return report, err
+				}
+				continue
 			}
-			before = program.RunDiagnose(ctx, diagnoser, view, bindings, loop.deadline())
-		}
-		if before.Result == program.Unknown {
-			attempt.Error = diagnosisFailure(before)
-		}
-		if before.Result != program.Match {
-			if len(matches) > 1 && !deferred[key] {
-				deferred[key] = true
-				delete(attempted, key)
-				retry[key] = attempt
-				matches = append(matches, match)
+			if loop.Programs == nil {
+				if err := skip("no_mitigation"); err != nil {
+					return report, err
+				}
+				continue
 			}
-			reason := "diagnose_unavailable"
-			if before.Result == program.NoMatch {
-				reason = "diagnose_no_longer_matches"
-				observed := ToolResponse{}
-				loop.verify(ctx, nil, &observed, true)
-				updateStageFindings(state, observed)
+			count := 0
+			for _, spec := range loop.Programs.List() {
+				if spec.ID == match.PlaybookId {
+					count++
+				}
 			}
-			if err := skip(reason); err != nil {
-				return report, err
+			if count > 1 {
+				if err := skip("multiple_entry_points"); err != nil {
+					return report, err
+				}
+				continue
 			}
-			continue
-		}
-		// Once the opening symptoms clear, a later pass can repair only
-		// findings that still belong to the incident's alert set.
-		if state.Refresh && (!state.openingObservedActive || len(newRecoveryScope(openingKeys(&state.Request)).blocking(state.Findings)) == 0) {
-			active := findingFingerprints(newRecoveryScope(alertKeys(&state.Request)).blocking(state.Findings))
-			match.targets = slices.DeleteFunc(slices.Clone(match.targets), func(fp string) bool {
-				return !slices.Contains(active, fp)
-			})
-		}
-		if len(match.targets) == 0 && !page {
-			if err := skip("unexplained_coverage"); err != nil {
-				return report, err
+			// A Diagnose-only playbook still runs: an out-of-reach diagnosis
+			// escalates without a mitigation.
+			mitigator, canMitigate := loop.Programs.Mitigator(match.PlaybookId)
+			diagnoser, ok := loop.Programs.Diagnoser(match.PlaybookId)
+			if !ok {
+				if err := skip("diagnose_unavailable"); err != nil {
+					return report, err
+				}
+				continue
 			}
-			continue
-		}
-		escalation, escalates, escalationErr := stageEscalation(ctx, mitigator, canMitigate, view, bindings, before, loop.deadline())
-		var refusal *NonExecutablePlanError
-		if match.PlaybookId != SourceRestoreID && errors.As(escalationErr, &refusal) {
-			loop.rememberTerminalPlanError(attempt.PlaybookId, attempt.ProgramRevision, bindings, refusal)
-			recordRefusal(refusal)
-			if err := save(false); err != nil {
-				return report, err
-			}
-			continue
-		}
-		// Only the responder may conclude that a page is out of reach.
-		if escalates && page {
-			if err := skip("no_mitigation"); err != nil {
-				return report, err
-			}
-			continue
-		}
-		if escalates {
-			escalateStageAttempt(state, attempt, match, bindings, before, escalation)
-			progressed = true
-			if err := save(false); err != nil {
-				return report, err
-			}
-			continue
-		}
-		if !canMitigate {
-			if err := skip("no_mitigation"); err != nil {
-				return report, err
-			}
-			continue
-		}
-		// Pin the live diagnosis view for planning; never reuse the dispatch-time
-		// view, and never invoke a working-checkout compiler in the automatic stage.
-		planResponse := ToolResponse{}
-		loop.matchedViews[matchedViewKey(match.PlaybookId, bindings)] = view
-		delete(loop.matchedPlans, matchedViewKey(match.PlaybookId, bindings))
-		if err := withoutResponderLocks(loop, "plan", true, func() {
-			planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.targets, stage: true})
-		}); err != nil {
-			return report, err
-		}
-		if planResponse.Error != "" {
-			if terminal := loop.terminalPlanError(match.PlaybookId, bindings); terminal != nil {
-				attempt.Error = terminal.Error()
-				if match.PlaybookId == SourceRestoreID {
-					if err := skip(stagePlanNotExecutable); err != nil {
+			// The turn's diagnoses share one live view: nothing is written
+			// between them.
+			if turnView == nil {
+				fresh, err := loop.snapshotView(ctx)
+				if err != nil {
+					attempt.Error = err.Error()
+					if err := skip("diagnose_unavailable"); err != nil {
 						return report, err
 					}
 					continue
 				}
-				recordRefusal(terminal)
-			} else {
-				attempt.Result = "apply_error"
-				attempt.Error = planResponse.Error
+				turnView = fresh
+			}
+			view := turnView
+			before := program.RunDiagnose(diagnoseCtx, diagnoser, view, bindings, loop.deadline())
+			// An Unknown verdict is a read that did not answer (a memory host
+			// restart, a cancelled stream), not a diagnosis: ask again before
+			// giving the playbook up, and keep the reason either way.
+			for try := 1; !page && before.Result == program.Unknown && try < stageDiagnoseTries; try++ {
+				if err := stage.diagnoseBackoff(ctx); err != nil {
+					// Plans already made are this turn's writes: they are applied below.
+					stopErr = err
+					break
+				}
+				if fresh, viewErr := loop.snapshotView(ctx); viewErr == nil {
+					view = fresh
+				}
+				before = program.RunDiagnose(ctx, diagnoser, view, bindings, loop.deadline())
+			}
+			if stopErr != nil {
+				break
+			}
+			if before.Result == program.Unknown {
+				attempt.Error = diagnosisFailure(before)
+			}
+			if before.Result != program.Match {
+				if len(matches) > 1 {
+					requeue(deferred, key, match, attempt)
+				}
+				reason := "diagnose_unavailable"
+				if before.Result == program.NoMatch {
+					reason = "diagnose_no_longer_matches"
+					observed := ToolResponse{}
+					loop.verify(ctx, nil, &observed, true)
+					updateStageFindings(state, observed)
+				}
+				if err := skip(reason); err != nil {
+					return report, err
+				}
+				continue
+			}
+			// Once the opening symptoms clear, a later pass can repair only
+			// findings that still belong to the incident's alert set.
+			if state.Refresh && (!state.openingObservedActive || len(newRecoveryScope(openingKeys(&state.Request)).blocking(state.Findings)) == 0) {
+				active := findingFingerprints(newRecoveryScope(alertKeys(&state.Request)).blocking(state.Findings))
+				match.targets = slices.DeleteFunc(slices.Clone(match.targets), func(fp string) bool {
+					return !slices.Contains(active, fp)
+				})
+			}
+			if len(match.targets) == 0 && !page {
+				if err := skip("unexplained_coverage"); err != nil {
+					return report, err
+				}
+				continue
+			}
+			escalation, escalates, escalationErr := stageEscalation(ctx, mitigator, canMitigate, view, bindings, before, loop.deadline())
+			var refusal *NonExecutablePlanError
+			if match.PlaybookId != SourceRestoreID && errors.As(escalationErr, &refusal) {
+				loop.rememberTerminalPlanError(attempt.PlaybookId, attempt.ProgramRevision, bindings, refusal)
+				recordRefusal(refusal)
+				if err := save(false); err != nil {
+					return report, err
+				}
+				continue
+			}
+			// Only the responder may conclude that a page is out of reach.
+			if escalates && page {
+				if err := skip("no_mitigation"); err != nil {
+					return report, err
+				}
+				continue
+			}
+			if escalates {
+				escalateStageAttempt(state, attempt, match, bindings, before, escalation)
+				progressed = true
+				if err := save(false); err != nil {
+					return report, err
+				}
+				continue
+			}
+			if !canMitigate {
+				if err := skip("no_mitigation"); err != nil {
+					return report, err
+				}
+				continue
+			}
+			// Pin the live diagnosis view for planning; never reuse the dispatch-time
+			// view, and never invoke a working-checkout compiler in the automatic stage.
+			planResponse := ToolResponse{}
+			loop.matchedViews[matchedViewKey(match.PlaybookId, bindings)] = view
+			delete(loop.matchedPlans, matchedViewKey(match.PlaybookId, bindings))
+			if err := withoutResponderLocks(loop, "plan", true, func() {
+				planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.targets, stage: true})
+			}); err != nil {
+				return report, err
+			}
+			if planResponse.Error != "" {
+				if terminal := loop.terminalPlanError(match.PlaybookId, bindings); terminal != nil {
+					attempt.Error = terminal.Error()
+					if match.PlaybookId == SourceRestoreID {
+						if err := skip(stagePlanNotExecutable); err != nil {
+							return report, err
+						}
+						continue
+					}
+					recordRefusal(terminal)
+				} else {
+					attempt.Result = "apply_error"
+					attempt.Error = planResponse.Error
+				}
+				if err := save(false); err != nil {
+					return report, err
+				}
+				continue
+			}
+			planned := stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID, key: key}
+			plan := loop.plans[planResponse.PlanID].plan
+			if loop.sameWriteInProgress(ctx, loop.clock(), report, plan) {
+				if err := skip(stageAlreadyAttempted); err != nil {
+					return report, err
+				}
+				continue
+			}
+			loop.stagePlanReach(ctx, plan, &planned)
+			// A plan that reaches what an earlier plan of the turn writes waits
+			// for the next turn, so it is diagnosed and planned on the state that
+			// write left. A source restore keeps its place over a data repair it
+			// conflicts with: restores go first.
+			var conflicts []int
+			for i, other := range batch {
+				if other.reaches(planned) {
+					conflicts = append(conflicts, i)
+				}
+			}
+			displace := len(conflicts) > 0 && !planned.data && !planned.unknown && !slices.ContainsFunc(conflicts, func(i int) bool { return !batch[i].data || batch[i].unknown })
+			if len(conflicts) > 0 && !displace {
+				if err := waitTurn(planned); err != nil {
+					return report, err
+				}
+				continue
+			}
+			for i := len(conflicts) - 1; i >= 0; i-- {
+				displaced := batch[conflicts[i]]
+				batch = slices.Delete(batch, conflicts[i], conflicts[i]+1)
+				if err := waitTurn(displaced); err != nil {
+					return report, err
+				}
+			}
+			// Planned and not yet written: a restart before the batch applies
+			// redoes it.
+			attempt.SkipReason = stagePlannedInTurn
+			batch = append(batch, planned)
+		}
+		// A turn whose findings all cleared while it planned writes nothing more.
+		if len(batch) > 0 && len(state.Findings) == 0 && !page {
+			for _, item := range batch {
+				item.attempt.SkipReason = stageFindingsCleared
+				recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
 			}
 			if err := save(false); err != nil {
 				return report, err
 			}
-			continue
+			batch = nil
 		}
-		if loop.sameWriteInProgress(ctx, loop.clock(), report, loop.plans[planResponse.PlanID].plan) {
-			if err := skip(stageAlreadyAttempted); err != nil {
+		if len(batch) > 0 {
+			if err := stage.applyBatch(applyCtx, loop, state, batch, save); err != nil {
 				return report, err
 			}
-			continue
+			progressed = true
+			for _, item := range batch {
+				ineffective.add(item.attempt)
+			}
 		}
-		if err := stage.applyMatch(applyCtx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, save); err != nil {
-			return report, err
-		}
-		progressed = true
-		ineffective.add(attempt)
 		// An unsuccessful application is evidence about that binding, not a
 		// reason to starve the other matches. Each later match diagnoses fresh
 		// state and goes through the ordinary conflict and mutation fences.
+		if stopErr != nil {
+			return report, stopErr
+		}
+		if len(state.Findings) == 0 && !page {
+			break
+		}
+		if !progressed && !waiting && len(state.Findings) >= turnFindings {
+			break
+		}
+		start = turnEnd
 	}
 	if !state.Refresh {
 		stage.armRecovery(state, loop, report, progress)
@@ -810,64 +903,155 @@ type stagePlanned struct {
 	attempt  *contracts.StageMitigation
 	bindings program.Bindings
 	planID   string
+	key      string
+	// reach is what the plan writes or acts on: its written objects and, for
+	// a plan with an effect beyond Kubernetes objects (data marks a data
+	// repair, a command, a script), the objects it acts on and their
+	// controller owner chain, so a repair on a Pod reaches the Deployment
+	// that would replace it. unknown marks a write set that cannot be listed.
+	reach   []sdk.ObjectRef
+	data    bool
+	unknown bool
 }
 
-// applyMatch retains each binding's own receipt and compensation boundary.
-// Its single rollout sample lets the other matches run while recovery progresses.
-func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, item stagePlanned, save func(bool) error) error {
-	plan := loop.plans[item.planID]
-	item.attempt.PlanId = item.planID
-	item.attempt.PlanActionCount = int32(len(plan.plan.Actions))
-	// Persist intent before mutation. Interrupted writes are never replayed.
-	item.attempt.Result = "apply_error"
-	item.attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
-	planIDs := []string{item.planID}
-	if err := save(false); err != nil {
-		return err
+const (
+	// stageObjectShared skips, for this turn, a plan that reaches an object
+	// an earlier plan of the same turn writes. The next turn diagnoses it afresh.
+	stageObjectShared = "object_shared_in_turn"
+	// stagePlannedInTurn marks a planned attempt whose batch has not applied it yet.
+	stagePlannedInTurn = "planned_in_turn"
+	// stageFindingsCleared skips planned attempts of a turn whose findings
+	// all cleared before its batch applied.
+	stageFindingsCleared = "findings_cleared"
+)
+
+// stageSkipRetryable reports a skip that wrote nothing and decided nothing
+// about its binding: a restart before the binding's turn redoes it.
+func stageSkipRetryable(reason string) bool {
+	return reason == stageObjectShared || reason == stagePlannedInTurn
+}
+
+// stagePlanReach fills the planned binding's reach.
+func (l *ResponderLoop) stagePlanReach(ctx context.Context, plan program.Plan, planned *stagePlanned) {
+	refs, err := l.menuPlanWriteRefs(plan)
+	planned.unknown = err != nil
+	planned.data = planwire.HasNonObjectEffect(plan.Actions)
+	planned.reach = slices.Clone(refs)
+	if planned.data {
+		planned.reach = l.recoveryOwnerRefs(ctx, append(planned.reach, planCaptureRefs(plan)...), nil)
 	}
-	// PollRollouts performs one rollout sample while preserving the normal
-	// source/direct-readback I/O bound. A tiny rollout budget must not truncate
-	// those reads; no serial recovery wait runs inside this apply.
-	// Apply through the ordinary tool boundary: mutation fences, recorded
-	// writes, immutable receipts and compensation have one owner.
-	var applied ToolResponse
-	if err := withoutResponderLocks(loop, "apply", true, func() {
-		applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: planIDs, stage: true, rolloutTimeout: stage.RolloutTimeout})
+}
+
+// reaches reports whether two planned bindings of one turn may touch the
+// same object: an unknown write set reaches everything.
+func (p stagePlanned) reaches(other stagePlanned) bool {
+	if p.unknown || other.unknown {
+		return true
+	}
+	for _, x := range p.reach {
+		if slices.ContainsFunc(other.reach, func(y sdk.ObjectRef) bool { return sameResource(x, y) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyBatch applies one turn's planned bindings back to back, source
+// restores (plans that only write Kubernetes objects) before data repairs, and
+// then verifies them once. Each binding keeps its own application, receipt and
+// compensation boundary, so a failure part-way rolls back only its own plan.
+// Each apply takes a single rollout sample, so the other bindings run while
+// recovery progresses.
+func (stage *DeterministicResponseStage) applyBatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, batch []stagePlanned, save func(bool) error) error {
+	batch = slices.Clone(batch)
+	sort.SliceStable(batch, func(i, j int) bool { return !batch[i].data && batch[j].data })
+	// An interrupted batch leaves no execution flags behind.
+	defer func() { loop.batchVerified = nil }()
+	applied := make([]ToolResponse, len(batch))
+	var ids []string
+	for index, item := range batch {
+		plan := loop.plans[item.planID]
+		item.attempt.PlanId = item.planID
+		item.attempt.PlanActionCount = int32(len(plan.plan.Actions))
+		// Persist intent before mutation. Interrupted writes are never replayed.
+		item.attempt.Result, item.attempt.SkipReason = "apply_error", ""
+		item.attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
+		if err := save(false); err != nil {
+			return err
+		}
+		// PollRollouts performs one rollout sample while preserving the normal
+		// source/direct-readback I/O bound. A tiny rollout budget must not truncate
+		// those reads; no serial recovery wait runs inside this apply.
+		// Apply through the ordinary tool boundary: mutation fences, recorded
+		// writes, immutable receipts and compensation have one owner.
+		if err := withoutResponderLocks(loop, "apply", true, func() {
+			applied[index] = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{item.planID}, stage: true, batchVerify: true, afterBatchWrite: index > 0, rolloutTimeout: stage.RolloutTimeout})
+		}); err != nil {
+			return err
+		}
+		// A write whose rollout is still pending is not verified now, as
+		// before batching: recovery settlement observes it.
+		if id, observed := stageApplicationID(loop, item.planID); observed {
+			ids = append(ids, id)
+		}
+	}
+	// The one verification is not a tool call of its own: the applies record
+	// the writes, and each attempt records its own post-apply Diagnose.
+	var verified ToolResponse
+	if err := withoutResponderLocks(loop, "verify", true, func() {
+		if len(ids) == 0 {
+			return
+		}
+		verified = loop.Handle(ctx, ToolRequest{Command: "stage-verify", stage: true, isolatedRead: true, batchApplications: ids})
 	}); err != nil {
 		return err
 	}
-	var receipt *contracts.PlanApplication
-	complete := false
-	for _, application := range loop.applicationsLog {
-		if len(application.PlanIDs) == len(planIDs) && application.PlanIDs[0] == planIDs[0] {
-			var err error
-			if receipt, err = recordedPlanContract(application); err != nil {
-				return err
+	wrote := false
+	for index, item := range batch {
+		var receipt *contracts.PlanApplication
+		for _, application := range loop.applicationsLog {
+			if len(application.PlanIDs) == 1 && application.PlanIDs[0] == item.planID {
+				var err error
+				if receipt, err = recordedPlanContract(application); err != nil {
+					return err
+				}
+				item.attempt.TouchedObjects = touchedObjects(attemptApplication(application, item.attempt).Result)
 			}
-			scoped := attemptApplication(application, item.attempt).Result
-			complete = PlanActionsComplete(scoped)
-			item.attempt.TouchedObjects = touchedObjects(scoped)
 		}
-	}
-	state.afterWrite = state.afterWrite || receipt.GetApplied()
-	updateStageFindings(state, applied)
-	{
+		wrote = wrote || receipt.GetApplied()
 		attempt := item.attempt
 		attempt.Error = receipt.GetError()
 		if receipt == nil {
-			attempt.Error = applied.Error
+			attempt.Error = applied[index].Error
 		}
 		attempt.ApplyReceipt = receipt
-		for _, run := range applied.ProgramRuns {
+		for _, run := range verified.ProgramRuns {
 			if run.ProgramID == item.match.PlaybookId && run.Bindings.Equal(item.bindings) {
 				attempt.PostApplyDiagnose = programRunContract(run)
 				break
 			}
 		}
+	}
+	state.afterWrite = state.afterWrite || wrote
+	// With no verify (every write still rolling out) the findings stand.
+	if len(ids) > 0 {
+		updateStageFindings(state, verified)
+	}
+	for _, item := range batch {
+		attempt := item.attempt
 		// Scoped executor verification and the bound post-write diagnosis are
 		// newer evidence than a retained opening incident finding. An incident
 		// detector may not be installed in this loop's health-only registry.
-		clearVerifiedStageTargets(state, attempt, item.match.targets, applied)
+		clearVerifiedStageTargets(state, attempt, item.match.targets, verified)
+	}
+	for _, item := range batch {
+		attempt := item.attempt
+		complete := false
+		for _, application := range loop.applicationsLog {
+			if len(application.PlanIDs) == 1 && application.PlanIDs[0] == item.planID {
+				complete = PlanActionsComplete(attemptApplication(application, attempt).Result)
+			}
+		}
 		recordStageFindingProgress(attempt, item.match.targets, state.Findings)
 		switch {
 		case attempt.ApplyReceipt.GetRolloutPending().GetReasonCode() == "admission_blocked":
@@ -883,6 +1067,17 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 		}
 	}
 	return save(false)
+}
+
+// stageApplicationID is the application that consumed planID, and whether it
+// wrote with its rollout observed, so a verify can judge it now.
+func stageApplicationID(loop *ResponderLoop, planID string) (string, bool) {
+	for _, application := range loop.applicationsLog {
+		if slices.Contains(application.PlanIDs, planID) {
+			return application.ID, application.Result.Applied && application.Result.RolloutPending == nil
+		}
+	}
+	return "", false
 }
 
 // attemptApplication narrows a shared stage application to one attempt's
