@@ -58,7 +58,7 @@ def test_scoped_kubeconfig_and_clean_pool(tmp_path, monkeypatch, capsys):
     assert not any("synthetic-kube-token" in p.read_text() for p in (tmp_path / "receipts").rglob("*.json"))
 
 
-def test_detached_onset_launcher_and_evidence(tmp_path):
+def test_detached_onset_launcher_and_evidence(tmp_path, capsys):
     tools = tmp_path / "bin"
     tools.mkdir()
     traffic = tmp_path / "traffic.jsonl"
@@ -69,12 +69,14 @@ def test_detached_onset_launcher_and_evidence(tmp_path):
     sample = {
         "inject_at": nominal_inject.isoformat(),
         "observed_at": datetime.now(timezone.utc).isoformat(),
+        "through": datetime.now(timezone.utc).isoformat(),
         "requests": 6,
         "first_bad": None,
+        "last_bad": None,
     }
     healthy = json.dumps(sample)
     bad_bucket = {"Start": nominal_inject.replace(microsecond=0).isoformat(), "Failed": 6}
-    hurt = json.dumps({**sample, "first_bad": bad_bucket})
+    hurt = json.dumps({**sample, "first_bad": bad_bucket, "last_bad": bad_bucket})
     traffic.write_text(healthy + "\n" + hurt[:20])
     write_executable(tools / "kubectl", "#!/bin/sh\nexit 0\n")
     write_executable(
@@ -168,6 +170,7 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
         "FUZZOPS_TRAFFIC": str(traffic),
         "FUZZOPS_DEADLINE": (nominal_inject + timedelta(seconds=600)).isoformat(),
         "FUZZOPS_NAMESPACE": "fg1",
+        "FUZZOPS_STANDBY": str(tmp_path / "standby"),
     }
     ready_fd = os.open(ready, os.O_RDWR | os.O_NONBLOCK)
     release_fd = os.open(release, os.O_RDWR | os.O_NONBLOCK)
@@ -191,8 +194,23 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
         watch.kill()
         stdout, _ = watch.communicate(timeout=4)
         assert stdout == ""
+        # Users were quiet and are hurt again: the same supervisor pages a second session.
+        later = {"Start": (nominal_inject + timedelta(seconds=40)).isoformat(), "Failed": 6}
+        again = {
+            **sample,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "through": (nominal_inject + timedelta(seconds=42)).isoformat(),
+            "first_bad": bad_bucket,
+            "last_bad": later,
+        }
+        with traffic.open("a") as stream:
+            stream.write(json.dumps(again) + "\n")
         os.write(release_fd, b"G")
-        # The detached supervisor owns the lock through evidence publication.
+        assert select.select([ready_fd], [], [], 15)[0]
+        assert os.read(ready_fd, 1) == b"R"
+        assert vanilla.main(["idle"], env) == 1
+        os.write(release_fd, b"G")
+        # The detached supervisor owns the lock through evidence publication (one fault: two pages at most).
         subprocess.run(
             ["flock", "-w", "15", str(state / "lock"), "true"],
             timeout=20,
@@ -207,11 +225,20 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
             watch.kill()
             watch.wait()
     assert vanilla.main(["collect"], env) == 0
+    assert not (state / vanilla.STANDBY).exists()
+    assert not (tmp_path / "standby").exists()
+    done = json.loads((evidence / "done.json").read_text())
+    assert (done["pages"], done["repage"]["stopped"], done["repage"]["page_limit"]) == (2, "page limit", 2)
+    pages = [json.loads(line) for line in (evidence / "pages.jsonl").read_text().splitlines()]
+    assert [(p["page"], p["session_id"], p["users_recovered"]) for p in pages] == [
+        (1, "synthetic", True),
+        (2, "synthetic", False),
+    ]
     assert cell_problems(evidence, "vanilla") == []
     assert json.loads((evidence / "start.json").read_text())["inject_at"] == nominal_inject.isoformat()
     assert json.loads((evidence / "onset.json").read_text())["first_bad"] == bad_bucket
     assert (evidence / "onset-probes.jsonl").read_text() == healthy + "\n" + hurt + "\n"
-    assert json.loads((evidence / "usage.json").read_text())["input_tokens"] == 7
+    assert json.loads((evidence / "usage.json").read_text())["input_tokens"] == 14
     transcript = (evidence / "transcript.jsonl").read_text()
     assert "synthetic-kube-token" not in transcript
     assert "synthetic-vertex-key" not in transcript

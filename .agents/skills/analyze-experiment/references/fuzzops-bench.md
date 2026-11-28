@@ -77,6 +77,14 @@ overlay files it passed are under the lane's `sdo-config/`.
   Claude was never launched. Earlier hooks used a separate journey check and launched at a cap even
   when `at` was null. The final grader may backdate harm after checking for lost writes.
 
+- A vanilla Claude row can hold several sessions: the agent is paged again when users are harmed after 15 s without
+  a bad second (`benchmarks/fuzzops/repage.py`; at most faults + 1 pages). `operator/pages.jsonl` has one line per
+  page (`paged_at`, `onset`, session id, times, exit, usage, cost, `users_recovered`: whether users had that quiet
+  period afterwards; false means no further page could follow). `done.json` spans first to last session (`pages`,
+  `agent_seconds`, `repage.stopped`: `window over`, `collected`, `page limit` or `unsupported` for a FuzzOps pin
+  without `last_bad`); `usage.json`, `transcript.jsonl` and `session-dir/` cover every session. Totals are unknown
+  when any session has no result event.
+
 - Only `done` runs are graded. `invalid` reasons: `capped: <idle reason>` (SDO was still busy at the cap, often a
   queued reflection), `lane lost`, `inject failed`, a fuzzops invalid reason, `host interference`, `sequence broken`.
   Not-ready gates are lane events (in `gates.jsonl` and the lane timeline), not runs.
@@ -139,7 +147,8 @@ runs. Grader metrics come from `record.json`. Validity also honors the lanes sta
 - Both arms' headline time to fix ends at the last fixing write: SDO from the incident opening,
   vanilla from the agent start (`ttf_s` = `anchor_to_last_write_s`, null when no fixing write was
   found). The vanilla session end, which includes the agent's own verification after the fix,
-  is `agent_wall_s`. For a recovered row, the tool searches calls issued through the final
+  is `agent_wall_s` (with several pages, the sessions' own time, not the waiting between them).
+  For a recovered row, the tool searches calls issued through the final
   graded bad bucket. A database timestamp can place the exact write later than that bucket.
 - An `external` row (an agent command, `benchmarks/fuzzops/external.py`) is read like a vanilla row; `done.json` `label` and
   `agent_version` name the agent and `session-dir/incident/` holds its own evidence.
