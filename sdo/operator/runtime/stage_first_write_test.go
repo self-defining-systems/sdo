@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,5 +136,29 @@ func TestStagePreApplyCaptureStaysCompleteAndPreWrite(t *testing.T) {
 	recordings, _ := filepath.Glob(filepath.Join(dir, "open@pre-apply*"))
 	if len(recordings) < 2 {
 		t.Fatalf("pre-apply recordings = %v, want the snapshot and its source comparisons", recordings)
+	}
+}
+
+// A start record that cannot be saved means nothing was written: the apply
+// fails, the executor never runs, and no started record is left behind to
+// hold Recovered as an unsettled write.
+func TestApplyWhoseStartSaveFailsLeavesNoRecord(t *testing.T) {
+	world, stage, state := keyedStageLoop(t, credits("fix", keyedSymptom, "api"))
+	loop := stage.NewLoop(state.Request)
+	bindings := program.Bindings{Objects: map[string]sdk.ObjectRef{ComponentRole: {APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}}}
+	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "fix", Bindings: bindings})
+	if planned.Error != "" {
+		t.Fatal(planned.Error)
+	}
+	loop.saveToolState = func(context.Context, []byte) error { return errors.New("synthetic save timeout") }
+	applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
+	if applied.Error == "" {
+		t.Fatal("an apply whose start record was not saved must fail")
+	}
+	if got := world.restarts.Load(); got != 0 {
+		t.Fatalf("the apply wrote %d times after its start save failed", got)
+	}
+	if apps := loop.PlanApplications(); len(apps) != 0 {
+		t.Fatalf("a failed start save left records behind: %+v", apps)
 	}
 }

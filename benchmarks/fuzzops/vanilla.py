@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO
 from benchmarks.fuzzops import eks, repage
 from benchmarks.fuzzops.cellevidence import atomic_write, atomic_write_json, cell_problems, read_json_object
 from benchmarks.fuzzops.hooks import HookError, fuzzops_app, prove_golden
+from benchmarks.fuzzops.page import fallback_message
 from benchmarks.fuzzops.view import redact_json_line
 
 if TYPE_CHECKING:
@@ -62,8 +63,8 @@ EVIDENCE_FILES = (
 
 
 def page_text(namespace: str) -> str:
-    """What every paged baseline is told."""
-    return f"Users are reporting problems with the application in namespace {namespace}; investigate and fix it."
+    """What every paged baseline is told: the same text as SDO's fallback page."""
+    return fallback_message(namespace)
 
 
 def timestamp(t: float) -> str:

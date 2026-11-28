@@ -1439,6 +1439,9 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	persistErr := l.persistToolState(ctx)
 	endPersist()
 	if persistErr != nil {
+		// Nothing was written: leave no started record behind.
+		l.applicationsLog = l.applicationsLog[:len(l.applicationsLog)-1]
+		delete(l.applicationBindings, id)
 		response.Error = persistErr.Error()
 		return
 	}

@@ -78,8 +78,10 @@ type liveCheckTarget struct {
 }
 
 // NewLivePlaybookCheck checks with a fresh responder loop per call, bound to
-// the incident and the checkout under check.
-func NewLivePlaybookCheck(newLoop func(IncidentRequest) *ResponderLoop, namespace string) LivePlaybookCheck {
+// the incident and the checkout under check. incidentOpen reports whether the
+// controller has an incident open now; the closing turn runs after its own
+// incident closed, so an open one is new and the cluster is not recovered.
+func NewLivePlaybookCheck(newLoop func(IncidentRequest) *ResponderLoop, namespace string, incidentOpen func() bool) LivePlaybookCheck {
 	return func(ctx context.Context, incidentID, root, base string) (LiveCheckReport, error) {
 		ids, err := memory.ChangedPlaybooks(ctx, root, base)
 		if err != nil || len(ids) == 0 {
@@ -87,7 +89,7 @@ func NewLivePlaybookCheck(newLoop func(IncidentRequest) *ResponderLoop, namespac
 		}
 		loop := newLoop(IncidentRequest{IncidentID: incidentID, Namespace: namespace, RepositoryWorktree: root})
 		loop.WorkingProgramRoot = root
-		blocking, notes := checkPlaybooksLive(ctx, loop, liveCheckTargets(root, incidentID, ids))
+		blocking, notes := checkPlaybooksLive(ctx, loop, liveCheckTargets(root, incidentID, ids), incidentOpen)
 		return LiveCheckReport{Blocking: validate.ProtoDiagnostics(blocking), Notes: validate.ProtoDiagnostics(notes)}, nil
 	}
 }
@@ -140,15 +142,20 @@ func liveCheckTargets(root, incidentID string, ids []string) []liveCheckTarget {
 // transport error, a timeout, a Diagnose error) is retried once, so a Pod
 // replaced mid-check never costs the playbook, and then blocks: the automatic
 // stage runs the same reads through the same transport and would fail the
-// same way on first reuse. A Mitigate that fails on both views is a note: it
+// same way on first reuse. A Diagnose that Matches the recovered cluster on
+// two looks blocks too: the stage would apply the repair to healthy state
+// (a cache of counts flushed as if poisoned), unless an incident has opened
+// since recovery (incidentOpen), when the Match is a note: the cluster is not
+// the recovered one. A Mitigate that fails on both views is a note: it
 // may refuse healthy state by design. The memory check's own time limit
 // running out (ctx done) is a note for every playbook it did not finish.
-func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveCheckTarget) (blocking, notes []validate.Diagnostic) {
+func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveCheckTarget, incidentOpen func() bool) (blocking, notes []validate.Diagnostic) {
 	fail := func(id, message, hint string) {
 		blocking = append(blocking, validate.Diagnostic{Rule: LivePlaybookCheckRule, Path: layout.PlaybookDir(id), Message: message, Hint: hint})
 	}
 	const wrongCode = "the check ran read only on the recovered cluster; fix it so it exits Expect when the state holds and the needs-change code otherwise, then run memory check again"
 	const diagnoseCannotRun = "it failed twice on the recovered cluster, where state is healthy: on healthy state Diagnose should return NoMatch, not an error; fix the read (target, container, binary, timeout, output parsing) or remove the program and keep the playbook README-only, then run memory check again"
+	const matchesHealthy = "the incident is fixed, so on this state Diagnose must return NoMatch, or the automatic stage applies the repair to healthy state; key it on a state the healthy application never has (check the object it matched holds what you assumed), then run memory check again"
 	const cannotRun = "it failed twice on the recovered cluster through the transport the automatic stage uses, so the stage would fail the same way on first reuse; fix the read (target, container, binary, timeout, output parsing) or remove the program and keep the playbook README-only, then run memory check again"
 	note := func(id, message string) {
 		notes = append(notes, validate.Diagnostic{Rule: LivePlaybookCheckNote, Path: layout.PlaybookDir(id), Message: message})
@@ -180,17 +187,36 @@ func checkPlaybooksLive(ctx context.Context, loop liveCheckLoop, targets []liveC
 			bindings.Values = map[string]any{}
 		}
 		var view program.ReadView
-		if err := retryOnce(ctx, func() error {
+		var verdict program.Verdict
+		diagnose := func() error {
 			var err error
 			view, err = loop.snapshotView(ctx)
 			if err != nil {
 				return err
 			}
+			verdict = program.Verdict{}
 			if diagnoser, ok := loop.programs().Diagnoser(id); ok {
-				_, err = diagnoser.Diagnose(ctx, view, bindings)
+				verdict, err = diagnoser.Diagnose(ctx, view, bindings)
 			}
 			return err
-		}); err != nil {
+		}
+		err := retryOnce(ctx, diagnose)
+		// The incident is fixed here, so a Match means the automatic stage
+		// would apply the repair to healthy state. Look once more, so a read
+		// taken as the cluster settles never costs the playbook.
+		if err == nil && verdict.Result == program.Match {
+			err = retryOnce(ctx, diagnose)
+			if err == nil && verdict.Result == program.Match {
+				message := fmt.Sprintf("playbook %s: its Diagnose Matches on the recovered cluster: %s", id, verdictObjects(verdict))
+				if incidentOpen != nil && incidentOpen() {
+					note(id, message+"; not checked: a new incident is open, so the cluster is not the recovered one")
+				} else {
+					fail(id, message, matchesHealthy)
+				}
+				continue
+			}
+		}
+		if err != nil {
 			if ctx.Err() != nil {
 				outOfTime(id)
 				continue
@@ -299,4 +325,28 @@ func operationText(op program.ExternalOperation) string {
 		return op.HTTP.Method + " " + op.HTTP.URL
 	}
 	return "?"
+}
+
+// verdictObjects names the objects a verdict cites, at most four.
+func verdictObjects(verdict program.Verdict) string {
+	var names []string
+	for _, evidence := range verdict.Evidence {
+		ref := evidence.Resource
+		if ref.Name == "" {
+			continue
+		}
+		name := ref.Kind + "/" + ref.Namespace + "/" + ref.Name
+		if slices.Contains(names, name) {
+			continue
+		}
+		if len(names) == 4 {
+			names = append(names, "…")
+			break
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return "no object cited"
+	}
+	return strings.Join(names, ", ")
 }

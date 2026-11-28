@@ -603,6 +603,9 @@ func (e *Engine) IterateWithTrace(ctx context.Context, iteration uint64, trace f
 			sample.Defect, sample.ByteCap = result.defect, result.byteCap
 			break
 		}
+		if result.emptySample {
+			break
+		}
 		if endpoint, ok := declaredHTTP(step.Endpoint); ok && endpoint.MarksExistingRecords() {
 			sample.ExistingRecords = existingRecordsOutcome(state[ExistingMembersKey], scenario.Marker)
 			sample.ExistingMarked = existingRecordsMarked(state[ExistingMembersKey], scenario.Marker)
@@ -715,6 +718,9 @@ type stepResult struct {
 	byteCap int
 	// pending is set when the step's check answered NotYet.
 	pending bool
+	// emptySample is set when a SampleSaved list was empty: nothing was sent
+	// and the iteration's remaining steps are skipped.
+	emptySample bool
 	// converge is set for a step that answered NotYet at least once.
 	converge *Convergence
 	// waited is the time spent on attempts before the last one and the pauses
@@ -757,8 +763,14 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 
 func (e *Engine) sendStep(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, passwords State, phase stepPhase) stepResult {
 	request, err := step.Endpoint.Build(ctx, rng, state)
+	if errors.Is(err, errEmptySample) {
+		return stepResult{outcome: OutcomeOK, emptySample: true}
+	}
 	if err != nil {
 		return stepResult{outcome: OutcomeInvalid, err: "build: " + err.Error()}
+	}
+	if list, others := sampledFromOthers(step.Endpoint, state); others && request.writes() {
+		return stepResult{outcome: OutcomeInvalid, err: fmt.Sprintf("a write samples %q, which no marked write of this scenario saved: users' records are sampled only to read", list)}
 	}
 	target := scenario.stepTarget(step)
 	lineTarget := step.Target
@@ -839,6 +851,12 @@ func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step St
 				}
 			}
 			break
+		}
+		// A retry checks the same sampled record again.
+		for _, key := range sampledKeys(step.Endpoint) {
+			if value, ok := attempt[key]; ok {
+				state[key] = value
+			}
 		}
 		remaining := deadline.Sub(e.clock.Now())
 		// Send again only when a whole request still fits before the

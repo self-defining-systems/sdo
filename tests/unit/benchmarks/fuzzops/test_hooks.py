@@ -1152,6 +1152,36 @@ def test_collect_records_the_watchers_fallback_page(tmp_path: Path, monkeypatch:
     assert any("delete" in cmd and "sdo-external-incident" in cmd for cmd in calls)
 
 
+def test_collect_removes_a_later_episodes_pending_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SDO paged itself first; the harness paged a later harm episode. The inbox still goes before the reset."""
+    run = tmp_path / "run"
+    watch_out = run / "exec" / "watch"
+    watch_out.mkdir(parents=True)
+    episode = {"at": "2026-11-12T10:05:00Z", "fallback_id": "fallback-later", "fallback_page_at": None}
+    doc = {
+        "inject_at": "2026-11-12T10:00:00.123Z",
+        "sdo_page_at": "2026-11-12T10:00:20Z",
+        "page_source": "own",
+        "episodes": [{"at": "2026-11-12T10:00:05Z", "sdo_page_at": "2026-11-12T10:00:20Z"}, episode],
+        "page_limit": 2,
+    }
+    (run / "record.json").write_text(json.dumps({"lifecycle": {"inject_at": doc["inject_at"]}}))
+    (watch_out / "sdo-page.json").write_text(json.dumps(doc))
+    calls: list[list[str]] = []
+
+    def run_cmd(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1, "", "no cluster")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
+    dest = run / "operator"
+    hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(dest)), out=lambda _: None)
+    summary = json.loads((dest / "collect.json").read_text())
+    assert summary["page_limit"] == 2
+    assert summary["episodes"][1]["fallback_id"] == "fallback-later"
+    assert any("delete" in cmd and "sdo-external-incident" in cmd for cmd in calls)
+
+
 def test_collect_does_not_report_the_managers_run_json_as_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

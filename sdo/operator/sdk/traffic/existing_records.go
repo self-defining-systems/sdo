@@ -115,7 +115,20 @@ func (s Scenario) ExistingRecordsSteps() []ExistingRecordsStep {
 	for _, step := range marked {
 		endpoint, _ := declaredHTTP(step.Endpoint)
 		fact := ExistingRecordsStep{Name: step.Name, ChecksContent: endpoint.existingRecords.compileErr == nil}
-		request, err := endpoint.Build(context.Background(), rand.New(rand.NewPCG(1, 2)), sentinels.clone())
+		state := sentinels.clone()
+		// A member sampled from a saved list carries that list's key, at every
+		// field the step samples from it.
+		members := map[string]any{}
+		for _, sample := range endpoint.samples {
+			if _, ok := state[sample.list]; ok {
+				members[sample.list] = withSentinel(members[sample.list], sample.field, sentinel(sample.list))
+			}
+		}
+		for list, member := range members {
+			encoded, _ := json.Marshal([]any{member})
+			state[list] = string(encoded)
+		}
+		request, err := endpoint.Build(context.Background(), rand.New(rand.NewPCG(1, 2)), state)
 		if err == nil {
 			text := request.Path + "\x00" + request.Body
 			for key, value := range request.Query {
@@ -131,6 +144,21 @@ func (s Scenario) ExistingRecordsSteps() []ExistingRecordsStep {
 		out = append(out, fact)
 	}
 	return out
+}
+
+// withSentinel sets value at the dotted field of member, an object built so
+// far ("" makes the member the value itself).
+func withSentinel(member any, field string, value string) any {
+	if field == "" {
+		return value
+	}
+	object, ok := member.(map[string]any)
+	if !ok {
+		object = map[string]any{}
+	}
+	head, rest, _ := strings.Cut(field, ".")
+	object[head] = withSentinel(object[head], rest, value)
+	return object
 }
 
 func sentinel(key string) string { return "SDOSENTINEL" + key + "END" }
