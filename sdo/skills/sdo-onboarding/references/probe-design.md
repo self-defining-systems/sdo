@@ -43,3 +43,15 @@ for core paths when their planned time is too long.
 
 Every run but `--quick` also runs `memory check` (red `memory-check` lines), so it needs no separate call. SDO runs
 every probe's repeatability, concurrency, cleanup and altered-answer checks after the session.
+
+## SDK details
+
+- Paths, `WithJSON` bodies, `JSONEquals` and `ExactSet` fill `{key}` from State (query and form values take
+  `FromPrevious`); `Contains` and `Each` use their text and pattern as written.
+- State holds only what `SaveJSON`, `SaveCookie` and `FromSeedPair` stored this iteration. A generated value
+  (`Unique`) is not kept: save it from the answer to use it in a later step.
+- `Eventually(read)` sends a GET again while its checks fail with an answer below 500, until they pass or the
+  `iterationTimeout` nears; a custom `Check` returns `NotYet` for the same.
+- `ReadsExistingRecords` passes on an empty list; a member that contains the scenario's Marker is the probe's own.
+- Every write of a write scenario carries its Marker (path, body, query or a header; a parameter the application
+  ignores is fine), or names a record a marked write saved.
