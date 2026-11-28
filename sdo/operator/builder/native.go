@@ -82,6 +82,16 @@ func lean(args ...string) []string {
 	return append([]string{args[0], "-ldflags=-s -w"}, args[1:]...)
 }
 
+// compileAll compiles every package of the workspace, main packages included,
+// and reports exactly the compiler errors `go build ./...` reports, but links
+// nothing: `go build` of several packages links every main package on every
+// run (a link is never cached), and those binaries are discarded. The
+// authored packages are linked by the test stages that follow (the generated
+// package's tests import every detector and playbook program), and the
+// controller and memory host are linked where they are used: at launch and by
+// BuildMemoryHost.
+var compileAll = []string{"list", "-export", "-buildvcs=false", `-f={{""}}`, "./..."}
+
 func (workspace *Workspace) runGo(ctx context.Context, args ...string) error {
 	elapsed, err := buildio.RunGo(ctx, workspace.Directory, nil, args...)
 	workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: strings.Join(args, " "), Duration: elapsed})
@@ -152,10 +162,10 @@ func (workspace *Workspace) validate(ctx context.Context, vet, classifyGenerated
 	binary := filepath.Join(workspace.Directory, "sdo-controller")
 	stages := [][]string{{"mod", "tidy"}}
 	if vet {
-		stages = append(stages, lean("build", "-buildvcs=false", "./..."), []string{"vet", "./..."})
+		stages = append(stages, compileAll, []string{"vet", "./..."})
 	}
 	if workspace.compileOnly {
-		stages = append(stages, lean("build", "-buildvcs=false", "./..."))
+		stages = append(stages, compileAll)
 	} else {
 		// Vet already compiles source and tests. Launch-only builds still
 		// compile tests without executing their behavioral assertions.

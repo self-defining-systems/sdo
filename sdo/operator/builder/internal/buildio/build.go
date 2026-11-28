@@ -31,7 +31,7 @@ func (e *StageError) Unwrap() error { return e.Err }
 func RunGo(ctx context.Context, directory string, environment []string, args ...string) (time.Duration, error) {
 	// Go's exact-input cache can survive a new isolated staging directory only
 	// when temporary source paths are omitted from compiled package identities.
-	if len(args) > 0 && (args[0] == "build" || args[0] == "vet" || args[0] == "test") {
+	if len(args) > 0 && (args[0] == "build" || args[0] == "list" || args[0] == "vet" || args[0] == "test") {
 		args = append([]string{args[0], "-trimpath"}, args[1:]...)
 	}
 	stage := strings.Join(args, " ")
@@ -43,7 +43,7 @@ func RunGo(ctx context.Context, directory string, environment []string, args ...
 		environment = os.Environ()
 	}
 	// The workspace is a self-contained module; a caller's go.work must not select it.
-	command.Env = append(environment, "GOWORK=off")
+	command.Env = append(withoutUnusableCacheProgram(environment), "GOWORK=off")
 	output, err := command.CombinedOutput()
 	elapsed := time.Since(started)
 	slog.Info("memory_check_stage_finished", "stage", stage, "duration", elapsed)
@@ -53,9 +53,35 @@ func RunGo(ctx context.Context, directory string, environment []string, args ...
 	return elapsed, nil
 }
 
+// cacheProgramUsable reports whether GOCACHEPROG names an executable. A pod
+// started from an image without the helper (an older image under newer code)
+// falls back to the private GOCACHE and its seed copy instead of failing every
+// Go command.
+func cacheProgramUsable() bool {
+	program := os.Getenv("GOCACHEPROG")
+	if program == "" {
+		return false
+	}
+	info, err := os.Stat(program)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+}
+
+func withoutUnusableCacheProgram(environment []string) []string {
+	if os.Getenv("GOCACHEPROG") == "" || cacheProgramUsable() {
+		return environment
+	}
+	kept := make([]string, 0, len(environment))
+	for _, variable := range environment {
+		if !strings.HasPrefix(variable, "GOCACHEPROG=") {
+			kept = append(kept, variable)
+		}
+	}
+	return kept
+}
+
 func SeedGoBuildCache(ctx context.Context) error {
-	// The cache helper reads image entries in place and writes misses to scratch.
-	if os.Getenv("GOCACHEPROG") != "" {
+	// The cache helper reads the seeds in place and writes misses to scratch.
+	if cacheProgramUsable() {
 		return nil
 	}
 	seed := os.Getenv("SDO_GO_CACHE_SEED")

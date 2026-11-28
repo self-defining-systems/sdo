@@ -4,6 +4,7 @@ package toolchain
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -17,6 +18,41 @@ func ValidateImage(image string) error {
 		return fmt.Errorf("--toolchain-image is required: worker runtime images lack Go; set it to the controller image")
 	}
 	return nil
+}
+
+// ControllerBuildCacheSubPath is the controller's Go build cache, relative to the repository volume. The controller
+// compiles and validates accepted memory with it, so it holds every package, vet fact and test result a memory check
+// of that memory reuses.
+const ControllerBuildCacheSubPath = ".sdo-runtime/build/go-cache"
+
+const (
+	// imageBuildCache is the compiler image's offline build cache seed, inside the toolchain's /go.
+	imageBuildCache = "/go/build-cache"
+	// cacheProgram is the read-through GOCACHEPROG helper shipped inside the toolchain's /go.
+	cacheProgram = "/go/bin/sdo-go-cache"
+	// controllerBuildCacheMount is where a worker sees the controller's build cache, read only.
+	controllerBuildCacheMount = "/sdo/controller-go-cache"
+)
+
+// useCacheProgram makes every Go command in the pod read the given seeds in place through the toolchain's
+// GOCACHEPROG helper and write its own misses to the image's private GOCACHE, instead of copying a seed into
+// GOCACHE first.
+func useCacheProgram(pod *corev1.PodSpec, seeds ...string) {
+	for i := range pod.Containers {
+		container := &pod.Containers[i]
+		setEnv(container, "GOCACHEPROG", cacheProgram)
+		setEnv(container, "SDO_GO_CACHE_SEED", strings.Join(seeds, string(filepath.ListSeparator)))
+	}
+}
+
+func setEnv(container *corev1.Container, name, value string) {
+	for i := range container.Env {
+		if container.Env[i].Name == name {
+			container.Env[i] = corev1.EnvVar{Name: name, Value: value}
+			return
+		}
+	}
+	container.Env = append(container.Env, corev1.EnvVar{Name: name, Value: value})
 }
 
 // Apply copies the trusted toolchain into a private emptyDir before untrusted
@@ -41,4 +77,5 @@ func Apply(pod *corev1.PodSpec, controllerImage string) {
 			corev1.VolumeMount{Name: "sdo-toolchain", MountPath: "/usr/local/go", SubPath: "go", ReadOnly: true},
 			corev1.VolumeMount{Name: "sdo-toolchain", MountPath: "/go", SubPath: "cache", ReadOnly: true})
 	}
+	useCacheProgram(pod, imageBuildCache)
 }

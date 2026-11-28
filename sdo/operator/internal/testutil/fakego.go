@@ -11,7 +11,7 @@ import (
 )
 
 // GoRule makes a matching Go toolchain stage fail. A rule matches when the
-// stage's verb (first non-flag argument: mod, build, vet, test) equals Verb,
+// stage's verb (first non-flag argument: mod, build, list, vet, test) equals Verb,
 // and every non-empty condition holds. An unmatched stage succeeds.
 type GoRule struct {
 	Verb string

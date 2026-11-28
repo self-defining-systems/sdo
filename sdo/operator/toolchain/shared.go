@@ -70,6 +70,9 @@ func Seeded(repositoryMount, image string) bool {
 
 // ApplyShared has no init container or per-incident copy. Seed must have
 // completed at controller startup. Build outputs remain private scratch files.
+// The controller's build cache is mounted read only and read before the image
+// seed, so a worker's first memory check reuses what the controller already
+// compiled and validated for the accepted memory instead of starting cold.
 func ApplyShared(pod *corev1.PodSpec, image, pvcSubPath string) {
 	if image == "" {
 		return
@@ -77,6 +80,8 @@ func ApplyShared(pod *corev1.PodSpec, image, pvcSubPath string) {
 	for i := range pod.Containers {
 		pod.Containers[i].VolumeMounts = append(pod.Containers[i].VolumeMounts,
 			corev1.VolumeMount{Name: "repository", MountPath: "/usr/local/go", SubPath: path.Join(pvcSubPath, SharedSubPath(image), "go"), ReadOnly: true},
-			corev1.VolumeMount{Name: "repository", MountPath: "/go", SubPath: path.Join(pvcSubPath, SharedSubPath(image), "cache"), ReadOnly: true})
+			corev1.VolumeMount{Name: "repository", MountPath: "/go", SubPath: path.Join(pvcSubPath, SharedSubPath(image), "cache"), ReadOnly: true},
+			corev1.VolumeMount{Name: "repository", MountPath: controllerBuildCacheMount, SubPath: path.Join(pvcSubPath, ControllerBuildCacheSubPath), ReadOnly: true})
 	}
+	useCacheProgram(pod, controllerBuildCacheMount, imageBuildCache)
 }
