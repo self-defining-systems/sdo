@@ -282,10 +282,18 @@ func TestEvaluateOnceWarmupLimitAnswersBeforeASlowWorkloadWarms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evaluate-once: %v (stderr=%s)", err, stderr.String())
 	}
-	if waited := clock.Since(started); waited > 2*time.Minute+5*time.Second {
-		t.Fatalf("waited %s for a workload that needs 20 minutes, want at most the 2m warm-up limit", waited)
+	// Nothing else needed waiting for: the unfillable workload does not hold
+	// the evaluation for the whole limit either.
+	if waited := clock.Since(started); waited > evaluateOnceWarmupBudget+5*time.Second {
+		t.Fatalf("waited %s for a workload that can never fill within the 2m limit, want the %s floor", waited, evaluateOnceWarmupBudget)
 	}
-	if _, err := evaluation.Decode(stdout.Bytes()); err != nil {
+	result, err := evaluation.Decode(stdout.Bytes())
+	if err != nil {
 		t.Fatalf("no verdict: %v (%q)", err, stdout.String())
+	}
+	// Repeating the evaluation could never fill that window: it is a clue for
+	// the controller to judge, not a pending verdict a caller waits on forever.
+	if result.Status == "pending" || len(result.Unavailable) != 1 || !result.Unavailable[0].Clue || result.Unavailable[0].DetectorID != "traffic-probe-call" {
+		t.Fatalf("status %q unavailable %+v, want the slow workload's detector as a clue and no pending verdict", result.Status, result.Unavailable)
 	}
 }
