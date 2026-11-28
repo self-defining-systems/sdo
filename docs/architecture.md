@@ -1183,8 +1183,10 @@ read (env or volume) last changed; the change time comes from managedFields and 
 never Secret data, and counts only managers other than SDO's own (`sdk.SDOFieldManagers`: the deployer,
 acceptance, replicas handoff, and the responder, whose writes the recording proxy forces to its manager). Unready and
 old-revision StatefulSet/DaemonSet rules, workload-health's rules except the progress deadline, and node NotReady
-report only after the self-heal hold from a Kubernetes timestamp; a CronJob's failed Job is not reported; OnDelete and partitioned updates retain old revisions
-intentionally. Cron schedules use the standard five-field parser with explicit timezone (UTC default).
+report after the self-heal hold. Replica readiness checks use Kubernetes timestamps for Pod startup and rollout progress.
+Without such progress, Deployment falls back to its availability condition, and StatefulSet and DaemonSet fall back to
+Pod or workload creation. The detectors keep no timing state between observations.
+CronJob-owned failed Jobs are covered by the CronJob rules. OnDelete and partitioned updates retain old revisions intentionally. Cron schedules use the standard five-field parser with explicit timezone (UTC default).
 Warning events require repeated occurrences spanning a minute, seen within two minutes, and clear
 when the affected pod has subsequently become ready. Runtime crashes use one firing evaluation:
 `logs.Appeared` already requires a quiet cycle and produces a single transition. Other policies use
