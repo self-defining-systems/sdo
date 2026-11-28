@@ -104,6 +104,22 @@ type ScenarioObservations struct {
 }
     ScenarioObservations are one scenario's recent samples, oldest first.
 
+type SentRequest struct {
+	Service string    `json:"service"`
+	Method  string    `json:"method"`
+	Path    string    `json:"path"`
+	Status  int       `json:"status"`
+	At      time.Time `json:"at"`
+}
+    SentRequest is one HTTP request SDO's prober sent and the status the
+    application answered. Path is the escaped URL path, without the query.
+
+func SentFrom(ctx sdk.DetectionContext) []SentRequest
+    SentFrom returns every request SDO's prober sent, from every window the
+    context carries, oldest first. An operator's own traffic is never evidence
+    that users are failing: readers of the application's request metrics
+    subtract these requests from what the application counted.
+
 type SetupLocker interface {
 	Lock(ctx context.Context, key string) (release func(), err error)
 }
@@ -211,32 +227,16 @@ type Window struct {
 	Skipped int `json:"skipped,omitempty"`
 	// LoadError is set when the workload could not be loaded or run.
 	LoadError string `json:"loadError,omitempty"`
+	// Sent lists the HTTP requests SDO's prober sent for this workload that
+	// the application answered, newest last, over the SentRetention before
+	// ObservedAt. They are SDO's own synthetic traffic: their verdicts are
+	// the scenarios' samples, so a reader of the application's own request
+	// metrics subtracts them before judging users' traffic (SentFrom).
+	Sent []SentRequest `json:"sent,omitempty"`
 }
     Window is what the prober has observed for one workload at ObservedAt.
 
 func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)
     WindowFrom returns the observations of workload, when the context carries
     them.
-
-func (w Window) ExistingRecordsExercised() int
-    ExistingRecordsExercised counts the samples in which a ReadsExistingRecords
-    step returned at least one record the probe did not write.
-
-func (w Window) IdentityWait() time.Duration
-    IdentityWait is the longest provisioning run any scenario is still waiting
-    for, zero when none waits on a probe user.
-
-func (w Window) LinkSetting() LinkSetting
-    LinkSetting returns the setting of the window's link-probe workload.
-
-func (w Window) Ready() bool
-    Ready reports whether the window holds what its own detectors need to judge
-    it: every observed scenario has the usable samples its SLO requires (failed
-    samples count, so an outage is judged rather than waited out), and every
-    link has a sample. The traffic detector's ConfirmationReason is built on the
-    same predicate, so a ready window can differ from a confirmed one only by
-    scenarios that have not yet succeeded.
-
-func (w Window) SLO() SLO
-    SLO returns the workload's effective SLO, defaults included.
 ```

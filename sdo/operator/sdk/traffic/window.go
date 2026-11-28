@@ -54,6 +54,44 @@ type Window struct {
 	Skipped int `json:"skipped,omitempty"`
 	// LoadError is set when the workload could not be loaded or run.
 	LoadError string `json:"loadError,omitempty"`
+	// Sent lists the HTTP requests SDO's prober sent for this workload that
+	// the application answered, newest last, over the SentRetention before
+	// ObservedAt. They are SDO's own synthetic traffic: their verdicts are
+	// the scenarios' samples, so a reader of the application's own request
+	// metrics subtracts them before judging users' traffic (SentFrom).
+	Sent []SentRequest `json:"sent,omitempty"`
+}
+
+// SentRetention is how long a window keeps the requests its prober sent: it
+// covers the request-metrics lookback (five minutes of steps, each a 30 s
+// window) with room for scrape delay.
+const SentRetention = 6 * time.Minute
+
+// SentRequest is one HTTP request SDO's prober sent and the status the
+// application answered. Path is the escaped URL path, without the query.
+type SentRequest struct {
+	Service string    `json:"service"`
+	Method  string    `json:"method"`
+	Path    string    `json:"path"`
+	Status  int       `json:"status"`
+	At      time.Time `json:"at"`
+}
+
+// SentFrom returns every request SDO's prober sent, from every window the
+// context carries, oldest first. An operator's own traffic is never evidence
+// that users are failing: readers of the application's request metrics
+// subtract these requests from what the application counted.
+func SentFrom(ctx sdk.DetectionContext) []SentRequest {
+	set, ok := ctx.(WindowSet)
+	if !ok {
+		return nil
+	}
+	var sent []SentRequest
+	for _, window := range set.TrafficWindows() {
+		sent = append(sent, window.Sent...)
+	}
+	sort.SliceStable(sent, func(i, j int) bool { return sent[i].At.Before(sent[j].At) })
+	return sent
 }
 
 // Source is implemented by detection contexts that carry synthetic-traffic

@@ -195,7 +195,14 @@ type Engine struct {
 	identityKeys map[string][]string
 	// stepLog receives every sent request and its answer (UseStepLog).
 	stepLog func(StepLog)
+	// sentLog receives every answered HTTP request (UseSentLog).
+	sentLog func(SentRequest)
 }
+
+// UseSentLog sends every HTTP request the engine sends and the application
+// answers to log, with the answer's status: the prober's ledger of its own
+// traffic (Window.Sent).
+func (e *Engine) UseSentLog(log func(SentRequest)) { e.sentLog = log }
 
 // StepLog is one request a scenario sent and what came back, with probe-user
 // credentials redacted: the line a prober's log would print.
@@ -888,6 +895,9 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 			return stepResult{outcome: OutcomeTimeout, sent: 1, request: line, err: err.Error(), observed: cause, dial: dial}
 		}
 		return stepResult{outcome: OutcomeError, sent: 1, request: line, err: err.Error(), observed: cause, dial: dial}
+	}
+	if e.sentLog != nil {
+		e.sentLog(SentRequest{Service: target.Service, Method: built.Method, Path: built.URL.EscapedPath(), Status: response.StatusCode, At: e.clock.Now().UTC()})
 	}
 	defer response.Body.Close()
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, MaxResponseBody+1))
