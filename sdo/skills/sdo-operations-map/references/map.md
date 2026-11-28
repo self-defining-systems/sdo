@@ -75,17 +75,20 @@ Rules the memory check enforces:
   operation reaches, stores included. A component on no path that a probed path's component reaches over edges
   counts as probed, so Go reads its store and dials its links as often as the path's. Paths that list only services
   therefore make everything behind them count, and Go can no longer favor what operations use.
-- A probe's path is the union of its operations' paths. Its scenario's `DependsOn` names at least one Service of
-  every component on that path and no other Service.
-- `call` scenarios are in workload `probe-call`, `write-read` scenarios (a write side effect, at least one
+- A probe's path is the union of its operations' paths. Go fills an empty scenario `DependsOn` from it (one
+  Service per component); a `DependsOn` you set names at least one Service of every component on that path and no
+  other Service.
+- Go runs `call` scenarios in workload `probe-call`, `write-read` scenarios (a write side effect, at least one
   writing operation) in `probe-write`, `read-later` scenarios (read side effect, a data-holding component on the
-  path) in `probe-read-later`. Each scenario is in exactly one of them and has one probe entry.
+  path) in `probe-read-later`. List a scenario in a workload file only to give it settings (`knownBroken`, an
+  `slo`), and then only in the workload of its kind. Each scenario has one probe entry.
 - Coverage: every component reachable from a user entry Service (exposed outside the cluster; else the entry
   Services of your operations) lies on the path of a probed operation that enters at a user entry Service, or the
   component carries `unprobed`, one line saying why no synthetic request can reach it (needing a login is not a
   reason: a scenario signs in as a probe user); every operation, writing ones too, is in a `call` probe (a
   write-read probe does not count); every writing operation is also in a write-read probe;
-  every data-holding component on a writing operation's path is on a read-later probe's path. An operation broken
+  every data-holding component on a writing operation's path that another operation also reaches is on a
+  read-later probe's path. An operation broken
   in the application as deployed is covered by a probe whose workload scenario is declared `knownBroken`
   (`knownBroken: {reason: <one line>, failsWith: ["404"]}`); at most half of the operations may be.
 

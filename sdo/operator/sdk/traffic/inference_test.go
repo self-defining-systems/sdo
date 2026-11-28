@@ -188,3 +188,22 @@ func (customEndpoint) Build(context.Context, *rand.Rand, State) (Request, error)
 	return Request{Method: http.MethodGet, Path: "/x"}, nil
 }
 func (customEndpoint) Check(Response, State) Verdict { return Pass() }
+
+// DependsOn follows from the map's probe paths: one Service per component, the
+// one a step calls when the component has several; a declared one is kept.
+func TestDependsOnIsDerivedFromTheMapPaths(t *testing.T) {
+	s := createReadDelete()
+	s.Steps = append(s.Steps, Step{Name: "admin", Endpoint: GET("/records", nil).Contains("x"), Target: &Target{Service: "web-admin", Port: 81}})
+	paths := map[string][][]string{"records": {{"web", "web-admin"}, {"db", "db-headless"}}}
+	if got := CompleteCatalog(Catalog{s}, paths)[0].DependsOn; strings.Join(got, ",") != "web,db" {
+		t.Fatalf("derived %v", got)
+	}
+	s.Target.Service = "web-admin"
+	if got := CompleteCatalog(Catalog{s}, paths)[0].DependsOn; strings.Join(got, ",") != "web-admin,db" {
+		t.Fatalf("the called Service of a component wins: %v", got)
+	}
+	s.DependsOn = []string{"web"}
+	if got := CompleteCatalog(Catalog{s}, paths)[0].DependsOn; strings.Join(got, ",") != "web" {
+		t.Fatalf("a declared DependsOn is kept: %v", got)
+	}
+}

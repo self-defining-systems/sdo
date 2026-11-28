@@ -168,7 +168,7 @@ func TestCheckNamesWhatIsWrong(t *testing.T) {
 	}{
 		{"operation in no call or write-read probe", strings.ReplaceAll(replace("operations: [list-items, add-item]}\n  - {scenario: write", "operations: [add-item]}\n  - {scenario: write"), "operations: [add-item, list-items]", "operations: [add-item]"), RuleUncoveredOp, "list-items"},
 		{"writing operation in no write-read probe", replace("operations: [add-item, list-items]", "operations: [list-items]"), RuleUncoveredWrite, "add-item"},
-		{"data component on no read-later path", replace("path: [web, api, db]\n  - id: add-item", "path: [web, api]\n  - id: add-item"), RuleUncoveredData, "db"},
+		{"data component on no read-later path", replace("  - {scenario: items-later, kind: read-later, operations: [list-items]}\n", ""), RuleUncoveredData, "db"},
 		{"unknown component in an edge", replace("to: cache", "to: queue"), RuleUnknownName, "queue"},
 		{"unknown operation in a probe", replace("operations: [list-items]}\n", "operations: [list-itemz]}\n"), RuleUnknownName, "list-itemz"},
 		{"workload not in the inventory", replace("Deployment/cache", "Deployment/cachee"), RuleUnknownName, "Deployment/cachee"},

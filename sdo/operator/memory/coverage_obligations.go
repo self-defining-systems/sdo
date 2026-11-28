@@ -31,8 +31,21 @@ func acceptedMap(checkout string) (m appmap.Map, coverage appmap.Coverage, ok bo
 }
 
 // MapWorkloads lists the traffic workloads' scenario IDs and knownBroken
-// declarations, as the map check reads them.
+// declarations, as the map check reads them: a scenario the map's probes
+// list runs in the workload of its probe kind even when the file omits it.
 func MapWorkloads(checkout string) []appmap.Workload {
+	workloads := fileWorkloads(checkout)
+	if data, err := os.ReadFile(filepath.Join(checkout, layout.ArchitectureFile)); err == nil {
+		if region, found, err := appmap.Find(string(data)); found && err == nil {
+			if m, err := appmap.Parse(region.YAML); err == nil {
+				return m.WithProbeMembership(workloads)
+			}
+		}
+	}
+	return workloads
+}
+
+func fileWorkloads(checkout string) []appmap.Workload {
 	directory := filepath.Join(checkout, layout.TrafficWorkloadsDir)
 	entries, err := os.ReadDir(directory)
 	if err != nil {

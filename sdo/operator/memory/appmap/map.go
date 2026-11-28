@@ -317,6 +317,7 @@ func opPaths(ops []Operation) map[string]Operation {
 // source inventory and the traffic workloads. Findings are sorted for a stable
 // report. Scenario facts (side effect, DependsOn) come from CheckScenarios.
 func (m Map) Check(inv Inventory, workloads []Workload) []Finding {
+	workloads = m.WithProbeMembership(workloads)
 	c := &checker{m: m, byName: map[string]Component{}, ops: map[string]Operation{}, knownBroken: map[string]bool{}, broken: map[string]bool{}}
 	c.schema()
 	c.entries()
@@ -661,15 +662,28 @@ func (c *checker) coverage() {
 		}
 	}
 	written := map[string][]string{}
+	reached := map[string][]string{}
 	for _, op := range c.m.Operations {
 		for _, a := range op.Path {
+			reached[a] = append(reached[a], op.ID)
 			if op.Writes && !c.broken[op.ID] {
 				written[a] = append(written[a], op.ID)
 			}
 		}
 	}
+	// Data is a read-later obligation only when an operation other than its
+	// writer reaches it: data a write stores and no other operation reads
+	// back cannot be read later by any probe.
+	readBack := func(name string) bool {
+		for _, id := range reached[name] {
+			if len(written[name]) != 1 || written[name][0] != id {
+				return true
+			}
+		}
+		return false
+	}
 	for _, comp := range c.m.Components {
-		if comp.HoldsData && len(written[comp.Name]) > 0 && !readLater[comp.Name] {
+		if comp.HoldsData && len(written[comp.Name]) > 0 && !readLater[comp.Name] && readBack(comp.Name) {
 			c.add(RuleUncoveredData, fmt.Sprintf("add a `read-later` probe scenario (workload %s) that reads back, in a later iteration, data written earlier through %s", WorkloadForKind[KindReadLater], strings.Join(dedupe(written[comp.Name]), ", ")), "data component %s (written by %s) is on no read-later probe path", comp.Name, strings.Join(dedupe(written[comp.Name]), ", "))
 		}
 	}

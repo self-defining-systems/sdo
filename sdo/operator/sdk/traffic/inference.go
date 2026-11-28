@@ -11,12 +11,14 @@ import (
 
 // CompleteCatalog fills what Go derives instead of the author: an empty
 // SideEffect from the steps' methods (InferSideEffect), and an empty
-// DependsOn from dependsOn, the Services the application map's probe line
-// for the scenario reaches. Scenarios whose side effect cannot be inferred
-// keep it empty, and Validate says what to declare. The generated catalog
-// runs every scenario through it, so the prober, the checks and the
-// controller see the same values.
-func CompleteCatalog(catalog Catalog, dependsOn map[string][]string) Catalog {
+// DependsOn from paths, the Services of each component on the operations'
+// paths of the application map's probe line for the scenario. DependsOn gets
+// one Service per component: the one the scenario's steps call, else the
+// component's first. Scenarios whose side effect cannot be inferred keep it
+// empty, and Validate says what to declare. The generated catalog runs every
+// scenario through it, so the prober, the checks and the controller see the
+// same values.
+func CompleteCatalog(catalog Catalog, paths map[string][][]string) Catalog {
 	out := make(Catalog, len(catalog))
 	for index, scenario := range catalog {
 		if scenario.SideEffect == "" {
@@ -24,10 +26,34 @@ func CompleteCatalog(catalog Catalog, dependsOn map[string][]string) Catalog {
 				scenario.SideEffect = inferred
 			}
 		}
-		if len(scenario.DependsOn) == 0 && len(dependsOn[scenario.ID]) > 0 {
-			scenario.DependsOn = append([]string(nil), dependsOn[scenario.ID]...)
+		if len(scenario.DependsOn) == 0 {
+			scenario.DependsOn = dependsOnFromPath(scenario, paths[scenario.ID])
 		}
 		out[index] = scenario
+	}
+	return out
+}
+
+func dependsOnFromPath(s Scenario, components [][]string) []string {
+	called := map[string]bool{s.Target.Service: true}
+	for _, step := range append(append(append([]Step(nil), s.Setup...), s.Steps...), s.Cleanup...) {
+		if step.Target != nil {
+			called[step.Target.Service] = true
+		}
+	}
+	var out []string
+	for _, services := range components {
+		if len(services) == 0 {
+			continue
+		}
+		chosen := services[0]
+		for _, service := range services {
+			if called[service] {
+				chosen = service
+				break
+			}
+		}
+		out = append(out, chosen)
 	}
 	return out
 }

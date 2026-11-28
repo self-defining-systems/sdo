@@ -59,6 +59,23 @@ func generateApplicationMapTest(applicationRoot, workspace string) error {
 	return os.WriteFile(filepath.Join(workspace, "generated", "application_map_test.go"), []byte(applicationMapTest), 0o644)
 }
 
+// readApplicationMap is the checkout's well-formed application map, or nil.
+func readApplicationMap(applicationRoot string) *appmap.Map {
+	data, err := os.ReadFile(filepath.Join(applicationRoot, filepath.FromSlash(layout.ArchitectureFile)))
+	if err != nil {
+		return nil
+	}
+	region, found, err := appmap.Find(string(data))
+	if !found || err != nil {
+		return nil
+	}
+	parsed, err := appmap.Parse(region.YAML)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
 // knownBrokenScenarios lists, sorted, the scenario IDs the checkout's traffic
 // workloads declare knownBroken: they are not gated probes.
 func knownBrokenScenarios(applicationRoot string) ([]string, error) {
