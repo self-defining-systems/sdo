@@ -17,6 +17,7 @@ description: Incident repair.
   Stage writes, new findings, alert set: `sdo detect`.
 - **Test each change.** Predict its fix; wait on its effect (`sdo detect --wait`), not a sleep. No effect counts against it; replace processes not yet using the fix.
 - **Restore lost data.** Use its authoritative copy first. Before recreating, search all backups or copies: configuration, jobs, object stores, replicas. Never seed substitute data to pass health checks.
+- **Restore only what changed**, each item to its own prior value (history, backups, siblings); never reset a kind of setting wholesale to a default.
 - **App-owned state**: repair it through the app's own tools (its migration runner, admin APIs, maintenance tasks). Hand writes to its internal tables or schema are a last resort; name them as such in your close.
 - **Late background work**: drain the queue (workers, poison jobs); never edit app code; escalate if nothing drains.
 - **Verify recovery.** Detector-opened: done is Recovered for all alerts, joined too, not one passing test. Paged: `completed` if verified, else `failed`.

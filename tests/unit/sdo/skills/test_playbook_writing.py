@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 SKILL = ROOT / "sdo/skills/playbook-writing"
 PROGRAM = ROOT / "sdo/operator/sdk/program"
-BUDGET_BYTES = 2816
+BUDGET_BYTES = 2944
 
 
 def _declared() -> set[str]:

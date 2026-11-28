@@ -208,3 +208,10 @@ def test_app_managed_state_is_brought_current_through_the_apps_own_path() -> Non
     assert "app-owned state" in text
     assert "the app's own tools" in text
     assert "are a last resort; name them as such in your close" in text
+
+
+def test_restores_are_scoped_to_what_changed() -> None:
+    """A restore puts back what the incident changed, item by item, not a whole kind of setting."""
+    text = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8").lower()
+    assert "restore only what changed" in text
+    assert "never reset a kind of setting wholesale to a default" in text
