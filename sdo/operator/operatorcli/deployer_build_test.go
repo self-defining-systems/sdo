@@ -91,9 +91,11 @@ func TestDeploymentBuildPrintsTheReportAndExitsByOutcome(t *testing.T) {
 		wantOut  string
 		wantErr  string
 	}{
-		"built":   {func(context.Context, []string) (string, bool, error) { return "  ok      a\n", false, nil }, exitClean, "ok      a", ""},
-		"failed":  {func(context.Context, []string) (string, bool, error) { return "  failed  a\nstep\n", true, nil }, exitDiagnostics, "failed  a", ""},
-		"refused": {func(context.Context, []string) (string, bool, error) { return "", false, errors.New(`"x" is not an image this commit builds`) }, exitInfra, "", "not an image"},
+		"built":  {func(context.Context, []string) (string, bool, error) { return "  ok      a\n", false, nil }, exitClean, "ok      a", ""},
+		"failed": {func(context.Context, []string) (string, bool, error) { return "  failed  a\nstep\n", true, nil }, exitDiagnostics, "failed  a", ""},
+		"refused": {func(context.Context, []string) (string, bool, error) {
+			return "", false, errors.New(`"x" is not an image this commit builds`)
+		}, exitInfra, "", "not an image"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
