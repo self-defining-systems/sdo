@@ -47,11 +47,11 @@ commands:
         [--repository-pvc-subpath PATH] [--kubeconfig FILE] [--context NAME]
         [--operator-root DIR] [--application-namespace NS] [--healthy-baseline]
         Publish through the broker and its isolated Kubernetes validator.
-  check [--replay on|off] [--root DIR] [--json] [--decision FILE]
+  check [--replay on|off] [--repo DIR] [--json] [--decision FILE]
         Run structural, semantic, ownership, compilation and provenance checks.
         A scenario's ProbeUser.Token requires returns_token on the map's
         probe_identity procedure. It prints one token line on stdout.
-        --root defaults to the Git checkout containing the current directory,
+        --repo (alias --root) defaults to the Git checkout containing the current directory,
         so run it from anywhere inside your checkout.
         Tests and replay run as information; their verdicts never block saving.
         Like the broker, it derives playbook fault_class and regenerates the
@@ -86,7 +86,7 @@ commands:
         Exit 0 when clean,
         1 for diagnostics, 2 for missing inputs or infrastructure/usage errors,
         124 for an exceeded validation deadline. Report timeouts; do not retry.
-  test <id> [--replay on|off] [--root .]
+  test <id> [--replay on|off] [--repo .]
         Replay one playbook on the captured cases of this incident: the same check as
         "memory check", reduced to the playbook's own replay lines and whether anything
         blocks. A playbook new in this change also shows its verdict on the incident it was written for:
@@ -94,12 +94,12 @@ commands:
         (the capture cannot say: does not block). At most about 1 KB.
         Each case line also gives how long every action took when it was recorded ("action 0 apply
         219.8s"): a Mitigate runs while users fail, so a slow one is a defect to rewrite.
-  ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
+  ls [--repo .] [--kind goal|architecture|playbook|script|detector] [--json]
         List artifacts by logical ID.
-  new playbook <id> [--root .] [--incident I]
-  new detector <id> [--root .] [--class learned|health] [--playbook ID]... [--incident I]
+  new playbook <id> [--repo .] [--incident I]
+  new detector <id> [--repo .] [--class learned|health] [--playbook ID]... [--incident I]
         Scaffold a minimal artifact that passes "memory check".
-  outcomes [--root .] [--json]
+  outcomes [--repo .] [--json]
         Print the stored outcome records of every incident.`
 
 const (
@@ -194,19 +194,23 @@ func parseFlags(flags *flag.FlagSet, args []string) ([]string, error) {
 }
 
 // shortFlagError is a flag parse error as one line: the error, the command's
-// flags and the help hint, never the whole usage. A --repo that the command
-// does not take (it takes --root) says so.
+// flags and the help hint, never the whole usage.
 func shortFlagError(flags *flag.FlagSet, err error) error {
 	var names []string
 	flags.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
-	command := flags.Name()
-	if strings.Contains(err.Error(), "-repo") && flags.Lookup("root") != nil {
-		return fmt.Errorf("%s takes --root DIR, not --repo (default: the Git checkout containing the current directory); flags: %s; see sdo-operator memory --help", command, strings.Join(names, " "))
-	}
-	return fmt.Errorf("%s: %w; flags: %s; see sdo-operator memory --help", command, err, strings.Join(names, " "))
+	return fmt.Errorf("%s: %w; flags: %s; see sdo-operator memory --help", flags.Name(), err, strings.Join(names, " "))
 }
 
-// checkoutRoot resolves a memory command's --root. An empty root means the Git checkout containing the current
+// repoFlag registers a memory command's checkout flag as --repo, the name the
+// onboarding commands use, with --root as an alias for existing callers.
+func repoFlag(flags *flag.FlagSet, usage string) *string {
+	root := new(string)
+	flags.StringVar(root, "repo", "", usage)
+	flags.StringVar(root, "root", "", "alias of --repo")
+	return root
+}
+
+// checkoutRoot resolves a memory command's --repo. An empty root means the Git checkout containing the current
 // directory, so an agent working in a subdirectory of its isolated checkout needs no flag.
 func checkoutRoot(root string) (string, error) {
 	if root != "" {
@@ -221,7 +225,7 @@ func checkoutRoot(root string) (string, error) {
 			return current, nil
 		}
 		if filepath.Dir(current) == current {
-			return "", fmt.Errorf("no Git checkout contains %s: run from inside the checkout or pass --root DIR", dir)
+			return "", fmt.Errorf("no Git checkout contains %s: run from inside the checkout or pass --repo DIR", dir)
 		}
 	}
 }
@@ -278,7 +282,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	flags := flag.NewFlagSet("memory check", flag.ContinueOnError)
 	replayFlag := flags.String("replay", getenv(settings.ReplayEnvironment), "replay policy: on or off")
 	decisionPath := flags.String("decision", "", "ReflectionDecision JSON; defaults to .git/sdo-reflection-decision.json")
-	root := flags.String("root", "", "repository checkout to validate (default: the Git checkout containing the current directory)")
+	root := repoFlag(flags, "repository checkout to validate (default: the Git checkout containing the current directory)")
 	asJSON := flags.Bool("json", false, "print a MemoryCheckReport as ProtoJSON")
 	accepted := flags.Bool("accepted", false, "audit a clean accepted checkout without publication context")
 	positional, err := parseFlags(flags, args)
@@ -478,7 +482,7 @@ var listKinds = []string{"goal", "architecture", "playbook", "script", "detector
 
 func memoryList(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("memory ls", flag.ContinueOnError)
-	root := flags.String("root", "", "repository checkout (default: the Git checkout containing the current directory)")
+	root := repoFlag(flags, "repository checkout (default: the Git checkout containing the current directory)")
 	kind := flags.String("kind", "", "only list this kind: "+strings.Join(listKinds, ", "))
 	asJSON := flags.Bool("json", false, "print a MemoryListing as ProtoJSON")
 	positional, err := parseFlags(flags, args)
@@ -547,7 +551,7 @@ func containsString(values []string, want string) bool {
 
 func memoryOutcomes(ctx context.Context, args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("memory outcomes", flag.ContinueOnError)
-	root := flags.String("root", "", "repository checkout (default: the Git checkout containing the current directory)")
+	root := repoFlag(flags, "repository checkout (default: the Git checkout containing the current directory)")
 	asJSON := flags.Bool("json", false, "print MemoryOutcomes as ProtoJSON")
 	positional, err := parseFlags(flags, args)
 	if err != nil {
@@ -653,7 +657,7 @@ func applyTimes(effects []string) string {
 func memoryTest(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
 	flags := flag.NewFlagSet("memory test", flag.ContinueOnError)
 	replayFlag := flags.String("replay", getenv(settings.ReplayEnvironment), "replay policy: on or off")
-	root := flags.String("root", "", "repository checkout to validate (default: the Git checkout containing the current directory)")
+	root := repoFlag(flags, "repository checkout to validate (default: the Git checkout containing the current directory)")
 	positional, err := parseFlags(flags, args)
 	if err != nil {
 		return exitInfra, err
@@ -663,7 +667,7 @@ func memoryTest(ctx context.Context, args []string, getenv func(string) string, 
 	}
 	id := positional[0]
 	var report bytes.Buffer
-	code, err := memoryCheck(ctx, []string{"--json", "--root", *root, "--replay", *replayFlag}, getenv, &report)
+	code, err := memoryCheck(ctx, []string{"--json", "--repo", *root, "--replay", *replayFlag}, getenv, &report)
 	if err != nil {
 		return code, err
 	}

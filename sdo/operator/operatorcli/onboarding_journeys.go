@@ -102,7 +102,7 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 	}
 	slog.SetLogLoggerLevel(slog.LevelWarn) // the build's stage lines are not findings
 	if *quick {
-		checkArgs := []string{"check", "--root", *repo, "--replay", "off"}
+		checkArgs := []string{"check", "--repo", *repo, "--replay", "off"}
 		if *asJSON {
 			checkArgs = append(checkArgs, "--json")
 		}
@@ -230,7 +230,7 @@ func journeysMemoryCheck(ctx context.Context, repo, operatorRoot string) ([]jour
 		return nil, &journeycheck.MemoryCheck{Skipped: strings.Join(unset, ", ") + " not set (they are set in an onboarding session)"}
 	}
 	var checked, failed bytes.Buffer
-	code := RunMemory(ctx, []string{"check", "--root", repo, "--replay", "off", "--json"}, getenv, &checked, &failed)
+	code := RunMemory(ctx, []string{"check", "--repo", repo, "--replay", "off", "--json"}, getenv, &checked, &failed)
 	red := func(detail string) []journeycheck.Result {
 		return []journeycheck.Result{{Item: journeycheck.ItemMemoryCheck, Subject: "all", Status: journeycheck.Red, Detail: detail}}
 	}

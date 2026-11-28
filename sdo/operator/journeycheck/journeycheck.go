@@ -490,7 +490,8 @@ func (j *judge) concurrent(ctx context.Context) Result {
 // request none of whose wrong answers is noticed checks nothing: red.
 func (j *judge) altered(ctx context.Context, requests int, slowest time.Duration) Result {
 	id := j.scenario.ID
-	bound := min(max(3*slowest, 5*time.Second), j.workload.IterationTimeout.Duration())
+	// Never below the request timeout: a workload whose iteration bound undercuts its own request timeout is invalid.
+	bound := max(min(max(3*slowest, 5*time.Second), j.workload.IterationTimeout.Duration()), j.workload.Timeout.Duration())
 	a := &alterer{client: j.c.Client, marker: j.scenario.Marker, previous: map[int][]byte{}, write: map[int]bool{}}
 	e, err := j.engine(a, j.shared, bound)
 	if err != nil {
