@@ -228,8 +228,9 @@ type Config struct {
 	// SteadyState marks a judge run for an application that is already onboarded (a
 	// health refresh): the onboarding-only evidence (existing records) does not gate it.
 	SteadyState bool
-	// MaxAttempts bounds the deployer's correction tasks and the rounds of the
-	// architecture and health judge. The fields below bound the waits that
+	// MaxAttempts bounds the deployer's correction rounds (its first task of a
+	// fresh deploy is not one) and the rounds of the architecture and health
+	// judge. The fields below bound the waits that
 	// never consume one; zero selects the default.
 	PendingEvaluations    int
 	PendingInterval       time.Duration
@@ -471,7 +472,8 @@ func (c Coordinator) bootstrap(ctx context.Context, id string, actor broker.Acto
 // application that ships its own deployment needs no agent. A failure the
 // deployer owns dispatches the deployer agent on the same proposal with the
 // failing step as its correction feedback; the agent commits files like an
-// engineer and Go deploys its last commit, up to cfg.MaxAttempts tasks. A tree
+// engineer and Go deploys its last commit, up to cfg.MaxAttempts correction
+// rounds after the first task. A tree
 // with no deployment files fails offline (no cluster or build time), so that
 // is the deployer's first task. Without a registered deployer every failure is
 // a human hold (*DeploymentHoldError).
@@ -495,7 +497,14 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, feedback
 	}
 	var tracker feedbackTracker
 	task := 0
+	// The budget counts correction rounds: tasks that answer Go's rejection of
+	// a commit the deployer wrote. The first task of a fresh deploy answers the
+	// failure of a commit it never wrote (no deployment files, or the app's
+	// own files), so it is not one. A complete-stage verdict is about the
+	// accepted source, so its first task is already a correction.
+	free := 1
 	if feedback != "" {
+		free = 0
 		if mode == operability.ModeNoDeployer {
 			return broker.Receipt{}, DeploymentReceipt{}, &DeploymentHoldError{Stage: "verify", Reason: feedback}
 		}
@@ -519,8 +528,8 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, feedback
 		if mode == operability.ModeNoDeployer {
 			return broker.Receipt{}, DeploymentReceipt{}, &DeploymentHoldError{Stage: "deploy", Reason: feedback}
 		}
-		if task >= cfg.MaxAttempts {
-			return broker.Receipt{}, DeploymentReceipt{}, NewAgentNotConvergingError(operability.OwnerDeployer, proposal.BaseCommit, []string{fmt.Sprintf("exhausted %d deployer tasks; last failure: %s", cfg.MaxAttempts, operability.Clip(feedback))}, true)
+		if task-free >= cfg.MaxAttempts {
+			return broker.Receipt{}, DeploymentReceipt{}, NewAgentNotConvergingError(operability.OwnerDeployer, proposal.BaseCommit, []string{fmt.Sprintf("exhausted %d correction rounds after %d deployer tasks; last failure: %s", cfg.MaxAttempts, task, operability.Clip(feedback))}, true)
 		}
 		if err := tracker.repeated(operability.OwnerDeployer, proposal.BaseCommit, feedback); err != nil {
 			return broker.Receipt{}, DeploymentReceipt{}, err
