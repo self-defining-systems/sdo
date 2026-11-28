@@ -130,10 +130,13 @@ func (e *HTTPEndpoint) SampleSaved(list string, field string, key string) *HTTPE
     list (SaveJSON of an array path), with the iteration's random source,
     and stores its value at field ("" for the element itself) in State under key
     before the request is built, so {key} in the path, query, body or a check
-    names it. Successive iterations open different members, so a probe checks a
-    bounded, rotating sample of records users made instead of one fixed record.
-    An empty or unsaved list sends nothing and the sample is invalid, so sample
-    from a listing that requires members (Each).
+    names it. Successive iterations of a Steps step open different members,
+    so a probe checks a bounded, rotating sample of records users made instead
+    of one fixed record; retries of an Eventually step keep their pick.
+    An empty list sends nothing and ends the iteration's steps as passing,
+    like an empty ReadsExistingRecords read: keep the listing's own check (Each,
+    a saved Setup set) for records that disappear. A write may sample only a
+    list a marked write of the scenario saved, never users' records.
 
 func (e *HTTPEndpoint) SaveCookie(name string, key string) *HTTPEndpoint
     SaveCookie stores the value of the response's Set-Cookie named name in State

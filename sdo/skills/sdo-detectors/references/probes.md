@@ -82,8 +82,8 @@ touched the affected records.
   Either way the scenario fails until data exists to read.
 - Every invariant a probe checks on its own fixtures (a read-back, both sides of a relation, a derived view
   against its source, a reference that resolves) must also hold on users' records: check it read-only on a
-  rotating sample of them (`SampleSaved` one member of a listing, read it, `Includes` for the other side). A
-  stale cache or a ghost member in users' data answers 200 and leaves every fixture passing.
+  rotating sample of them (`SampleSaved` one member of a listing, read it, `Includes` for the other side; an
+  empty listing passes). A stale cache or a ghost member in users' data answers 200 and leaves every fixture passing.
 - A probe that only creates fresh records (a new name, a new version) never reuses a record users keep writing
   into: read, and where it is safe append to, the existing container.
 - Probe the writes users make in the same containers, not only in the probe's own (a commit or push into a

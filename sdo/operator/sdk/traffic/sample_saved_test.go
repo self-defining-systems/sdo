@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // relationDoer serves a synthetic two-sided relation: GET /followers?of=X
@@ -85,12 +86,64 @@ func TestSampledInverseRelationCatchesAGhostMemberReadOnly(t *testing.T) {
 	}
 }
 
-// A fresh install has no records: the sample is invalid, never failing.
-func TestSampleOfAnEmptyListIsInvalid(t *testing.T) {
+// A fresh install has no records: an empty sample sends nothing and passes,
+// like an empty ReadsExistingRecords read.
+func TestSampleOfAnEmptyListPassesWithoutSending(t *testing.T) {
 	var methods []string
 	_, outcomes := iterateRelation(t, relationDoer{methods: &methods}, 1)
-	if outcomes[0] != OutcomeInvalid {
-		t.Fatalf("outcome %s", outcomes[0])
+	if outcomes[0] != OutcomeOK || len(methods) != 1 {
+		t.Fatalf("outcome %s, requests %v", outcomes[0], methods)
+	}
+}
+
+// An Eventually step that samples keeps its pick across retries, so a bad
+// record is not traded for a good one on the next attempt.
+func TestEventuallyRetriesTheSameSampledRecord(t *testing.T) {
+	scenario := relationScenario()
+	scenario.Steps[1].Endpoint = Eventually(GET("/following", Params{"of": FromPrevious("follower")}).
+		SampleSaved("followers", "", "follower").Includes("ids", "", "7"))
+	doer := relationDoer{
+		followers: map[string][]string{"7": {"1", "2", "3", "4", "999999"}},
+		following: map[string][]string{"1": {"7"}, "2": {"7"}, "3": {"7"}, "4": {"7"}},
+		methods:   new([]string),
+	}
+	clock := newSimClock()
+	server := &simServer{clock: clock, handle: func(_ time.Time, request *http.Request) (int, string) {
+		response, _ := doer.Do(request)
+		body, _ := io.ReadAll(response.Body)
+		return response.StatusCode, string(body)
+	}}
+	engine := simEngine(t, probeWorkload(scenario.ID), Catalog{scenario}, server)
+	failed := 0
+	for i := range 30 {
+		_, sample := engine.Iterate(context.Background(), uint64(i))
+		if sample.Outcome != OutcomeOK {
+			failed++
+			if !strings.Contains(sample.Request, "999999") {
+				t.Fatalf("failed on a healthy record: %+v", sample)
+			}
+		}
+	}
+	if failed == 0 {
+		t.Fatal("no iteration reported the ghost member")
+	}
+}
+
+// Users' records are sampled only to read: a write that names a member
+// sampled from a list no marked write saved is refused before it is sent.
+func TestAWriteMayNotSampleUsersRecords(t *testing.T) {
+	var methods []string
+	scenario := relationScenario()
+	scenario.SideEffect = SideEffectIdempotentWrite
+	scenario.Steps[1].Endpoint = POST("/notes", Params{"of": FromPrevious("follower"), "tag": Const("sdo-probe")}).
+		SampleSaved("followers", "", "follower")
+	doer := relationDoer{followers: map[string][]string{"7": {"1"}}, methods: &methods}
+	engine := setupEngine(t, scenario, doer)
+	if _, sample := engine.Iterate(context.Background(), 0); sample.Outcome != OutcomeInvalid || !strings.Contains(sample.Error, "only to read") {
+		t.Fatalf("%+v", sample)
+	}
+	if slices.Contains(methods, http.MethodPost) {
+		t.Fatalf("the write was sent: %v", methods)
 	}
 }
 
@@ -141,5 +194,11 @@ func TestExistingRecordsStepsFollowAKeySampledFromAWrittenList(t *testing.T) {
 	}
 	if facts := scenario.ExistingRecordsSteps(); len(facts) != 1 || !slices.Equal(facts[0].OwnKeys, []string{"created"}) {
 		t.Fatalf("%+v", facts)
+	}
+	// Two fields sampled from one list still trace back to it.
+	scenario.Steps[0].Endpoint = GET("/items/{pick}/{rev}", nil).SampleSaved("created", "id", "pick").
+		SampleSaved("created", "meta.rev", "rev").ReadsExistingRecords("items", "name", `^.+$`)
+	if facts := scenario.ExistingRecordsSteps(); len(facts) != 1 || !slices.Equal(facts[0].OwnKeys, []string{"created"}) {
+		t.Fatalf("two samples of one list: %+v", facts)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -482,14 +483,20 @@ func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern s
 // list (SaveJSON of an array path), with the iteration's random source, and
 // stores its value at field ("" for the element itself) in State under key
 // before the request is built, so {key} in the path, query, body or a check
-// names it. Successive iterations open different members, so a probe checks a
-// bounded, rotating sample of records users made instead of one fixed record.
-// An empty or unsaved list sends nothing and the sample is invalid, so sample
-// from a listing that requires members (Each).
+// names it. Successive iterations of a Steps step open different members, so
+// a probe checks a bounded, rotating sample of records users made instead of
+// one fixed record; retries of an Eventually step keep their pick. An empty
+// list sends nothing and ends the iteration's steps as passing, like an empty
+// ReadsExistingRecords read: keep the listing's own check (Each, a saved
+// Setup set) for records that disappear. A write may sample only a list a
+// marked write of the scenario saved, never users' records.
 func (e *HTTPEndpoint) SampleSaved(list string, field string, key string) *HTTPEndpoint {
 	e.samples = append(e.samples, savedSample{list: list, field: field, key: key})
 	return e
 }
+
+// errEmptySample is the Build error of a SampleSaved step whose list is empty.
+var errEmptySample = errors.New("SampleSaved: the saved list is empty")
 
 func (s savedSample) pick(rng *rand.Rand, state State) error {
 	var document any
@@ -501,10 +508,42 @@ func (s savedSample) pick(rng *rand.Rand, state State) error {
 		return fmt.Errorf("SampleSaved(%s): %w", s.list, err)
 	}
 	if len(members) == 0 {
-		return fmt.Errorf("SampleSaved: the array saved under %q is empty", s.list)
+		return fmt.Errorf("%w (%q)", errEmptySample, s.list)
+	}
+	if kept, ok := state[s.key]; ok && slices.Contains(members, kept) {
+		return nil
 	}
 	state[s.key] = members[rng.IntN(len(members))]
 	return nil
+}
+
+// sampledFromOthers names the first list a SampleSaved of endpoint draws from
+// that no marked write of the scenario saved: users' records.
+func sampledFromOthers(endpoint Endpoint, state State) (string, bool) {
+	declared, ok := declaredHTTP(endpoint)
+	if !ok {
+		return "", false
+	}
+	own := ownKeys(state)
+	for _, sample := range declared.samples {
+		if !own[sample.list] {
+			return sample.list, true
+		}
+	}
+	return "", false
+}
+
+// sampledKeys are the State keys the endpoint's SampleSaved picks set.
+func sampledKeys(endpoint Endpoint) []string {
+	declared, ok := declaredHTTP(endpoint)
+	if !ok {
+		return nil
+	}
+	keys := make([]string, 0, len(declared.samples))
+	for _, sample := range declared.samples {
+		keys = append(keys, sample.key)
+	}
+	return keys
 }
 
 // Includes requires the JSON array at dotted path ("" for the whole body) to
