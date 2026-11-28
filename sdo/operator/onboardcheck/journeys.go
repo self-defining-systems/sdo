@@ -3,6 +3,7 @@ package onboardcheck
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -166,7 +167,10 @@ func judgeProbesAndPointers(cfg Config, report *Report) {
 		}
 		var missing []string
 		for _, n := range op.Path {
-			if o := byName[n].Observe; o == nil || o.Metrics == "" || o.Logs == "" {
+			o := byName[n].Observe
+			// A component SDO scrapes nothing from has no metrics to point to.
+			needsMetrics := slices.ContainsFunc(byName[n].Services, cfg.scraped) || len(byName[n].Services) == 0
+			if o == nil || o.Logs == "" || (needsMetrics && o.Metrics == "") {
 				missing = append(missing, n)
 			}
 		}

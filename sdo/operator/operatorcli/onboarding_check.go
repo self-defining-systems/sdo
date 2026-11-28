@@ -56,7 +56,8 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          items with quiet-when-healthy observing alongside, then (with --break)
          fails-under-break. Progress lines go to stderr; the report is headed
          by its mode.
-         --metrics runs only the metric items (no detector is built or run).
+         --metrics runs only the metric items (no detector is built or run). A Service SDO's Prometheus
+         scrapes no request counter from is a note, not red; init says when no Service has one.
          Confirm that each exposed request counter with route support separates
          the mapped user operations before finishing onboarding.
          Each red names the map line that clears it; the worked example of
@@ -432,6 +433,11 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		Requests: *requests, Settle: *settle, Poll: 5 * time.Second, Wait: processio.Wait,
 		Now: processio.Now, Quick: *quick,
 		Progress: func(line string) { fmt.Fprintln(os.Stderr, processio.Now().Format("15:04:05"), line) },
+	}
+	if *promTarget == "" {
+		// SDO's own Prometheus scrapes by annotation, so init's read says
+		// which Services have a request counter to map.
+		config.Scraped = scrapeFacts(ctx, cluster.Kube(), *namespace)
 	}
 	saveCache := func() {}
 	var paused [2]onboardcheck.HarmSample

@@ -87,8 +87,34 @@ type Config struct {
 	Routes RouteLister
 	// Progress, when set, receives a line as the check advances.
 	Progress func(string)
+	// Scraped says what SDO's Prometheus scrapes from a Service's pods; nil
+	// assumes every Service counts requests (a missing entries record is red).
+	Scraped Scraped
 
 	phases *phaseLog
+}
+
+// ScrapeFacts is what SDO's Prometheus scrapes from one Service's pods.
+type ScrapeFacts struct {
+	// Scraped: the pods carry the scrape annotations and serve metrics.
+	Scraped bool
+	// RequestCounter: those metrics hold a request counter with a route label.
+	RequestCounter bool
+}
+
+// Scraped reports the ScrapeFacts of a Service.
+type Scraped func(service string) ScrapeFacts
+
+// countsRequests reports whether the Service may hold a request counter to
+// map; without scrape facts every Service may.
+func (c Config) countsRequests(service string) bool {
+	return c.Scraped == nil || c.Scraped(service).RequestCounter
+}
+
+// scraped reports whether SDO's Prometheus scrapes any metrics of the
+// Service; without scrape facts every Service is.
+func (c Config) scraped(service string) bool {
+	return c.Scraped == nil || c.Scraped(service).Scraped
 }
 
 func (c Config) say(format string, args ...any) {
@@ -436,7 +462,11 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 	duplicate := map[string][]string{}
 	for _, op := range cfg.Map.Operations {
 		entry, ok := cfg.Map.EntryFor(op.Entry.Service)
-		if !ok {
+		switch {
+		case !ok && !cfg.countsRequests(op.Entry.Service):
+			add(ItemJourneys, op.ID, Note, fmt.Sprintf("SDO's Prometheus scrapes no request counter for service %s, so there is nothing to map; its probes and logs cover the operation", op.Entry.Service))
+			continue
+		case !ok:
 			add(ItemJourneys, op.ID, Red, noEntriesDetail(op.Entry.Service, op.ID))
 			continue
 		}

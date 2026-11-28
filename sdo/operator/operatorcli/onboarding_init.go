@@ -21,6 +21,7 @@ import (
 
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/onboardcheck"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/safefs"
 )
@@ -32,7 +33,8 @@ const OnboardingInitUsage = `usage: sdo-operator onboarding init --repo DIR --na
   in .sdo/goal.md. The entry is the sole exposed Service port, else one no other
   component calls; it names the other ports, or pass --entry. Edit routes and assertions before scheduling the probes.
   It maps the request counter (entries, observe metrics) of each Service whose pods SDO's Prometheus
-  scrapes (prometheus.io annotations), reading their metrics once through the API server.
+  scrapes (prometheus.io annotations), reading their metrics once through the API server, and says
+  when no Service has one (then skip onboarding check --metrics).
   Run before authoring operations, probes or generators. No app requests are sent.`
 
 const initGenerator = layout.TrafficGeneratorsDir + "/generators.go"
@@ -237,7 +239,7 @@ Steps: []traffic.Step{{Name: "todo", Endpoint: traffic.GET("/{replace-with-journ
 	if err != nil {
 		return "", err
 	}
-	mapped := mapRequestMetrics(&m, scrape)
+	mapped, counters := mapRequestMetrics(&m, scrape)
 	header := ""
 	if found {
 		header = appmap.Header(region.YAML)
@@ -265,8 +267,11 @@ Steps: []traffic.Step{{Name: "todo", Endpoint: traffic.GET("/{replace-with-journ
 		return "", errors.Join(err, safefs.Remove(repo, initGenerator))
 	}
 	note := "entry " + entry.String()
-	if len(mapped) > 0 {
+	switch {
+	case len(mapped) > 0:
 		note += "; request metrics mapped: " + strings.Join(mapped, ", ")
+	case scrape != nil && !counters && len(m.Entries) == 0:
+		note += "; SDO's Prometheus scrapes no request counter from any Service, so there is nothing to map: skip `onboarding check --metrics`"
 	}
 	if others != "" {
 		note += "; other Service ports: " + others + " (move an operation's entry if one fits better)"
@@ -281,11 +286,12 @@ type metricsScraper func(service string) (exposition []byte, where string)
 
 // mapRequestMetrics adds an entries record (appmap.RequestCounter) and an
 // observe metrics pointer for each component Service whose scraped metrics
-// carry a request counter, and returns the Services mapped. A counter name two
-// Services share needs a selector only the author knows, so neither is mapped.
-func mapRequestMetrics(m *appmap.Map, scrape metricsScraper) []string {
+// carry a request counter, and returns the Services mapped and whether any
+// Service exposes a request counter. A counter name two Services share needs a
+// selector only the author knows, so neither is mapped.
+func mapRequestMetrics(m *appmap.Map, scrape metricsScraper) ([]string, bool) {
 	if scrape == nil {
-		return nil
+		return nil, false
 	}
 	type found struct {
 		component int
@@ -321,7 +327,23 @@ func mapRequestMetrics(m *appmap.Map, scrape metricsScraper) []string {
 		}
 		mapped = append(mapped, f.entry.Service)
 	}
-	return mapped
+	return mapped, len(all) > 0
+}
+
+// scrapeFacts reads, once per Service, what SDO's Prometheus scrapes from the
+// Service's pods, as init does to map request counters.
+func scrapeFacts(ctx context.Context, client kubernetes.Interface, namespace string) onboardcheck.Scraped {
+	seen := map[string]onboardcheck.ScrapeFacts{}
+	return func(service string) onboardcheck.ScrapeFacts {
+		if facts, ok := seen[service]; ok {
+			return facts
+		}
+		exposition, _ := scrapeServiceMetrics(ctx, client, namespace, service)
+		_, counter := appmap.RequestCounter(service, exposition)
+		facts := onboardcheck.ScrapeFacts{Scraped: exposition != nil, RequestCounter: counter}
+		seen[service] = facts
+		return facts
+	}
 }
 
 // scrapeTimeout bounds one metrics read through the API server.
