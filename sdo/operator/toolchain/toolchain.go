@@ -28,8 +28,10 @@ const ControllerBuildCacheSubPath = ".sdo-runtime/build/go-cache"
 const (
 	// imageBuildCache is the compiler image's offline build cache seed, inside the toolchain's /go.
 	imageBuildCache = "/go/build-cache"
-	// cacheProgram is the read-through GOCACHEPROG helper shipped inside the toolchain's /go.
-	cacheProgram = "/go/bin/sdo-go-cache"
+	// cacheProgram is the read-through GOCACHEPROG helper shipped inside the toolchain's /go (cacheProgramInSeed
+	// within the published seed).
+	cacheProgram       = "/go/bin/sdo-go-cache"
+	cacheProgramInSeed = "cache/bin/sdo-go-cache"
 	// controllerBuildCacheMount is where a worker sees the controller's build cache, read only.
 	controllerBuildCacheMount = "/sdo/controller-go-cache"
 )
@@ -77,5 +79,4 @@ func Apply(pod *corev1.PodSpec, controllerImage string) {
 			corev1.VolumeMount{Name: "sdo-toolchain", MountPath: "/usr/local/go", SubPath: "go", ReadOnly: true},
 			corev1.VolumeMount{Name: "sdo-toolchain", MountPath: "/go", SubPath: "cache", ReadOnly: true})
 	}
-	useCacheProgram(pod, imageBuildCache)
 }

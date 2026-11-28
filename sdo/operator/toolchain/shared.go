@@ -70,18 +70,34 @@ func Seeded(repositoryMount, image string) bool {
 
 // ApplyShared has no init container or per-incident copy. Seed must have
 // completed at controller startup. Build outputs remain private scratch files.
-// The controller's build cache is mounted read only and read before the image
-// seed, so a worker's first memory check reuses what the controller already
-// compiled and validated for the accepted memory instead of starting cold.
-func ApplyShared(pod *corev1.PodSpec, image, pvcSubPath string) {
+// repositoryMount is where this process sees the same volume. When the seed
+// carries the cache helper, Go reads the seeds in place instead of copying the
+// image seed into the private cache: first the controller's build cache
+// (mounted read only, when it exists), so a worker's first memory check reuses
+// what the controller already compiled and validated for the accepted memory,
+// then the image seed. A seed from an image without the helper keeps the copy.
+func ApplyShared(pod *corev1.PodSpec, image, pvcSubPath, repositoryMount string) {
 	if image == "" {
 		return
 	}
 	for i := range pod.Containers {
 		pod.Containers[i].VolumeMounts = append(pod.Containers[i].VolumeMounts,
 			corev1.VolumeMount{Name: "repository", MountPath: "/usr/local/go", SubPath: path.Join(pvcSubPath, SharedSubPath(image), "go"), ReadOnly: true},
-			corev1.VolumeMount{Name: "repository", MountPath: "/go", SubPath: path.Join(pvcSubPath, SharedSubPath(image), "cache"), ReadOnly: true},
-			corev1.VolumeMount{Name: "repository", MountPath: controllerBuildCacheMount, SubPath: path.Join(pvcSubPath, ControllerBuildCacheSubPath), ReadOnly: true})
+			corev1.VolumeMount{Name: "repository", MountPath: "/go", SubPath: path.Join(pvcSubPath, SharedSubPath(image), "cache"), ReadOnly: true})
 	}
-	useCacheProgram(pod, controllerBuildCacheMount, imageBuildCache)
+	if repositoryMount == "" {
+		return
+	}
+	if info, err := os.Stat(filepath.Join(repositoryMount, SharedSubPath(image), cacheProgramInSeed)); err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	seeds := []string{imageBuildCache}
+	if info, err := os.Stat(filepath.Join(repositoryMount, ControllerBuildCacheSubPath)); err == nil && info.IsDir() {
+		for i := range pod.Containers {
+			pod.Containers[i].VolumeMounts = append(pod.Containers[i].VolumeMounts,
+				corev1.VolumeMount{Name: "repository", MountPath: controllerBuildCacheMount, SubPath: path.Join(pvcSubPath, ControllerBuildCacheSubPath), ReadOnly: true})
+		}
+		seeds = append([]string{controllerBuildCacheMount}, seeds...)
+	}
+	useCacheProgram(pod, seeds...)
 }

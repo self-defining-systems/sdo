@@ -7,14 +7,17 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"sdo.dev/operator/builder/internal/buildio"
 )
 
-// The check's compile stage links nothing, so it must reject exactly what `go build ./...` rejects, with the same
-// compiler report the diagnostics are parsed from: a library and a main package that do not compile, a missing import,
-// an import cycle, and a clean module.
+// The check's compile stage links nothing, so it must reject every compile error `go build ./...` rejects, with the
+// same compiler report the diagnostics are parsed from: a library and a main package that do not compile, a missing
+// import, an import cycle, and a clean module. (An error only the linker finds is rejected by the test stages, which
+// link the generated package and with it every authored detector and program.)
 func TestCompileAllReportsWhatGoBuildReports(t *testing.T) {
 	for name, files := range map[string]map[string]string{
 		"clean": {
@@ -65,9 +68,17 @@ func TestCompileAllReportsWhatGoBuildReports(t *testing.T) {
 			if !errors.As(built, &want) || !errors.As(compiled, &got) {
 				t.Fatalf("not stage errors: %v / %v", built, compiled)
 			}
-			if got.Output != want.Output {
+			// Packages compile in parallel, so the order of their reports varies between runs of either command;
+			// the diagnostics are parsed per line.
+			if !slices.Equal(sortedLines(got.Output), sortedLines(want.Output)) {
 				t.Fatalf("compile stage reports\n%s\ngo build reports\n%s", got.Output, want.Output)
 			}
 		})
 	}
+}
+
+func sortedLines(output string) []string {
+	lines := strings.Split(output, "\n")
+	slices.Sort(lines)
+	return lines
 }

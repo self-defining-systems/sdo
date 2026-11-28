@@ -43,7 +43,7 @@ func RunGo(ctx context.Context, directory string, environment []string, args ...
 		environment = os.Environ()
 	}
 	// The workspace is a self-contained module; a caller's go.work must not select it.
-	command.Env = append(withoutUnusableCacheProgram(environment), "GOWORK=off")
+	command.Env = append(environment, "GOWORK=off")
 	output, err := command.CombinedOutput()
 	elapsed := time.Since(started)
 	slog.Info("memory_check_stage_finished", "stage", stage, "duration", elapsed)
@@ -53,35 +53,9 @@ func RunGo(ctx context.Context, directory string, environment []string, args ...
 	return elapsed, nil
 }
 
-// cacheProgramUsable reports whether GOCACHEPROG names an executable. A pod
-// started from an image without the helper (an older image under newer code)
-// falls back to the private GOCACHE and its seed copy instead of failing every
-// Go command.
-func cacheProgramUsable() bool {
-	program := os.Getenv("GOCACHEPROG")
-	if program == "" {
-		return false
-	}
-	info, err := os.Stat(program)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
-}
-
-func withoutUnusableCacheProgram(environment []string) []string {
-	if os.Getenv("GOCACHEPROG") == "" || cacheProgramUsable() {
-		return environment
-	}
-	kept := make([]string, 0, len(environment))
-	for _, variable := range environment {
-		if !strings.HasPrefix(variable, "GOCACHEPROG=") {
-			kept = append(kept, variable)
-		}
-	}
-	return kept
-}
-
 func SeedGoBuildCache(ctx context.Context) error {
 	// The cache helper reads the seeds in place and writes misses to scratch.
-	if cacheProgramUsable() {
+	if os.Getenv("GOCACHEPROG") != "" {
 		return nil
 	}
 	seed := os.Getenv("SDO_GO_CACHE_SEED")
