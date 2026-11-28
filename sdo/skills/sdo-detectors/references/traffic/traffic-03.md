@@ -214,9 +214,4 @@ func MatchFailures(window Window, patterns ...logs.Pattern) ([]FailureMatch, err
     keys on the exact failure text instead of searching a finding's Evidence.
     Patterns are RE2 and use the same ID and size rules as log patterns;
     a malformed pattern is an error, never a non-match.
-
-type FaultClass string
-    FaultClass is a failure a scenario must detect. Every scenario must detect
-    FaultUnreachable and FaultErrorStatus; the others are declared when the
-    scenario's checks are strong enough to catch them.
 ```
