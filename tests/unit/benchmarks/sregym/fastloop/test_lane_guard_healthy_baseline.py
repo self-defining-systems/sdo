@@ -117,7 +117,8 @@ class _Handler(BaseHTTPRequestHandler):
 @pytest.fixture
 def lane_kubeconfig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    # A short poll keeps shutdown() from adding the default half second to the test.
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
     path = tmp_path / "kubeconfig"
     path.write_text(
         json.dumps(
@@ -166,7 +167,8 @@ def test_lease_fenced_row_with_healthy_baseline_reaches_injection_without_secret
         return completed
 
     monkeypatch.setattr(cli, "kubectl", runner)
-    monkeypatch.setitem(capture_snapshots.__kwdefaults__, "sleep", lambda _: None)  # no real sample spacing
+    # One sample runs every read the capture makes; more only start more kubectl processes.
+    monkeypatch.setitem(capture_snapshots.__kwdefaults__, "count", 1)
     LaneGuard("synthetic-50", lane_kubeconfig, "fixture", coord="/bin/true").install()
     row = argparse.Namespace(inject_before_resume=False, healthy_baseline=True)
 
@@ -176,6 +178,7 @@ def test_lease_fenced_row_with_healthy_baseline_reaches_injection_without_secret
 
     assert events == ["inject"]
     snapshots = json.loads(published[0])
+    assert list(snapshots) == ["healthy-0.json"]
     assert snapshots["healthy-0.json"]["secrets"] == [
         {
             "name": "with-keys",
