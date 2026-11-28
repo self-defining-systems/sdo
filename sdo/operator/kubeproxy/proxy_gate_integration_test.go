@@ -259,16 +259,25 @@ func echo(t *testing.T, conn net.Conn, reader *bufio.Reader, line string) {
 	}
 }
 
+// observe retries a busy gate, as the controller does: a peer can read forwarded
+// bytes before the proxy releases that write's shared lock. A stream that holds
+// the lock still fails at the deadline.
 func observe(t *testing.T, gate *apihistory.MutationGate) *apihistory.MutationObservation {
 	t.Helper()
-	observation, err := gate.TryObserve()
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		observation, err := gate.TryObserve()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if observation != nil {
+			return observation
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("an open stream blocks observation: %+v", gate.InFlight())
+		}
+		time.Sleep(time.Millisecond)
 	}
-	if observation == nil {
-		t.Fatalf("an open stream blocks observation: %+v", gate.InFlight())
-	}
-	return observation
 }
 
 // upgrade sends an upgrade request through the proxy and returns its status.
