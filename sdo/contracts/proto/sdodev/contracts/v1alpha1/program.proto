@@ -368,6 +368,9 @@ message RecoveryWait {
     EXIT_REASON_UNCOVERED = 5;
     // No learned playbook applied, so the stage had nothing to wait for.
     EXIT_REASON_NOTHING_APPLIED = 6;
+    // The stage bound no learned plan: only SDO's built-in restore wrote, so
+    // the agent starts as its apply returns, with no recovery wait.
+    EXIT_REASON_BUILTIN_ONLY = 7;
   }
   ExitReason exit_reason = 1 [(buf.validate.field).enum.defined_only = true];
   google.protobuf.Duration duration = 2 [(buf.validate.field).duration.gte = {}];

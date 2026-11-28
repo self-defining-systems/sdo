@@ -57,10 +57,15 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
 		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
 	// Nor do the writes have anything left to do for an alert they did not clear.
-	// Nor for a cause its settled writes provably did not address.
+	// Nor for a cause its settled writes provably did not address, nor for a
+	// joined alert none of its writes or plans reaches.
 	beyond := canDispatch && report.StabilityDeadline == nil && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) &&
-		(c.alertBeyondStageLocked(now, *request, check.beyondStage) || len(check.uncoveredCauses) > 0)
-	if !failed && !gaveUp && !beyond && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
+		(c.alertBeyondStageLocked(now, *request, check.beyondStage) || len(check.uncoveredCauses) > 0 || len(check.untouchedJoiners) > 0)
+	// A stage that bound no learned plan wrote only SDO's built-in restore:
+	// there is no learned repair to wait for, so the agent starts as its apply
+	// returns, beside the restore's rollout.
+	builtinOnly := applied && report.StabilityDeadline == nil && !learnedPlanBound(report) && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages)
+	if !failed && !gaveUp && !beyond && !builtinOnly && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
 	if stabilityOnly && scoped {
@@ -96,8 +101,11 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	}
 	if applied {
 		exit := contracts.RecoveryWait_EXIT_REASON_DEADLINE
-		if page || beyond {
+		switch {
+		case page || beyond:
 			exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
+		case builtinOnly:
+			exit = contracts.RecoveryWait_EXIT_REASON_BUILTIN_ONLY
 		}
 		markAutomaticRecovery(report, observedAt, exit)
 		markUnsettledRollouts(report, check.record, rolloutBlockers)
@@ -108,7 +116,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	}
 
 	// The causes the stage did not cover go to the agent with the alerts.
-	for _, key := range check.uncoveredCauses {
+	for _, key := range append(slices.Clone(check.uncoveredCauses), check.untouchedJoiners...) {
 		if !slices.Contains(keys, key) {
 			keys = append(keys, key)
 		}
@@ -125,15 +133,26 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 }
 
 // handOffUnappliedStageLocked dispatches the agent as soon as a stage that
-// wrote nothing ends. Its decision reads the frozen request alone, and once the
-// pipeline ends only evidence already queued can start another automatic pass,
-// so a further observation could change neither.
+// wrote nothing, or bound no learned plan, ends. Its decision reads the frozen
+// request alone, and once the pipeline ends only evidence already queued can
+// start another automatic pass, so a further observation could change neither.
 func (c *Controller) handOffUnappliedStageLocked(now time.Time) {
 	report := c.awaitingAutomaticRecoveryLocked()
-	if report == nil || c.config.ExternalIncidentsOnly || playbookWrote(report) || stagePlanRefused(report) {
+	if report == nil || c.config.ExternalIncidentsOnly || report.GetStabilityDeadline() != nil ||
+		learnedPlanBound(report) && (playbookWrote(report) || stagePlanRefused(report)) {
 		return
 	}
 	c.automaticRecoveryLocked(now, report, false, recoveryCheck{}, nil)
+}
+
+// learnedPlanBound reports that the stage bound a learned playbook's plan: a
+// playbook other than SDO's built-in restore whose diagnosis matched and that
+// the stage applied, refused or escalated. Only then is there a learned
+// repair whose recovery the agent waits for (stage [deterministic, agent]).
+func learnedPlanBound(report *contracts.StageReport) bool {
+	return slices.ContainsFunc(report.GetMitigations(), func(attempt *contracts.StageMitigation) bool {
+		return attempt.GetPlaybookId() != SourceRestoreID && attempt.GetResult() != "skipped"
+	})
 }
 
 // stageSettledBound is how long settled writes wait for alerts that have no
@@ -610,6 +629,30 @@ func (c *Controller) uncoveredStageCauses(ctx context.Context, snapshot sdk.Dete
 	})
 }
 
+// untouchedJoiners are the joined alerts (user tests that started failing
+// while the stage owned the incident) that no plan of the stage targeted and
+// whose components neither are nor depend on a component the stage wrote: a
+// new cause the stage is not repairing. The agent starts for one at once; it
+// is the agent's first start, not a re-prompt. Unknown writes, an alert the
+// map does not place, or a joiner whose newest sample passed give none.
+func untouchedJoiners(view sdk.DetectionContext, m appmap.Map, request IncidentRequest, report *contracts.StageReport) []string {
+	if len(request.JoinedKeys) == 0 || !playbookWrote(report) {
+		return nil
+	}
+	return slices.DeleteFunc(alertsBeyondStage(view, m, request, report), func(key string) bool {
+		return !slices.Contains(request.JoinedKeys, key)
+	})
+}
+
+func (c *Controller) untouchedStageJoiners(ctx context.Context, snapshot sdk.DetectionContext, request IncidentRequest) []string {
+	report := deterministicStageReport(request.PriorStages)
+	if len(request.JoinedKeys) == 0 || !playbookWrote(report) {
+		return nil
+	}
+	m, _ := acceptedVerificationMap(ctx, c.gitRead, request)
+	return untouchedJoiners(snapshot, m, request, report)
+}
+
 // newestSampleFailed reports a qualified scenario whose newest usable sample
 // failed.
 func newestSampleFailed(window traffic.Window, scenario string) bool {
@@ -777,9 +820,19 @@ func markUnsettledRollouts(report *contracts.StageReport, recovery *contracts.Re
 
 // stageDispatchRequest narrows only the prepared task. The controller's
 // request retains the full opening and joined alert descriptions for closure.
+// The task's candidate block leads with the stage's report, so the first
+// prompt states what SDO already wrote.
 func stageDispatchRequest(request IncidentRequest) IncidentRequest {
 	report := deterministicStageReport(request.PriorStages)
-	if !report.GetHandoffSelected() || pageOpened(&request) {
+	if !report.GetHandoffSelected() {
+		return request
+	}
+	if lines := stageReportLines(request.PriorStages); len(lines) > 0 {
+		if changes := append(lines, request.RecentChanges...); recentChangesWithin(changes) {
+			request.RecentChanges = changes
+		}
+	}
+	if pageOpened(&request) {
 		return request
 	}
 	findings := make([]sdk.Finding, 0, len(report.GetHandoffKeys()))

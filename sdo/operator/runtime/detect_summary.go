@@ -897,12 +897,8 @@ func buildDetectSummary(in detectInput) detectSummary {
 		if _, dropped, found := strings.Cut(note.GetError(), droppedStateNote); found {
 			header = append(header, "stage: "+droppedStateNote+redactDetectText(dropped, 300))
 		}
-		for _, mitigation := range note.GetMitigations() {
-			if line := stageAttemptLine(mitigation); line != "" {
-				header = append(header, line)
-			}
-		}
 	}
+	header = append(header, stageReportLines(in.Request.PriorStages)...)
 
 	for _, match := range in.LiveMatches {
 		if match.GetMitigateCommand() != "" {
@@ -1175,9 +1171,42 @@ func alertSetLine(request *IncidentRequest) string {
 	return fmt.Sprintf("alert set: %d opening + %d joined alerts (%s); recovered needs all of them clear and staying clear", len(openingKeys(request)), len(names), strings.Join(names, ", "))
 }
 
+// stageReportLines are the facts of the automatic stage's report: per
+// matched playbook, what it wrote, on which objects, when and with what
+// result. They state what happened, never whether it suffices.
+func stageReportLines(reports []*contracts.StageReport) []string {
+	var lines []string
+	for _, report := range reports {
+		for _, mitigation := range report.GetMitigations() {
+			if line := stageAttemptLine(mitigation); line != "" {
+				lines = append(lines, line)
+			}
+		}
+	}
+	return lines
+}
+
 // stageAttemptLine tells the agent what SDO did with one matched playbook.
 func stageAttemptLine(mitigation *contracts.StageMitigation) string {
-	by := fmt.Sprintf("stage: by sdo (playbook %s): ", mitigation.GetPlaybookId())
+	by := fmt.Sprintf("stage: by sdo (playbook %s)", mitigation.GetPlaybookId())
+	var objects []string
+	for _, ref := range mitigation.GetTouchedObjects() {
+		objects = append(objects, ref.GetKind()+"/"+ref.GetName())
+	}
+	if len(objects) > 0 {
+		by += " on " + redactDetectText(strings.Join(slices.Compact(objects), ", "), 200)
+	}
+	if receipt := mitigation.GetApplyReceipt(); receipt.GetStartedAt().IsValid() {
+		at := receipt.GetStartedAt()
+		if receipt.GetCompletedAt().IsValid() {
+			at = receipt.GetCompletedAt()
+		}
+		by += " at " + hms(at.AsTime())
+	}
+	by += ": "
+	if mitigation.GetRolloutUnsettledAtDeadline() && mitigation.GetResult() != "rollout_pending_at_handoff" {
+		by = strings.TrimSuffix(by, ": ") + " (rollout still running at handoff): "
+	}
 	switch {
 	case automaticPlanRefused(mitigation):
 		return by + "plan validation refused: " + redactDetectText(mitigation.GetError(), 200)

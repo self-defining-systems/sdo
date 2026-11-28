@@ -131,6 +131,14 @@ type settlingCase struct {
 	startup time.Duration
 	// scriptExit, when set, is the exit code every RunScript ends with.
 	scriptExit *int32
+	// builtinOnly reports the stage's restart as SDO's built-in restore, the
+	// one playbook that is not learned memory (automaticRecoveryWorld only).
+	builtinOnly bool
+	// unnamed drops the learned stall detector: only the judge's health
+	// detector fires, and the learned playbook is tried on its finding.
+	unnamed bool
+	// clues are further non-alert findings the incident opened with.
+	clues []sdk.Finding
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario
@@ -306,6 +314,9 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		restart = remotePlanningTestProgram(t, planningTestProgram{restartProgram: restartProgram{id: "api-request-stall"}, mitigate: tc.testMitigate})
 	}
 	detectors := []sdk.Detector{traffic, stallDetector}
+	if tc.unnamed {
+		detectors = detectors[:1]
+	}
 	if tc.storeRestart > 0 {
 		detectors = append(detectors, restartingStoreDetector{world: world, until: clock.Now().Add(tc.storeRestart)})
 	}
@@ -331,6 +342,7 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 	if tc.unexplainedDrift {
 		findings = append(findings, sdk.Finding{DetectorID: "drift.unexplained", RuleID: "unexplained", Status: sdk.FindingActive, Severity: sdk.SeverityLatent, Summary: "unexplained drift", PrimaryResource: sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "synthetic-policy"}})
 	}
+	findings = append(findings, tc.clues...)
 	sortFindings(findings)
 	request := IncidentRequest{IncidentID: "synthetic-settling", Namespace: "app", SourceCommit: "synthetic-accepted", Findings: findings, RepairPolicy: "recorded-actions"}
 	if tc.churnUntil > 0 {

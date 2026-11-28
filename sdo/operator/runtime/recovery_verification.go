@@ -45,6 +45,8 @@ type recoveryCheck struct {
 	beyondStage []string
 	// uncoveredCauses are the active findings of causes the stage's settled writes did not address.
 	uncoveredCauses []string
+	// untouchedJoiners are joined alerts no write or plan of the stage reaches.
+	untouchedJoiners []string
 }
 
 // verificationInput is the live view, the incident alert set and SDO writes.
