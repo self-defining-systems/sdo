@@ -350,3 +350,18 @@ func TestPassingProbeDoesNotHideRequestFailures(t *testing.T) {
 		t.Fatalf("missing coverage must remain explicit:\n%s", text)
 	}
 }
+
+// An incident a user test opened says so after that test passes again, and
+// says what Recovered still waits on.
+func TestDetectSummaryOpenedOnComesFromTheOpeningAlerts(t *testing.T) {
+	request := detectRequest()
+	request.Findings = []sdk.Finding{probeFinding("create")}
+	request.OpeningKeys = []string{findingKey(request.Findings[0])}
+	waiting := "waiting on: write in flight: patch app/deployments/web since 19:14:35Z (noted 19:14:36Z)"
+	text := buildDetectSummary(detectInput{Request: request, View: detectApp(), Now: detectNow(), RecoveryWaiting: waiting}).Text
+	for _, want := range []string{"opened on: user tests", "recovered: no (0 alerts active) — " + waiting} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q:\n%s", want, text)
+		}
+	}
+}

@@ -235,6 +235,10 @@ type Controller struct {
 	recoverySafetyLost      bool
 	recoverySamples         map[string]recoverySample
 	closureStableSince      time.Time
+	// recoveryWaitingOn is what the last closure pass of the open incident
+	// waited on, noted at recoveryWaitingSince; "" when nothing is known.
+	recoveryWaitingOn    string
+	recoveryWaitingSince time.Time
 	// When the automatic stage's writes settled and how long after the last one;
 	// until then, whether a rollout was seen unfinished and given up on.
 	stageSettledAt              time.Time
@@ -2009,9 +2013,10 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	release := func() {}
 	safe := true
 	var closureGuard *responderClosureGuard
+	unsafeReason := ""
 	if early {
 		var state closureGuardState
-		closureGuard, release, state = acquireClosureGuard(loop)
+		closureGuard, release, state, unsafeReason = acquireClosureGuard(loop)
 		if state == closureGuardBusy {
 			return false
 		}
@@ -2178,11 +2183,31 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 				since = settled
 			}
 		}
+		// An agent exec or attach session counts as a write while bytes flow
+		// on it: the window starts at its last activity, so a running backfill
+		// keeps Recovered from holding and a forgotten idle shell does not.
+		var activeSession string
+		if guard != nil {
+			if active, session, ok := guard.LastSessionActivity(); ok && active.After(since) {
+				since = active
+				activeSession = fmt.Sprintf("%s, last bytes at %s", session.Subject, hms(active))
+			}
+		}
 		verified = c.recoveryProofForEpochLocked(now, finalStates, true, since)
 		if !verified {
 			verification.Summary = recoveryStabilitySummary
+			left := c.closureStableSince.Add(c.config.ClosureStabilityWindow).Sub(now)
+			waiting := fmt.Sprintf("stability window: %d s left", int(left.Round(time.Second)/time.Second))
+			if activeSession != "" && !c.closureStableSince.After(since) {
+				waiting = fmt.Sprintf("your open session (%s); %s after its last bytes", activeSession, waiting)
+			}
+			c.noteRecoveryWaitingLocked(now, waiting)
 		} else if reason := c.unevaluatedHoldLocked(now, unevaluated, unevaluatedNeed); reason != "" {
 			verified, verification.Summary = false, reason
+			c.noteRecoveryWaitingLocked(now, reason)
+		}
+		if line := c.recoveryWaitingLineLocked(); early && !verified && line != "" {
+			verification.Summary += "; recovered " + line
 		}
 		verification.Healthy = verified
 		c.cacheVerificationLocked(verification)
@@ -2190,6 +2215,15 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		c.closureStableSince = time.Time{}
 		if recovery.verdict == recoveryPending {
 			verification.Summary = recovery.reason
+		}
+		if early {
+			c.noteRecoveryWaitingLocked(now, recoveryBlocker(recoveryBlockerInput{
+				unsafe: !safe, unsafeReason: unsafeReason, guard: guard, gate: loopGate(loop), restorePending: restorePending,
+				observationErr: observationErr, source: source, recovery: recovery, findings: verification.Findings, healthVerified: healthVerified,
+			}))
+			if line := c.recoveryWaitingLineLocked(); line != "" {
+				verification.Summary += "; recovered " + line
+			}
 		}
 		verification.Healthy = false
 		c.cacheVerificationLocked(verification)
@@ -2311,6 +2345,9 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			c.mu.Unlock()
 			c.reportBrokerError("fence incident writes", err)
 			return false
+		}
+		for _, session := range guard.OpenSessions {
+			slog.Info("incident_fenced_with_open_agent_session", "incident_id", request.IncidentID, "session", session.Subject.String(), "open_since", session.Started, "verified", verified)
 		}
 		c.recoveryFenceMayStand = c.recoveryFenceMayStand || verified
 	}

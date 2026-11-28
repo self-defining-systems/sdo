@@ -56,6 +56,8 @@ type detectInput struct {
 	Now      time.Time
 	// Recovered is the incident's verified marker.
 	Recovered bool
+	// RecoveryWaiting is what Recovered waits on ("waiting on: ..."); "" when unknown.
+	RecoveryWaiting string
 	// Signals holds each user test's recent results; nil shows no history.
 	Signals *incidentSignals
 	// AppState supplies the app-state changes placed on the candidates; nil lists none.
@@ -866,15 +868,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 	if in.Recovered {
 		active = 0
 	}
-	opened := "Kubernetes condition"
-	switch {
-	case pageText(in.Request) != "":
-		opened = "page"
-	case len(failing) > 0:
-		opened = "user tests"
-	case slicesContainsFunc(openingFindings, func(f sdk.Finding) bool { return f.RuleID == requestmetrics.RuleErrors }):
-		opened = "request errors"
-	}
+	opened := openedOn(in.Request)
 	operations := requestOperations(in.Findings, in.Request)
 	coverage := requestCoverageLine(operations)
 	probeStatus := "SDO's own test accounts: "
@@ -891,7 +885,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 		coverage,
 		probeStatus,
 		freshnessLine(in.View, in.Now),
-		fmt.Sprintf("recovered: %s (%d alerts active)", state, active),
+		recoveredLine(state, active, in.RecoveryWaiting, in.Recovered),
 	}
 	if line := alertSetLine(&in.Request); line != "" {
 		header = append(header, line)
@@ -1120,8 +1114,49 @@ func (s detectSummary) item(id string) (string, bool) {
 }
 
 // detectIncidentRecovered reports whether the incident's verified marker is set.
+func (l *ResponderLoop) detectRecoveryWaiting() string {
+	if l.RecoveryWaiting == nil {
+		return ""
+	}
+	return l.RecoveryWaiting()
+}
+
 func (l *ResponderLoop) detectIncidentRecovered() bool {
 	return l.IncidentStatus != nil && l.IncidentStatus() != nil
+}
+
+// openedOn is what opened the incident, from its opening alerts: never from
+// what fails now.
+func openedOn(request IncidentRequest) string {
+	if pageText(request) != "" {
+		return "page"
+	}
+	userTests, requestErrors := false, false
+	for _, key := range openingKeys(&request) {
+		if _, _, ok := openingUserTest(request, key); ok {
+			userTests = true
+		}
+		for _, finding := range request.Findings {
+			if findingKey(finding) == key && finding.RuleID == requestmetrics.RuleErrors {
+				requestErrors = true
+			}
+		}
+	}
+	switch {
+	case userTests:
+		return "user tests"
+	case requestErrors:
+		return "request errors"
+	}
+	return "Kubernetes condition"
+}
+
+func recoveredLine(state string, active int, waiting string, recovered bool) string {
+	line := fmt.Sprintf("recovered: %s (%d alerts active)", state, active)
+	if !recovered && waiting != "" {
+		line += " — " + waiting
+	}
+	return line
 }
 
 // alertSetLine says what Recovered waits on when new alerts joined the

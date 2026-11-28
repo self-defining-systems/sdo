@@ -96,6 +96,8 @@ type Event struct {
 	Ports     []string `json:"ports,omitempty"`
 	// SessionEnd is when an upgraded exec, attach or port-forward stream closed.
 	SessionEnd time.Time `json:"session_end,omitempty"`
+	// ClosedAtIncidentEnd marks an exec or attach stream SDO closed when it sealed the incident.
+	ClosedAtIncidentEnd bool `json:"closed_at_incident_end,omitempty"`
 	// Reserved marks the envelope of an admitted write; it is stored from the reserved envelope budget.
 	Reserved bool `json:"-"`
 }

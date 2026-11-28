@@ -48,7 +48,7 @@ FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2
 # its passwd entry lets the ssh client reach a memory upstream. Go and build
 # dependencies stay in build stages; controller and validator share compiler layers.
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates git openssh-client python3 python3-pip bash curl jq tar \
+    && apt-get install --yes --no-install-recommends ca-certificates git openssh-client python3 python3-pip bash curl jq tar procps \
     && rm -rf /var/lib/apt/lists/* \
     && echo "sdo:x:65532:65532:SDO:/tmp:/usr/sbin/nologin" >> /etc/passwd
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
@@ -245,7 +245,7 @@ CMD ["python3", "-m", "sdo.agents.responder.worker"]
 # Fixed slim tools for RunScript; no model CLI, compiler, module cache or sources.
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS script-tools-base
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates git bash curl jq tar \
+    && apt-get install --yes --no-install-recommends ca-certificates git bash curl jq tar procps \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 FROM script-tools-base AS script-tools

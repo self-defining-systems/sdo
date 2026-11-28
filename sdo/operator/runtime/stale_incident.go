@@ -224,6 +224,7 @@ func (c *Controller) clearIncidentLocked() {
 	c.stageWritesReadyAt = time.Time{}
 	c.closureFreezeDelay, c.closureFreezeRetryAt, c.closureFreezeCauses = 0, time.Time{}, nil
 	c.closureStableSince = time.Time{}
+	c.recoveryWaitingOn, c.recoveryWaitingSince = "", time.Time{}
 	c.unevaluatedHoldUntil, c.unevaluatedHoldSince = time.Time{}, time.Time{}
 	c.closureMutationRevision = ""
 	c.earlyLastMutationAt = time.Time{}

@@ -11,7 +11,7 @@ func TestClosureGuardIsNotLostToResponderReads(t *testing.T) {
 	loop.operationMu.RLock()
 	defer loop.operationMu.RUnlock()
 
-	_, release, state := acquireClosureGuard(loop)
+	_, release, state, _ := acquireClosureGuard(loop)
 	if state != closureGuardHeld {
 		t.Fatalf("a concurrent responder read made the closure pass state %d, want held", state)
 	}
@@ -22,7 +22,7 @@ func TestClosureGuardIsUnsafeWhileAWriteRuns(t *testing.T) {
 	loop := &ResponderLoop{}
 	loop.operationMu.Lock()
 	defer loop.operationMu.Unlock()
-	if _, _, state := acquireClosureGuard(loop); state != closureGuardUnsafe {
+	if _, _, state, _ := acquireClosureGuard(loop); state != closureGuardUnsafe {
 		t.Fatalf("a running write left the closure pass state %d, want unsafe", state)
 	}
 }
@@ -33,13 +33,13 @@ func TestClosureGuardContentionIsBusyNotUnsafe(t *testing.T) {
 	loop := &ResponderLoop{}
 	loop.mu.Lock()
 	defer loop.mu.Unlock()
-	if _, _, state := acquireClosureGuard(loop); state != closureGuardBusy {
+	if _, _, state, _ := acquireClosureGuard(loop); state != closureGuardBusy {
 		t.Fatalf("lock contention left the closure pass state %d, want busy", state)
 	}
 }
 
 func TestClosureGuardWithoutALoopIsHeld(t *testing.T) {
-	if _, _, state := acquireClosureGuard(nil); state != closureGuardHeld {
+	if _, _, state, _ := acquireClosureGuard(nil); state != closureGuardHeld {
 		t.Fatalf("no loop left the closure pass state %d, want held", state)
 	}
 }
