@@ -85,6 +85,21 @@ func TestExistingRecordsStepsFactsFindKeysTheScenarioWrote(t *testing.T) {
 	if facts := live.ExistingRecordsSteps(); len(facts) != 1 || len(facts[0].OwnKeys) != 0 {
 		t.Fatalf("%+v", facts)
 	}
+	// A sign-in token the read sends in a header is a credential, not a
+	// record the probe wrote: the read still lists users' records.
+	signedIn := own
+	signedIn.Setup = []Step{{Name: "sign-in", Endpoint: POST("/login", nil).WithJSON(`{"user":"sdo-probe"}`, nil).SaveJSON("token", "token")}}
+	signedIn.Steps = []Step{{Name: "list", Endpoint: GET("/items", nil).WithHeader("Authorization", "Bearer {token}").ReadsExistingRecords("items", "name", `^.+$`)}}
+	if facts := signedIn.ExistingRecordsSteps(); len(facts) != 1 || len(facts[0].OwnKeys) != 0 {
+		t.Fatalf("a header credential counted as own data: %+v", facts)
+	}
+	// A wrapper that embeds the marked endpoint to refine Check is still
+	// the marked step.
+	wrapped := signedIn
+	wrapped.Steps = []Step{{Name: "list", Endpoint: wrappedRecords{GET("/items", nil).ReadsExistingRecords("items", "name", `^.+$`)}}}
+	if facts := wrapped.ExistingRecordsSteps(); len(facts) != 1 {
+		t.Fatalf("a wrapped marked step was not found: %+v", facts)
+	}
 	// An empty pattern checks nothing.
 	empty := recordsScenario()
 	empty.Steps[0].Endpoint = GET("/items", nil).ReadsExistingRecords("items", "name", "")
@@ -101,3 +116,5 @@ func TestExistingRecordsCountsTheProbeMarkedRecordsUsersSee(t *testing.T) {
 		t.Fatalf("existingMarked=%d, want 2: %+v", s.ExistingMarked, s)
 	}
 }
+
+type wrappedRecords struct{ *HTTPEndpoint }

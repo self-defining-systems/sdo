@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"math/rand/v2"
-	"net/http"
 	"sort"
 	"strings"
 )
@@ -60,9 +59,10 @@ type ExistingRecordsStep struct {
 	// ChecksContent is true when the step's member pattern is valid and
 	// non-empty.
 	ChecksContent bool
-	// OwnKeys are the State keys the step templates (in its path, query,
-	// headers or body) that a write step of the scenario saved, sorted: the
-	// step then reads what the scenario itself wrote.
+	// OwnKeys are the State keys the step templates (in its path, query or
+	// body) that a write step of the scenario saved, sorted: the step then
+	// reads what the scenario itself wrote. Headers carry credentials (a
+	// sign-in token), not record keys, so they do not count.
 	OwnKeys []string
 }
 
@@ -74,7 +74,7 @@ type ExistingRecordsStep struct {
 func (s Scenario) ExistingRecordsSteps() []ExistingRecordsStep {
 	var marked []Step
 	for _, step := range s.Steps {
-		if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.MarksExistingRecords() {
+		if endpoint, ok := declaredHTTP(step.Endpoint); ok && endpoint.MarksExistingRecords() {
 			marked = append(marked, step)
 		}
 	}
@@ -85,11 +85,11 @@ func (s Scenario) ExistingRecordsSteps() []ExistingRecordsStep {
 	sentinels := State{}
 	for _, phase := range [][]Step{s.Setup, s.Steps} {
 		for _, step := range phase {
-			endpoint, ok := step.Endpoint.(*HTTPEndpoint)
+			endpoint, ok := declaredHTTP(step.Endpoint)
 			if !ok {
 				continue
 			}
-			isWrite := endpoint.Method != http.MethodGet && endpoint.Method != http.MethodHead
+			isWrite := (Request{Method: endpoint.Method, readOnly: endpoint.readOnly}).writes()
 			var keys []string
 			for key := range endpoint.Saves {
 				keys = append(keys, key)
@@ -113,16 +113,13 @@ func (s Scenario) ExistingRecordsSteps() []ExistingRecordsStep {
 	}
 	var out []ExistingRecordsStep
 	for _, step := range marked {
-		endpoint := step.Endpoint.(*HTTPEndpoint)
+		endpoint, _ := declaredHTTP(step.Endpoint)
 		fact := ExistingRecordsStep{Name: step.Name, ChecksContent: endpoint.existingRecords.compileErr == nil}
 		request, err := endpoint.Build(context.Background(), rand.New(rand.NewPCG(1, 2)), sentinels.clone())
 		if err == nil {
 			text := request.Path + "\x00" + request.Body
 			for key, value := range request.Query {
 				text += "\x00" + key + "=" + value
-			}
-			for name, value := range request.Headers {
-				text += "\x00" + name + "=" + value
 			}
 			for key := range written {
 				if strings.Contains(text, sentinel(key)) {

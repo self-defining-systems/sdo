@@ -44,6 +44,12 @@ func TestOnboardingInitScaffoldsGoalJourneysWithoutReplacingAuthoredFiles(t *tes
 	if err != nil || !strings.Contains(string(source), `"journey-1"`) || !strings.Contains(string(source), `"journey-2"`) {
 		t.Fatalf("generator = %s, error = %v", source, err)
 	}
+	// The call probes run at once: init writes their workload, and the map's
+	// probe lines place them in it.
+	workload, err := os.ReadFile(filepath.Join(root, initCallWorkload))
+	if err != nil || !strings.Contains(string(workload), "name: probe-call") || strings.Contains(string(workload), "scenarios") {
+		t.Fatalf("call workload = %s, error = %v", workload, err)
+	}
 	testArch, err := os.ReadFile(filepath.Join(root, ".sdo/arch.md"))
 	if err != nil || appmap.Outside(string(testArch)) != appmap.Outside(arch) {
 		t.Fatalf("architecture = %s, error = %v", testArch, err)
