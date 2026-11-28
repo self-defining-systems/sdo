@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
 	"strconv"
@@ -22,6 +23,31 @@ type ValidationInfrastructureError struct{ Message string }
 func (e *ValidationInfrastructureError) Error() string { return e.Message }
 func (*ValidationInfrastructureError) ExitCode() int   { return 2 }
 
+// validationBytesPerProc is the resident memory one concurrent compile of
+// the validation child's Go build may use (one go1.26 compile of generated
+// detector code peaks well under it).
+const validationBytesPerProc = int64(768) << 20
+
+// validationChildEnvironment is the child's environment: the parent's, with
+// TMPDIR in the scratch directory and GOMAXPROCS bounded so that its go
+// command runs no more concurrent compiles than the memory budget holds.
+// Without the bound a 32-core host runs 32 compiles and the group exceeds
+// the budget however small the memory being checked is.
+func validationChildEnvironment(parent []string, scratch string, memory int64, cpus int) []string {
+	procs := max(int64(1), min(int64(max(cpus, 1)), memory/validationBytesPerProc))
+	env := make([]string, 0, len(parent)+2)
+	for _, entry := range parent {
+		if value, ok := strings.CutPrefix(entry, "GOMAXPROCS="); ok {
+			if n, err := strconv.ParseInt(value, 10, 64); err == nil && n >= 1 {
+				procs = min(procs, n)
+			}
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env, "TMPDIR="+scratch, "GOMAXPROCS="+strconv.FormatInt(procs, 10))
+}
+
 // ValidationOutput carries the child's non-blocking evidence: coverage gaps
 // and advisory mitigation replay notes. Neither affects acceptance.
 type ValidationOutput struct {
@@ -34,7 +60,7 @@ func RunValidationProcess(ctx context.Context, binary string, args []string, scr
 	defer cancel()
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = scratch
-	cmd.Env = append(os.Environ(), "TMPDIR="+scratch)
+	cmd.Env = validationChildEnvironment(os.Environ(), scratch, memory, runtime.NumCPU())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var stdout, stderr limitedValidationOutput
 	cmd.Stdout = &stdout
