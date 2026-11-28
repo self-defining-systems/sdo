@@ -38,6 +38,7 @@ import (
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/evaluation"
+	"sdo.dev/operator/journeycheck"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/observation"
@@ -1070,8 +1071,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}); err != nil {
 		return fmt.Errorf("load install start-up record: %w", err)
 	}
+	var journeyCheck JourneyCheck
+	if checker, ok := proberAPI.(interface {
+		JourneyCheck(context.Context) (journeycheck.Report, error)
+	}); ok && syntheticTraffic {
+		journeyCheck = checker.JourneyCheck
+	}
 	if err := retryStartup(func() error {
-		return controller.AttachOnboardingSoak(ctx, lifecycleio.NewOnboardingSoakStore(stateClient, *controlNamespace))
+		return controller.AttachOnboardingSoak(ctx, lifecycleio.NewOnboardingSoakStore(stateClient, *controlNamespace), journeyCheck)
 	}); err != nil {
 		return fmt.Errorf("load onboarding soak record: %w", err)
 	}

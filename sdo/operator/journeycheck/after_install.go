@@ -29,7 +29,8 @@ type SoakRecord struct {
 	BeganAt  time.Time        `json:"began_at"`
 	EndedAt  time.Time        `json:"ended_at"`
 	Duration traffic.Duration `json:"duration"`
-	// Results has one healthy-run line per scenario sampled, sorted.
+	// Results has one healthy-run line per scenario sampled, sorted, then
+	// the full journey checks run beside the soak.
 	Results []Result `json:"results"`
 }
 
@@ -152,6 +153,9 @@ func SoakFollowUp(record SoakRecord) string {
 	size := 0
 	for i, result := range red {
 		line := fmt.Sprintf("- %s: %s", result.Subject, result.Detail)
+		if result.Item != ItemSoak {
+			line = fmt.Sprintf("- %s: %s: %s", result.Subject, result.Item, result.Detail)
+		}
 		if size+len(line)+1 > soakFollowUpBudget {
 			lines = append(lines, fmt.Sprintf("+%d more red scenarios", len(red)-i))
 			break
@@ -159,10 +163,10 @@ func SoakFollowUp(record SoakRecord) string {
 		lines = append(lines, line)
 		size += len(line) + 1
 	}
-	return fmt.Sprintf("SDO installed your export and ran its probes on their schedule for %s while the application was healthy. "+
-		"These were red:\n%s\n\n"+
+	return fmt.Sprintf("SDO installed your export, ran every probe's full checks (three passes, a second prober, altered answers) "+
+		"and ran the probes on their schedule for %s while the application was healthy. These were red:\n%s\n\n"+
 		"Fix each one, or remove a probe you cannot make reliable and say so. Re-check what you changed with "+
-		"`onboarding journeys --only ID`, commit, pass `sdo-operator memory check`, and reply with one line. "+
+		"`onboarding journeys --only ID` (add `--alter` for an altered-answers red), commit, pass `sdo-operator memory check`, and reply with one line. "+
 		"This is the only follow-up: SDO does not soak again.", record.Duration.Duration(), strings.Join(lines, "\n"))
 }
 

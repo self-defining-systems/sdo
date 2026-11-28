@@ -56,6 +56,9 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
                      passed its checks, sampled on a schedule. It stops early once every scenario
                      is red or has 10 samples, none failed. An onboarding session refuses it: the
                      installed controller soaks the export after the session.
+  In an onboarding session a run over every probe (no --only, not --plan or --quick) is refused: after
+  the session SDO runs every probe's full checks with --alter beside the soak and sends one follow-up
+  if one is red. Finish with --plan and --quick --only ID; re-check a red it names with --only ID.
   --only selects exact IDs or, for unmatched filters, ID substrings. --plan builds the probes and prints the
   checklist, schedule and budget without a cluster: nothing is sent.
   Probe cadence targets detection within 30s by default. Set a different target in the human
@@ -96,6 +99,9 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 	}
 	if *soak != 0 && onboardingSession(processio.Environment) {
 		return 0, errors.New("--soak is not needed in an onboarding session: after this session SDO installs the export, soaks its probes and sends one follow-up if one fails; commit and finish")
+	}
+	if !*plan && !*quick && *only == "" && onboardingSession(processio.Environment) {
+		return 0, errors.New("a full run is not needed in an onboarding session: after this session SDO runs every probe's full and altered-answer checks with the soak and sends one follow-up if one fails; finish with --plan and --quick --only ID")
 	}
 	if *quick && (*only == "" || strings.Contains(*only, ",") || *plan || *alter || *soak != 0) {
 		return 0, errors.New("--quick requires --only with one exact scenario ID and cannot combine with --plan, --alter or --soak")

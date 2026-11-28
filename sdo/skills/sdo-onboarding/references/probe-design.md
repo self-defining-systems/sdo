@@ -38,9 +38,8 @@ for core paths when their planned time is too long.
 |---|---|
 | `sdo-operator onboarding journeys --repo DIR --namespace NS --plan` | first, and after each map or workload edit (no cluster) |
 | `sdo-operator onboarding journeys --repo DIR --namespace NS --only ID --quick` | after each edit of one probe: one iteration, each request and answer printed |
-| same without `--quick` | once it passes: repeatability, concurrency, cleanup and memory check for that probe |
-| same with `--alter` | then: does it fail on wrong answers; rerun only the IDs you changed |
+| `--only ID`, with `--alter` for an altered-answers red | in the follow-up, to re-check a scenario SDO named red |
 | `sdo-operator onboarding check --metrics --repo DIR --namespace NS` | once, when a request counter is mapped |
 
-Every run also runs `memory check` (red `memory-check` lines), so it needs no separate call. Reports give one line per scenario with details for failures. Use `--verbose` for every check. Run long checks in
-the background and write the next probe meanwhile.
+Every run but `--quick` also runs `memory check` (red `memory-check` lines), so it needs no separate call. SDO runs
+every probe's repeatability, concurrency, cleanup and altered-answer checks after the session.

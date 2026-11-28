@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/journeycheck"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
@@ -69,6 +70,26 @@ func (c MemoryTraffic) Burst(ctx context.Context, r prober.BurstRequest) (prober
 	err = json.Unmarshal(raw, &result)
 	return result, err
 }
+
+// JourneyCheck runs every health probe's full journey checks once in the
+// active memory host (prober.Prober.JourneyCheck).
+func (c MemoryTraffic) JourneyCheck(ctx context.Context) (journeycheck.Report, error) {
+	response, err := c.RPC.Traffic(ctx, &pb.TrafficRequest{Operation: pb.TrafficRequest_OPERATION_JOURNEY_CHECK})
+	if err != nil {
+		return journeycheck.Report{}, err
+	}
+	if response.GetJourneyCheck() == nil {
+		return journeycheck.Report{}, errors.New("missing journey-check report")
+	}
+	raw, err := response.JourneyCheck.MarshalJSON()
+	if err != nil {
+		return journeycheck.Report{}, err
+	}
+	var report journeycheck.Report
+	err = json.Unmarshal(raw, &report)
+	return report, err
+}
+
 func (c MemoryTraffic) Probe(ctx context.Context, ref sdk.ObjectRef, port int32, http *program.HTTPProbe) (program.ProbeResult, error) {
 	r := &pb.TrafficRequest{Operation: pb.TrafficRequest_OPERATION_PROBE, Target: objectRefContract(ref), Port: port}
 	if http != nil {

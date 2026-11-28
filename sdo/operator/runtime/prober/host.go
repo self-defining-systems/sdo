@@ -106,6 +106,12 @@ func (h *Host) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.TrafficRe
 		if err != nil {
 			return nil, err
 		}
+	case pb.TrafficRequest_OPERATION_JOURNEY_CHECK:
+		var err error
+		out.JourneyCheck, err = trafficStruct(h.engine.JourneyCheck(ctx))
+		if err != nil {
+			return nil, err
+		}
 	case pb.TrafficRequest_OPERATION_PROBE:
 		target := r.GetTarget()
 		request := PrimitiveRequest{To: sdk.ObjectRef{APIVersion: target.GetApiVersion(), Kind: target.GetKind(), Namespace: target.GetNamespace(), Name: target.GetName()}, Port: r.Port, PodIP: r.PodIp, Timeout: time.Duration(r.TimeoutNs)}
