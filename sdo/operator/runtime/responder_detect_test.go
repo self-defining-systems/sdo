@@ -480,3 +480,34 @@ func TestDetectWaitReturnsWhenTheIncidentRecoversDuringARead(t *testing.T) {
 		})
 	}
 }
+
+// A passing test scoped by name does not mean the incident recovered: the
+// scoped view still says whether the whole alert set cleared and names the
+// alerts still failing.
+func TestDetectAPassingTestStillReportsTheFailingAlertSet(t *testing.T) {
+	world := &detectWorld{sendOK: true}
+	loop, _ := detectWorldLoop(world)
+	opening := loop.Handle(context.Background(), ToolRequest{Command: "detect"})
+	if len(opening.Findings) != 1 {
+		t.Fatalf("findings = %+v, want the create test's", opening.Findings)
+	}
+	loop.Request.Findings = opening.Findings
+	loop.Request.OpeningKeys = []string{findingKey(opening.Findings[0])}
+	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "list"})
+	if response.Error != "" {
+		t.Fatal(response.Error)
+	}
+	if response.Healthy {
+		t.Fatalf("scoped detect reported healthy while the alert set fails:\n%s", response.Text)
+	}
+	for _, want := range []string{"list sent now: PASS", "incident recovered: no"} {
+		if !strings.Contains(response.Summary, want) {
+			t.Fatalf("summary %q lacks %q", response.Summary, want)
+		}
+	}
+	for _, want := range []string{"recovered: no", "still failing: create (opening)"} {
+		if !strings.Contains(response.Text, want) {
+			t.Fatalf("scoped detect lacks %q:\n%s", want, response.Text)
+		}
+	}
+}
