@@ -90,4 +90,4 @@ def test_the_detector_guidance_offers_the_store_state_readers_with_real_identifi
 def test_a_playbook_for_app_managed_state_encodes_the_apps_own_path() -> None:
     """A learned playbook must not turn a hand schema edit into the default repair for state the app maintains."""
     text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
-    assert "encode the app's own maintenance path, not the hand edit" in text
+    assert "A playbook that writes app internals by hand says so in its README" in text
