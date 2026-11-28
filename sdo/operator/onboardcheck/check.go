@@ -437,7 +437,7 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 	for _, op := range cfg.Map.Operations {
 		entry, ok := cfg.Map.EntryFor(op.Entry.Service)
 		if !ok {
-			add(ItemJourneys, op.ID, Red, noEntriesDetail(op.Entry.Service))
+			add(ItemJourneys, op.ID, Red, noEntriesDetail(op.Entry.Service, op.ID))
 			continue
 		}
 		st := &opState{op: op, entry: entry, route: op.RouteValue(), method: op.Entry.Method, internal: cfg.Map.Internal(op)}
@@ -655,7 +655,7 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 	for _, e := range cfg.Exposed {
 		exposed[e.Service] = true
 		if _, ok := cfg.Map.EntryFor(e.Service); !ok {
-			result(ItemRoutes, e.Service, Red, fmt.Sprintf("exposed entry (%s) has no entries record; %s", e.Via, entriesHint(e.Service)))
+			result(ItemRoutes, e.Service, Red, fmt.Sprintf("exposed entry (%s) has no entries record; %s", e.Via, entriesHint(e.Service, ItemRoutes, e.Service)))
 		}
 	}
 	for _, name := range services {
@@ -688,11 +688,17 @@ func mapKeys(m map[string]float64) []string {
 	return out
 }
 
-func noEntriesDetail(service string) string {
-	return fmt.Sprintf("no entries record for service %s: %s", service, entriesHint(service))
+// mapDoc is the agent-facing section with a worked example of every map line
+// these reds ask for.
+const mapDoc = "example: sdo-operations-map references/request-metrics.md"
+
+func noEntriesDetail(service, operation string) string {
+	return fmt.Sprintf("no entries record for service %s: %s", service, entriesHint(service, ItemJourneys, operation))
 }
 
-func entriesHint(service string) string {
-	return fmt.Sprintf("add under `entries:` `- {service: %s, metric: <request counter>, labels: {route: <label>, method: <label>, status: <label>}}`; "+
-		"a service that counts no requests gets `- {item: %s, subject: <operation>, reason: <why>}` under `reasons:`", service, ItemJourneys)
+// entriesHint names the entries line that maps the service's counter and the
+// reason line that clears this red (item and subject) when it counts nothing.
+func entriesHint(service, item, subject string) string {
+	return fmt.Sprintf("add under `entries:` `- {service: %s, metric: <request counter>, labels: {route: <label>, method: <label>, status: <label>}, errors: '5..'}`; "+
+		"a service that counts no requests gets `- {item: %s, subject: %s, reason: <why>}` under `reasons:` (%s)", service, item, subject, mapDoc)
 }

@@ -167,7 +167,8 @@ func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 		"sdo-playbook-authoring/assets/restart-loop/README.md",
 		"sdo-operations-map/SKILL.md", "sdo-detectors/references/cause-catalog.md",
 		"sdo-detectors/references/methods.md", "sdo-operations-map/references/map.md",
-		"sdo-operations-map/references/rules.md", "sdo-detectors/references/probes.md",
+		"sdo-operations-map/references/rules.md", "sdo-operations-map/references/request-metrics.md",
+		"sdo-detectors/references/probes.md",
 		"sdo-serving/SKILL.md", "sdo-serving/references/catalog.md", "sdo-serving/references/rules.md",
 	} {
 		if _, err := os.Stat(filepath.Join(skillsRoot, filepath.FromSlash(rel))); err != nil {

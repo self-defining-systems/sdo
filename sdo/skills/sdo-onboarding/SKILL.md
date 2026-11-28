@@ -15,7 +15,8 @@ the [worked example](references/example.md), [probe design](references/probe-des
 3. Write one scenario; run `onboarding journeys --only ID --quick` after each edit (one pass, each request and
    answer printed). Then the next scenario. Run the full `journeys` once all pass, and after a fix rerun only
    that ID (`--only ID`).
-4. If the app counts requests by route, method and status, map that metric (`onboarding check --metrics`).
+4. If the app counts requests by route, method and status, map that metric (`onboarding check --metrics`;
+   [example](../sdo-operations-map/references/request-metrics.md)).
 
 What the checks require, so plan for it: every operation in a `call` probe; a writing one also in a `write-read`
 probe that reads the write back, and its data read by a `read-later` probe (Setup writes a fixture once, later
