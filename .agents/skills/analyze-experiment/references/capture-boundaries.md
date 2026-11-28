@@ -39,7 +39,9 @@ fault that started after the incident opened shows only there. Each has
 `join-<n>-context.json`: `joined_keys` (the alerts of that pass),
 `new_findings` (the findings that first appeared in it, in key order), `known_writes_before`,
 `write_sources` (`automatic_stage`, `responder_plan`, `agent_recording`,
-`repair_action`) and `recording`. Unlike the opening captures, a join capture
+`repair_action`) and `recording`. `responder_plan` is also set when a
+plan application (the stage's or the agent's) was still running at the capture;
+`recording: false` with the recording on means an SDO operation held the loop then. Unlike the opening captures, a join capture
 can follow SDO's or the agent's writes; `known_writes_before: false` means none
 known, not none made (with `agent.recording` off the agent's direct writes are
 invisible). A Diagnose that matches a join capture taken after writes may be

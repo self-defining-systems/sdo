@@ -273,14 +273,10 @@ func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
 	}
 	responderPlans, recorded := resultPlans, false
 	if loop != nil {
-		loop.locked(func() {
-			responderPlans = responderPlans || len(loop.applicationsLog) > 0
-			if loop.ExternalReceipts != nil {
-				joinContext.Recording = true
-				receipts, _, _, err := loop.ExternalReceipts()
-				recorded = recorded || err == nil && len(receipts) > 0
-			}
-		})
+		// Observation never waits behind a loop operation: an apply holds the
+		// loop for as long as its script or rollout poll runs.
+		responderPlans = responderPlans || loop.hasJournaledPlans()
+		joinContext.Recording, recorded = loop.tryRecordedWrites()
 	}
 	if responderPlans {
 		joinContext.WriteSources = append(joinContext.WriteSources, "responder_plan")

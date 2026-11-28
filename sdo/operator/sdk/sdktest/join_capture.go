@@ -64,6 +64,7 @@ type JoinCaptureContext struct {
 	// receipt in the responder's reported result).
 	WriteSources []string `json:"write_sources,omitempty"`
 	// Recording is whether the agent's recorded Kubernetes writes were
-	// readable for this capture (the recording on and a responder running).
+	// readable for this capture (the recording on, a responder running and
+	// no SDO operation holding its loop at that moment).
 	Recording bool `json:"recording"`
 }

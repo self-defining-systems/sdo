@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"sdo.dev/operator/provenance"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	kclock "k8s.io/utils/clock"
@@ -311,6 +312,8 @@ type ResponderLoop struct {
 	plans            map[string]selectedPlan
 	applications     map[string]PlanApplicationResult
 	applicationsLog  []RecordedPlanApplication
+	// journaledApplications is len(applicationsLog), kept by setApplicationsLog.
+	journaledApplications atomic.Int32
 	// Restored application evidence has no live plan or rollback handles.
 	archivedApplications []RecordedPlanApplication
 	completedRepairs     []continuationRepair
@@ -424,6 +427,37 @@ func (l *ResponderLoop) continuationAttempts() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.continuation.Attempts
+}
+
+// setApplicationsLog is the one write of the plan application journal; it
+// keeps the journaled count controller observation reads without the lock.
+// The caller holds l.mu.
+func (l *ResponderLoop) setApplicationsLog(log []RecordedPlanApplication) {
+	l.applicationsLog = log
+	l.journaledApplications.Store(int32(len(log)))
+}
+
+// hasJournaledPlans reports whether this loop has journaled a plan
+// application, including one whose apply is still running (it is journaled
+// before it writes). Controller observation calls it: it takes no lock, since
+// an apply holds l.mu for as long as its script or rollout poll runs.
+func (l *ResponderLoop) hasJournaledPlans() bool {
+	return l.journaledApplications.Load() > 0
+}
+
+// tryRecordedWrites reads the agent's write recording if the loop is free:
+// readable is false when the recording is off or a loop operation holds the
+// loop (the read's pre-apply capture must not race the loop's own).
+func (l *ResponderLoop) tryRecordedWrites() (readable, wrote bool) {
+	if l.ExternalReceipts == nil {
+		return false, false
+	}
+	if !l.mu.TryLock() {
+		return false, false
+	}
+	defer l.mu.Unlock()
+	receipts, _, _, err := l.ExternalReceipts()
+	return true, err == nil && len(receipts) > 0
 }
 
 func (l *ResponderLoop) observeMutations() (*apihistory.MutationObservation, error) {
@@ -1450,13 +1484,13 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		l.applicationBindings[id] = append(l.applicationBindings[id], recoveryBinding{ProgramID: plan.programID, ProgramRevision: plan.revision, Bindings: cloneProgramBindings(plan.bindings), FindingFingerprints: append([]string(nil), plan.targetFingerprints...), ActionStart: actionStart, ActionCount: len(plan.plan.Actions)})
 		actionStart += len(plan.plan.Actions)
 	}
-	l.applicationsLog = append(l.applicationsLog, entry)
+	l.setApplicationsLog(append(l.applicationsLog, entry))
 	endPersist := l.phase("persist_application")
 	persistErr := l.persistToolState(ctx)
 	endPersist()
 	if persistErr != nil {
 		// Nothing was written: leave no started record behind.
-		l.applicationsLog = l.applicationsLog[:len(l.applicationsLog)-1]
+		l.setApplicationsLog(l.applicationsLog[:len(l.applicationsLog)-1])
 		delete(l.applicationBindings, id)
 		response.Error = persistErr.Error()
 		return
