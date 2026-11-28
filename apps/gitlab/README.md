@@ -46,7 +46,7 @@ install phases, not part of the accepted inventory (the bucket Job is a regular 
 ## The provided deployment plan
 
 `fastloop up --app gitlab` builds the cluster, installs the prerequisites, commits the workspace, builds the plan and
-onboards through `host --deployment-plan` (no deployer agent; architecture and the health judge still run).
+onboards through `host` with the harness-committed override naming the kind values file: Go deploys the chart as it is (the deployer agent runs only if that fails; architecture and the health judge still run).
 `gitlab_lane.provided_plan(workspace)` renders the committed chart through SDO's production `render-source` and derives
 the plan from that render, nothing is maintained by hand:
 

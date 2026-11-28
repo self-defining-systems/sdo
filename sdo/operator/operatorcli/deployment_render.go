@@ -9,11 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sort"
 
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/internal/processio"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 )
@@ -22,17 +23,15 @@ import (
 const DeploymentUsage = `usage: sdo-operator deployment render [--root .] [--plan FILE] [--namespace NS] [--json]
 
   render
-        Render offline, with no cluster, what Go would deploy from your working
-        state: the checkout's .sdo/deployment directory (values, manifests,
-        build, overlays) with the working patch series applied to the base
-        tree, rendered by the plan's source. Prints one line per object
-        (--json: the objects). A renderer or patch error is printed as the
-        error Go would hold the deployment on. App files you changed but did
-        not capture with "patch create" are not part of the render; they are
-        listed as uncaptured.
+        Render offline, with no cluster, what Go would deploy from your
+        checkout: its last commit (uncommitted app files are never deployed),
+        rendered by the source derived from the files or named in the
+        optional override .sdo/deployment/plan.yaml. Prints one line per
+        object (--json: the objects). A renderer error is printed as the error
+        Go would hold the deployment on.
         --plan defaults to .sdo/deployment/plan.yaml in the checkout.
-        Exit 0 on success, 1 when the render or the patches fail, 2 for usage
-        or infrastructure errors.`
+        Exit 0 on success, 1 when the render fails, 2 for usage or
+        infrastructure errors.`
 
 // RunDeployment runs "sdo-operator deployment <args>" and returns the exit code.
 func RunDeployment(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
@@ -82,28 +81,24 @@ func deploymentRender(ctx context.Context, args []string, stdout, stderr io.Writ
 	if err != nil {
 		return exitInfra, err
 	}
-	if *planPath == "" {
+	explicit := *planPath != ""
+	if !explicit {
 		*planPath = filepath.Join(absolute, ".sdo", "deployment", "plan.yaml")
 	}
+	plan := &contracts.DeploymentPlan{}
 	data, err := os.ReadFile(*planPath)
-	if err != nil {
-		return exitInfra, fmt.Errorf("read the deployment plan: %w (write .sdo/deployment/plan.yaml or pass --plan)", err)
+	switch {
+	case errors.Is(err, os.ErrNotExist) && !explicit:
+		// No override: the source is derived from the committed files.
+	case err != nil:
+		return exitInfra, fmt.Errorf("read the deployment plan: %w", err)
+	default:
+		if plan, err = planfile.Parse(data, planCatalogs()); err != nil {
+			fmt.Fprintln(stdout, "deployment.invalid: "+err.Error())
+			return exitDiagnostics, nil
+		}
 	}
-	plan, err := planfile.Parse(data, planCatalogs())
-	if err != nil {
-		fmt.Fprintln(stdout, "deployment.invalid: "+err.Error())
-		return exitDiagnostics, nil
-	}
-	report, err := patchset.Check(ctx, absolute)
-	var perr *patchset.PatchError
-	if errors.As(err, &perr) {
-		fmt.Fprintln(stdout, patchDiagnostic(perr))
-		return exitDiagnostics, nil
-	}
-	if err != nil {
-		return exitInfra, err
-	}
-	tree, err := patchset.PublishedTree(ctx, absolute)
+	tree, err := broker.ProposalTreeDigest(ctx, absolute)
 	if err != nil {
 		return exitInfra, err
 	}
@@ -136,13 +131,7 @@ func deploymentRender(ctx context.Context, args []string, stdout, stderr io.Writ
 		for _, l := range lines {
 			fmt.Fprintln(stdout, l)
 		}
-		fmt.Fprintf(stdout, "%d object(s) rendered from effective tree of %d patch(es)\n", len(lines), report.Patches)
-	}
-	if len(report.Uncaptured) > 0 {
-		fmt.Fprintf(stderr, "note: %d app file(s) are scratch edits no patch reproduces, so this render does not include them:\n", len(report.Uncaptured))
-		for _, line := range uncapturedLines(report.Uncaptured) {
-			fmt.Fprintln(stderr, line)
-		}
+		fmt.Fprintf(stdout, "%d object(s) rendered from the committed tree\n", len(lines))
 	}
 	return exitClean, nil
 }

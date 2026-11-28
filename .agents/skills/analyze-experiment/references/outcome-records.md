@@ -223,8 +223,8 @@ Admission repair plans may append `retry_admission` actions for affected Replica
 Program records: `ProgramRun.verdict` carries optional `cause_class` and `reach` (the
 `ConfirmedRootCause` vocabulary). A plan `ActionReport.source_change_json` is a
 `ProposeSourceChange` with its resolved value (`{ref, path, value, reason}`); nothing was written.
-After a `success` outcome Go captures each such proposal as a responder-owned patch under
-`.sdo/deployment/patches/` in the reflection checkout (`memory.CaptureSourceProposals`); a proposal
+After a `success` outcome Go edits the object's source file and commits it as the responder in the
+reflection checkout (`memory.CaptureSourceProposals`, one commit per proposal); a proposal
 whose object has no single YAML source file is logged `source_proposal_not_captured` and left to
 reflection. Escalated stage attempts appear in `prior_stages` with result `escalated`.
 

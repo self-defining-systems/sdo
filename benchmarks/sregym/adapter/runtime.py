@@ -82,10 +82,10 @@ class RuntimeConfig:
     kind_cluster_name: str | None = None
     max_deployment_attempts: int | None = None
     agent_registrations: Path | None = None
-    # ProtoJSON DeploymentSource (see ``deployment_source.py``) recorded as ``.sdo/deployment/plan.yaml`` by
-    # install-existing; ``None`` requires the seeded repository to carry a plan already.
+    # ProtoJSON DeploymentSource (see ``deployment_source.py``) the harness commits as the override
+    # ``.sdo/deployment/plan.yaml`` before install-existing; ``None`` derives it from the repository's files.
     deployment_source: dict[str, Any] | None = None
-    # ProtoJSON DeploymentPlan the human provides (see ``deployment_source.py``); ``None``: agent-authored.
+    # ProtoJSON DeploymentPlan override the harness commits before onboarding; ``None``: derived from the files.
     deployment_plan: dict[str, Any] | None = None
     # Install-time deployment policy the lane chooses (registry allowlist, scope grants); default: none.
     deployment_policy: DeploymentPolicyConfig = DeploymentPolicyConfig()

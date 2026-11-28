@@ -46,8 +46,8 @@ func TestEvaluateOnceReadsTheDeploymentSourceFromThePlan(t *testing.T) {
 	if err := evaluateOnceAt(t, syntheticPlanRepo(t, syntheticPlan)); err != nil {
 		t.Fatalf("repository with a plan: %v", err)
 	}
-	if err := evaluateOnceAt(t, syntheticPlanRepo(t, `{"colour":1}`+"\n")); err == nil || !strings.Contains(err.Error(), "plan.yaml") {
-		t.Fatalf("plan with an unknown field: err = %v", err)
+	if err := evaluateOnceAt(t, syntheticPlanRepo(t, `{"expectedWorkloadIds":["Deployment/shop/web"]}`+"\n")); err == nil || !strings.Contains(err.Error(), "plan.yaml") {
+		t.Fatalf("an override with a retired field: err = %v", err)
 	}
 	for _, flag := range []string{"--deployment-source", "--deployed-manifest-path"} {
 		var stderr bytes.Buffer

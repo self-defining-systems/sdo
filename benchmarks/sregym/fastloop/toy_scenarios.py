@@ -336,8 +336,3 @@ def run_broken(
         if after.images != at_verdict.images:
             result.violations.append("workload images changed after the hold with no incident open")
     return result
-
-
-def helm_onboarding_arguments(deployment_plan: Mapping[str, Any]) -> list[str]:
-    """Host flags that hand the harness-provided ``DeploymentPlan`` to SDO (no agent authors the deployment)."""
-    return ["--deployment-plan", json.dumps(deployment_plan, sort_keys=True, separators=(",", ":"))]

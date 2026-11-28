@@ -215,7 +215,6 @@ func (c *Controller) acceptDeploymentLocked(revision string) {
 type headHoldRecord struct {
 	Commit        string `json:"commit"`
 	EffectiveTree string `json:"effective_tree"`
-	PatchesDigest string `json:"patches_digest"`
 	Reason        string `json:"reason"`
 	Detail        string `json:"detail"`
 	At            string `json:"at"`
@@ -237,7 +236,6 @@ var (
 type HeadDeploymentNotice struct {
 	Commit        string `json:"commit"`
 	EffectiveTree string `json:"effective_tree"`
-	PatchesDigest string `json:"patches_digest"`
 	Verdict       string `json:"verdict"`
 	At            string `json:"at"`
 }
@@ -249,7 +247,7 @@ func (h ConfigMapHeadHolds) Deployed(ctx context.Context, change broker.HeadChan
 	if h.Now != nil {
 		at = h.Now().UTC().Format(time.RFC3339)
 	}
-	data, err := json.Marshal(HeadDeploymentNotice{Commit: change.Commit, EffectiveTree: change.EffectiveTree, PatchesDigest: change.PatchesDigest, Verdict: string(result.Verdict.Outcome), At: at})
+	data, err := json.Marshal(HeadDeploymentNotice{Commit: change.Commit, EffectiveTree: change.EffectiveTree, Verdict: string(result.Verdict.Outcome), At: at})
 	if err != nil {
 		return err
 	}
@@ -310,7 +308,7 @@ func (h ConfigMapHeadHolds) Held(ctx context.Context, change broker.HeadChange) 
 	if err != nil || record == nil {
 		return "", false, err
 	}
-	if record.EffectiveTree != change.EffectiveTree || record.PatchesDigest != change.PatchesDigest {
+	if record.EffectiveTree != change.EffectiveTree {
 		return "", false, nil
 	}
 	return record.Reason + ": " + record.Detail, true, nil
@@ -322,7 +320,7 @@ func (h ConfigMapHeadHolds) Hold(ctx context.Context, change broker.HeadChange, 
 	if h.Now != nil {
 		at = h.Now().UTC().Format(time.RFC3339)
 	}
-	data, err := json.Marshal(headHoldRecord{Commit: change.Commit, EffectiveTree: change.EffectiveTree, PatchesDigest: change.PatchesDigest, Reason: string(reason), Detail: detail, At: at})
+	data, err := json.Marshal(headHoldRecord{Commit: change.Commit, EffectiveTree: change.EffectiveTree, Reason: string(reason), Detail: detail, At: at})
 	if err != nil {
 		return err
 	}

@@ -163,7 +163,7 @@ func (w *advWorld) ApplyAndVerify(_ context.Context, checkout string, plan *cont
 			return lifecycle.DeploymentReceipt{}, err
 		}
 	}
-	receipt := lifecycle.DeploymentReceipt{Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: advTree, EffectiveTree: advEffective, PatchesDigest: advDigest, ObservedRevision: advEffective, RenderDigest: advDigest, EnvDigest: advDigest, Images: []string{"toy@sha256:" + advDigest}, ResourceIDs: []string{"Deployment/toy/toy"}, Ready: true}
+	receipt := lifecycle.DeploymentReceipt{Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: advTree, EffectiveTree: advEffective, ObservedRevision: advEffective, RenderDigest: advDigest, EnvDigest: advDigest, Images: []string{"toy@sha256:" + advDigest}, ResourceIDs: []string{"Deployment/toy/toy"}, Ready: true}
 	if w.receipt != nil {
 		receipt = w.receipt(receipt)
 	}
@@ -229,7 +229,7 @@ func (w *advWorld) CheckOffline(_ context.Context, checkout string, plan *contra
 	}
 	unused := w.unused
 	w.unused = nil
-	return lifecycle.OfflineChecks{Checks: checks, UnusedImages: unused, BaseTree: advTree, EffectiveTree: advEffective, PatchesDigest: advDigest, RenderDigest: advDigest, EnvDigest: advDigest}, nil
+	return lifecycle.OfflineChecks{Checks: checks, UnusedImages: unused, BaseTree: advTree, EffectiveTree: advEffective, RenderDigest: advDigest, EnvDigest: advDigest}, nil
 }
 
 func (w *advWorld) VerifyAccepted(context.Context, string, string, lifecycle.DeploymentReceipt) (lifecycle.DeploymentReceipt, error) {
@@ -262,7 +262,7 @@ func newAdvWorld(t *testing.T) *advWorld {
 		t.Fatal(err)
 	}
 	return &advWorld{
-		plan:   &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "synthetic", Config: config}, ExpectedWorkloadIds: []string{"Deployment/toy/toy"}},
+		plan:   &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "synthetic", Config: config}},
 		shapes: map[string]string{advHead: "shape-a", advCandidate: "shape-a"},
 	}
 }

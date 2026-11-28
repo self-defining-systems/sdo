@@ -14,7 +14,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
-	"sdo.dev/operator/planfile"
+	"sdo.dev/operator/planfile/planfiletest"
 	"sdo.dev/operator/rendered"
 )
 
@@ -57,9 +57,7 @@ func TestRefreshNeedsJudgeOnShapeNotSourceBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := planfile.Write(dir, &contracts.DeploymentPlan{Source: source}); err != nil {
-		t.Fatal(err)
-	}
+	planfiletest.Write(t, dir, &contracts.DeploymentPlan{Source: source})
 	shapeGit(t, dir, "add", "-A")
 	shapeGit(t, dir, "commit", "-q", "-m", "judge\n\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed")
 	cfg := settings.Default()

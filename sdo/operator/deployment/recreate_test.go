@@ -252,8 +252,8 @@ func TestRunningJobPastTheBoundIsNeverKilled(t *testing.T) {
 		t.Fatalf("a refused phase deleted or applied: %v", cluster.events)
 	}
 	cause := ClassifyDeploymentError(err)
-	if cause != operability.CauseImmutableChange || operability.RouteIn(operability.ModeAdvance, cause) != operability.OwnerDeployer {
-		t.Fatalf("cause %s owner %s, want immutable_change for the deployer", cause, operability.RouteIn(operability.ModeAdvance, cause))
+	if cause != operability.CauseImmutableChange || operability.Route(cause) != operability.OwnerDeployer {
+		t.Fatalf("cause %s owner %s, want immutable_change for the deployer", cause, operability.Route(cause))
 	}
 }
 
@@ -278,8 +278,8 @@ func TestDataBearingAndUnrecreatableChangesHoldWithTheirOwner(t *testing.T) {
 			deployer.Applier = cluster
 			_, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/web"))
 			cause := ClassifyDeploymentError(err)
-			if cause != tc.cause || operability.RouteIn(operability.ModeAdvance, cause) != tc.owner {
-				t.Fatalf("err %v: cause %s owner %s, want %s %s", err, cause, operability.RouteIn(operability.ModeAdvance, cause), tc.cause, tc.owner)
+			if cause != tc.cause || operability.Route(cause) != tc.owner {
+				t.Fatalf("err %v: cause %s owner %s, want %s %s", err, cause, operability.Route(cause), tc.cause, tc.owner)
 			}
 			if strings.Join(cluster.events, "|") != "dry-run" {
 				t.Fatalf("a held change touched the cluster: %v", cluster.events)
@@ -507,7 +507,7 @@ func TestRecreateRefusesObjectsTheDeployerDidNotCreate(t *testing.T) {
 	if got := strings.Join(cluster.events, "|"); got != "dry-run" {
 		t.Fatalf("a refused phase touched the cluster: %s", got)
 	}
-	if cause := ClassifyDeploymentError(err); cause != operability.CauseImmutableChange || operability.RouteIn(operability.ModeAdvance, cause) != operability.OwnerDeployer {
+	if cause := ClassifyDeploymentError(err); cause != operability.CauseImmutableChange || operability.Route(cause) != operability.OwnerDeployer {
 		t.Fatalf("cause %s, want immutable_change for the deployer", cause)
 	}
 }

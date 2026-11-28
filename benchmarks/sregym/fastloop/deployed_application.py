@@ -110,10 +110,10 @@ def _plan_only_names_the_deployed_source(environment: Any, deployed: str, revisi
     """Whether the two revisions differ in ``.sdo/deployment`` only by a plan that names the source the app came from.
 
     The harness deploys the application from its own source (``deployment_source_for_environment``) whatever the
-    plan says, and an install replaces a seeded memory's authored plan with one that records exactly that source.
-    A plan that names it, and equals the deployed revision's plan in everything else (images, expected workloads),
-    describes the live app: moving its pointer changes nothing the harness deployed. Any other change to the plan or
-    to the files beside it is a change to what is deployed.
+    override says, and an install commits an override that records exactly that source. An override that names
+    it, and equals the deployed revision's override in everything else (images), describes the live app: moving
+    its pointer changes nothing the harness deployed. Any other change to the override or to the files beside it
+    is a change to what is deployed.
     """
     from benchmarks.sregym.fastloop.accepted_source import deployment_source_for_environment
 

@@ -369,9 +369,8 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
     assert actual.verification_timeout_seconds == config.verification_timeout_seconds
     assert actual.deployment_source == raw_source(("kubernetes",))
     if seeded:
-        assert json.loads(controller_args[controller_args.index("--deployment-source") + 1]) == raw_source(
-            ("kubernetes",)
-        )
+        assert "--deployment-source" not in controller_args
+        assert _committed_override_source(tmp_path) == raw_source(("kubernetes",))
 
 
 @pytest.mark.parametrize("entrypoint", ["lifecycle", "evidence"])
@@ -418,7 +417,8 @@ def test_environment_settings_reach_nonpersistent_native_install(
         native_operator.install_existing(driver._native_install_for_run(args, tmp_path, "demo", "demo", ""))
     assert len(commands) == 1
     command = commands[0]
-    assert json.loads(command[command.index("--deployment-source") + 1]) == raw_source(("kubernetes",))
+    assert "--deployment-source" not in command
+    assert _committed_override_source(tmp_path) == raw_source(("kubernetes",))
 
 
 def test_driver_cli_overrides_environment_source_and_program_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -542,3 +542,22 @@ def test_completed_nonpersistent_install_collects_strict_receipt(
     assert events == ["completed", "sync", "strict-receipt"]
     assert receipt["incident_id"] == "incident-1"
     assert receipt["native_host_receipt"]["seeded"] is True
+
+
+_COMMITTED_OVERRIDES: list[tuple[Path, dict]] = []
+
+
+@pytest.fixture(autouse=True)
+def _record_committed_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The adapter commits the override into the lane repository as a human; record it instead of running git."""
+    from benchmarks.sregym.adapter import native_operator
+
+    _COMMITTED_OVERRIDES.clear()
+    monkeypatch.setattr(
+        native_operator, "commit_override", lambda repository, plan: _COMMITTED_OVERRIDES.append((repository, plan))
+    )
+
+
+def _committed_override_source(_root: Path) -> object:
+    """The source of the override the adapter committed (no launcher flag carries it)."""
+    return _COMMITTED_OVERRIDES[-1][1]["source"]

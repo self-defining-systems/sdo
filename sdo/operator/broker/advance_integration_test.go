@@ -176,15 +176,17 @@ func syntheticPlan(t *testing.T, path string) *contracts.DeploymentPlan {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: config}, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}
+	return &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: config}}
 }
 
-// writeSyntheticPlan writes the plan.yaml the lifecycle writes at admission.
+// writeSyntheticPlan writes a deployment override naming the raw source.
 func writeSyntheticPlan(t *testing.T, root, path string) {
 	t.Helper()
-	if err := planfile.Write(root, syntheticPlan(t, path)); err != nil {
+	data, err := planfile.Format(syntheticPlan(t, path))
+	if err != nil {
 		t.Fatal(err)
 	}
+	writeFiles(t, root, map[string]string{layout.DeploymentPlanFile: string(data)})
 }
 
 func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
@@ -197,8 +199,7 @@ func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
 // tests that attest a tree the broker must refuse).
 func advanceEvidenceFor(t *testing.T, checkout, image string, applied bool) SourceEvidence {
 	t.Helper()
-	// The complete working tree: an advance stage holds its merge uncommitted.
-	tree, err := advanceTreeDigest(context.Background(), checkout)
+	tree, err := ProposalTreeDigest(context.Background(), checkout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,17 +208,16 @@ func advanceEvidenceFor(t *testing.T, checkout, image string, applied bool) Sour
 		t.Fatal(err)
 	}
 	source := &contracts.DeploymentSource{RendererId: "raw", Config: config}
-	effective := rendered.EffectiveTree{ID: strings.Repeat("0", 40), PatchesDigest: strings.Repeat("0", 64)}
+	effective := rendered.EffectiveTree{ID: strings.Repeat("0", 40)}
 	if applied {
 		var err error
 		if effective, err = rendered.Effective(context.Background(), rendered.ObjectStore{Dir: checkout}, rendered.BaseTree(tree)); err != nil {
 			t.Fatal(err)
 		}
-		defer effective.Close()
 	}
 	return SourceEvidence{
 		DeploymentSource: source,
-		BaseTree:         tree, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest, ObservedRevision: effective.ID,
+		BaseTree:         tree, EffectiveTree: effective.ID, ObservedRevision: effective.ID,
 		RenderDigest: strings.Repeat("b", 64), EnvDigest: strings.Repeat("c", 64),
 		Images: []string{image + "@sha256:" + strings.Repeat("d", 64)}, ResourceIDs: []string{"Deployment/ns/app"}, Ready: true,
 	}
@@ -266,13 +266,12 @@ func TestPublishVerifiedSourceRecomputesTheEffectiveTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, p.Path, map[string]string{".sdo/deployment/values/second.yaml": "replicas: 2\n"})
+	commitDeploymentFile(t, p.Path, "second")
 	for name, mutate := range map[string]func(*SourceEvidence){
 		"effective tree": func(e *SourceEvidence) {
 			e.EffectiveTree = strings.Repeat("9", 40)
 			e.ObservedRevision = e.EffectiveTree
 		},
-		"patch series": func(e *SourceEvidence) { e.PatchesDigest = strings.Repeat("9", 64) },
 	} {
 		evidence := advanceEvidence(t, p.Path, "second")
 		mutate(&evidence)
@@ -282,34 +281,5 @@ func TestPublishVerifiedSourceRecomputesTheEffectiveTree(t *testing.T) {
 	}
 	if _, err := w.broker.PublishVerifiedSource(ctx, "second", advanceEvidence(t, p.Path, "second"), deploymentReportFor(t, advanceEvidence(t, p.Path, "second"), p.BaseCommit)); err != nil {
 		t.Fatalf("matching evidence must publish: %v", err)
-	}
-}
-
-// The plan is part of the staged tree: evidence for a tree whose plan.yaml is
-// missing, or names another source than the deployed one, is never accepted.
-func TestPublishVerifiedSourceRequiresThePlanToNameTheDeployedSource(t *testing.T) {
-	ctx := context.Background()
-	w := newAdvanceWorld(t)
-	for name, c := range map[string]struct {
-		prepare func(root string)
-		want    string
-	}{
-		"no plan": {func(root string) {
-			if err := os.Remove(filepath.Join(root, filepath.FromSlash(layout.DeploymentPlanFile))); err != nil {
-				t.Fatal(err)
-			}
-		}, "plan.yaml"},
-		"another source": {func(root string) { writeSyntheticPlan(t, root, "elsewhere") }, "another deployment source"},
-	} {
-		id := "plan-" + strings.ReplaceAll(name, " ", "-")
-		p, err := w.broker.CreateProposalForPhase(ctx, id, InitialPhase)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeFiles(t, p.Path, map[string]string{".sdo/deployment/values/" + id + ".yaml": "replicas: 2\n"})
-		c.prepare(p.Path)
-		if _, err := w.broker.PublishVerifiedSource(ctx, id, advanceEvidence(t, p.Path, id), deploymentReportFor(t, advanceEvidence(t, p.Path, id), p.BaseCommit)); err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Fatalf("%s: PublishVerifiedSource = %v, want %q", name, err, c.want)
-		}
 	}
 }

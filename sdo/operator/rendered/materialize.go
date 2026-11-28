@@ -82,7 +82,7 @@ func (m *Materializer) ensure(ctx context.Context, tree EffectiveTree, dir strin
 		return err
 	}
 	staging := filepath.Join(tmp, "tree")
-	if err := renderio.Extract(ctx, tree.Store.Dir, tree.Store.Env, tree.ID, staging); err != nil {
+	if err := renderio.Extract(ctx, tree.Store.Dir, tree.ID, staging); err != nil {
 		_ = os.RemoveAll(tmp)
 		return fmt.Errorf("materialize effective tree %s: %w", tree.ID, err)
 	}

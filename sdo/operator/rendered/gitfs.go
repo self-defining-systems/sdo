@@ -33,10 +33,9 @@ type treeFile struct {
 
 // GitTreeFS reads one effective tree through `git ls-tree -r -z --full-tree -l`
 // and `git cat-file`. Modes 100644 and 100755 are files; symlinks (120000) and
-// gitlinks (160000) do not exist in the view. Everything under .sdo/ is hidden
-// except the deployment views (.sdo/deployment/{values,manifests,build,overlays}),
-// so memory-only commits cannot change a render even if a caller hands in an
-// unprojected tree. Reads go through tree.Store.
+// gitlinks (160000) do not exist in the view. Everything under .sdo/ and
+// .sdo-runtime/ is hidden, so memory-only commits cannot change a render even
+// if a caller hands in an unprojected tree. Reads go through tree.Store.
 // The context bounds later ReadFile calls too.
 func GitTreeFS(ctx context.Context, tree EffectiveTree) (render.FS, error) {
 	id, objects := tree.ID, tree.Store
@@ -83,15 +82,8 @@ func GitTreeFS(ctx context.Context, tree EffectiveTree) (render.FS, error) {
 }
 
 func hidden(name string) bool {
-	if name != sdoDir && !strings.HasPrefix(name, sdoDir+"/") {
-		return false
-	}
-	rest, ok := strings.CutPrefix(name, deploymentDir+"/")
-	if !ok {
-		return true
-	}
-	view, _, _ := strings.Cut(rest, "/")
-	return !deploymentViews[view]
+	root, _, _ := strings.Cut(name, "/")
+	return projectedRoots[root]
 }
 
 func (t *treeFS) index() {

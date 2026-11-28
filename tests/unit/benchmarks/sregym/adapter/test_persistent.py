@@ -1483,7 +1483,8 @@ def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_re
     assert ops.installs == 1
     assert len(commands) == 1
     command = commands[0]
-    assert json.loads(command[command.index("--deployment-source") + 1]) == kustomize_source("kubernetes")
+    assert "--deployment-source" not in command
+    assert _committed_override_source(tmp_path) == kustomize_source("kubernetes")
 
 
 def test_unrepresentable_rejected_receipt_stays_one_incidents_typed_failure(tmp_path: Path) -> None:
@@ -1878,3 +1879,22 @@ def test_external_ingress_payload_has_no_problem_or_oracle_context(monkeypatch):
         "namespace": "app",
         "message": "operator page: users of social-network report errors",
     }
+
+
+_COMMITTED_OVERRIDES: list[tuple[Path, dict]] = []
+
+
+@pytest.fixture(autouse=True)
+def _record_committed_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The adapter commits the override into the lane repository as a human; record it instead of running git."""
+    from benchmarks.sregym.adapter import native_operator
+
+    _COMMITTED_OVERRIDES.clear()
+    monkeypatch.setattr(
+        native_operator, "commit_override", lambda repository, plan: _COMMITTED_OVERRIDES.append((repository, plan))
+    )
+
+
+def _committed_override_source(_root: Path) -> object:
+    """The source of the override the adapter committed (no launcher flag carries it)."""
+    return _COMMITTED_OVERRIDES[-1][1]["source"]

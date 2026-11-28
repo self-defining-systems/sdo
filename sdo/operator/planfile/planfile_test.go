@@ -17,13 +17,12 @@ const goodPlan = `source:
   rendererId: raw
   config:
     "@type": type.googleapis.com/sdodev.contracts.v1alpha1.RawRenderConfig
-    paths: [.sdo/deployment/manifests]
+    paths: [deploy/sdo/manifests]
 images:
   - image: registry.invalid/app:1
     sourceId: prebuilt
     config:
       "@type": type.googleapis.com/sdodev.contracts.v1alpha1.PrebuiltImageConfig
-expectedWorkloadIds: [Deployment/app/api]
 `
 
 func catalogs(t *testing.T) Catalogs {
@@ -44,7 +43,7 @@ func TestParseDecodesThroughBothCatalogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.GetSource().GetRendererId() != "raw" || len(plan.GetImages()) != 1 || plan.GetExpectedWorkloadIds()[0] != "Deployment/app/api" {
+	if plan.GetSource().GetRendererId() != "raw" || len(plan.GetImages()) != 1 {
 		t.Fatalf("plan = %v", plan)
 	}
 	// The plan round-trips: Format then Parse is the identity.
@@ -68,10 +67,11 @@ func TestParseRejects(t *testing.T) {
 		{"unknown field", strings.Replace(goodPlan, "images:", "colour: red\nimages:", 1), "colour"},
 		{"duplicate key", goodPlan + "source: {}\n", "duplicate YAML key"},
 		{"unknown renderer", strings.Replace(goodPlan, "rendererId: raw", "rendererId: jsonnet", 1), "unknown renderer"},
-		{"wrong config type", strings.Replace(strings.Replace(goodPlan, "RawRenderConfig", "KustomizeRenderConfig", 1), "paths: [.sdo/deployment/manifests]", "path: .sdo/deployment/manifests", 1), "takes config"},
+		{"wrong config type", strings.Replace(strings.Replace(goodPlan, "RawRenderConfig", "KustomizeRenderConfig", 1), "paths: [deploy/sdo/manifests]", "path: deploy/sdo/manifests", 1), "takes config"},
 		{"unknown config field", strings.Replace(goodPlan, "paths:", "pathz:", 1), "pathz"},
 		{"unknown image source", strings.Replace(goodPlan, "sourceId: prebuilt", "sourceId: ftp", 1), "unknown source"},
-		{"retired strategy", "strategyId: raw\n" + goodPlan, "retired"},
+		{"retired strategy", "strategyId: raw\n" + goodPlan, "strategyId"},
+		{"retired expected workloads", goodPlan + "expectedWorkloadIds: [Deployment/app/api]\n", "expectedWorkloadIds"},
 		{"not a mapping", "- a\n- b\n", "mapping"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

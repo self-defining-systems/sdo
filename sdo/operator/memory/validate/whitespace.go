@@ -34,7 +34,7 @@ func checkWhitespace(ctx context.Context, r Request) ([]Diagnostic, error) {
 			return nil, fmt.Errorf("prepare diff check: %w: %s", err, out)
 		}
 	}
-	out, err := run("-c", "core.whitespace=blank-at-eol,blank-at-eof,space-before-tab", "diff", "--cached", "--check", r.Base, "--", layout.Dir, ":(exclude)"+layout.DeploymentPatchesDir)
+	out, err := run("-c", "core.whitespace=blank-at-eol,blank-at-eof,space-before-tab", "diff", "--cached", "--check", r.Base, "--", layout.Dir)
 	if err == nil {
 		return nil, nil
 	}

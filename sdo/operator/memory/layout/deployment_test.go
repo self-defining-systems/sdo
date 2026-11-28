@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"sdo.dev/operator/imagesrc"
 )
 
 func TestClassifyDeployment(t *testing.T) {
@@ -14,13 +12,7 @@ func TestClassifyDeployment(t *testing.T) {
 		kind Kind
 		id   string
 	}{
-		".sdo/deployment/plan.yaml":                       {KindDeploymentPlan, ""},
-		".sdo/deployment/values/prod.yaml":                {KindDeploymentFile, "values"},
-		".sdo/deployment/manifests/a/b/service.yaml":      {KindDeploymentFile, "manifests"},
-		".sdo/deployment/build/Dockerfile":                {KindDeploymentFile, "build"},
-		".sdo/deployment/overlays/telemetry/metrics.yaml": {KindDeploymentOverlay, "telemetry"},
-		".sdo/deployment/patches/0001-fix-probe.patch":    {KindDeploymentPatch, "0001-fix-probe"},
-		".sdo/deployment/patches/0042-a.patch":            {KindDeploymentPatch, "0042-a"},
+		".sdo/deployment/plan.yaml": {KindDeploymentPlan, ""},
 	} {
 		kind, id, ok := Classify(p)
 		if !ok || kind != want.kind || id != want.id {
@@ -33,6 +25,8 @@ func TestClassifyDeploymentIsStrict(t *testing.T) {
 	for _, p := range []string{
 		".sdo/deployment", ".sdo/deployment/", ".sdo/deployment/plan.yaml/x", ".sdo/deployment/plan.yml",
 		".sdo/deployment/values", ".sdo/deployment/other/x.yaml", ".sdo/deployment/notes.md",
+		".sdo/deployment/values/prod.yaml", ".sdo/deployment/manifests/a/service.yaml", ".sdo/deployment/build/Dockerfile",
+		".sdo/deployment/overlays/telemetry/metrics.yaml", ".sdo/deployment/patches/0001-fix-probe.patch",
 		".sdo/deployment/overlays/telemetry", ".sdo/deployment/overlays/other/x.yaml", ".sdo/deployment/overlays/x.yaml",
 		".sdo/deployment/patches", ".sdo/deployment/patches/fix.patch", ".sdo/deployment/patches/001-fix.patch",
 		".sdo/deployment/patches/0001-Fix.patch", ".sdo/deployment/patches/0001-.patch", ".sdo/deployment/patches/0001-fix.diff",
@@ -63,8 +57,8 @@ func TestMigrateToSchema4OnlyStamps(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
-		t.Fatalf("schema-version = %q, want 14", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "15\n" {
+		t.Fatalf("schema-version = %q, want 15", got)
 	}
 	var files []string
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
@@ -100,8 +94,8 @@ func TestMigrateToSchema8KeepsExistingCorpusCases(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
-		t.Fatalf("schema-version = %q, want 14", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "15\n" {
+		t.Fatalf("schema-version = %q, want 15", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(CorpusDir+"/case-1/labels.json"))); string(got) != labels {
 		t.Fatalf("an existing case changed: %q", got)
@@ -128,8 +122,8 @@ func TestMigrateToSchema11KeepsExistingOutcomes(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
-		t.Fatalf("schema-version = %q, want 14", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "15\n" {
+		t.Fatalf("schema-version = %q, want 15", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(path))); string(got) != outcome {
 		t.Fatalf("an existing outcome changed: %q", got)
@@ -155,20 +149,10 @@ func TestMigrateToSchema12KeepsExistingRecordings(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
-		t.Fatalf("schema-version = %q, want 14", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "15\n" {
+		t.Fatalf("schema-version = %q, want 15", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(CorpusDir+"/case-1/recordings.json"))); string(got) != recordings {
 		t.Fatalf("an existing recording changed: %q", got)
-	}
-}
-
-// The build-input rule's authored Dockerfile directory is this layout's "build" deployment files.
-func TestAuthoredDockerfilesAreBuildDeploymentFiles(t *testing.T) {
-	if imagesrc.AuthoredDockerfileDir != DeploymentDir+"/build" {
-		t.Fatalf("imagesrc.AuthoredDockerfileDir = %q, want %q", imagesrc.AuthoredDockerfileDir, DeploymentDir+"/build")
-	}
-	if kind, id, ok := Classify(imagesrc.AuthoredDockerfileDir + "/api/Dockerfile"); !ok || kind != KindDeploymentFile || id != "build" {
-		t.Fatalf("Classify = %q, %q, %v; want a build deployment file", kind, id, ok)
 	}
 }

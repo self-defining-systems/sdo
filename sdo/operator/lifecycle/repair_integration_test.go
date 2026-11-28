@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 
@@ -15,8 +16,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/operability"
-	"sdo.dev/operator/patchset"
-	"sdo.dev/operator/planfile"
+	"sdo.dev/operator/planfile/planfiletest"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
@@ -45,10 +45,8 @@ func (d *repairDeployerFake) ApplyAndVerify(ctx context.Context, checkout string
 	if err != nil {
 		return DeploymentReceipt{}, err
 	}
-	defer effective.Close()
 	return DeploymentReceipt{
-		Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: tree, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest,
-		ObservedRevision: effective.ID, RenderDigest: strings.Repeat("a", 64), EnvDigest: strings.Repeat("b", 64),
+		Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: tree, EffectiveTree: effective.ID, ObservedRevision: effective.ID, RenderDigest: strings.Repeat("a", 64), EnvDigest: strings.Repeat("b", 64),
 		ContainerImages: []rendered.DeployedImage{{Ref: sdk.ObjectRef{Kind: "Deployment", Namespace: "ns", Name: "app"}, Name: "app", Applied: "app@sha256:" + strings.Repeat("c", 64), Digest: "sha256:" + strings.Repeat("c", 64), Inputs: rendered.ImageInputs{SourceImage: "app", ContextPath: ".", DockerfilePath: "Dockerfile"}}},
 		Images:          []string{"app@sha256:" + strings.Repeat("c", 64)}, ResourceIDs: []string{"Deployment/ns/app"}, Ready: true,
 	}, nil
@@ -94,17 +92,14 @@ func (w *gateWorld) onboard(t *testing.T) *contracts.DeploymentSource {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := planfile.Write(p.Path, &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}); err != nil {
-		t.Fatal(err)
-	}
+	planfiletest.Write(t, p.Path, &contracts.DeploymentPlan{Source: source})
 	deployer := &repairDeployerFake{}
 	receipt, err := deployer.ApplyAndVerify(context.Background(), p.Path, &contracts.DeploymentPlan{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
 	subject := operability.Subject{
-		AcceptedCommit: p.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest,
-		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest, SettingsDigest: "settings-digest",
+		AcceptedCommit: p.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest, SettingsDigest: "settings-digest",
 	}
 	report, err := operability.New(operability.StageDeployment, subject).With(
 		operability.Check{ID: "O1.deploy", Phase: operability.PhaseLive, Status: operability.StatusPass},
@@ -120,7 +115,7 @@ func (w *gateWorld) onboard(t *testing.T) *contracts.DeploymentSource {
 	return source
 }
 
-// responderPatch captures an edit of app.txt as the responder's patch.
+// responderPatch commits an edit of app.txt as the responder's source repair.
 func (w *repairGit) responderPatch(t *testing.T, id string) {
 	t.Helper()
 	p, err := w.broker.CreateProposalForPhase(context.Background(), id, broker.ProposalPhase)
@@ -130,9 +125,9 @@ func (w *repairGit) responderPatch(t *testing.T, id string) {
 	if err := os.WriteFile(filepath.Join(p.Path, "app.txt"), []byte("synthetic app, repaired\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := patchset.Create(context.Background(), p.Path, patchset.CreateRequest{Owner: patchset.OwnerResponder, Incident: id, Reason: "Repair the synthetic application the deployment ships with this change"}); err != nil {
-		t.Fatal(err)
-	}
+	testutil.ConfigureGit(t, p.Path)
+	testutil.Git(t, p.Path, "add", "app.txt")
+	testutil.Git(t, p.Path, "commit", "-qm", "repair the synthetic application")
 }
 
 func (w *repairGit) repairer(d *repairDeployerFake, v *repairVerifierFake) RepairDeployer {

@@ -5,7 +5,6 @@ package operability
 type Cause string
 
 const (
-	CausePatch            Cause = "patch"
 	CauseRender           Cause = "render"
 	CauseBuild            Cause = "build"
 	CauseRollout          Cause = "rollout"
@@ -50,7 +49,7 @@ const (
 // declared in this package.
 func Causes() []Cause {
 	return []Cause{
-		CausePatch, CauseRender, CauseBuild, CauseRollout,
+		CauseRender, CauseBuild, CauseRollout,
 		CauseAttribution, CauseScope, CauseAllowlist, CauseBudget, CauseBinding,
 		CauseCoverage, CauseMemoryInvalid, CauseDetectorFault, CauseSourceFault,
 		CauseProbeUnavailable, CauseInfrastructure, CauseEnvironment, CauseInternal,
@@ -68,7 +67,7 @@ func (c Cause) known() bool {
 type Owner string
 
 const (
-	// OwnerDeployer corrects deployment files, plan and patches.
+	// OwnerDeployer corrects the deployment files and the override.
 	OwnerDeployer Owner = "deployer"
 	// OwnerDesigner corrects detectors, probes and operational memory.
 	OwnerDesigner Owner = "designer"
@@ -86,16 +85,15 @@ const (
 type Mode string
 
 const (
-	// ModeFresh is onboarding where the deployer authored the deployment.
+	// ModeFresh is onboarding with a registered deployer agent.
 	ModeFresh Mode = "fresh"
-	// ModeProvided is an install of a human-provided deployment plan.
-	ModeProvided Mode = "provided"
-	// ModeAdvance is an upstream advance of an installed deployment.
-	ModeAdvance Mode = "advance"
+	// ModeNoDeployer is onboarding with no deployer agent registered: what the
+	// deployer would correct is for a person.
+	ModeNoDeployer Mode = "no_deployer"
 )
 
 type routing struct {
-	fresh, provided, advance Owner
+	fresh, noDeployer Owner
 	// rank orders worst-cause precedence, lowest first: infrastructure (a flaky
 	// cluster is never blamed on an agent), SDO's own defects, deployer
 	// causes, then designer causes.
@@ -112,22 +110,16 @@ const (
 // route is the one cause-to-owner table.
 func route(c Cause) (routing, bool) {
 	switch c {
-	case CausePatch, CauseRender, CauseBuild, CauseImmutableChange:
-		return routing{OwnerDeployer, OwnerHuman, OwnerDeployer, rankDeployer}, true
-	case CauseRollout:
-		return routing{OwnerDeployer, OwnerHuman, OwnerResponder, rankDeployer}, true
-	case CauseScope, CauseAllowlist, CauseBudget:
-		return routing{OwnerDeployer, OwnerHuman, OwnerHuman, rankDeployer}, true
-	case CauseSourceFault:
-		return routing{OwnerDeployer, OwnerHuman, OwnerResponder, rankDeployer}, true
+	case CauseRender, CauseBuild, CauseImmutableChange, CauseRollout, CauseScope, CauseAllowlist, CauseBudget, CauseSourceFault:
+		return routing{OwnerDeployer, OwnerHuman, rankDeployer}, true
 	case CauseAttribution, CauseBaseInvalid, CausePolicy:
-		return routing{OwnerOperator, OwnerOperator, OwnerOperator, rankInternal}, true
+		return routing{OwnerOperator, OwnerOperator, rankInternal}, true
 	case CauseBinding, CauseCoverage, CauseMemoryInvalid, CauseProbeUnavailable, CauseDetectorFault:
-		return routing{OwnerDesigner, OwnerDesigner, OwnerDesigner, rankDesigner}, true
+		return routing{OwnerDesigner, OwnerDesigner, rankDesigner}, true
 	case CauseInfrastructure:
-		return routing{OwnerRetry, OwnerRetry, OwnerRetry, rankInfrastructure}, true
+		return routing{OwnerRetry, OwnerRetry, rankInfrastructure}, true
 	case CauseEnvironment, CauseInternal, CauseAgentNotConverging, CauseDataBearingChange:
-		return routing{OwnerHuman, OwnerHuman, OwnerHuman, rankInternal}, true
+		return routing{OwnerHuman, OwnerHuman, rankInternal}, true
 	}
 	return routing{}, false
 }
@@ -145,10 +137,8 @@ func RouteIn(mode Mode, c Cause) Owner {
 	switch mode {
 	case ModeFresh:
 		return r.fresh
-	case ModeProvided:
-		return r.provided
-	case ModeAdvance:
-		return r.advance
+	case ModeNoDeployer:
+		return r.noDeployer
 	}
 	return OwnerHuman
 }

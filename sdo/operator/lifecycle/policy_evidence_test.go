@@ -21,7 +21,7 @@ func TestReceiptPolicyIsRecordedInTheEvidence(t *testing.T) {
 	}
 	receipt := DeploymentReceipt{
 		Source:   &contracts.DeploymentSource{RendererId: "raw", Config: config},
-		BaseTree: strings.Repeat("a", 40), EffectiveTree: strings.Repeat("f", 40), PatchesDigest: strings.Repeat("e", 64), ObservedRevision: strings.Repeat("f", 40),
+		BaseTree: strings.Repeat("a", 40), EffectiveTree: strings.Repeat("f", 40), ObservedRevision: strings.Repeat("f", 40),
 		RenderDigest: strings.Repeat("b", 64), EnvDigest: strings.Repeat("c", 64),
 		Images: []string{"app@sha256:" + strings.Repeat("d", 64)}, ResourceIDs: []string{"Deployment/ns/app"}, Ready: true,
 		Policy: &contracts.DeploymentPolicy{AllowedRegistries: []string{"ghcr.io"}, ScopeBlocking: true},

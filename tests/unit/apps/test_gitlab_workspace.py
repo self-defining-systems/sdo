@@ -253,30 +253,22 @@ def _repository(image: str) -> str:
     return (head + "/" if head else "") + tail.split(":", 1)[0]
 
 
-def test_stand_in_plan_is_derived_from_the_render(tmp_path: Path, operator_binary: Path, monkeypatch) -> None:
+def test_stand_in_override_renders_the_chart_as_helm_does(tmp_path: Path, operator_binary: Path, monkeypatch) -> None:
+    """The lane's override names only the kind values file; SDO renders the chart with it as helm does."""
     from benchmarks.sregym.fastloop import gitlab_lane
 
     monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
     archive, pins = stand_in_archive(tmp_path)
-    commit = gitlab_lane.prepare_workspace(tmp_path / "ws", archive=archive, pins=pins)
-    assert commit
-    plan = gitlab_lane.provided_plan(tmp_path / "ws")
+    assert gitlab_lane.prepare_workspace(tmp_path / "ws", archive=archive, pins=pins)
+    assert gitlab_lane.provided_plan(tmp_path / "ws") == {"source": gitlab_lane.deployment_source()}
     expected = helm_objects(tmp_path / "ws/chart")
-    # The expected side comes from `helm template`, not from SDO's render: workloads that are not hooks.
-    assert sorted(_family(i) for i in plan["expected_workload_ids"]) == sorted(
-        _family(i) for i in helm_workload_ids(expected)
-    )
-    assert "Deployment/gitlab/gitlab-webservice" in plan["expected_workload_ids"]
-    # A CronJob is a workload too (Go's pod-template table), so the plan must name it.
-    assert "CronJob/gitlab/gitlab-cleanup" in plan["expected_workload_ids"]
-    # Images are declared by repository, so a release that only bumps tags keeps matching.
-    images = {image["image"] for image in plan["images"]}
-    assert "registry.invalid/cron" in images
-    assert "registry.invalid/web" in images
-    # Hook and test-only images are not part of the rendered inventory.
-    assert not images & {"registry.invalid/kubectl", "registry.invalid/t"}
-    assert images == {_repository(image) for image in helm_images(expected)}
-    assert {image["source_id"] for image in plan["images"]} == {"prebuilt"}
+    source = AcceptedSource(tmp_path / "ws", "gitlab", ("chart",), renderer_source=gitlab_lane.deployment_source())
+    actual = {
+        f"{o['kind']}/{o['metadata'].get('namespace', 'gitlab')}/{o['metadata']['name']}" for o in source.manifests
+    }
+    for workload in helm_workload_ids(expected):
+        if not workload.startswith("Job/"):
+            assert workload in actual, workload
 
 
 def test_real_chart_workspace_renders_through_sdo_as_helm_does(
@@ -320,18 +312,8 @@ def test_real_chart_plan_is_printed(tmp_path: Path, operator_binary: Path, monke
         print("\n" + json.dumps(plan, indent=2, sort_keys=True))
     expected = helm_objects(tmp_path / "ws/chart")
 
-    # Job names carry a hash of Helm's own version: compare them by their family.
-    def family(workload_id: str) -> str:
-        return workload_id.rsplit("-", 1)[0] if workload_id.startswith("Job/") else workload_id
-
-    assert {family(i) for i in plan["expected_workload_ids"]} == {family(i) for i in helm_workload_ids(expected)}
-    assert {_repository(image) for image in helm_images(expected)} == {image["image"] for image in plan["images"]}
-    assert len(plan["images"]) >= 8
-    # The lane's install-time policy admits every image of the real chart (Go's RegistryHost rule).
-    for image in plan["images"]:
-        first = image["image"].split("/", 1)[0]
-        host = first if "/" in image["image"] and ("." in first or ":" in first) else "docker.io"
-        assert host in gitlab_lane.IMAGE_REGISTRIES, image["image"]
+    assert plan == {"source": gitlab_lane.deployment_source()}
+    assert expected
 
 
 def _bucket_job_script() -> str:

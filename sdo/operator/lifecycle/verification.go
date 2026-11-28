@@ -256,10 +256,10 @@ func (c Coordinator) awaitClear(ctx context.Context, cfg Config, fault HealthVer
 	return verdict, nil
 }
 
-// ProvidedPlanError ends a lifecycle whose human-provided deployment plan
-// failed admission, deployment or verification. No agent is dispatched to
-// repair a plan the human supplied, so the failure is for the human.
-type ProvidedPlanError struct {
+// DeploymentHoldError ends a lifecycle whose deployment failed with no
+// deployer agent registered: nothing can correct the repository's own
+// deployment files, so the failure is for a person.
+type DeploymentHoldError struct {
 	// Stage is "deploy" (admission, deployment, evidence) or "verify".
 	Stage  string
 	Reason string
@@ -268,6 +268,6 @@ type ProvidedPlanError struct {
 	Report *operability.Report
 }
 
-func (e *ProvidedPlanError) Error() string {
-	return fmt.Sprintf("the provided deployment plan failed at %s (no agent was asked to correct it): %s", e.Stage, e.Reason)
+func (e *DeploymentHoldError) Error() string {
+	return fmt.Sprintf("the deployment failed at %s and no deployer agent is registered to correct it: %s", e.Stage, e.Reason)
 }

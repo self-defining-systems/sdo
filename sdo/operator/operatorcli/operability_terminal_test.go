@@ -18,7 +18,7 @@ import (
 
 func failingReport(t *testing.T, cause operability.Cause) operability.Report {
 	t.Helper()
-	subject := operability.Subject{AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v", SettingsDigest: "s"}
+	subject := operability.Subject{AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", RenderDigest: "r", EnvDigest: "v", SettingsDigest: "s"}
 	report, err := operability.New(operability.StageDeployment, subject).With(
 		operability.Check{ID: "O1.render", Phase: operability.PhaseOffline, Status: operability.StatusFail, Cause: cause, Detail: "synthetic failure"},
 		operability.Check{ID: "O2.images", Phase: operability.PhaseOffline, Status: operability.StatusPass},
@@ -66,12 +66,12 @@ func TestTerminalOperabilityWritesTheTerminationMessageAndTheLogLine(t *testing.
 	}
 }
 
-// A provided plan's stop carries the report and is decided for the provided
+// A stop with no deployer carries the report and is decided for that
 // mode (a deployment fault is the person's).
-func TestTerminalOperabilityDecidesAProvidedPlanForThePerson(t *testing.T) {
+func TestTerminalOperabilityDecidesANoDeployerHoldForThePerson(t *testing.T) {
 	report := failingReport(t, operability.CauseRender)
 	var stderr bytes.Buffer
-	err := &lifecycle.ProvidedPlanError{Stage: "deploy", Reason: "x", Report: &report}
+	err := &lifecycle.DeploymentHoldError{Stage: "deploy", Reason: "x", Report: &report}
 	if !reportTerminalOperability(err, &stderr, "", time.Unix(0, 0)) || !strings.Contains(stderr.String(), `"owner":"human"`) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
@@ -81,7 +81,7 @@ func TestTerminalOperabilityDecidesAProvidedPlanForThePerson(t *testing.T) {
 func TestTerminalOperabilityIgnoresOtherErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "termination-log")
 	var stderr bytes.Buffer
-	for _, err := range []error{errors.New("plain"), &lifecycle.ProvidedPlanError{Stage: "verify", Reason: "x"}} {
+	for _, err := range []error{errors.New("plain"), &lifecycle.DeploymentHoldError{Stage: "verify", Reason: "x"}} {
 		if reportTerminalOperability(err, &stderr, path, time.Unix(0, 0)) {
 			t.Fatalf("%v was reported as an operability stop", err)
 		}

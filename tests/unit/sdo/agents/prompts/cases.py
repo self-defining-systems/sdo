@@ -228,15 +228,7 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
             prompts["source_deployment"] = prompt
             return SimpleNamespace(
                 session_id="toy-source",
-                output_json=json.dumps(
-                    {
-                        "proposed": False,
-                        "summary": "synthetic capture",
-                        "image_builds": [],
-                        "manifest_paths": [],
-                        "expected_workload_ids": [],
-                    }
-                ),
+                output_json=json.dumps({"proposed": False, "summary": "synthetic capture"}),
             )
 
         patch.setattr(worker, "run_structured_turn", source_turn)

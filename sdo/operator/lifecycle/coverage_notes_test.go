@@ -25,7 +25,7 @@ func TestClearVerdictRecordsCoverageNotesWithoutHoldingAcceptance(t *testing.T) 
 	if note == nil || note.Status != operability.StatusNote || !strings.Contains(note.Detail, "store-state-kv") || !strings.Contains(note.Detail, "redis-cli") {
 		t.Fatalf("checks = %+v", checks)
 	}
-	subject := operability.Subject{AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v", DiagnosticsTree: "d"}
+	subject := operability.Subject{AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", RenderDigest: "r", EnvDigest: "v", DiagnosticsTree: "d"}
 	pass := func(id string) operability.Check {
 		return operability.Check{ID: id, Phase: operability.PhaseLive, Status: operability.StatusPass}
 	}

@@ -397,7 +397,7 @@ func (r onbReadiness) CheckOffline(ctx context.Context, checkout string, plan *c
 	if err != nil {
 		return lifecycle.OfflineChecks{}, err
 	}
-	out := lifecycle.OfflineChecks{BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest}
+	out := lifecycle.OfflineChecks{BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest}
 	for _, id := range offline.DeploymentCheckIDs() {
 		out.Checks = append(out.Checks, operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusPass})
 	}
@@ -413,7 +413,16 @@ func (r onbReadiness) ApplyAndVerify(ctx context.Context, checkout string, plan 
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	defer effective.Close()
+	source := plan.GetSource()
+	if source == nil {
+		// The synthetic application ships raw manifests under k8s/: the
+		// source Go derives from its files.
+		config, err := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
+		if err != nil {
+			return lifecycle.DeploymentReceipt{}, err
+		}
+		source = &contracts.DeploymentSource{RendererId: "raw", Config: config}
+	}
 	digest := "sha256:" + strings.Repeat("c", 64)
 	var images []rendered.DeployedImage
 	var refs []string
@@ -424,8 +433,7 @@ func (r onbReadiness) ApplyAndVerify(ctx context.Context, checkout string, plan 
 		refs = append(refs, ref)
 	}
 	return lifecycle.DeploymentReceipt{
-		Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: tree, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest,
-		ObservedRevision: effective.ID, RenderDigest: strings.Repeat("a", 64), EnvDigest: strings.Repeat("b", 64),
+		Source: proto.Clone(source).(*contracts.DeploymentSource), BaseTree: tree, EffectiveTree: effective.ID, ObservedRevision: effective.ID, RenderDigest: strings.Repeat("a", 64), EnvDigest: strings.Repeat("b", 64),
 		ContainerImages: images, Images: refs, ResourceIDs: r.app.workloads, Ready: true,
 	}, nil
 }
@@ -476,7 +484,6 @@ type onbOptions struct {
 	prepare func(t *testing.T, root string)
 	// plan is the provided deployment plan; nil is the raw source over k8s/ with
 	// app.workloads as the expected workloads.
-	plan *contracts.DeploymentPlan
 	// readiness replaces the scripted deployer.
 	readiness lifecycle.SourceReadiness
 	// sources are the upstreams followed (the repository is their clone).
@@ -556,14 +563,6 @@ func onboardWith(t *testing.T, app onbApp, profile telemetry.Profile, options on
 	}
 	if coordinator.Readiness == nil {
 		coordinator.Readiness = onbReadiness{app: app}
-	}
-	config.Lifecycle.ProvidedPlan = options.plan
-	if config.Lifecycle.ProvidedPlan == nil {
-		source, err := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		config.Lifecycle.ProvidedPlan = &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: source}, ExpectedWorkloadIds: app.workloads}
 	}
 	result, runErr := coordinator.Run(ctx, config.Lifecycle)
 	stopRunner()

@@ -15,7 +15,7 @@ from benchmarks.sregym.fastloop.toy import (
     deployment_policy,
     prepare_workspace,
     provided_deployment_plan,
-    registry_host,
+    registry_image,
 )
 from tests.unit.benchmarks.sregym.fastloop.operability_fixtures import green_read
 
@@ -309,33 +309,17 @@ def test_workload_templates_follow_the_pod_template_revision_label() -> None:
 
 
 @pytest.mark.go_integration
-def test_helm_onboarding_provides_the_plan_of_the_assembled_source(
-    tmp_path: Path, operator_binary: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_helm_variant_needs_no_override(tmp_path: Path, operator_binary: Path, monkeypatch: pytest.MonkeyPatch):
+    """One chart and the tree's only Dockerfile: Go derives the whole deployment, so the lane commits no override."""
     monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
     prepare_workspace(tmp_path, "unused:v1", fresh=True, variant="helm")
-    plan = provided_deployment_plan("helm", "sdo-toy", tmp_path)
-    assert plan is not None
-    source = plan["source"]
-    assert (tmp_path / source["config"]["chart_path"] / "Chart.yaml").is_file()
-    assert (tmp_path / plan["images"][0]["config"]["dockerfile_path"]).is_file()
-    # Derived from SDO's render of the chart (Go's pod-template table), in render order.
-    assert sorted(plan["expected_workload_ids"]) == sorted(
-        f"Deployment/sdo-toy/{name}" for name in ("frontend", "backend", "catalog")
-    )
+    assert provided_deployment_plan("helm", "sdo-toy", tmp_path) is None
+    assert (tmp_path / "chart" / "Chart.yaml").is_file()
+    assert [p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*Dockerfile*")] == ["Dockerfile"]
     values = (tmp_path / "chart" / "values.yaml").read_text()
-    image = plan["images"][0]["image"]
-    repository, _, tag = image.rpartition(":")
+    repository = registry_image("sdo-toy").rpartition(":")[0]
     assert f"repository: {repository}\n" in values
-    assert f"tag: {tag}\n" in values
     assert "pullPolicy: IfNotPresent" in values
-    assert image.startswith("sdo-benchmark-registry.sdo-toy-sdo.svc.cluster.local:5000/")
-    flags = sc.helm_onboarding_arguments(plan)
-    assert flags[0] == "--deployment-plan"
-    decoded = json.loads(flags[1])
-    assert decoded["source"]["renderer_id"] == "helm"
-    assert decoded["source"]["config"]["@type"].endswith(".HelmRenderConfig")
-    assert decoded["images"][0]["source_id"] == "buildkit"
 
 
 def test_provided_toy_plans_may_pull_only_from_the_lane_registry():
@@ -347,34 +331,19 @@ def test_provided_toy_plans_may_pull_only_from_the_lane_registry():
     assert [deployment_policy(v, "sdo-toy").settings() for v in ("raw", "compose")] == [{}, {}]
 
 
-@pytest.mark.go_integration
-def test_provided_toy_plan_images_are_within_the_policys_registry(
-    tmp_path: Path, operator_binary: Path, monkeypatch: pytest.MonkeyPatch
-):
-    monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
-    prepare_workspace(tmp_path, "unused:v1", fresh=True, variant="helm")
-    plan = provided_deployment_plan("helm", "sdo-toy", tmp_path)
-    assert plan is not None
-    assert {image["image"].partition("/")[0] for image in plan["images"]} == {registry_host("sdo-toy")}
-
-
-def test_raw_and_compose_provide_no_plan(tmp_path: Path):
-    assert [provided_deployment_plan(v, "ns", tmp_path) for v in ("raw", "compose")] == [None, None]
+def test_no_toy_variant_needs_an_override(tmp_path: Path):
+    assert [provided_deployment_plan(v, "ns", tmp_path) for v in ("raw", "compose", "helm", "kustomize")] == [None] * 4
 
 
 @pytest.mark.go_integration
-def test_kustomize_overlay_deploys_the_plans_registry_image(
+def test_kustomize_overlay_deploys_the_registry_image(
     tmp_path: Path, operator_binary: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
     prepare_workspace(tmp_path, "unused:v1", fresh=True, variant="kustomize")
-    plan = provided_deployment_plan("kustomize", "sdo-toy", tmp_path)
-    assert plan is not None
-    overlay = tmp_path / plan["source"]["config"]["path"] / "kustomization.yaml"
-    image = plan["images"][0]["image"]
-    repository, _, tag = image.rpartition(":")
+    overlay = tmp_path / "deploy/overlays/default/kustomization.yaml"
+    repository = registry_image("sdo-toy").rpartition(":")[0]
     assert f"newName: {repository}\n" in overlay.read_text()
-    assert f"newTag: {tag}\n" in overlay.read_text()
     assert "imagePullPolicy: Never" not in (tmp_path / "deploy/base/backend.yaml").read_text()
 
 

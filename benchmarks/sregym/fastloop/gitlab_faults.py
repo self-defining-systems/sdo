@@ -700,7 +700,9 @@ def add_faults_parser(gitlab_commands: Any) -> None:
     faults.add_argument("--seed", type=int, default=0)
     faults.add_argument("--kinds", nargs="*", help=f"fault kinds, default all of {[k.value for k in DEFAULT_KINDS]}")
     faults.add_argument("--exclude", nargs="*", default=[], help="workload names or IDs that must stay untouched")
-    faults.add_argument("--plan", type=Path, help="deployment plan JSON; restricts targets to its expected workloads")
+    faults.add_argument(
+        "--targets", type=Path, help="JSON list of workload IDs (Kind/namespace/name); restricts targets to them"
+    )
     faults.add_argument("--inventory", type=Path, help="with --dry-run: read this kubectl listing instead of the lane")
     faults.add_argument("--dry-run", action="store_true", help="print the selected faults and actions; change nothing")
     faults.add_argument("--run-id", default="gitlab-faults")
@@ -710,12 +712,12 @@ def add_faults_parser(gitlab_commands: Any) -> None:
 
 
 def _plan_ids(path: Path | None) -> list[str] | None:
+    """The workload IDs a ``--targets`` file lists (the deployment plan no longer carries them)."""
     if path is None:
         return None
-    plan = json.loads(path.read_text(encoding="utf-8"))
-    ids = plan.get("expected_workload_ids") or plan.get("expectedWorkloadIds")
-    if not ids:
-        raise ValueError(f"{path} has no expected_workload_ids")
+    ids = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i.count("/") == 2 for i in ids):
+        raise ValueError(f"{path} must be a non-empty JSON list of Kind/namespace/name workload IDs")
     return list(ids)
 
 
@@ -724,7 +726,7 @@ def faults_command(args: Any) -> int:
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
-    plan_ids = _plan_ids(args.plan)
+    plan_ids = _plan_ids(args.targets)
     kinds = parse_kinds(args.kinds)
     if args.dry_run and args.inventory is not None:
         workloads = parse_inventory(json.loads(args.inventory.read_text(encoding="utf-8")), plan_ids=plan_ids)

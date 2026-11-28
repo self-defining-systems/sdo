@@ -18,6 +18,7 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import tempfile
 import urllib.request
 from dataclasses import asdict, dataclass, field
@@ -46,6 +47,7 @@ from benchmarks.sregym.fastloop.toy_scenarios import (
     watch_for_incident,
 )
 from benchmarks.sregym.fastloop.toy_upstream import UpstreamError, forwarded_remote, push_change
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -463,14 +465,53 @@ def fetch_archive(release: Release, cache: Path, opener: Callable[..., Any] = ur
     return target
 
 
+class VendoredChartEdited(UpstreamError):
+    """A lane violation: SDO commits since the last release changed the vendored upstream chart.
+
+    Vendored subcharts are layered through values only: a release replaces the vendored chart wholesale, so an
+    edit inside it would be silently lost. The replay refuses the push instead.
+    """
+
+
+def sdo_edits_of_vendored_chart(clone: Path) -> list[str]:
+    """The SDO commits since the last replayed release (or ever) that changed the vendored upstream chart."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            host_git_command(clone, *args),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=wait_for(WaitKind.COMMAND),
+        ).stdout
+
+    last = git("log", "-1", "--format=%H", "--author=gitlab-replay").strip()
+    revisions = [f"{last}..HEAD"] if last else ["HEAD"]
+    log = git("log", "--format=%H%x00%B%x1e", *revisions, "--", "/".join(CHART_DIRECTORY))
+    edits = []
+    for record in log.split("\x1e"):
+        sha, _, body = record.strip().partition("\x00")
+        if sha and f"\n{ACTOR_TRAILER}: " in "\n" + body:
+            edits.append(sha)
+    return edits
+
+
 def push_release(release: Release, archive: Path, remote: str, layout: UpstreamLayout) -> str:
-    """Replace the vendored upstream chart by ``archive`` and bump the umbrella dependency, as a chart-bump commit."""
+    """Replace the vendored upstream chart by ``archive`` and bump the umbrella dependency, as a chart-bump commit.
+
+    Refused (``VendoredChartEdited``) when SDO commits since the last release touched the vendored chart.
+    """
     pins = release.pins(assemble.load_pins())
 
     def bump(clone: Path) -> None:
         vendored = clone.joinpath(*CHART_DIRECTORY)
         if not vendored.is_dir():
             raise UpstreamError(f"the followed ref has no {'/'.join(CHART_DIRECTORY)}; is this a gitlab lane?")
+        if edits := sdo_edits_of_vendored_chart(clone):
+            raise VendoredChartEdited(
+                f"lane violation: SDO commits {', '.join(e[:12] for e in edits)} changed {'/'.join(CHART_DIRECTORY)}; "
+                "vendored subcharts are layered through values only, and a release replaces the chart"
+            )
         shutil.rmtree(vendored)
         assemble.vendor_chart(archive, clone / "chart", pins)
         assemble.bump_dependency(clone / "chart" / "Chart.yaml", pins["gitlab_chart"]["name"], release.version)

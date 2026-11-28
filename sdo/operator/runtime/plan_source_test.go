@@ -36,18 +36,13 @@ func TestAcceptedDeploymentSourceReadsThePlanFile(t *testing.T) {
 
 func TestAcceptedDeploymentSourceRejectsAnInvalidPlan(t *testing.T) {
 	root := t.TempDir()
-	writePlanFile(t, root, `{"colour":1}`+"\n")
-	if _, err := acceptedDeploymentSource(root); err == nil || !strings.Contains(err.Error(), "plan.yaml") {
-		t.Fatalf("plan with an unknown field: err = %v", err)
-	}
-}
-
-// An override without a source leaves the source to the files: reads derive it.
-func TestAcceptedDeploymentSourceWithoutASourceIsDerived(t *testing.T) {
-	root := t.TempDir()
 	writePlanFile(t, root, `{"images":[]}`+"\n")
 	if source, err := acceptedDeploymentSource(root); err != nil || source != nil {
-		t.Fatalf("source = %v, err = %v; want none (derived at read time)", source, err)
+		t.Fatalf("an override without a source derives it: %v, %v", source, err)
+	}
+	writePlanFile(t, root, `{"expectedWorkloadIds":["Deployment/a/b"]}`+"\n")
+	if _, err := acceptedDeploymentSource(root); err == nil || !strings.Contains(err.Error(), "plan.yaml") {
+		t.Fatalf("an override with a retired field: err = %v", err)
 	}
 }
 

@@ -5,16 +5,16 @@ package memory
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
-func TestCaptureSourceProposalsWritesAResponderPatch(t *testing.T) {
+func TestCaptureSourceProposalsCommitsTheSourceEdit(t *testing.T) {
 	root := t.TempDir()
 	acceptedGit(t, root, "init", "-q")
 	acceptedGit(t, root, "config", "user.email", "test@example.invalid")
@@ -41,17 +41,34 @@ func TestCaptureSourceProposalsWritesAResponderPatch(t *testing.T) {
 	if err != nil || len(created) != 1 || len(skipped) != 1 {
 		t.Fatalf("created %v skipped %v: %v", created, skipped, err)
 	}
-	patch, err := os.ReadFile(filepath.Join(root, patchset.Directory, created[0]))
+	if created[0] != "k8s/web.yaml" {
+		t.Fatalf("created = %v", created)
+	}
+	if status := gitOut(t, root, "status", "--porcelain"); strings.TrimSpace(status) != "" {
+		t.Fatalf("the edit must be committed, not left as scratch: %q", status)
+	}
+	committed := gitOut(t, root, "show", "HEAD:k8s/web.yaml")
+	if !strings.Contains(committed, "replicas: 3") {
+		t.Fatalf("committed file lacks the proposal:\n%s", committed)
+	}
+	if message := gitOut(t, root, "log", "-1", "--format=%B"); !strings.Contains(message, "inc-1") || !strings.Contains(message, reason) {
+		t.Fatalf("commit message = %q", message)
+	}
+	again, skippedAgain, err := CaptureSourceProposals(context.Background(), root, "inc-1", []program.SourceChangeProposal{
+		{Ref: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "shop", Name: "web"}, Path: "spec.replicas", Value: float64(3), Reason: reason},
+	})
+	if err != nil || len(again) != 0 || len(skippedAgain) != 1 {
+		t.Fatalf("an applied proposal commits nothing again: %v %v %v", again, skippedAgain, err)
+	}
+}
+
+func gitOut(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = root
+	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("git %v: %v: %s", args, err, output)
 	}
-	for _, want := range []string{"Owner: responder", "Incident: inc-1", "+  replicas: 3"} {
-		if !strings.Contains(string(patch), want) {
-			t.Fatalf("patch lacks %q:\n%s", want, patch)
-		}
-	}
-	report, err := patchset.Check(context.Background(), root)
-	if err != nil || len(report.Uncaptured) != 0 {
-		t.Fatalf("check = %+v, %v", report, err)
-	}
+	return string(output)
 }

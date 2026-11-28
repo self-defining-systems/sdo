@@ -110,6 +110,11 @@ func Migrate(root string) (bool, error) {
 			return false, fmt.Errorf("migrate to schema 13: %w", err)
 		}
 	}
+	if version < 15 {
+		if err := plan.deployment.apply(root); err != nil {
+			return false, fmt.Errorf("migrate to schema 15: %w", err)
+		}
+	}
 	target := filepath.Join(root, filepath.FromSlash(SchemaVersionFile))
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return false, err
@@ -120,11 +125,12 @@ func Migrate(root string) (bool, error) {
 // Each format break has one registered planner. Plans are composed before any
 // file changes, preserving the legacy migrator's rejection-before-write contract.
 type schemaPlan struct {
-	root      string
-	legacy    []byte
-	hasLegacy bool
-	detectors []migrationStep
-	rewrites  []fileRewrite
+	root       string
+	legacy     []byte
+	hasLegacy  bool
+	detectors  []migrationStep
+	rewrites   []fileRewrite
+	deployment deploymentMigration
 }
 
 var schemaMigrations = map[int]func(*schemaPlan) error{
@@ -187,6 +193,15 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 	},
 	// Version 14 readers ignore retired script linkage. Keep captured cases immutable.
 	14: func(*schemaPlan) error { return nil },
+	// Version 15 keeps only the optional override plan.yaml in .sdo/deployment:
+	// the retired views move to deploy/sdo/<dir> (their paths in the override
+	// rewritten), the retired plan fields go, patches are applied to the files
+	// they change and removed, and the telemetry overlay slot is removed.
+	15: func(p *schemaPlan) error {
+		var err error
+		p.deployment, err = planDeploymentMigration(p.root)
+		return err
+	},
 }
 
 const (

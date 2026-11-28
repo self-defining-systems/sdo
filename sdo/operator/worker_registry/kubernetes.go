@@ -606,7 +606,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		}
 		env = append(env, corev1.EnvVar{Name: "SDO_ACTOR", Value: actor}, corev1.EnvVar{Name: "SDO_PHASE", Value: phase}, corev1.EnvVar{Name: "SDO_BASE_COMMIT", Value: task.GetWorkspace().GetBaseCommit()})
 	}
-	// Roles that capture patches (`sdo-operator patch create`) learn their owner from the launch, never from a flag.
+	// Roles with no memory phase still learn their actor from the launch, never from a flag.
 	patchActor := !memoryAuthor && launchActor(task) != ""
 	if patchActor {
 		env = append(env, corev1.EnvVar{Name: "SDO_ACTOR", Value: launchActor(task)})

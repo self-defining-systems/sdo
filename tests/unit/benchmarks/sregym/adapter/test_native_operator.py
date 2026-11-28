@@ -96,7 +96,8 @@ def test_install_existing_invokes_go_cli_with_config_files_and_environment(
     }
     assert (env["SDO_AGENT_MODEL"], env["SDO_AGENT_EFFORT"]) == ("gpt-6-luna", "high")
     assert "SDO_MODE" not in env
-    assert json.loads(command[command.index("--deployment-source") + 1]) == raw_source(("kubernetes",))
+    assert "--deployment-source" not in command
+    assert _committed_override_source(tmp_path) == raw_source(("kubernetes",))
     knob_flags = ("--model", "--agent-", "--repair-policy", "--max-response-loops", "--code-path")
     assert not [arg for arg in command if arg.startswith(knob_flags)]
     assert command[0] != "python3"
@@ -473,3 +474,22 @@ def test_shared_identity_distinguishes_transport_readiness_and_mismatch(
     assert "hotel-sdo" in str(caught.value)
     assert "CANARY" not in str(caught.value)
     assert bool(calls) is (failure != "not_ready")
+
+
+_COMMITTED_OVERRIDES: list[tuple[Path, dict]] = []
+
+
+@pytest.fixture(autouse=True)
+def _record_committed_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The adapter commits the override into the lane repository as a human; record it instead of running git."""
+    from benchmarks.sregym.adapter import native_operator
+
+    _COMMITTED_OVERRIDES.clear()
+    monkeypatch.setattr(
+        native_operator, "commit_override", lambda repository, plan: _COMMITTED_OVERRIDES.append((repository, plan))
+    )
+
+
+def _committed_override_source(_root: Path) -> object:
+    """The source of the override the adapter committed (no launcher flag carries it)."""
+    return _COMMITTED_OVERRIDES[-1][1]["source"]

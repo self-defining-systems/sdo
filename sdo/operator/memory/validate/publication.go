@@ -183,8 +183,8 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string) ([]Diagnost
 		}
 	}
 	if r.Phase == InitialPhase && r.Actor == Deployer {
-		// Deployment inputs (plan, values, manifests, build files, patches) are
-		// source for the deployed system: they publish only through
+		// The deployer's change (app files and the deployment override) is
+		// source for the deployed system: it publishes only through
 		// PublishVerifiedSource, bound to the tree the deployer verified.
 		deployment, architecture := false, false
 		for _, p := range paths {
@@ -399,10 +399,12 @@ func providedSource(r Request) bool {
 	return r.Phase == InitialPhase && r.Actor == Deployer && r.Publication != nil && r.Publication.VerifiedSourceTree != ""
 }
 
-// deployerOwnedDeployment reports whether p is a deployment-class path the
-// deployer publishes with its verified source: the plan, the values, manifests
-// and build files, and patches. Overlays belong to the detection designer.
+// deployerOwnedDeployment reports whether p is a path the deployer publishes
+// with its verified source: an app file or the deployment override.
 func deployerOwnedDeployment(p string) bool {
+	if !layout.IsMemoryPath(p) {
+		return true
+	}
 	kind, _, ok := layout.Classify(p)
-	return ok && (kind == layout.KindDeploymentPlan || kind == layout.KindDeploymentFile || kind == layout.KindDeploymentPatch)
+	return ok && kind == layout.KindDeploymentPlan
 }

@@ -14,7 +14,6 @@ import (
 
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
-	"sdo.dev/operator/patchset"
 )
 
 // Limits of one source publication (the broker's squash of an agent's commits).
@@ -27,29 +26,21 @@ const (
 // SourceChange is the application-source part of an agent's checkout. An agent
 // changes source by committing it; everything else it leaves in the working
 // tree is scratch that nothing publishes or deploys.
-//
-// A checkout's working files start as the effective view (the accepted base
-// plus its deployment patches) while HEAD is still the base commit, so a
-// commit of those materialized files adds nothing. Kept is therefore measured
-// from the view, not from the base: the paths where HEAD's tree differs from
-// the view's effective tree.
 type SourceChange struct {
 	// Kept are the committed app paths, sorted: what the publication carries.
 	Kept []string
 	// Scratch are the app paths whose working content differs from what HEAD
-	// holds (or from the view, when nothing was committed): untracked,
-	// unstaged and uncommitted edits. Ignored files are invisible.
+	// holds: untracked, unstaged and uncommitted edits. Ignored files are
+	// invisible.
 	Scratch []string
 	// Subjects are the subject lines of the agent's commits since the base,
 	// oldest first.
 	Subjects []string
 
 	entries map[string]treeEntry
-	// effective is the checkout's view tree: what a diff of the kept content
-	// is measured from.
-	effective string
-	// overlap are the kept paths a deployment patch also changes.
-	overlap []string
+	// base is the base commit's tree: what a diff of the kept content is
+	// measured from.
+	base string
 }
 
 type treeEntry struct {
@@ -72,53 +63,25 @@ func SourceChangeOf(ctx context.Context, checkout, baseCommit string) (SourceCha
 			Hint:    "commit on top of the checkout's starting commit; do not reset, rebase or amend below it",
 		}})
 	}
-	view, viewed, err := patchset.LoadView(ctx, checkout)
+	baseTree, err := gitText(ctx, checkout, "rev-parse", baseCommit+"^{tree}")
 	if err != nil {
 		return change, err
-	}
-	if !viewed {
-		tree, err := gitText(ctx, checkout, "rev-parse", baseCommit+"^{tree}")
-		if err != nil {
-			return change, err
-		}
-		view = patchset.View{BaseTree: tree, EffectiveTree: tree}
 	}
 	headTree, err := gitText(ctx, checkout, "rev-parse", "HEAD^{tree}")
 	if err != nil {
 		return change, err
 	}
-	change.effective = view.EffectiveTree
-	// What HEAD changed relative to the base, and what it changed relative to
-	// the view the agent saw. A commit of only the materialized files is the
-	// first without the second; the kept change is the intersection.
-	fromBase, err := appTreeDelta(ctx, checkout, view.BaseTree, headTree)
+	change.base = baseTree
+	committed, err := appTreeDelta(ctx, checkout, baseTree, headTree)
 	if err != nil {
 		return change, err
 	}
-	fromView, err := appTreeDelta(ctx, checkout, view.EffectiveTree, headTree)
-	if err != nil {
-		return change, err
-	}
-	change.entries = map[string]treeEntry{}
-	for p := range fromBase {
-		if entry, differs := fromView[p]; differs {
-			change.entries[p] = entry
-			change.Kept = append(change.Kept, p)
-		}
+	change.entries = committed
+	for p := range committed {
+		change.Kept = append(change.Kept, p)
 	}
 	sort.Strings(change.Kept)
-	if len(change.Kept) > 0 {
-		patched, err := appTreeDelta(ctx, checkout, view.BaseTree, view.EffectiveTree)
-		if err != nil {
-			return change, err
-		}
-		for _, p := range change.Kept {
-			if _, also := patched[p]; also {
-				change.overlap = append(change.overlap, p)
-			}
-		}
-	}
-	if change.Scratch, err = scratchAgainst(ctx, checkout, view.EffectiveTree, fromBase); err != nil {
+	if change.Scratch, err = scratchAgainst(ctx, checkout, baseTree, committed); err != nil {
 		return change, err
 	}
 	subjects, err := runGit(ctx, checkout, "log", "--reverse", "--no-merges", "--format=%s", baseCommit+"..HEAD")
@@ -156,16 +119,16 @@ func appTreeDelta(ctx context.Context, checkout, from, to string) (map[string]tr
 }
 
 // scratchAgainst lists the app paths of the working tree that differ from the
-// reference: the view tree with the paths HEAD changed replaced by HEAD's
+// reference: the base tree with the paths HEAD changed replaced by HEAD's
 // entries. It uses a scratch index, so the checkout's own index is untouched.
-func scratchAgainst(ctx context.Context, checkout, view string, committed map[string]treeEntry) ([]string, error) {
+func scratchAgainst(ctx context.Context, checkout, base string, committed map[string]treeEntry) ([]string, error) {
 	indexDir, err := os.MkdirTemp("", "sdo-scratch-index-")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(indexDir)
 	env := []string{"GIT_INDEX_FILE=" + filepath.Join(indexDir, "index")}
-	if _, err := runGitEnv(ctx, checkout, env, "read-tree", view); err != nil {
+	if _, err := runGitEnv(ctx, checkout, env, "read-tree", base); err != nil {
 		return nil, err
 	}
 	for p, entry := range committed {
@@ -205,13 +168,6 @@ func scratchAgainst(ctx context.Context, checkout, view string, committed map[st
 // paths of one publication, evaluated on the content HEAD holds.
 func sourceDiagnostics(ctx context.Context, checkout string, change SourceChange) ([]validate.Diagnostic, error) {
 	var diagnostics []validate.Diagnostic
-	for _, p := range change.overlap {
-		diagnostics = append(diagnostics, validate.Diagnostic{
-			Rule: validate.RuleSourcePolicy, Path: p,
-			Message: "the committed change touches a file that a deployment patch also changes",
-			Hint:    "revert this file and capture the change as a patch (`sdo-operator patch create --reason \"<why>\"`); the patch series is applied on top of committed source",
-		})
-	}
 	total := 0
 	for _, p := range change.Kept {
 		entry := change.entries[p]
@@ -365,7 +321,7 @@ func sourceSecretDiagnostics(ctx context.Context, checkout, baseCommit string, c
 		if !utf8.Valid(content) {
 			continue
 		}
-		diff, err := runGit(ctx, checkout, "-c", "diff.external=", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "-U0", change.effective, "HEAD^{tree}", "--", p)
+		diff, err := runGit(ctx, checkout, "-c", "diff.external=", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "-U0", change.base, "HEAD^{tree}", "--", p)
 		if err != nil {
 			return nil, err
 		}

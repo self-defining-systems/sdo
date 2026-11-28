@@ -19,7 +19,6 @@ import (
 	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/memory"
-	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
 )
@@ -56,7 +55,6 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	journeysFile := flags.String("journeys-file", "", "absolute path of a file holding the same free text")
 	sourceBranchURL := flags.String("source-branch-url", "", "Git remote of the one branch SDO commits to and deploys from (source.branch); engineers and the benchmark replayer push to it")
 	sourceBranch := flags.String("source-branch", "", "name of that branch (never main or master)")
-	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON (source, image sources, expected workload IDs): the deployer agent is skipped and the plan is deployed as given")
 	var configFiles repeatable
 	flags.Var(&configFiles, "config", "operator configuration YAML (repeatable; later files override earlier ones; see docs/config.md)")
 	operationID := flags.String("operation-id", "", "durable operation identity")
@@ -166,23 +164,11 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 			return HostConfig{}, err
 		}
 	}
-	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
-	if err != nil {
-		return HostConfig{}, err
-	}
-	compactPlan, err := rendered.FormatDeploymentPlan(providedPlan)
-	if err != nil {
-		return HostConfig{}, err
-	}
-	if providedPlan == nil && *registryHost == "" {
-		return HostConfig{}, errors.New("no --deployment-plan: the deployer agent builds the application's images and pushes them only to the trusted registry, so --registry-host is required (add --registry-insecure for a plain-HTTP registry)")
-	}
 	controlForTelemetry := *control
 	if controlForTelemetry == "" {
 		controlForTelemetry = *namespace
 	}
 	config := install.Config{
-		DeploymentPlan:     compactPlan,
 		ObservationCeiling: ceiling,
 		Namespace:          *namespace, ControlNamespace: *control, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,

@@ -27,7 +27,7 @@ const MaxDetailBytes = 500
 type ItemID string
 
 const (
-	// O1: the deployment patches apply, render deterministically, deploy and are ready.
+	// O1: the deployment renders, deploys and is ready.
 	O1 ItemID = "O1"
 	// O2: every live object is attributable to accepted source and recorded inputs.
 	O2 ItemID = "O2"
@@ -71,12 +71,6 @@ const (
 	StageDeployment Stage = "deployment"
 	// StageComplete gates acceptance of the health commit and install: all items.
 	StageComplete Stage = "complete"
-	// StageAdvance gates acceptance of an upstream advance: the deployment
-	// items and the independent detector verdict, O1, O2, O4, O6. The advance
-	// changes no operational memory and an unchanged shape needs no new
-	// detectors, so O3 and O5 are not its items; a changed shape is routed to
-	// the detection designer after acceptance.
-	StageAdvance Stage = "advance"
 )
 
 // StageItems returns the items a report of the stage must satisfy.
@@ -86,8 +80,6 @@ func StageItems(s Stage) []ItemID {
 		return []ItemID{O1, O2, O6}
 	case StageComplete:
 		return AllItems()
-	case StageAdvance:
-		return []ItemID{O1, O2, O4, O6}
 	}
 	return nil
 }
@@ -98,7 +90,6 @@ type Subject struct {
 	AcceptedCommit string `json:"accepted_commit"`
 	BaseTree       string `json:"base_tree"`
 	EffectiveTree  string `json:"effective_tree"`
-	PatchesDigest  string `json:"patches_digest"`
 	RenderDigest   string `json:"render_digest"`
 	EnvDigest      string `json:"env_digest"`
 	// SettingsDigest is the sha256 of the operator configuration's detection section (settings.Config.DetectionDigest):
@@ -115,7 +106,6 @@ func (s Subject) BindsTo(want Subject) error {
 		{"accepted_commit", s.AcceptedCommit, want.AcceptedCommit},
 		{"base_tree", s.BaseTree, want.BaseTree},
 		{"effective_tree", s.EffectiveTree, want.EffectiveTree},
-		{"patches_digest", s.PatchesDigest, want.PatchesDigest},
 		{"render_digest", s.RenderDigest, want.RenderDigest},
 		{"env_digest", s.EnvDigest, want.EnvDigest},
 		{"settings_digest", s.SettingsDigest, want.SettingsDigest},
@@ -135,7 +125,7 @@ const Unavailable = "unavailable"
 
 // WithUnavailable returns the subject with every empty field set to Unavailable.
 func (s Subject) WithUnavailable() Subject {
-	for _, f := range []*string{&s.AcceptedCommit, &s.BaseTree, &s.EffectiveTree, &s.PatchesDigest, &s.RenderDigest, &s.EnvDigest, &s.SettingsDigest, &s.DiagnosticsTree} {
+	for _, f := range []*string{&s.AcceptedCommit, &s.BaseTree, &s.EffectiveTree, &s.RenderDigest, &s.EnvDigest, &s.SettingsDigest, &s.DiagnosticsTree} {
 		if *f == "" {
 			*f = Unavailable
 		}
@@ -148,7 +138,6 @@ func (s Subject) validate(requireDiagnostics bool) error {
 		{"accepted_commit", s.AcceptedCommit},
 		{"base_tree", s.BaseTree},
 		{"effective_tree", s.EffectiveTree},
-		{"patches_digest", s.PatchesDigest},
 		{"render_digest", s.RenderDigest},
 		{"env_digest", s.EnvDigest},
 		{"settings_digest", s.SettingsDigest},

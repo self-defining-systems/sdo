@@ -46,9 +46,6 @@ type ProposalBroker interface {
 	// deployment has applied: a push the head deployer has yet to deploy.
 	HeadUndeployed(context.Context) (bool, error)
 	ChangedPaths(context.Context, string, broker.Phase) ([]string, error)
-	// ScratchFeedback is the patch.uncaptured correction text for a checkout
-	// whose app-file edits no patch reproduces, or "" when consistent.
-	ScratchFeedback(context.Context, string, broker.Phase) (string, error)
 	ReleaseProposal(string, broker.Phase) error
 	// StageCandidate, Accept and DiscardCandidate split publication of the
 	// health judge's proposal: the broker validates and stages the commit
@@ -102,12 +99,10 @@ type DeploymentReceipt struct {
 	// BaseTree is the accepted commit's tree (broker.ProposalTreeDigest).
 	BaseTree string
 	// EffectiveTree is the ID of the tree that was rendered and built:
-	// BaseTree with the deployment patch series applied and the .sdo/
-	// memory projected away (rendered.Effective). PatchesDigest is the digest
-	// of that series. The pod-template source stamp is EffectiveTree, so
-	// ObservedRevision (read back from the cluster) equals it.
+	// BaseTree with the .sdo/ memory projected away (rendered.Effective). The
+	// pod-template source stamp is EffectiveTree, so ObservedRevision (read
+	// back from the cluster) equals it.
 	EffectiveTree    string
-	PatchesDigest    string
 	ObservedRevision string
 	// RenderDigest and EnvDigest are rendered.DesiredSet's digests at BaseTree.
 	RenderDigest string
@@ -132,8 +127,9 @@ type DeploymentReceipt struct {
 	Recreated []rendered.Recreation
 }
 
-// SourceReadinessVerifier is a trusted Go build/apply/observe adapter. The
-// agent's plan is only input; it cannot attest its own deployment.
+// SourceReadinessVerifier is a trusted Go build/apply/observe adapter: it
+// deploys a checkout's committed tree, with the optional deployment override
+// as plan. No agent can attest its own deployment.
 type SourceReadinessVerifier interface {
 	ApplyAndVerify(context.Context, string, *contracts.DeploymentPlan) (DeploymentReceipt, error)
 	VerifyAccepted(context.Context, string, string, DeploymentReceipt) (DeploymentReceipt, error)
@@ -201,12 +197,6 @@ type Config struct {
 	// goal. They require a health objective, because the goal commit carries them.
 	Sources                       []layout.Source
 	DeployerAgentID, JudgeAgentID string
-	// ProvidedPlan is a deployment the human or harness supplies (an
-	// application that ships its own deployment). The deployer agent is not
-	// dispatched: the plan goes through the same admission, trusted Deployer,
-	// evidence and verification as an agent's plan, and any failure of it is
-	// terminal (*ProvidedPlanError), never fed back to an agent.
-	ProvidedPlan *contracts.DeploymentPlan
 	// DeploymentSource and RenderEnvironment tell RefreshHealth what to
 	// render: the accepted checkout's plan source and the recorded install
 	// environment. Run takes both from the deployment receipt instead.
@@ -238,8 +228,9 @@ type Config struct {
 	// SteadyState marks a judge run for an application that is already onboarded (a
 	// health refresh): the onboarding-only evidence (existing records) does not gate it.
 	SteadyState bool
-	// MaxAttempts bounds deployer correction attempts only. The fields below
-	// bound the waits that never consume one; zero selects the default.
+	// MaxAttempts bounds the deployer's correction tasks and the rounds of the
+	// architecture and health judge. The fields below bound the waits that
+	// never consume one; zero selects the default.
 	PendingEvaluations    int
 	PendingInterval       time.Duration
 	InfrastructureTries   int
@@ -277,33 +268,25 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 		return result, fmt.Errorf("publish operator schema: %w", err)
 	}
 	result.SchemaCommit = schema.Commit
+	// One accepted source per operation: later rounds resume it instead of
+	// redeploying, unless the deployed application itself failed the
+	// complete-stage checks (a deployer-owned verdict); that round gives the
+	// deployer the verdict on a new source proposal.
+	sourceReceipt, deployment, err := c.deploy(ctx, cfg.OperationID+"-source", cfg, "")
+	if err != nil {
+		return result, err
+	}
 	feedback := ""
 	var tracker feedbackTracker
-	lastRole := operability.OwnerDeployer
+	lastRole := operability.OwnerDesigner
+	redeploy := false
 	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
 		result.Attempts = attempt
-		deployerID := fmt.Sprintf("%s-source-%d", cfg.OperationID, attempt)
-		if cfg.ProvidedPlan != nil {
-			// One deployment for the whole operation: later rounds (a failed
-			// judge, say) resume the accepted source instead of redeploying.
-			deployerID = fmt.Sprintf("%s-source-1", cfg.OperationID)
-		}
-		sourceReceipt, deployment, sourceReady, nextFeedback, err := c.deploy(ctx, deployerID, cfg, attempt, feedback)
-		if err != nil {
-			if opErr, ok := asOperabilityError(err); ok && cfg.ProvidedPlan != nil {
-				return result, &ProvidedPlanError{Stage: "deploy", Reason: opErr.Decision.Feedback(), Report: &opErr.Report}
-			}
-			return result, fmt.Errorf("deployment attempt %d: %w", attempt, err)
-		}
-		if !sourceReady {
-			if cfg.ProvidedPlan != nil {
-				return result, &ProvidedPlanError{Stage: "deploy", Reason: nextFeedback}
-			}
-			feedback, lastRole = nextFeedback, operability.OwnerDeployer
-			if err := tracker.repeated(lastRole, result.SchemaCommit, feedback); err != nil {
+		if redeploy {
+			if sourceReceipt, deployment, err = c.deploy(ctx, fmt.Sprintf("%s-source-%d", cfg.OperationID, attempt), cfg, feedback); err != nil {
 				return result, err
 			}
-			continue
+			feedback, redeploy = "", false
 		}
 		result.SourceCommit = sourceReceipt.Commit
 		// The architecture belongs to the accepted source, not to the attempt:
@@ -330,7 +313,7 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 		if err != nil {
 			return result, err
 		}
-		judgeReceipt, judgeReady, nextFeedback, err := c.judge(ctx, judgeID, cfg, attempt, sourceReceipt.Commit, architectureReceipt.Commit, feedback, deployment)
+		judgeReceipt, judgeReady, nextFeedback, deployerOwned, err := c.judge(ctx, judgeID, cfg, attempt, sourceReceipt.Commit, architectureReceipt.Commit, feedback, deployment)
 		if err != nil {
 			if isTerminalOperability(err) {
 				return result, err
@@ -338,7 +321,10 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			return result, fmt.Errorf("health judge attempt %d: %w", attempt, err)
 		}
 		if !judgeReady {
-			feedback, lastRole = nextFeedback, operability.OwnerDesigner
+			feedback, lastRole, redeploy = nextFeedback, operability.OwnerDesigner, false
+			if deployerOwned {
+				lastRole, redeploy = operability.OwnerDeployer, true
+			}
 			if err := tracker.repeated(lastRole, result.ArchitectureCommit, feedback); err != nil {
 				return result, err
 			}
@@ -368,9 +354,9 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 }
 
 func isTerminalOperability(err error) bool {
-	var provided *ProvidedPlanError
+	var held *DeploymentHoldError
 	_, offlineGate := asOperabilityError(err)
-	return offlineGate || errors.As(err, &provided)
+	return offlineGate || errors.As(err, &held)
 }
 
 // verifyResumed re-verifies a judge commit that was accepted before this run
@@ -383,9 +369,6 @@ func (c Coordinator) verifyResumed(ctx context.Context, cfg Config, commit strin
 	}
 	if verdict.Outcome == VerificationClear {
 		return nil
-	}
-	if cfg.ProvidedPlan != nil {
-		return &ProvidedPlanError{Stage: "verify", Reason: verdict.Feedback()}
 	}
 	return fmt.Errorf("accepted health diagnostics %s fail independent verification and can no longer be corrected: %s", shortCommit(commit), verdict.Feedback())
 }
@@ -425,7 +408,9 @@ func (c Coordinator) validate(cfg Config) error {
 		request proto.Message
 	}
 	choices := []agentChoice{{cfg.JudgeAgentID, &contracts.HealthJudgeRequest{}}}
-	if cfg.ProvidedPlan == nil {
+	if cfg.DeployerAgentID != "" {
+		// A named deployer must be registered; an unnamed one is optional (no
+		// registered deployer makes every deployment failure a human hold).
 		choices = append(choices, agentChoice{cfg.DeployerAgentID, &contracts.SourceDeploymentRequest{}})
 	}
 	for _, choice := range choices {
@@ -440,6 +425,9 @@ func (c Coordinator) validate(cfg Config) error {
 // configured ID selects the one registered agent declaring the request's
 // message type, so neither task names nor built-in IDs live in Go.
 func (c Coordinator) target(configured string, request proto.Message) (agentID, taskType string, err error) {
+	if c.Registry == nil {
+		return "", "", fmt.Errorf("%w: no agent registry", ErrAgentRegistration)
+	}
 	agentID = configured
 	if agentID == "" {
 		if agentID, err = c.Registry.AgentFor(request); err != nil {
@@ -478,74 +466,114 @@ func (c Coordinator) bootstrap(ctx context.Context, id string, actor broker.Acto
 	return c.Broker.Publish(ctx, id, actor, broker.InitialPhase)
 }
 
-func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt int, feedback string) (broker.Receipt, DeploymentReceipt, bool, string, error) {
+// deploy is the one deployment path. It deploys the proposal's commit as it is
+// (offline gate, ApplyAndVerify, report) and publishes it when it passes: an
+// application that ships its own deployment needs no agent. A failure the
+// deployer owns dispatches the deployer agent on the same proposal with the
+// failing step as its correction feedback; the agent commits files like an
+// engineer and Go deploys its last commit, up to cfg.MaxAttempts tasks. A tree
+// with no deployment files fails offline (no cluster or build time), so that
+// is the deployer's first task. Without a registered deployer every failure is
+// a human hold (*DeploymentHoldError).
+//
+// A non-empty feedback is a failure of the accepted source found after it was
+// deployed (the complete-stage checks): the deployer is dispatched with it
+// before Go deploys again.
+func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, feedback string) (broker.Receipt, DeploymentReceipt, error) {
 	if prior, ok, err := c.Broker.AcceptedCommit(ctx, id, broker.InitialPhase); err != nil {
-		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+		return broker.Receipt{}, DeploymentReceipt{}, err
 	} else if ok {
-		evidence, found, err := c.Broker.SourceEvidence(ctx, id)
-		if err != nil {
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", fmt.Errorf("load broker source evidence: %w", err)
-		}
-		if !found {
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", errors.New("accepted source lacks broker-validated deployment evidence")
-		}
-		if evidence.AcceptedCommit != prior.Commit {
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", errors.New("source evidence belongs to another accepted commit")
-		}
-		if _, _, err := c.Broker.OperabilityReport(ctx, id, operability.StageDeployment); err != nil {
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", fmt.Errorf("accepted source's operability report: %w", err)
-		}
-		recorded := deploymentFromBroker(evidence)
-		readiness, err := c.Readiness.VerifyAccepted(ctx, prior.Commit, cfg.Namespace, recorded)
-		if err != nil {
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", fmt.Errorf("verify accepted source: %w", refusedByPolicy(err, prior.Commit))
-		}
-		if !completeDeploymentReceipt(readiness) || !sameDeploymentIdentity(recorded, readiness) {
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", errors.New("accepted source has incomplete or changed deployment evidence")
-		}
-		return prior, readiness, true, "", nil
+		return c.resumeDeployment(ctx, id, cfg, prior)
 	}
 	proposal, err := c.Broker.CreateProposalForPhase(ctx, id, broker.InitialPhase)
 	if err != nil {
-		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+		return broker.Receipt{}, DeploymentReceipt{}, err
 	}
-	plan := cfg.ProvidedPlan
-	if plan == nil {
-		agentPlan, nextFeedback, err := c.agentPlan(ctx, id, cfg, attempt, feedback, proposal)
-		if err != nil || agentPlan == nil {
-			return broker.Receipt{}, DeploymentReceipt{}, false, nextFeedback, err
+	mode := operability.ModeFresh
+	if _, _, err := c.target(cfg.DeployerAgentID, &contracts.SourceDeploymentRequest{}); err != nil {
+		mode = operability.ModeNoDeployer
+	}
+	var tracker feedbackTracker
+	task := 0
+	if feedback != "" {
+		if mode == operability.ModeNoDeployer {
+			return broker.Receipt{}, DeploymentReceipt{}, &DeploymentHoldError{Stage: "verify", Reason: feedback}
 		}
-		plan = agentPlan
-		// App files are never published: edits no patch reproduces go back to
-		// the agent as a correction before anything is deployed.
-		scratch, err := c.Broker.ScratchFeedback(ctx, id, broker.InitialPhase)
+		task++
+		if err := c.correctDeployment(ctx, fmt.Sprintf("%s-deployer-%d", id, task), cfg, task, feedback, proposal); err != nil {
+			return broker.Receipt{}, DeploymentReceipt{}, err
+		}
+	}
+	for ; ; task++ {
+		receipt, deployment, feedback, err := c.deployCommit(ctx, id, cfg, mode, proposal)
 		if err != nil {
-			_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+			var opErr *OperabilityError
+			if errors.As(err, &opErr) && mode == operability.ModeNoDeployer {
+				err = &DeploymentHoldError{Stage: "deploy", Reason: opErr.Decision.Feedback(), Report: &opErr.Report}
+			}
+			return broker.Receipt{}, DeploymentReceipt{}, err
 		}
-		if scratch != "" {
-			_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-			return broker.Receipt{}, DeploymentReceipt{}, false, scratch, nil
+		if feedback == "" {
+			return receipt, deployment, nil
+		}
+		if mode == operability.ModeNoDeployer {
+			return broker.Receipt{}, DeploymentReceipt{}, &DeploymentHoldError{Stage: "deploy", Reason: feedback}
+		}
+		if task >= cfg.MaxAttempts {
+			return broker.Receipt{}, DeploymentReceipt{}, NewAgentNotConvergingError(operability.OwnerDeployer, proposal.BaseCommit, []string{fmt.Sprintf("exhausted %d deployer tasks; last failure: %s", cfg.MaxAttempts, operability.Clip(feedback))}, true)
+		}
+		if err := tracker.repeated(operability.OwnerDeployer, proposal.BaseCommit, feedback); err != nil {
+			return broker.Receipt{}, DeploymentReceipt{}, err
+		}
+		if err := c.correctDeployment(ctx, fmt.Sprintf("%s-deployer-%d", id, task+1), cfg, task+1, feedback, proposal); err != nil {
+			return broker.Receipt{}, DeploymentReceipt{}, err
 		}
 	}
-	if err := admissiblePlan(plan); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "the deployment plan is not deployable: " + err.Error(), nil
+}
+
+// resumeDeployment re-verifies a source accepted by an earlier run.
+func (c Coordinator) resumeDeployment(ctx context.Context, id string, cfg Config, prior broker.Receipt) (broker.Receipt, DeploymentReceipt, error) {
+	evidence, found, err := c.Broker.SourceEvidence(ctx, id)
+	if err != nil {
+		return broker.Receipt{}, DeploymentReceipt{}, fmt.Errorf("load broker source evidence: %w", err)
 	}
-	// Go writes the canonical plan into the proposal, whatever the agent left
-	// at that path: the accepted tree then answers "what is deployed and how".
-	if err := planfile.Write(proposal.Path, plan); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "", fmt.Errorf("write deployment plan: %w", err)
+	if !found {
+		return broker.Receipt{}, DeploymentReceipt{}, errors.New("accepted source lacks broker-validated deployment evidence")
+	}
+	if evidence.AcceptedCommit != prior.Commit {
+		return broker.Receipt{}, DeploymentReceipt{}, errors.New("source evidence belongs to another accepted commit")
+	}
+	if _, _, err := c.Broker.OperabilityReport(ctx, id, operability.StageDeployment); err != nil {
+		return broker.Receipt{}, DeploymentReceipt{}, fmt.Errorf("accepted source's operability report: %w", err)
+	}
+	recorded := deploymentFromBroker(evidence)
+	readiness, err := c.Readiness.VerifyAccepted(ctx, prior.Commit, cfg.Namespace, recorded)
+	if err != nil {
+		return broker.Receipt{}, DeploymentReceipt{}, fmt.Errorf("verify accepted source: %w", refusedByPolicy(err, prior.Commit))
+	}
+	if !completeDeploymentReceipt(readiness) || !sameDeploymentIdentity(recorded, readiness) {
+		return broker.Receipt{}, DeploymentReceipt{}, errors.New("accepted source has incomplete or changed deployment evidence")
+	}
+	return prior, readiness, nil
+}
+
+// deployCommit deploys and gates the proposal's current commit once. A
+// non-empty feedback is a failure the deployer owns (the proposal is kept for
+// its correction); an error is terminal or infrastructure.
+func (c Coordinator) deployCommit(ctx context.Context, id string, cfg Config, mode operability.Mode, proposal broker.Proposal) (broker.Receipt, DeploymentReceipt, string, error) {
+	plan, err := planfile.Read(proposal.Path, c.planCatalogs())
+	switch {
+	case errors.Is(err, planfile.ErrAbsent):
+		plan = nil
+	case err != nil:
+		return broker.Receipt{}, DeploymentReceipt{}, "the deployment override .sdo/deployment/plan.yaml does not parse: " + err.Error(), nil
 	}
 	var offlineReport operability.Report
-	if report, decision, checked, err := c.offlineGate(ctx, cfg, proposal, plan); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+	if report, decision, checked, err := c.offlineGate(ctx, cfg, mode, proposal, plan); err != nil {
+		return broker.Receipt{}, DeploymentReceipt{}, "", err
 	} else if checked && decision.Kind != operability.Accepted {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		reason, err := offlineOutcome(report, decision)
-		return broker.Receipt{}, DeploymentReceipt{}, false, reason, err
+		return broker.Receipt{}, DeploymentReceipt{}, reason, err
 	} else if checked {
 		offlineReport = report
 	}
@@ -555,117 +583,65 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		return err
 	})
 	if err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		var infrastructure *InfrastructureError
 		if errors.As(err, &infrastructure) || ctx.Err() != nil {
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+			return broker.Receipt{}, DeploymentReceipt{}, "", err
 		}
-		return broker.Receipt{}, DeploymentReceipt{}, false, "independent source deployment failed: " + err.Error(), nil
+		return broker.Receipt{}, DeploymentReceipt{}, "independent source deployment failed: " + err.Error(), nil
 	}
 	if !completeDeploymentReceipt(readiness) {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "independent source deployment returned incomplete evidence", nil
+		return broker.Receipt{}, DeploymentReceipt{}, "independent source deployment returned incomplete evidence", nil
 	}
-	if !rendered.SameDeploymentSource(readiness.Source, plan.GetSource()) {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "independent deployment source differs from proposal", nil
-	}
-	report, decision, err := c.deploymentReport(ctx, cfg, proposal, plan, offlineReport, readiness)
+	report, decision, err := c.deploymentReport(ctx, cfg, mode, proposal, plan, offlineReport, readiness)
 	if err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+		return broker.Receipt{}, DeploymentReceipt{}, "", err
 	}
 	if decision.Kind != operability.Accepted {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		reason, err := deployedOutcome(report, decision)
-		return broker.Receipt{}, DeploymentReceipt{}, false, reason, err
+		return broker.Receipt{}, DeploymentReceipt{}, reason, err
 	}
 	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness), report)
 	if err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "broker rejected deployment: " + err.Error(), nil
+		return broker.Receipt{}, DeploymentReceipt{}, "broker rejected deployment: " + err.Error(), nil
 	}
-	return receipt, readiness, true, "", nil
+	return receipt, readiness, "", nil
 }
 
-// agentPlan dispatches the deployer agent for a plan. A nil plan with a nil
-// error carries correction feedback; the proposal is already released then.
-func (c Coordinator) agentPlan(ctx context.Context, id string, cfg Config, attempt int, feedback string, proposal broker.Proposal) (*contracts.DeploymentPlan, string, error) {
-	plan, nextFeedback, err := c.proposePlan(ctx, id, cfg, attempt, feedback, proposal)
-	if plan == nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+// planCatalogs decode the override's renderer and image-source configs.
+func (c Coordinator) planCatalogs() planfile.Catalogs {
+	var catalogs planfile.Catalogs
+	if c.Renderers != nil {
+		catalogs.Renderers = c.Renderers
 	}
-	return plan, nextFeedback, err
+	if c.ImageSources != nil {
+		catalogs.Images = c.ImageSources
+	}
+	return catalogs
 }
 
-// proposePlan is one deployer task over a proposal checkout; it releases
-// nothing. A nil plan with a nil error carries feedback for the next round.
-func (c Coordinator) proposePlan(ctx context.Context, id string, cfg Config, attempt int, feedback string, proposal broker.Proposal) (*contracts.DeploymentPlan, string, error) {
+// correctDeployment is one deployer task over the proposal checkout: the agent
+// commits what is missing and replies proposed. Go deploys the checkout's last
+// commit whatever the reply says, so a task that fails or does not propose
+// only costs an attempt; the next deploy reports what still fails.
+func (c Coordinator) correctDeployment(ctx context.Context, taskID string, cfg Config, attempt int, feedback string, proposal broker.Proposal) error {
 	request := &contracts.SourceDeploymentRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, CorrectionFeedback: feedback, Attempt: uint32(attempt), RegistryHost: cfg.RegistryHost, Renderers: pluginDescriptors(c.Renderers.Describe()), ImageSources: pluginDescriptors(c.ImageSources.Describe())}
-	task, err := c.newTask(id, cfg.DeployerAgentID, proposal, request)
+	task, err := c.newTask(taskID, cfg.DeployerAgentID, proposal, request)
 	if err != nil {
-		return nil, "", err
+		return err
 	}
 	response := &contracts.SourceDeploymentResult{}
-	if err := c.execute(ctx, task, response); err != nil {
-		if ctx.Err() != nil {
-			return nil, "", ctx.Err()
-		}
-		return nil, err.Error(), nil
-	}
-	if !response.GetProposed() || strings.TrimSpace(response.GetAgentSessionId()) == "" || response.GetPlan() == nil {
-		return nil, "deployment worker did not propose a complete source plan: " + response.GetSummary(), nil
-	}
-	return response.GetPlan(), "", nil
-}
-
-// advanceFeedbackPreamble tells the deployer what an advance correction is: its
-// checkout is not an onboarding proposal but the accepted tree with an upstream
-// revision merged in, which an operability check refused before anything was
-// deployed.
-const advanceFeedbackPreamble = "An upstream advance is held before deployment. Your checkout is the accepted source with the new upstream revision merged in; " +
-	"the current plan is .sdo/deployment/plan.yaml. Correct only deployment files and patches under .sdo/deployment (app files are never edited) " +
-	"and return the full corrected plan. The hold: "
-
-// CorrectDeployment is the deployment agent's route in an upstream advance
-// (operational contract plan section 5, E1-E3): one deployer task over the
-// advance checkout with the hold as its request. cfg names the application, its
-// namespace, health objective and registry; the task ID is the advance's and
-// the attempt, so a restarted controller re-attaches to the same task. A task
-// that fails or proposes no plan is an error (the advance feeds its text back).
-func (c Coordinator) CorrectDeployment(ctx context.Context, cfg Config, correction DeploymentCorrection) (*contracts.DeploymentPlan, error) {
-	if c.Registry == nil || c.Workers == nil {
-		return nil, errors.New("deployment correction needs the agent registry and workers")
-	}
-	id := fmt.Sprintf("%s-deployer-%d", correction.AdvanceID, correction.Attempt)
-	plan, feedback, err := c.proposePlan(ctx, id, cfg, correction.Attempt, advanceFeedbackPreamble+correction.Feedback, correction.Proposal)
-	if err != nil {
-		return nil, err
-	}
-	if plan == nil {
-		return nil, errors.New(feedback)
-	}
-	return plan, nil
-}
-
-// admissiblePlan requires the deployment source: which renderer renders the
-// tree and how. The deployer, not the coordinator, decodes and checks it.
-func admissiblePlan(plan *contracts.DeploymentPlan) error {
-	if plan.GetSource() == nil {
-		return errors.New("the plan names no deployment source; set source to a renderer ID from the request's renderers and its config")
-	}
-	if plan.GetStrategyId() != "" || plan.GetStrategyConfig() != nil {
-		return errors.New("the plan sets the retired strategy fields; describe the deployment only with source, images and expected workload IDs")
+	if err := c.execute(ctx, task, response); err != nil && ctx.Err() != nil {
+		return ctx.Err()
 	}
 	return nil
 }
 
 func completeDeploymentReceipt(receipt DeploymentReceipt) bool {
-	return receipt.Ready && receipt.Source != nil && receipt.BaseTree != "" && receipt.EffectiveTree != "" && receipt.PatchesDigest != "" && receipt.ObservedRevision != "" && receipt.RenderDigest != "" && receipt.EnvDigest != "" && len(receipt.Images) > 0 && len(receipt.ResourceIDs) > 0
+	return receipt.Ready && receipt.Source != nil && receipt.BaseTree != "" && receipt.EffectiveTree != "" && receipt.ObservedRevision != "" && receipt.RenderDigest != "" && receipt.EnvDigest != "" && len(receipt.Images) > 0 && len(receipt.ResourceIDs) > 0
 }
 
 func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
-	if left.BaseTree != right.BaseTree || left.EffectiveTree != right.EffectiveTree || left.PatchesDigest != right.PatchesDigest || left.ObservedRevision != right.ObservedRevision || left.RenderDigest != right.RenderDigest || left.EnvDigest != right.EnvDigest || !renderenv.Same(left.Environment, right.Environment) || !rendered.SameDeploymentSource(left.Source, right.Source) {
+	if left.BaseTree != right.BaseTree || left.EffectiveTree != right.EffectiveTree || left.ObservedRevision != right.ObservedRevision || left.RenderDigest != right.RenderDigest || left.EnvDigest != right.EnvDigest || !renderenv.Same(left.Environment, right.Environment) {
 		return false
 	}
 	leftImages, rightImages := slices.Clone(left.Images), slices.Clone(right.Images)
@@ -677,11 +653,11 @@ func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
 	return reflect.DeepEqual(left.ContainerImages, right.ContainerImages) && slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources)
 }
 
-// deploymentToBroker records the receipt. The admitted plan is not part of it:
-// it is the accepted tree's .sdo/deployment/plan.yaml.
+// deploymentToBroker records the receipt. The optional override is not part of
+// it: it is the accepted tree's .sdo/deployment/plan.yaml.
 func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
 	evidence := broker.SourceEvidence{
-		ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest, ObservedRevision: receipt.ObservedRevision,
+		ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, ObservedRevision: receipt.ObservedRevision,
 		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
 		Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), Ready: receipt.Ready,
 		Recreated: append([]rendered.Recreation(nil), receipt.Recreated...),
@@ -700,7 +676,7 @@ func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
 
 func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
 	receipt := DeploymentReceipt{
-		ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest, ObservedRevision: evidence.ObservedRevision,
+		ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, ObservedRevision: evidence.ObservedRevision,
 		RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
 		Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), Ready: evidence.Ready,
 		Recreated: append([]rendered.Recreation(nil), evidence.Recreated...),
@@ -777,31 +753,31 @@ func RenderedSourceFacts(ctx context.Context, catalog *render.Catalog, checkout,
 // or the validation retry bound is spent. Every broker rejection is recorded
 // durably, with its typed diagnostics, before the checkout is released, so the
 // attempt number derived from that log survives a restart.
-func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string, deployment DeploymentReceipt) (broker.Receipt, bool, string, error) {
+func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string, deployment DeploymentReceipt) (broker.Receipt, bool, string, bool, error) {
 	for {
 		if prior, ok, err := c.Broker.AcceptedCommit(ctx, id, broker.InitialPhase); err != nil {
-			return broker.Receipt{}, false, "", err
+			return broker.Receipt{}, false, "", false, err
 		} else if ok {
-			return prior, true, "", nil
+			return prior, true, "", false, nil
 		}
 		log, err := c.Broker.Rejections(id)
 		if err != nil {
-			return broker.Receipt{}, false, "", err
+			return broker.Receipt{}, false, "", false, err
 		}
 		// Another round over the same source would repeat a spent budget or a
 		// repeated rejection: end the run with the typed cause instead.
 		if stop := judgeStop(log, architectureCommit); stop != nil {
-			return broker.Receipt{}, false, "", stop
+			return broker.Receipt{}, false, "", false, stop
 		}
-		receipt, ready, nextFeedback, rejected, err := c.judgeOnce(ctx, id, cfg, attempt, sourceCommit, architectureCommit, feedback, deployment, log)
+		receipt, ready, nextFeedback, rejected, deployerOwned, err := c.judgeOnce(ctx, id, cfg, attempt, sourceCommit, architectureCommit, feedback, deployment, log)
 		if err != nil || ready || rejected == nil {
-			return receipt, ready, nextFeedback, err
+			return receipt, ready, nextFeedback, deployerOwned, err
 		}
 		if _, err := c.Broker.RecordRejection(id, rejected); err != nil {
-			return broker.Receipt{}, false, "", err
+			return broker.Receipt{}, false, "", false, err
 		}
 		if err := c.Broker.ReleaseProposal(id, broker.InitialPhase); err != nil {
-			return broker.Receipt{}, false, "", err
+			return broker.Receipt{}, false, "", false, err
 		}
 	}
 }
@@ -836,45 +812,45 @@ func rejectionHistory(rejections []*contracts.ProposalRejection) []*contracts.Me
 
 // judgeOnce runs one judge dispatch. A non-nil rejected slice means the broker
 // rejected the proposal with typed diagnostics and the caller owns the retry.
-func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string, deployment DeploymentReceipt, log *contracts.ProposalRejectionLog) (broker.Receipt, bool, string, []*contracts.MemoryDiagnostic, error) {
+func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string, deployment DeploymentReceipt, log *contracts.ProposalRejectionLog) (broker.Receipt, bool, string, []*contracts.MemoryDiagnostic, bool, error) {
 	validationAttempt := uint32(len(log.GetRejections()) + 1)
 	var previous []*contracts.MemoryDiagnostic
 	if n := len(log.GetRejections()); n > 0 {
 		previous = rejectionHistory(log.GetRejections())
 		// A crash may have left the rejected checkout behind.
 		if err := c.Broker.ReleaseProposal(id, broker.InitialPhase); err != nil {
-			return broker.Receipt{}, false, "", nil, err
+			return broker.Receipt{}, false, "", nil, false, err
 		}
 	}
-	fail := func(feedback string) (broker.Receipt, bool, string, []*contracts.MemoryDiagnostic, error) {
-		return broker.Receipt{}, false, feedback, nil, nil
+	fail := func(feedback string) (broker.Receipt, bool, string, []*contracts.MemoryDiagnostic, bool, error) {
+		return broker.Receipt{}, false, feedback, nil, false, nil
 	}
 	proposal, err := c.Broker.CreateProposalForPhase(ctx, id, broker.InitialPhase)
 	if err != nil {
-		return broker.Receipt{}, false, "", nil, err
+		return broker.Receipt{}, false, "", nil, false, err
 	}
 	if proposal.BaseCommit != architectureCommit {
-		return broker.Receipt{}, false, "", nil, fmt.Errorf("judge proposal base %q differs from accepted architecture %q", proposal.BaseCommit, architectureCommit)
+		return broker.Receipt{}, false, "", nil, false, fmt.Errorf("judge proposal base %q differs from accepted architecture %q", proposal.BaseCommit, architectureCommit)
 	}
 	if validationAttempt == 1 {
 		// The base is the same for every retry of this proposal: check it once,
 		// before the agent can be blamed for what it did not write.
 		base, err := c.Broker.CheckBase(ctx, id, broker.HealthJudge, broker.InitialPhase)
 		if err != nil {
-			return broker.Receipt{}, false, "", nil, fmt.Errorf("check the accepted base before the health judge: %w", err)
+			return broker.Receipt{}, false, "", nil, false, fmt.Errorf("check the accepted base before the health judge: %w", err)
 		}
 		if len(base) > 0 {
 			_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-			return broker.Receipt{}, false, "", nil, NewBaseInvalidError(architectureCommit, base)
+			return broker.Receipt{}, false, "", nil, false, NewBaseInvalidError(architectureCommit, base)
 		}
 	}
 	architectureSummary, err := c.Bootstrap.ReadArchitecture(proposal.Path)
 	if err != nil {
-		return broker.Receipt{}, false, "", nil, err
+		return broker.Receipt{}, false, "", nil, false, err
 	}
 	facts, err := c.sourceFacts(ctx, proposal.Path, sourceCommit, cfg.Namespace, deployment)
 	if err != nil {
-		return broker.Receipt{}, false, "", nil, fmt.Errorf("read accepted source inventory: %w", err)
+		return broker.Receipt{}, false, "", nil, false, fmt.Errorf("read accepted source inventory: %w", err)
 	}
 	request := &contracts.HealthJudgeRequest{Telemetry: cfg.Telemetry, Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), ArchitectureSummaryMarkdown: architectureSummary, SourceResources: facts.Resources, ValidationAttempt: validationAttempt, PreviousDiagnostics: previous}
 	taskID := id
@@ -885,28 +861,28 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 	}
 	task, err := c.newTask(taskID, cfg.JudgeAgentID, proposal, request)
 	if err != nil {
-		return broker.Receipt{}, false, "", nil, err
+		return broker.Receipt{}, false, "", nil, false, err
 	}
 	response := &contracts.HealthJudgeResult{}
 	if err := c.execute(ctx, task, response); err != nil {
 		// Cancellation does not mean the remote Job stopped. Keep its checkout
 		// and immutable task identity for a later bounded reattachment.
 		if ctx.Err() != nil {
-			return broker.Receipt{}, false, "", nil, ctx.Err()
+			return broker.Receipt{}, false, "", nil, false, ctx.Err()
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return broker.Receipt{}, false, "", nil, err
+			return broker.Receipt{}, false, "", nil, false, err
 		}
 		var failedJob *worker_registry.JobFailedError
 		if errors.As(err, &failedJob) {
 			// Preserve the failed attempt and proposal for the bounded retry.
-			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: jobFailedRule, Message: err.Error()}}, nil
+			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: jobFailedRule, Message: err.Error()}}, false, nil
 		}
 		var vanished *worker_registry.JobVanishedError
 		if errors.As(err, &vanished) {
 			// Redispatch already failed too: record a typed failed attempt and
 			// let the bounded retry start a fresh task rather than end the process.
-			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: vanishedWorkerRule, Message: err.Error()}}, nil
+			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: vanishedWorkerRule, Message: err.Error()}}, false, nil
 		}
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return fail(err.Error())
@@ -923,9 +899,9 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 	}
 	outcome, err := c.gateCandidate(ctx, id, cfg, deployment, log)
 	if err != nil {
-		return broker.Receipt{}, false, "", nil, err
+		return broker.Receipt{}, false, "", nil, false, err
 	}
-	return outcome.receipt, outcome.ready, outcome.feedback, outcome.rejected, nil
+	return outcome.receipt, outcome.ready, outcome.feedback, outcome.rejected, outcome.deployer, nil
 }
 
 func (c Coordinator) newTask(id, configuredAgent string, proposal broker.Proposal, request proto.Message) (*contracts.AgentTask, error) {

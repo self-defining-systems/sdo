@@ -25,7 +25,6 @@ from benchmarks.sregym.adapter import (
     benchmark_registry_host,
     deployment_plan,
     helm_source,
-    prebuilt_image,
     wait_for,
 )
 from benchmarks.sregym.fastloop.gitlab_releases import load_releases
@@ -35,8 +34,6 @@ from benchmarks.sregym.repository_git import host_git_command
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
-
-    from benchmarks.sregym.fastloop.accepted_source import RenderedWorkloads
 
 NAMESPACE = "gitlab"
 APPLICATION = "gitlab"
@@ -87,28 +84,14 @@ def deployment_policy() -> DeploymentPolicyConfig:
     return DeploymentPolicyConfig(allowed_registries=IMAGE_REGISTRIES)
 
 
-def plan_from_workloads(workloads: RenderedWorkloads) -> dict[str, Any]:
-    """The provided ``DeploymentPlan``: the lane's helm source, prebuilt upstream images, the rendered workloads.
-
-    Nothing here is maintained by hand: Go proposes the plan's entries from SDO's own render of the chart. They are
-    the release-independent forms (workload identities with generated name suffixes as ``*``, image repositories
-    without tags), so an upstream release that only changes image tags, and with them a hash-named Job, still matches
-    the plan and advances without an agent. Hooks are not in the rendered inventory (SDO renders them as ephemeral
-    install phases).
-    """
-    return deployment_plan(
-        deployment_source(),
-        images=[prebuilt_image(repository) for repository in workloads.repositories],
-        expected_workload_ids=list(workloads.identities),
-    )
-
-
 def provided_plan(workspace: Path, namespace: str = NAMESPACE) -> dict[str, Any]:
-    """Plan for the committed ``workspace``, rendered through SDO's production ``render-source``."""
-    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
+    """The lane's deployment override: the helm chart with the kind values file.
 
-    source = AcceptedSource(workspace, namespace, ("chart",), renderer_source=deployment_source())
-    return plan_from_workloads(source.workloads)
+    The chart's own files cannot name the values file, so the harness commits this override as a human, like an
+    engineer. Images are the chart's upstream ones (prebuilt, pinned by Go); nothing else needs saying.
+    """
+    del workspace, namespace
+    return deployment_plan(deployment_source())
 
 
 def prepare_workspace(workspace: Path, *, archive: Path | None = None, pins: dict[str, Any] | None = None) -> str:
@@ -234,11 +217,16 @@ def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations
 
 
 def onboard(environment: Any, config: Any, objective: str) -> dict[str, Any]:
-    """Run SDO's host lifecycle with the provided plan: no deployer agent; the judge still runs."""
+    """Run SDO's host lifecycle on the lane's chart with its override; the judge still runs.
+
+    Go deploys the chart as it is (case B); the deployer agent runs only if that deploy fails.
+    """
     from benchmarks.sregym.adapter import launch_native_lifecycle
 
     if config.deployment_plan is None:
-        raise ValueError(f"the GitLab lane needs a provided deployment plan for {environment.namespace}")
+        raise ValueError(
+            f"the GitLab lane needs its deployment override (the kind values file) for {environment.namespace}"
+        )
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     environment.apply_operator_env(os.environ)
     return launch_native_lifecycle(config, objective, "")

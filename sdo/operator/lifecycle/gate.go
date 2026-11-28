@@ -36,9 +36,16 @@ type LiveChecker interface {
 	CheckLive(ctx context.Context, checkout string, plan *contracts.DeploymentPlan, receipt DeploymentReceipt, outcome error) ([]operability.Check, error)
 }
 
+// mode is ModeNoDeployer when no deployer agent is registered: what the
+// deployer would correct is then for a person.
 func (c Coordinator) mode(cfg Config) operability.Mode {
-	if cfg.ProvidedPlan != nil {
-		return operability.ModeProvided
+	if c.Registry == nil {
+		// A health refresh or test coordinator without a registry routes as
+		// onboarding did; it dispatches no deployer either way.
+		return operability.ModeFresh
+	}
+	if _, _, err := c.target(cfg.DeployerAgentID, &contracts.SourceDeploymentRequest{}); err != nil {
+		return operability.ModeNoDeployer
 	}
 	return operability.ModeFresh
 }
@@ -99,7 +106,7 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 	}
 	subject := operability.Subject{
 		AcceptedCommit: candidate.Commit, BaseTree: deployment.BaseTree, EffectiveTree: deployment.EffectiveTree,
-		PatchesDigest: deployment.PatchesDigest, RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest,
+		RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest,
 		SettingsDigest:  cfg.SettingsDigest,
 		DiagnosticsTree: candidate.DiagnosticsTree,
 	}
@@ -329,6 +336,9 @@ type gateOutcome struct {
 	receipt  broker.Receipt
 	ready    bool
 	feedback string
+	// deployer marks feedback the deployer owns: the deployed application
+	// itself fails the complete-stage checks.
+	deployer bool
 	rejected []*contracts.MemoryDiagnostic
 }
 
@@ -418,7 +428,7 @@ func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, d
 				slog.Info("health_refresh_published_seeded", "proposal", id, "commit", candidate.Commit, "detectors", "verified against the live application")
 				return c.publish(ctx, id)
 			}
-			receipt, err := c.Broker.Accept(ctx, candidate, broker.CandidateEvidence{Commit: candidate.Commit, Tree: candidate.Tree, EffectiveTree: deployment.EffectiveTree, PatchesDigest: deployment.PatchesDigest, Operability: &report})
+			receipt, err := c.Broker.Accept(ctx, candidate, broker.CandidateEvidence{Commit: candidate.Commit, Tree: candidate.Tree, EffectiveTree: deployment.EffectiveTree, Operability: &report})
 			if errors.Is(err, broker.ErrCandidateStale) && restage < maxCandidateRestages {
 				continue
 			}
@@ -436,7 +446,7 @@ func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, d
 				return c.publishUnverified(ctx, id, "the seeded application fails its own checks: "+decision.Feedback())
 			}
 			_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-			return gateOutcome{feedback: decision.Feedback()}, nil
+			return gateOutcome{feedback: decision.Feedback(), deployer: decision.Owner == operability.OwnerDeployer}, nil
 		}
 		_ = c.Broker.DiscardCandidate(id, broker.InitialPhase)
 		if decision.Kind == operability.Wait && pending != nil {
@@ -455,11 +465,11 @@ func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, d
 }
 
 // terminal is the error a run ends with when no agent can act on the decision:
-// for a provided plan the typed plan error the harness already reads, otherwise
-// an OperabilityError.
+// with no deployer registered the typed hold the harness reads, otherwise an
+// OperabilityError.
 func (c Coordinator) terminal(mode operability.Mode, stage string, report operability.Report, decision operability.Decision) error {
-	if mode == operability.ModeProvided {
-		return &ProvidedPlanError{Stage: stage, Reason: decision.Feedback(), Report: &report}
+	if mode == operability.ModeNoDeployer {
+		return &DeploymentHoldError{Stage: stage, Reason: decision.Feedback(), Report: &report}
 	}
 	return &OperabilityError{Report: report, Decision: decision}
 }

@@ -515,7 +515,7 @@ func (n NativeIncidentBroker) acceptSourceRepair(ctx context.Context, id string,
 		}
 		return n.Repairs.Repair(ctx, id)
 	}
-	if slices.ContainsFunc(paths, func(p string) bool { return layout.IsEffectiveDeploymentInput(p) || !layout.IsMemoryPath(p) }) {
+	if slices.ContainsFunc(paths, func(p string) bool { return !layout.IsMemoryPath(p) }) {
 		// A configuration without a repairer stays without one on every retry:
 		// the typed hold is recorded once, never an error that is retried.
 		return SourceRepair{Held: fmt.Sprintf("repairer_required: incident %s: %s", id, ErrRepairerRequired)}, nil

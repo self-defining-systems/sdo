@@ -16,7 +16,6 @@ from google.protobuf import json_format
 
 from apps.gitlab import assemble
 from benchmarks.sregym.fastloop import gitlab_lane
-from benchmarks.sregym.fastloop.accepted_source import RenderedWorkloads
 from benchmarks.sregym.fastloop.cli import build_parser
 from tests.unit.apps.test_gitlab_workspace import stand_in_archive
 
@@ -68,7 +67,7 @@ def test_runtime_config_installs_the_provided_source_without_manifest_paths(tmp_
         cluster="fastloop-w0",
         evidence_root=None,
     )
-    plan = gitlab_lane.plan_from_workloads(_workloads())
+    plan = gitlab_lane.provided_plan(tmp_path)
     config = gitlab_lane.lane_runtime_config(environment, plan)
     assert config.deployment_plan == plan
     assert config.deployment_source == gitlab_lane.deployment_source()
@@ -90,7 +89,7 @@ def test_runtime_config_names_the_evidence_sink_only_for_a_lane_with_an_evidence
             evidence_root=root,
         )
 
-    plan = gitlab_lane.plan_from_workloads(_workloads())
+    plan = gitlab_lane.provided_plan(tmp_path)
     assert gitlab_lane.lane_runtime_config(environment(None), plan).evidence_sink_host_path == ""
     config = gitlab_lane.lane_runtime_config(environment(tmp_path / "evidence"), plan)
     assert config.evidence_sink_host_path == EVIDENCE_NODE_ROOT
@@ -120,7 +119,7 @@ def test_runtime_config_carries_the_lane_policy(tmp_path: Path) -> None:
         cluster="fastloop-w0",
         evidence_root=None,
     )
-    config = gitlab_lane.lane_runtime_config(environment, gitlab_lane.plan_from_workloads(_workloads()))
+    config = gitlab_lane.lane_runtime_config(environment, gitlab_lane.provided_plan(tmp_path))
     assert config.deployment_policy == gitlab_lane.deployment_policy()
 
 
@@ -153,37 +152,15 @@ def test_pins_agree_with_the_chart_values_and_the_umbrella_dependency() -> None:
     assert pins["namespace"] == gitlab_lane.NAMESPACE
 
 
-def _workloads() -> RenderedWorkloads:
-    return RenderedWorkloads(
-        ("Deployment/gitlab/web", "StatefulSet/other/db", "CronJob/gitlab/tick", "Job/gitlab/migrate"),
-        ("busybox:1", "postgres:17@sha256:" + "a" * 64, "registry.invalid/web:1"),
-        ("CronJob/gitlab/tick", "Deployment/gitlab/web", "Job/gitlab/migrate-*", "StatefulSet/other/db"),
-        ("busybox", "postgres", "registry.invalid/web"),
-    )
-
-
-def test_plan_declares_release_independent_identities_and_repositories() -> None:
+def test_plan_is_the_helm_override_with_the_kind_values(tmp_path: Path) -> None:
+    """The lane's override names only what the chart's files cannot: the values file. Images stay upstream's."""
     from sdo.contracts.proto import DeploymentPlan
 
-    plan = gitlab_lane.plan_from_workloads(_workloads())
+    plan = gitlab_lane.provided_plan(tmp_path)
+    assert plan == {"source": gitlab_lane.deployment_source()}
     message = json_format.ParseDict(plan, DeploymentPlan())
-    assert plan["source"] == gitlab_lane.deployment_source()
-    # No tag and no digest: a release that only bumps tags still matches the declaration.
-    assert [image.image for image in message.images] == ["busybox", "postgres", "registry.invalid/web"]
-    assert {image.source_id for image in message.images} == {"prebuilt"}
-    assert all(image.config.TypeName().endswith(".PrebuiltImageConfig") for image in message.images)
-    # A Job named after a hash of its images is declared by its stable prefix, not by this release's name.
-    assert list(message.expected_workload_ids) == [
-        "CronJob/gitlab/tick",
-        "Deployment/gitlab/web",
-        "Job/gitlab/migrate-*",
-        "StatefulSet/other/db",
-    ]
-
-
-def test_plan_with_no_workloads_is_rejected() -> None:
-    with pytest.raises(ValueError, match="workload"):
-        gitlab_lane.plan_from_workloads(RenderedWorkloads((), ()))
+    assert message.source.renderer_id == "helm"
+    assert not message.images
 
 
 def test_onboarding_hands_the_plan_to_the_native_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -210,7 +187,7 @@ def test_onboarding_hands_the_plan_to_the_native_lifecycle(monkeypatch: pytest.M
         kubeconfig=tmp_path / "kubeconfig",
         apply_operator_env=lambda environ: None,
     )
-    plan = gitlab_lane.plan_from_workloads(_workloads())
+    plan = gitlab_lane.provided_plan(tmp_path)
     config = gitlab_lane.lane_runtime_config(environment, plan)
     assert gitlab_lane.onboard(environment, config, "goal") == {"judge_commit": "c"}
     assert seen == {"kubeconfig": str(tmp_path / "kubeconfig"), "plan": plan, "objective": "goal"}
@@ -218,7 +195,7 @@ def test_onboarding_hands_the_plan_to_the_native_lifecycle(monkeypatch: pytest.M
 
 def test_onboarding_without_a_plan_is_refused(tmp_path: Path) -> None:
     environment = SimpleNamespace(namespace="gitlab", workspace=tmp_path)
-    with pytest.raises(ValueError, match="provided deployment plan"):
+    with pytest.raises(ValueError, match="deployment override"):
         gitlab_lane.onboard(environment, SimpleNamespace(deployment_plan=None), "goal")
 
 

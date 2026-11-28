@@ -186,7 +186,7 @@ func TestAcceptedAdvancesLeaveNoUnexplainedDrift(t *testing.T) {
 
 	first := release(1)
 	summary := rendered.SummarizeWorkloads(inventoryAt(first).Objects, driftChainNS)
-	plan := &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: summary.Identities}
+	plan := &contracts.DeploymentPlan{Source: source}
 	prebuilt, err := anypb.New(&contracts.PrebuiltImageConfig{})
 	if err != nil {
 		t.Fatal(err)

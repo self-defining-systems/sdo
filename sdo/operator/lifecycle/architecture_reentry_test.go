@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"google.golang.org/protobuf/proto"
-
 	"sdo.dev/operator/lifecycle"
 )
 
@@ -14,13 +12,12 @@ import (
 // past it, so attempt 2 must resume the accepted architecture rather than
 // propose another one against the moved head.
 func TestSecondAttemptResumesTheAcceptedArchitecture(t *testing.T) {
-	plan := providedPlans(t)["helm"]
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
 	h.workers.judgeFailures = 1
 	architectures := &countingArtifacts{}
 	h.coordinator.Bootstrap = architectures
 
-	cfg := providedConfig(plan)
+	cfg := config()
 	result, err := h.coordinator.Run(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +28,7 @@ func TestSecondAttemptResumesTheAcceptedArchitecture(t *testing.T) {
 	if architectures.architectures != 1 {
 		t.Fatalf("architecture written %d times, want once for the one accepted source", architectures.architectures)
 	}
-	if h.readiness.calls != 1 || !proto.Equal(h.readiness.plans[0], plan) {
-		t.Fatalf("the provided plan must deploy once, got %d calls", h.readiness.calls)
+	if h.readiness.calls != 1 || h.workers.deployerAttempts() != 0 {
+		t.Fatalf("the source must deploy once, got %d calls and %d deployer tasks", h.readiness.calls, h.workers.deployerAttempts())
 	}
 }

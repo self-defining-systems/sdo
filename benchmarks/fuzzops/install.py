@@ -6,8 +6,9 @@
 2. creates the application and control namespaces, the agent credentials Secret (``--from-file``; the adapter
    never reads the value) and an empty registry push Secret, and gives the kind nodes' preloaded app images their
    digest names (SDO pins every image to a digest);
-3. runs ``sdo-operator host --deployment-plan``: SDO applies exactly the pack's manifests, writes the goal and
-   architecture, the detection designer authors health detectors, and the long-running controller starts.
+3. commits the deployment override naming the pack's manifests (``.sdo/deployment/plan.yaml``, as a human) and
+   runs ``sdo-operator host``: SDO deploys exactly those manifests, writes the goal and architecture, the detection
+   designer authors health detectors, and the long-running controller starts.
 
 Operator configuration is the benchmark profile (``sdo-bench.yaml``) and any ``--config`` overlay files, passed to
 ``host`` as ``--config`` in that order; the agent backend, model and effort, the evidence sink and the watch-only mode
@@ -25,7 +26,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from benchmarks.fuzzops import config
-from benchmarks.fuzzops.pack import SourcePack, deployment_plan, images, write_app_repository, write_attached_pack
+from benchmarks.fuzzops.pack import (
+    SourcePack,
+    commit_override,
+    deployment_plan,
+    images,
+    write_app_repository,
+    write_attached_pack,
+)
 
 BUILDKIT_IMAGE = "moby/buildkit@sha256:ef31818fffd0b9133d710742e06b492553f7ebc54f5fd66cd21a1a9bf2e51f76"
 CREDENTIALS_SECRET = "sdo-agent-credentials"
@@ -67,11 +75,12 @@ class InstallConfig:
     #: Free-text user journeys the people running the app give (``host --journeys-file``); ``None``: the
     #: onboarding agent discovers them (the benchmark profile does not require them).
     journeys_file: Path | None = None
-    #: ``False``: no provided plan; SDO's deployer agent writes it from the repository (the production path), so
-    #: it can add what the app lacks (request metrics, a telemetry overlay). ``True`` (default): the benchmark path.
+    #: ``False``: no override; SDO derives the deployment from the repository and its deployer agent corrects a
+    #: failing deploy (the production path), so it can add what the app lacks. ``True`` (default): the harness
+    #: commits the override naming the pack's manifests (the benchmark path).
     provided_plan: bool = True
     #: The registry the deployer agent's image builds push to and the nodes pull from (host[:port], for a kind lane
-    #: the registry's name on the kind network); required without a provided plan, unused with one.
+    #: the registry's name on the kind network); required without the override, unused with one.
     registry_host: str = ""
     #: The registry speaks plain HTTP (a lane's local registry).
     registry_insecure: bool = False
@@ -80,8 +89,8 @@ class InstallConfig:
         self.host_env()
         if not self.provided_plan and not self.registry_host:
             raise ValueError(
-                "registry_host is required without a provided plan: the deployer agent builds the app's images "
-                "and pushes them to that registry (sdo-operator host refuses the launch without it)"
+                "registry_host is required without the override: the deployer agent builds the app's images "
+                "and pushes them to that registry"
             )
         for name in ("namespace", "control_namespace", "objective", "controller_image", "responder_image", "model"):
             if not getattr(self, name):
@@ -98,7 +107,7 @@ class InstallConfig:
     def application(self) -> str:
         return self.namespace
 
-    def host_args(self, repository: Path, plan: dict[str, object]) -> list[str]:
+    def host_args(self, repository: Path) -> list[str]:
         """The ``sdo-operator host`` command line."""
         args = [
             str(self.operator_binary),
@@ -127,11 +136,6 @@ class InstallConfig:
             CREDENTIALS_SECRET,
             "--registry-push-secret",
             REGISTRY_SECRET,
-            *(
-                ["--deployment-plan", json.dumps(plan, separators=(",", ":"), sort_keys=True)]
-                if self.provided_plan
-                else []
-            ),
             "--kubeconfig",
             str(self.kubeconfig),
         ]
@@ -252,13 +256,15 @@ def install(cfg: InstallConfig, *, description: str) -> int:
         write_app_repository(pack, repository, description=description, source=cfg.source)
     write_attached_pack(pack, cfg.work / "pack")
     plan = deployment_plan(pack.manifests(), cfg.namespace)
+    if cfg.provided_plan:
+        commit_override(repository, plan)
     for line in declare_node_images(cfg, images(pack.manifests())):
         print(f"declared {line}", flush=True)
     (cfg.work / "deployment-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     provision_namespaces(cfg)
     with (cfg.work / "host-receipt.json").open("w") as receipt, (cfg.work / "host.log").open("w") as log:
         return subprocess.run(
-            cfg.host_args(repository, plan),
+            cfg.host_args(repository),
             stdout=receipt,
             stderr=log,
             check=False,
@@ -310,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--deployer",
         action="store_true",
-        help="no provided plan: SDO's deployer agent deploys from the repository (needs --source for the app's code)",
+        help="no override: SDO derives the deployment; its deployer agent corrects a failing deploy (needs --source)",
     )
     p.add_argument(
         "--registry-host",

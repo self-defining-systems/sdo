@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
-
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
@@ -31,9 +29,9 @@ type InstallExistingConfig struct {
 	AdoptExistingMemory bool
 	OperatorRoot        string
 	Kubeconfig          string
-	// DeploymentSource, when set, is recorded as the repository's plan.yaml
-	// before install; RunInstallExisting then replaces it with the source the
-	// accepted tree declares, which scopes adoption evidence.
+	// DeploymentSource is the source the accepted tree's optional override
+	// names (RunInstallExisting sets it); nil derives it from the files. It
+	// scopes adoption evidence.
 	DeploymentSource *contracts.DeploymentSource
 	// RenderEnvironment is discovered from the cluster at install and passed
 	// to the controller (--render-env); RunInstallExisting sets it.
@@ -83,7 +81,6 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	flags.Var(&configFiles, "config", "operator configuration YAML (repeatable; later files override earlier ones; see docs/config.md)")
 	sourceBranchURL := flags.String("source-branch-url", "", "Git remote of the one branch SDO commits to and deploys from (source.branch); engineers and the benchmark replayer push to it")
 	sourceBranch := flags.String("source-branch", "", "name of that branch (never main or master)")
-	deploymentSourceFlag := flags.String("deployment-source", "", "DeploymentSource as ProtoJSON, recorded as the repository's .sdo/deployment/plan.yaml in a human commit; optional when the repository already carries a plan")
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
 	}
@@ -129,17 +126,13 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	if *registrationConfigMap != "" {
 		config.RegistrationDirectory = "/sdo/registrations"
 	}
-	deploymentSource, err := parseDeploymentSourceFlag(*deploymentSourceFlag)
-	if err != nil {
-		return InstallExistingConfig{}, err
-	}
 	if *duration > 0 {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--duration", duration.String())
 	}
 	if *exitAfterClosure {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--exit-after-closure")
 	}
-	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, DeploymentSource: deploymentSource, Duration: *duration, Install: config}, nil
+	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, Duration: *duration, Install: config}, nil
 }
 
 // PrepareInstallTree makes the launch repository's accepted head the tree an
@@ -164,7 +157,7 @@ func PrepareInstallTree(ctx context.Context, launch InstallExistingConfig) (stri
 }
 
 func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (InstallExistingResult, error) {
-	source, err := recordInstallDeploymentSource(ctx, launch)
+	source, err := installDeploymentSource(launch)
 	if err != nil {
 		return InstallExistingResult{}, err
 	}
@@ -209,35 +202,18 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 	return InstallExistingResult{Installed: true, Reused: result.Reused, Fingerprint: result.Fingerprint, AcceptedCommit: commit, GoalSupplied: goalSupplied, ControllerLogs: result.ControllerLogs}, nil
 }
 
-// recordInstallDeploymentSource settles the deployment source before any
-// cluster call: the flag's source becomes plan.yaml in a human commit, and a
-// repository left without a plan is refused (the controller would not start).
-func recordInstallDeploymentSource(ctx context.Context, launch InstallExistingConfig) (*contracts.DeploymentSource, error) {
-	if launch.DeploymentSource != nil {
-		plan, err := memory.RecordDeploymentSource(ctx, launch.Repository, launch.DeploymentSource)
-		if err != nil {
-			return nil, err
-		}
-		return plan.GetSource(), nil
-	}
+// installDeploymentSource reads the accepted tree's optional deployment
+// override before any cluster call; without one the source is derived from the
+// repository's files (nil).
+func installDeploymentSource(launch InstallExistingConfig) (*contracts.DeploymentSource, error) {
 	plan, err := planfile.Read(launch.Repository, planCatalogs())
+	if errors.Is(err, planfile.ErrAbsent) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("install-existing: %w", err)
 	}
 	return plan.GetSource(), nil
-}
-
-// parseDeploymentSourceFlag decodes the strict ProtoJSON DeploymentSource of
-// --deployment-source; empty is no source.
-func parseDeploymentSourceFlag(encoded string) (*contracts.DeploymentSource, error) {
-	if encoded == "" {
-		return nil, nil
-	}
-	source := &contracts.DeploymentSource{}
-	if err := protojson.Unmarshal([]byte(encoded), source); err != nil {
-		return nil, fmt.Errorf("invalid deployment source: %w", err)
-	}
-	return source, nil
 }
 
 // prepareInstallExistingRepository keeps the opt-in adoption edge separate from

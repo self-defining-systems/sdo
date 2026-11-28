@@ -183,7 +183,6 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string, t
 	if err != nil {
 		return nil, err
 	}
-	defer effective.Close()
 	set, err := s.desiredFrom(ctx, effective, namespace)
 	if err != nil {
 		return nil, err
@@ -244,7 +243,6 @@ func (s Source) ShapeOf(namespace string) func(ctx context.Context, repository, 
 		if err != nil {
 			return "", classifySource(err)
 		}
-		defer effective.Close()
 		return effective.ID, nil
 	}
 }
@@ -271,7 +269,6 @@ func (s Source) desired(ctx context.Context, revision, namespace string) (Desire
 	if err != nil {
 		return DesiredSet{}, err
 	}
-	defer effective.Close()
 	return s.desiredFrom(ctx, effective, namespace)
 }
 
@@ -341,7 +338,6 @@ func (s Source) inheritedPins(ctx context.Context, pins ReceiptPins, effective E
 		}
 		return ReceiptPins{}, nil
 	}
-	defer deployed.Close()
 	if deployed.ID != pins.EffectiveTree {
 		return ReceiptPins{}, nil
 	}

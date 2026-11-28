@@ -10,7 +10,6 @@ import (
 
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/validate"
-	"sdo.dev/operator/patchset"
 )
 
 // seedMemory completes the minimal memory the shared check requires, as a plain
@@ -18,7 +17,7 @@ import (
 func seedMemory(t *testing.T, w *patchWorld) {
 	t.Helper()
 	writeFiles(t, w.accepted, map[string]string{
-		".sdo/schema-version": "14\n",
+		".sdo/schema-version": "15\n",
 		".sdo/arch.md":        "---\nschema_version: 1\ngenerated_at_commit: base\napplication: demo\n---\nsynthetic\n",
 	})
 	testutil.Git(t, w.accepted, "add", ".")
@@ -38,9 +37,9 @@ func rulesOf(t *testing.T, err error) []string {
 	return rules
 }
 
-// Agents write only .sdo/: the candidate tree ignores scratch app edits and
-// sees a captured edit only as its patch file.
-func TestProposalTreeDigestCoversOnlyTheMemoryDirectory(t *testing.T) {
+// The candidate tree is the committed tree with the working .sdo/ in place:
+// scratch app edits never move it, a local commit of app files does.
+func TestProposalTreeDigestIsTheCommitWithWorkingMemory(t *testing.T) {
 	ctx := context.Background()
 	w := newPatchWorld(t, false)
 	p, err := w.broker.CreateProposalForPhase(ctx, "inc-tree", ProposalPhase)
@@ -55,23 +54,21 @@ func TestProposalTreeDigestCoversOnlyTheMemoryDirectory(t *testing.T) {
 	if got, err := ProposalTreeDigest(ctx, p.Path); err != nil || got != clean {
 		t.Fatalf("scratch edit moved the candidate tree: %s vs %s, %v", got, clean, err)
 	}
-	// A local commit of app files does not move the base either.
 	testutil.Git(t, p.Path, "add", "app.txt")
 	testutil.ConfigureGit(t, p.Path)
 	testutil.Git(t, p.Path, "commit", "-qm", "local")
-	if got, err := ProposalTreeDigest(ctx, p.Path); err != nil || got != clean {
-		t.Fatalf("a local app commit moved the candidate tree: %s vs %s, %v", got, clean, err)
+	committed, err := ProposalTreeDigest(ctx, p.Path)
+	if err != nil || committed == clean {
+		t.Fatalf("a local app commit did not move the candidate tree: %s, %v", committed, err)
 	}
-	if _, err := patchset.Create(ctx, p.Path, patchset.CreateRequest{Owner: patchset.OwnerResponder, Incident: "inc-tree", Reason: patchReason}); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := ProposalTreeDigest(ctx, p.Path); err != nil || got == clean {
-		t.Fatalf("a patch file did not move the candidate tree: %s, %v", got, err)
+	writeFiles(t, p.Path, map[string]string{".sdo/deployment/plan.yaml": "images: []\n"})
+	if got, err := ProposalTreeDigest(ctx, p.Path); err != nil || got == committed {
+		t.Fatalf("a working memory edit did not move the candidate tree: %s, %v", got, err)
 	}
 }
 
 // The responder keeps source by committing it. An uncommitted app-file edit is
-// scratch: ScratchFeedback asks for a decision, and a publication carries
+// scratch: the cleanup message names it, and a publication carries
 // nothing and moves nothing. The committed file is published (as app source,
 // not as a patch) with the agent's subject in the message and the broker's
 // trailers.
@@ -84,9 +81,9 @@ func TestResponderPublishesCommittedSourceAndNeverScratch(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree fixed\n", "probe.sh": "echo debug\n"})
-	feedback, err := w.broker.ScratchFeedback(ctx, "inc-resp", ProposalPhase)
-	if err != nil || !strings.Contains(feedback, "app.txt") || !strings.Contains(feedback, "probe.sh") || strings.Contains(feedback, UncapturedRule) {
-		t.Fatalf("ScratchFeedback = %q, %v", feedback, err)
+	scratch, err := w.broker.UncapturedPaths(ctx, "inc-resp", ProposalPhase)
+	if err != nil || strings.Join(scratch, ",") != "app.txt,probe.sh" {
+		t.Fatalf("UncapturedPaths = %v, %v", scratch, err)
 	}
 	head := w.head(t)
 	receipt, err := w.broker.Publish(ctx, "inc-resp", Responder, ProposalPhase)
@@ -97,8 +94,8 @@ func TestResponderPublishesCommittedSourceAndNeverScratch(t *testing.T) {
 	testutil.ConfigureGit(t, p.Path)
 	testutil.Git(t, p.Path, "add", "app.txt")
 	testutil.Git(t, p.Path, "commit", "-qm", "fix the off-by-one in app.txt")
-	if feedback, err := w.broker.ScratchFeedback(ctx, "inc-resp", ProposalPhase); err != nil || strings.Contains(feedback, "app.txt") || !strings.Contains(feedback, "probe.sh") {
-		t.Fatalf("ScratchFeedback after the commit = %q, %v", feedback, err)
+	if scratch, err := w.broker.UncapturedPaths(ctx, "inc-resp", ProposalPhase); err != nil || strings.Join(scratch, ",") != "probe.sh" {
+		t.Fatalf("UncapturedPaths after the commit = %v, %v", scratch, err)
 	}
 	receipt, err = w.broker.Publish(ctx, "inc-resp", Responder, ProposalPhase)
 	if err != nil || receipt.Commit == "" {
@@ -119,21 +116,49 @@ func TestResponderPublishesCommittedSourceAndNeverScratch(t *testing.T) {
 	}
 }
 
-// A hand-made proposal diff touching an app file is denied for every agent
-// actor by the shared ownership policy, whatever the publish path filters.
-func TestPublishNeverCarriesAppFiles(t *testing.T) {
+// The deployer commits app files: a verified-source publication carries what
+// it committed and never its scratch, bound to the deployed tree.
+func TestDeployerPublishesCommittedSourceBoundToTheDeployedTree(t *testing.T) {
 	ctx := context.Background()
 	w := newPatchWorld(t, false)
 	p, err := w.broker.CreateProposalForPhase(ctx, "inc-app", InitialPhase)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
-	_, err = w.broker.PublishVerifiedSource(ctx, "inc-app", advanceEvidence(t, p.Path, "app"), deploymentReportFor(t, advanceEvidence(t, p.Path, "app"), p.BaseCommit))
-	if err == nil {
-		t.Fatal("a deployer publication with an uncaptured app edit was accepted")
+	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n", "notes.txt": "scratch\n"})
+	commitInCheckout(t, p.Path, "deploy app.txt", "app.txt")
+	head := w.head(t)
+	evidence := advanceEvidence(t, p.Path, "app")
+	receipt, err := w.broker.PublishVerifiedSource(ctx, "inc-app", evidence, deploymentReportFor(t, evidence, p.BaseCommit))
+	if err != nil {
+		t.Fatalf("a deployer publication of committed source: %v", err)
 	}
-	if got := rulesOf(t, err); len(got) != 1 || got[0] != validate.RulePatchUncaptured {
-		t.Fatalf("rules = %v", got)
+	changed := strings.Fields(gitOut(t, w.accepted, "diff", "--name-only", head, receipt.Commit))
+	if strings.Join(changed, ",") != "app.txt" {
+		t.Fatalf("accepted commit changed %v, want only the committed app.txt", changed)
+	}
+	if tree := gitOut(t, w.accepted, "rev-parse", receipt.Commit+"^{tree}"); tree != evidence.BaseTree {
+		t.Fatalf("accepted tree %s, deployed tree %s", tree, evidence.BaseTree)
+	}
+}
+
+// An uncommitted app edit is never part of a deployer's publication: evidence
+// that names it (a tree with the scratch file) is refused.
+func TestDeployerScratchIsNeverPublished(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	p, err := w.broker.CreateProposalForPhase(ctx, "inc-scratch", InitialPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
+	evidence := advanceEvidence(t, p.Path, "app")
+	head := w.head(t)
+	receipt, err := w.broker.PublishVerifiedSource(ctx, "inc-scratch", evidence, deploymentReportFor(t, evidence, p.BaseCommit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed := strings.TrimSpace(gitOut(t, w.accepted, "diff", "--name-only", head, receipt.Commit)); changed != "" {
+		t.Fatalf("scratch reached the accepted tree: %q", changed)
 	}
 }

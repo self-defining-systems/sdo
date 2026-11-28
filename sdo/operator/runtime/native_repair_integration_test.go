@@ -18,7 +18,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/telemetry"
 )
 
@@ -130,13 +129,6 @@ func newRepairClosureWorld(t *testing.T, repairs SourceRepairer, keep string) *r
 		repairGit(t, checkout, "config", "user.email", "agent@example.invalid")
 		repairGit(t, checkout, "add", "app.txt")
 		repairGit(t, checkout, "commit", "-qm", "repair the synthetic application")
-	case "patch":
-		if err := os.WriteFile(filepath.Join(checkout, "app.txt"), []byte("synthetic app, repaired\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := patchset.Create(ctx, checkout, patchset.CreateRequest{Owner: patchset.OwnerResponder, Incident: "incident-1", Reason: "Repair the synthetic application the deployment ships with this change"}); err != nil {
-			t.Fatal(err)
-		}
 	case "scratch":
 		if err := os.WriteFile(filepath.Join(checkout, "app.txt"), []byte("synthetic app, edited and left\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -191,7 +183,7 @@ func (w *repairClosureWorld) sourceRepairOfTheOutcome(t *testing.T) *contracts.S
 // and records that a repair is owed. The queued dispatch after the
 // acknowledgment hands it to the configured repairer, which owns deployment.
 func TestClosureOwesASourceRepairThatIsPublishedAfterTheAcknowledgment(t *testing.T) {
-	for _, keep := range []string{"committed", "patch"} {
+	for _, keep := range []string{"committed"} {
 		t.Run(keep, func(t *testing.T) {
 			repairs := &recordedRepairer{result: SourceRepair{Deployed: true}}
 			w := newRepairClosureWorld(t, repairs, keep)

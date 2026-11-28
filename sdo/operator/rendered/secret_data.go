@@ -61,7 +61,6 @@ func (s Source) renderSecretData(ctx context.Context, revision, namespace string
 	if err != nil {
 		return nil, classifySource(err)
 	}
-	defer effective.Close()
 	fsys, err := GitTreeFS(ctx, effective)
 	if err != nil {
 		return nil, classifySource(err)

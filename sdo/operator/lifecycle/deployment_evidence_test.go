@@ -2,6 +2,8 @@ package lifecycle_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +14,8 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/renderenv"
 )
@@ -27,64 +31,76 @@ func rawSourcePlan(t *testing.T, paths ...string) *contracts.DeploymentPlan {
 		t.Fatal(err)
 	}
 	return &contracts.DeploymentPlan{
-		Source:              &contracts.DeploymentSource{RendererId: "raw", Config: config},
-		Images:              []*contracts.ImageSource{{Image: "registry.local/app:dev", SourceId: "buildkit", Config: build}},
-		ExpectedWorkloadIds: []string{"Deployment/ns/app"},
+		Source: &contracts.DeploymentSource{RendererId: "raw", Config: config},
+		Images: []*contracts.ImageSource{{Image: "registry.local/app:dev", SourceId: "buildkit", Config: build}},
 	}
 }
 
 func acceptedEvidence(t *testing.T, h *harness) broker.SourceEvidence {
 	t.Helper()
-	evidence, found, err := h.coordinator.Broker.SourceEvidence(context.Background(), "op-source-1")
+	evidence, found, err := h.coordinator.Broker.SourceEvidence(context.Background(), "op-source")
 	if err != nil || !found {
 		t.Fatalf("accepted source evidence: found=%v err=%v", found, err)
 	}
 	return evidence
 }
 
-// Accepted evidence binds the source the deployer rendered and its digests;
-// the admitted plan (image declarations and expected workloads) is written by
-// Go into the proposal as .sdo/deployment/plan.yaml.
-func TestAcceptedEvidenceRecordsTheSourceAndDigestsAndGoWritesThePlan(t *testing.T) {
+// writeOverride commits nothing: it writes the deployment override into the
+// source proposal checkout the fake broker hands out.
+func writeOverride(t *testing.T, h *harness, plan *contracts.DeploymentPlan) {
+	t.Helper()
+	data, err := planfile.Format(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(h.coordinator.Broker.(*fakeBroker).root, "op-source", filepath.FromSlash(layout.DeploymentPlanFile))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The deployer is handed the commit's override: accepted evidence binds the
+// source it names and the digests; Go writes no plan.
+func TestAcceptedEvidenceRecordsTheOverrideSourceAndDigests(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
 	plan := rawSourcePlan(t, "k8s")
-	h.workers.plan = plan
+	writeOverride(t, h, plan)
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
+	if len(h.readiness.plans) != 1 || !proto.Equal(h.readiness.plans[0].GetSource(), plan.GetSource()) {
+		t.Fatalf("the deployer saw %v, want the override", h.readiness.plans)
+	}
 	evidence := acceptedEvidence(t, h)
-	if !rendered.SameDeploymentSource(evidence.DeploymentSource, plan.GetSource()) {
+	if !proto.Equal(evidence.DeploymentSource, plan.GetSource()) {
 		t.Fatalf("evidence source %v, want %v", evidence.DeploymentSource, plan.GetSource())
 	}
-	if written := h.coordinator.Broker.(*fakeBroker).plan(t, "op-source-1"); !proto.Equal(written, plan) {
-		t.Fatalf("plan.yaml of the proposal = %v, want the admitted plan %v", written, plan)
-	}
-	if evidence.BaseTree != "tree" || evidence.EffectiveTree != "effective" || evidence.PatchesDigest != "patches" || evidence.RenderDigest != "render" || evidence.EnvDigest != "env" {
+	if evidence.BaseTree != "tree" || evidence.EffectiveTree != "effective" || evidence.RenderDigest != "render" || evidence.EnvDigest != "env" {
 		t.Fatalf("evidence = %+v", evidence)
 	}
 }
 
-func TestReceiptThatDoesNotBindTheProposedSourceIsNotAccepted(t *testing.T) {
+func TestIncompleteReceiptIsNotAccepted(t *testing.T) {
 	for name, adjust := range map[string]func(*lifecycle.DeploymentReceipt){
-		"another source":    func(r *lifecycle.DeploymentReceipt) { r.Source = rawSourcePlan(t, "other").GetSource() },
 		"no source":         func(r *lifecycle.DeploymentReceipt) { r.Source = nil },
 		"no render digest":  func(r *lifecycle.DeploymentReceipt) { r.RenderDigest = "" },
 		"no env digest":     func(r *lifecycle.DeploymentReceipt) { r.EnvDigest = "" },
 		"no base tree":      func(r *lifecycle.DeploymentReceipt) { r.BaseTree = "" },
 		"no effective tree": func(r *lifecycle.DeploymentReceipt) { r.EffectiveTree = "" },
-		"no patches digest": func(r *lifecycle.DeploymentReceipt) { r.PatchesDigest = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-			h.workers.plan = rawSourcePlan(t, "k8s")
 			h.readiness.receipt = adjust
 			if _, err := h.coordinator.Run(context.Background(), config()); err == nil {
-				t.Fatal("run accepted a receipt that does not bind the proposed source")
+				t.Fatal("run accepted an incomplete receipt")
 			}
-			if _, found, _ := h.coordinator.Broker.SourceEvidence(context.Background(), "op-source-1"); found {
+			if _, found, _ := h.coordinator.Broker.SourceEvidence(context.Background(), "op-source"); found {
 				t.Fatal("broker accepted the source")
 			}
-			if feedback := h.workers.deployer[1].GetCorrectionFeedback(); !strings.Contains(feedback, "independent") {
+			if feedback := h.workers.deployer[0].GetCorrectionFeedback(); !strings.Contains(feedback, "independent") {
 				t.Fatalf("feedback = %q", feedback)
 			}
 		})
@@ -97,11 +113,9 @@ func TestRestartRequiresTheRecordedSourceAndDigests(t *testing.T) {
 	for name, adjust := range map[string]func(*lifecycle.DeploymentReceipt){
 		"render digest": func(r *lifecycle.DeploymentReceipt) { r.RenderDigest = "changed" },
 		"env digest":    func(r *lifecycle.DeploymentReceipt) { r.EnvDigest = "changed" },
-		"source":        func(r *lifecycle.DeploymentReceipt) { r.Source = rawSourcePlan(t, "other").GetSource() },
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{firing, clear}})
-			h.workers.plan = rawSourcePlan(t, "k8s")
 			first := h.coordinator
 			// The first run accepts the source and stops at the firing verdict
 			// with one attempt; the next run re-verifies the accepted source.

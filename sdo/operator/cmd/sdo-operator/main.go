@@ -134,9 +134,6 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "config" {
 		os.Exit(operatorcli.RunConfigProcess(context.Background(), os.Args[2:], os.Stdout, os.Stderr))
 	}
-	if len(os.Args) > 1 && os.Args[1] == "patch" {
-		os.Exit(operatorcli.RunPatch(context.Background(), os.Args[2:], nil, os.Stdout, os.Stderr))
-	}
 	if len(os.Args) > 1 && os.Args[1] == "deployment" {
 		os.Exit(operatorcli.RunDeployment(context.Background(), os.Args[2:], nil, os.Stdout, os.Stderr))
 	}

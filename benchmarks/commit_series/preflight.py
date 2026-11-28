@@ -34,7 +34,6 @@ from benchmarks.common.replay.replay import replay, run_git
 from benchmarks.common.replay.series import Series
 
 RENDER_FILE = "k8s/render.yaml"
-PLAN_FILE = ".sdo/deployment/plan.yaml"
 #: Pod-bearing kinds and where their pod spec is (sdo/operator/rendered/podtemplate.go).
 POD_SPEC = {
     "Deployment": ("spec", "template", "spec"),
@@ -84,18 +83,6 @@ def _matches(entry: str, ident: str) -> bool:
     prefix, star = entry.removesuffix("-*"), entry.endswith("-*")
     token = ident.removeprefix(prefix + "-") if star and ident.startswith(prefix + "-") else None
     return token is not None and bool(_GENERATED.match(token))
-
-
-def plan_problems(docs: list[dict[str, Any]], expected: list[str], namespace: str) -> list[str]:
-    """``rendered.CheckExpectedWorkloads``: each workload is named by an entry, each entry names a workload."""
-    problems, used = [], set()
-    for ident in workloads(docs, namespace):
-        hits = [e for e in expected if _matches(e, ident)]
-        used.update(hits)
-        if not hits:
-            problems.append(f"workload {ident} is missing from the deployment plan")
-    problems += [f"plan entry {e} matches no rendered workload" for e in expected if e not in used]
-    return problems
 
 
 def migration_problems(docs: list[dict[str, Any]]) -> list[str]:
@@ -169,9 +156,9 @@ def _git(repo: Path, *args: str) -> str:
 def replay_problems(series: Series, baseline: Path, scratch: Path) -> dict[int, list[str]]:
     """Push the series' commits, one by one, with the real replayer onto the baseline's memory branch (a bare remote
     in ``scratch``); the problems per 1-based commit index."""
-    info = json.loads((baseline / "baseline.json").read_text())
     remote = scratch / "remote.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "sdo-source", str(remote)], check=True)
+    info = json.loads((baseline / "baseline.json").read_text())
     clone = scratch / "memory"
     subprocess.run(["git", "clone", "-q", "-b", info["branch"], str(baseline / info["bundle"]), str(clone)], check=True)
     _git(clone, "push", "-q", str(remote), "HEAD:refs/heads/sdo-source")
@@ -205,18 +192,11 @@ def run(
     inspect: Any = None,
 ) -> Report:
     report = Report()
-    info = json.loads((baseline / "baseline.json").read_text())
     with tempfile.TemporaryDirectory(prefix="series-preflight-") as tmp:
         scratch = Path(tmp)
-        memory = scratch / "plan-memory"
-        subprocess.run(
-            ["git", "clone", "-q", "-b", info["branch"], str(baseline / info["bundle"]), str(memory)], check=True
-        )
-        expected = json.loads((memory / PLAN_FILE).read_text())["expectedWorkloadIds"]
         seen_images: set[str] = set()
         for label, render in release_renders(series):
             docs = [d for d in yaml.safe_load_all(render) if isinstance(d, dict)]
-            report.add(label, "plan", plan_problems(docs, expected, namespace))
             if label != "base":
                 report.add(label, "migrate", migration_problems(docs))
             seen_images |= images(docs)

@@ -26,7 +26,7 @@ from google.protobuf import json_format
 
 from benchmarks.fuzzops import config as operator_config
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
-from benchmarks.sregym.adapter.deployment_source import DeploymentPolicyConfig, plan_flag_value, source_flag_value
+from benchmarks.sregym.adapter.deployment_source import DeploymentPolicyConfig, commit_override, deployment_plan
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -821,7 +821,8 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     response_timeout = _launch_seconds(resolved_settings(config), "response", "timeout")
     args = config.common_args()
     if config.deployment_source is not None:
-        args.extend(("--deployment-source", source_flag_value(config.deployment_source)))
+        # The override is the repository's own file, committed as a human before install.
+        commit_override(config.repository, deployment_plan(config.deployment_source))
     if config.duration_seconds is not None:
         args.extend(("--duration", f"{config.duration_seconds}s"))
     if config.exit_after_closure:
@@ -895,7 +896,8 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     if config.agent_registrations is not None:
         args.extend(("--agent-registrations", str(config.agent_registrations)))
     if config.deployment_plan is not None:
-        args.extend(("--deployment-plan", plan_flag_value(config.deployment_plan)))
+        # Go deploys the repository's own files; the harness names what they cannot say in the override.
+        commit_override(config.install.repository, config.deployment_plan)
     if config.source_branch_url:
         args.extend(("--source-branch-url", config.source_branch_url, "--source-branch", config.source_branch))
     with launch_config(install) as (config_args, env):

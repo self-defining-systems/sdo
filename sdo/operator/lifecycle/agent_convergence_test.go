@@ -52,7 +52,7 @@ func TestJudgeRepeatingTheSameRejectionEndsAsNotConverging(t *testing.T) {
 	if err := opErr.Report.Validate(); err != nil {
 		t.Errorf("report invalid: %v", err)
 	}
-	if h.installer.installs != 0 || h.workers.deployerAttempts() != 1 {
+	if h.installer.installs != 0 || h.workers.deployerAttempts() != 0 {
 		t.Errorf("installs=%d deployer attempts=%d", h.installer.installs, h.workers.deployerAttempts())
 	}
 }
@@ -159,15 +159,15 @@ func TestInvalidBaseFailsBeforeTheJudgeRuns(t *testing.T) {
 
 // The deployer correcting the same feedback twice is not converging either.
 func TestDeployerRepeatingTheSameCorrectionEndsAsNotConverging(t *testing.T) {
-	h, fake := gateHarness(t, clear)
-	same := "patch.uncaptured: 1 app file(s) differ: app.go"
-	fake.scratch = []string{same, same, same}
+	h, _ := gateHarness(t, clear)
+	same := errors.New("rollout stuck: web has 0 ready replicas")
+	h.readiness.errors = []error{same, same, same}
 	_, err := h.coordinator.Run(context.Background(), config())
 	var stop *lifecycle.AgentNotConvergingError
 	if !errors.As(err, &stop) || stop.Role != operability.OwnerDeployer {
 		t.Fatalf("error = %v, want deployer AgentNotConvergingError", err)
 	}
-	if h.workers.deployerAttempts() != 2 {
-		t.Errorf("deployer attempts = %d, want 2", h.workers.deployerAttempts())
+	if h.workers.deployerAttempts() != 1 || h.readiness.calls != 2 {
+		t.Errorf("deployer tasks = %d deploys = %d, want 1 and 2", h.workers.deployerAttempts(), h.readiness.calls)
 	}
 }

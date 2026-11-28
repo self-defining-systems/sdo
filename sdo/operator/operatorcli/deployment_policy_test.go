@@ -112,8 +112,7 @@ func TestProductionDeployersRefuseOffAllowlistImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := &contracts.DeploymentPlan{
-		Source:              &contracts.DeploymentSource{RendererId: "raw", Config: rawConfig},
-		ExpectedWorkloadIds: []string{"Deployment/demo/web", "Deployment/demo/worker"},
+		Source: &contracts.DeploymentSource{RendererId: "raw", Config: rawConfig},
 	}
 	target := deployTarget{
 		Namespace: "demo", ControlNamespace: "sdo-system", AcceptedRoot: repo,
@@ -148,4 +147,14 @@ func mustPolicy(t *testing.T, encoded string) *contracts.DeploymentPolicy {
 		t.Fatal(err)
 	}
 	return policy
+}
+
+func hostArgs(extra ...string) []string {
+	args := []string{
+		"host", "--repository", "/repo", "--namespace", "app", "--application", "app", "--health-objective", "stay healthy",
+		"--operation-id", "op-1", "--controller-image", "controller:test", "--responder-image", "responder:test",
+		"--buildkit-image", "buildkit@sha256:" + strings.Repeat("a", 64), "--registry-push-secret", "push",
+		"--repository-pvc", "repo", "--credentials-secret", "creds", "--registry-host", "registry.local:5000", "--config", testModelConfig,
+	}
+	return append(args, extra...)
 }

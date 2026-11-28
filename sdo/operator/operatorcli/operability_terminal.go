@@ -32,15 +32,15 @@ type terminalStop struct {
 
 // terminalOperability finds the operability report an error ends on: an
 // *lifecycle.OperabilityError (the decision it recorded) or a
-// *lifecycle.ProvidedPlanError that carries one (decided for a provided plan).
+// *lifecycle.DeploymentHoldError that carries one (decided with no deployer).
 func terminalOperability(err error) (operability.Report, operability.Decision, bool) {
 	var opErr *lifecycle.OperabilityError
 	if errors.As(err, &opErr) {
 		return opErr.Report, opErr.Decision, true
 	}
-	var provided *lifecycle.ProvidedPlanError
-	if errors.As(err, &provided) && provided.Report != nil {
-		return *provided.Report, provided.Report.DecideIn(operability.ModeProvided, operability.StageItems(provided.Report.Stage)...), true
+	var held *lifecycle.DeploymentHoldError
+	if errors.As(err, &held) && held.Report != nil {
+		return *held.Report, held.Report.DecideIn(operability.ModeNoDeployer, operability.StageItems(held.Report.Stage)...), true
 	}
 	return operability.Report{}, operability.Decision{}, false
 }

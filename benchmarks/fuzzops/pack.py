@@ -1,7 +1,8 @@
 """Build the two inputs of an attached fuzzops run from a fuzzops app pack.
 
-* The SDO application repository: the pack's manifests as plain source, plus the ``DeploymentPlan`` that makes
-  ``sdo-operator host`` deploy exactly those manifests (no deployer agent). SDO then owns the app's desired state.
+* The SDO application repository: the pack's manifests as plain source, plus the deployment override
+  (``.sdo/deployment/plan.yaml``, committed as a human) that names exactly those manifests, so ``sdo-operator host``
+  deploys them as they are (the deployer agent runs only if that deploy fails). SDO then owns the app's desired state.
 * The attached pack: the same journeys, entry and app-specific faults, but ``up`` only waits for the app and
   ``down`` refuses, so fuzzops never deploys over or removes what SDO operates (``fuzzops run --skip-reset``).
 """
@@ -99,17 +100,34 @@ def images(manifests: list[Path]) -> list[str]:
 
 
 def deployment_plan(manifests: list[Path], namespace: str) -> dict[str, Any]:
-    """ProtoJSON ``DeploymentPlan``: the raw renderer over ``k8s/`` and every workload it must roll out."""
+    """ProtoJSON ``DeploymentPlan`` override: the raw renderer over ``k8s/`` (the app's ``src/`` is never deployed)."""
     if not namespace:
         raise ValueError("namespace is required")
+    if not workloads(manifests):
+        raise ValueError("the pack's manifests declare no workload")
     return {
-        "source": {
-            "renderer_id": "raw",
-            "config": {"@type": _CONFIG_TYPE + "RawRenderConfig", "paths": [MANIFEST_DIR]},
-        },
-        "images": [],
-        "expected_workload_ids": [f"{kind}/{namespace}/{name}" for kind, name in workloads(manifests)],
+        "source": {"renderer_id": "raw", "config": {"@type": _CONFIG_TYPE + "RawRenderConfig", "paths": [MANIFEST_DIR]}}
     }
+
+
+OVERRIDE_PATH = ".sdo/deployment/plan.yaml"
+
+
+def commit_override(repository: Path, plan: dict[str, Any]) -> None:
+    """Commit the override into the app repository as a human, like an engineer; a repeat commits nothing."""
+    path = repository / OVERRIDE_PATH
+    text = json.dumps(plan, separators=(",", ":"), sort_keys=True) + "\n"
+    if path.is_file() and path.read_text() == text:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    git = ["git", "-C", str(repository), "-c", "user.name=fuzzops adapter", "-c", "user.email=fuzzops-adapter@invalid"]
+    subprocess.run([*git, "add", "--force", "--", OVERRIDE_PATH], check=True, timeout=60)
+    subprocess.run(
+        [*git, "commit", "-q", "-m", "sdo: record the deployment override\n\nSDO-Actor: human\nSDO-Phase: initial"],
+        check=True,
+        timeout=60,
+    )
 
 
 SOURCE_DIR = "src"

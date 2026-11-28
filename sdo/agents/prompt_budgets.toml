@@ -13,8 +13,8 @@ max_chars = 100
 reason = "Baseline synthetic fixture maximum: 92 Unicode code points; byte-identical template extraction."
 
 [source_deployment.instructions]
-max_chars = 3200
-reason = "Baseline synthetic fixture maximum: 1072 Unicode code points; raised for the tag-pinning sentence (about 250 characters); raised again for plan-path and build-timeout guidance (about 220 characters); raised again for the dockerfile_path convention and the never-rewrite-after-timeout rule (about 130 characters).; raised again for failed-build feedback guidance (about 230 characters); raised again to teach .sdo/deployment authoring and patch capture (about 900 characters): agents write only .sdo/, app files are scratch, plan paths address the effective tree"
+max_chars = 1600
+reason = "About 1300 characters: the repository is the agent's to change, the derivation, image and override rules, commit-then-reply, and that Go deploys the last commit and returns any failing step (rewritten for the one deployment path)."
 
 [health_judge.health_objective]
 max_chars = 2000
@@ -135,10 +135,6 @@ reason = "Responder SDO command skill description; shares the existing 200-chara
 [skills.sdo-serving]
 max_chars = 200
 reason = "Serving skill description (layout, plan, images, failed builds); shares the existing 200-character skill-index allowance."
-
-[skills.sdo-source-advance]
-max_chars = 200
-reason = "Draft advance-hold skill description; shares the existing 200-character skill-index allowance."
 
 [continuation.instructions]
 max_chars = 270

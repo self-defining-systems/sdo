@@ -166,9 +166,9 @@ def build(
 
 _GENERATED = re.compile(r"^[a-z0-9]{5,10}$")  # the grammar of a plan's `*` (sdo/operator/rendered/workloads.go)
 MEMORY_COMMIT_SUBJECT = (
-    "sdo(series-base): the series' Jobs are workloads of the deployment plan\n\n"
-    "The base release's migration and bucket Jobs are in the render, and the plan names every Job a release of the\n"
-    "series carries (a generated name as Job/<namespace>/<prefix>-*).\n\n"
+    "sdo(series-base): the base release's Jobs are in the render\n\n"
+    "The base release's migration and bucket Jobs are merged into the memory's render where they sit in the base\n"
+    "release, so the series' commits apply onto it.\n\n"
 )
 #: The derived commit keeps the source memory's health judgment current when that judgment saw the source: adding
 #: the series' Jobs needs no new one.
@@ -203,16 +203,10 @@ def _jobs(render: str) -> list[str]:
     return [d["metadata"]["name"] for d in yaml.safe_load_all(render) if isinstance(d, dict) and d.get("kind") == "Job"]
 
 
-def series_job_ids(repo: Path, revisions: list[str]) -> list[str]:
-    """Every Job any of ``revisions`` renders, as plan workload IDs (sorted, once each)."""
-    ids = {stable_job_id(name) for rev in revisions for name in _jobs(_git(repo, "show", f"{rev}:{RENDER_FILE}"))}
-    return sorted(ids)
-
-
 def derive_baseline(source: Path, dest: Path, series: Path) -> str:
     """A copy of the baseline ``source`` for the series ``series`` (its ``series.json``) in ``dest``: the memory's
-    render gains the base release's Jobs (merged in where they sit in the base render) and its deployment plan names
-    every Job the series carries. Returns the new memory commit. The series' commits then apply onto it as they did
+    render gains the base release's Jobs (merged in where they sit in the base render). Returns the new memory
+    commit. The series' commits then apply onto it as they did
     onto the source. The commit claims a health judgment only when the source's last one is current
     (``judgment_current``)."""
     spec = json.loads(series.read_text())["upstream"]
@@ -240,13 +234,7 @@ def derive_baseline(source: Path, dest: Path, series: Path) -> str:
             raise ValueError(f"the base release's Jobs do not merge into the baseline's render ({merged.returncode})")
         trailers = JUDGED_TRAILERS if judgment_current(work) else UNJUDGED_TRAILERS
         (work / RENDER_FILE).write_text(merged.stdout)
-        plan_path = work / ".sdo" / "deployment" / "plan.yaml"
-        plan = json.loads(plan_path.read_text())
-        plan["expectedWorkloadIds"] += [
-            i for i in series_job_ids(repo, [spec["base"], *spec["commits"]]) if i not in plan["expectedWorkloadIds"]
-        ]
-        plan_path.write_text(json.dumps(plan, separators=(",", ":")))
-        _git(work, "commit", "-q", "-a", "-m", MEMORY_COMMIT_SUBJECT + trailers)
+        _git(work, "commit", "-q", "-a", "--allow-empty", "-m", MEMORY_COMMIT_SUBJECT + trailers)
         head = _git(work, "rev-parse", "HEAD")
         _git(work, "bundle", "create", str(dest / baseline["bundle"]), baseline["branch"])
     baseline["commit"] = head

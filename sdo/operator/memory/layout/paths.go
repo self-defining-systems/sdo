@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"path"
 	"regexp"
-	"slices"
 	"strings"
 )
 
@@ -44,7 +43,6 @@ const (
 	PlaybookScriptsDir     = "scripts"
 	DeploymentDir          = Dir + "/deployment"
 	DeploymentPlanFile     = DeploymentDir + "/plan.yaml"
-	DeploymentPatchesDir   = DeploymentDir + "/patches"
 	OutcomesDir            = Dir + "/outcomes"
 	ApplicationGenerator   = "application"
 	IncidentGenerator      = "incident"
@@ -74,7 +72,10 @@ const (
 	// without the optional labels, and an earlier recording without a class reads
 	// as unavailable.
 	// Version 14 retires optional script linkage from corpus labels.
-	CurrentSchemaVersion = 14
+	// Version 15 keeps only the optional override plan.yaml in .sdo/deployment
+	// (the retired views move to deploy/sdo/, patches are applied and removed,
+	// the telemetry overlay slot and the retired plan fields go).
+	CurrentSchemaVersion = 15
 )
 
 // Kind names a class of file in operational memory.
@@ -105,9 +106,6 @@ const (
 	KindPlaybook                Kind = "playbook"
 	KindPlaybookScript          Kind = "playbook-script"
 	KindDeploymentPlan          Kind = "deployment-plan"
-	KindDeploymentFile          Kind = "deployment-file"
-	KindDeploymentOverlay       Kind = "deployment-overlay"
-	KindDeploymentPatch         Kind = "deployment-patch"
 	KindTelemetrySources        Kind = "telemetry-sources"
 	KindTelemetryBackends       Kind = "telemetry-backends"
 	KindDataCheck               Kind = "data-check"
@@ -198,7 +196,6 @@ var (
 	playbookIDPattern = regexp.MustCompile(PlaybookIDPattern)
 	detectorIDPattern = regexp.MustCompile(DetectorIDPattern)
 	dataCheckFile     = regexp.MustCompile(`^(` + DataCheckIDPattern[1:len(DataCheckIDPattern)-1] + `)\.yaml$`)
-	deploymentPatch   = regexp.MustCompile(`^([0-9]{4}-[a-z0-9][a-z0-9-]{0,48})\.patch$`)
 	outcomeFile       = regexp.MustCompile(`^([0-9a-f]{64})\.json$`)
 )
 
@@ -258,29 +255,12 @@ func Classify(p string) (Kind, string, bool) {
 	return "", "", false
 }
 
-// DeploymentFileDirs are the directories of authored deployment files; the
-// directory name is the logical ID of every file below it. DeploymentOverlaySlots
-// are the overlay slots, each owned by one actor.
-var (
-	DeploymentFileDirs     = []string{"values", "manifests", "build"}
-	DeploymentOverlaySlots = []string{"telemetry"}
-)
-
-// classifyDeployment is strict: any path below .sdo/deployment that is not the
-// plan, a file under a known directory, a known overlay slot or a well-named
-// patch is unclassified, and therefore denied to every actor.
+// classifyDeployment is strict: .sdo/deployment holds only the optional
+// override plan.yaml; any other path below it is unclassified, and therefore
+// denied to every actor.
 func classifyDeployment(parts []string) (Kind, string, bool) {
-	switch {
-	case len(parts) == 1 && parts[0] == "plan.yaml":
+	if len(parts) == 1 && parts[0] == "plan.yaml" {
 		return KindDeploymentPlan, "", true
-	case len(parts) >= 2 && slices.Contains(DeploymentFileDirs, parts[0]):
-		return KindDeploymentFile, parts[0], true
-	case len(parts) >= 3 && parts[0] == "overlays" && slices.Contains(DeploymentOverlaySlots, parts[1]):
-		return KindDeploymentOverlay, parts[1], true
-	case len(parts) == 2 && parts[0] == "patches":
-		if match := deploymentPatch.FindStringSubmatch(parts[1]); match != nil {
-			return KindDeploymentPatch, match[1], true
-		}
 	}
 	return "", "", false
 }
@@ -360,15 +340,6 @@ func IncidentTraffic(kind Kind, id string) bool {
 // symlink named exactly Dir replaces the directory) or anything below it.
 // Every caller that decides what may touch memory uses this predicate.
 func IsMemoryPath(p string) bool { return p == Dir || strings.HasPrefix(p, Dir+"/") }
-
-// IsEffectiveDeploymentInput reports a path whose bytes shape what is deployed
-// although it lives in memory: authored values, manifests and build files,
-// overlays and patches (the inputs of the effective tree). plan.yaml and every
-// other memory path are not.
-func IsEffectiveDeploymentInput(p string) bool {
-	kind, _, ok := Classify(p)
-	return ok && (kind == KindDeploymentFile || kind == KindDeploymentOverlay || kind == KindDeploymentPatch)
-}
 
 // DetectorDir is the repository-relative directory of a detector package.
 func DetectorDir(class Class, id string) string {

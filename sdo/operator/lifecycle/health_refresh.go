@@ -44,7 +44,7 @@ func (c Coordinator) RefreshHealth(ctx context.Context, cfg Config, revision mem
 	if err != nil {
 		return broker.Receipt{}, fmt.Errorf("refresh health requirements: %w", err)
 	}
-	receipt, ready, feedback, err := c.judge(ctx, publicationID, cfg, 1, revision.Commit, revision.Commit, "", deployment)
+	receipt, ready, feedback, _, err := c.judge(ctx, publicationID, cfg, 1, revision.Commit, revision.Commit, "", deployment)
 	if err != nil {
 		return broker.Receipt{}, fmt.Errorf("refresh health requirements: %w", err)
 	}

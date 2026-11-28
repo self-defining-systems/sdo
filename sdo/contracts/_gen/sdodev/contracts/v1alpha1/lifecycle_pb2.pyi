@@ -1,5 +1,4 @@
 from buf.validate import validate_pb2 as _validate_pb2
-from google.protobuf import any_pb2 as _any_pb2
 from sdodev.contracts.v1alpha1 import deployment_source_pb2 as _deployment_source_pb2
 from sdodev.contracts.v1alpha1 import memory_diagnostic_pb2 as _memory_diagnostic_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
@@ -32,40 +31,22 @@ class SourceDeploymentRequest(_message.Message):
     def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., registry_host: _Optional[str] = ..., renderers: _Optional[_Iterable[_Union[_deployment_source_pb2.PluginDescriptor, _Mapping]]] = ..., image_sources: _Optional[_Iterable[_Union[_deployment_source_pb2.PluginDescriptor, _Mapping]]] = ...) -> None: ...
 
 class SourceDeploymentResult(_message.Message):
-    __slots__ = ("proposed", "summary", "agent_session_id", "plan")
+    __slots__ = ("proposed", "summary", "agent_session_id")
     PROPOSED_FIELD_NUMBER: _ClassVar[int]
     SUMMARY_FIELD_NUMBER: _ClassVar[int]
     AGENT_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
-    PLAN_FIELD_NUMBER: _ClassVar[int]
     proposed: bool
     summary: str
     agent_session_id: str
-    plan: DeploymentPlan
-    def __init__(self, proposed: _Optional[bool] = ..., summary: _Optional[str] = ..., agent_session_id: _Optional[str] = ..., plan: _Optional[_Union[DeploymentPlan, _Mapping]] = ...) -> None: ...
+    def __init__(self, proposed: _Optional[bool] = ..., summary: _Optional[str] = ..., agent_session_id: _Optional[str] = ...) -> None: ...
 
 class DeploymentPlan(_message.Message):
-    __slots__ = ("strategy_id", "strategy_config", "source", "images", "expected_workload_ids")
-    STRATEGY_ID_FIELD_NUMBER: _ClassVar[int]
-    STRATEGY_CONFIG_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("source", "images")
     SOURCE_FIELD_NUMBER: _ClassVar[int]
     IMAGES_FIELD_NUMBER: _ClassVar[int]
-    EXPECTED_WORKLOAD_IDS_FIELD_NUMBER: _ClassVar[int]
-    strategy_id: str
-    strategy_config: _any_pb2.Any
     source: _deployment_source_pb2.DeploymentSource
     images: _containers.RepeatedCompositeFieldContainer[_deployment_source_pb2.ImageSource]
-    expected_workload_ids: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, strategy_id: _Optional[str] = ..., strategy_config: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., source: _Optional[_Union[_deployment_source_pb2.DeploymentSource, _Mapping]] = ..., images: _Optional[_Iterable[_Union[_deployment_source_pb2.ImageSource, _Mapping]]] = ..., expected_workload_ids: _Optional[_Iterable[str]] = ...) -> None: ...
-
-class RawManifestStrategy(_message.Message):
-    __slots__ = ("image_builds", "manifest_paths", "expected_workload_ids")
-    IMAGE_BUILDS_FIELD_NUMBER: _ClassVar[int]
-    MANIFEST_PATHS_FIELD_NUMBER: _ClassVar[int]
-    EXPECTED_WORKLOAD_IDS_FIELD_NUMBER: _ClassVar[int]
-    image_builds: _containers.RepeatedCompositeFieldContainer[ImageBuild]
-    manifest_paths: _containers.RepeatedScalarFieldContainer[str]
-    expected_workload_ids: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, image_builds: _Optional[_Iterable[_Union[ImageBuild, _Mapping]]] = ..., manifest_paths: _Optional[_Iterable[str]] = ..., expected_workload_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[_deployment_source_pb2.DeploymentSource, _Mapping]] = ..., images: _Optional[_Iterable[_Union[_deployment_source_pb2.ImageSource, _Mapping]]] = ...) -> None: ...
 
 class ImageBuild(_message.Message):
     __slots__ = ("image", "context_path", "dockerfile_path")

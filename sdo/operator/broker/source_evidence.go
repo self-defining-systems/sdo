@@ -15,8 +15,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 )
 
@@ -26,10 +24,9 @@ import (
 var ErrSourceEvidencePredatesDeploymentSource = errors.New("deployment evidence predates deployment_source (written by an older operator); persistent lanes must reinstall the operator (`sdo-operator install --fresh` / lane reset)")
 
 // ErrSourceEvidencePredatesEffectiveTree marks a ledger record written before
-// receipts bound the effective tree and the deployment patch series. It has no
-// reader: the deployed workloads carry a different source stamp, so the lane
-// must be reinstalled.
-var ErrSourceEvidencePredatesEffectiveTree = errors.New("deployment evidence predates effective_tree and patches_digest (written by an older operator); persistent lanes must reinstall the operator (`sdo-operator install --fresh` / lane reset)")
+// receipts bound the effective tree. It has no reader: the deployed workloads
+// carry a different source stamp, so the lane must be reinstalled.
+var ErrSourceEvidencePredatesEffectiveTree = errors.New("deployment evidence predates effective_tree (written by an older operator); persistent lanes must reinstall the operator (`sdo-operator install --fresh` / lane reset)")
 
 // ErrSourceEvidenceCarriesPlan marks a ledger record written while the plan
 // lived in the evidence. The plan is now .sdo/deployment/plan.yaml in the
@@ -40,7 +37,7 @@ func validateSourceEvidence(value SourceEvidence) error {
 	if value.AcceptedCommit != "" {
 		return errors.New("deployment evidence cannot claim an accepted commit")
 	}
-	if !validGitID(value.BaseTree) || !validGitID(value.EffectiveTree) || !validSHA256(value.PatchesDigest) || value.ObservedRevision != value.EffectiveTree || !value.Ready || len(value.Images) == 0 || len(value.ResourceIDs) == 0 {
+	if !validGitID(value.BaseTree) || !validGitID(value.EffectiveTree) || value.ObservedRevision != value.EffectiveTree || !value.Ready || len(value.Images) == 0 || len(value.ResourceIDs) == 0 {
 		return errors.New("trusted source evidence is incomplete or does not match the deployed tree")
 	}
 	if value.DeploymentSource == nil || value.DeploymentSource.GetRendererId() == "" || value.DeploymentSource.GetConfig() == nil {
@@ -71,43 +68,10 @@ func requireEffectiveEvidence(ctx context.Context, root, tree string, evidence S
 	if err != nil {
 		return fmt.Errorf("compute effective tree of the staged source: %w", err)
 	}
-	defer effective.Close()
-	if effective.ID != evidence.EffectiveTree || effective.PatchesDigest != evidence.PatchesDigest {
-		return fmt.Errorf("staged effective tree %s (patches %s) differs from the verified deployment's %s (patches %s)", effective.ID, effective.PatchesDigest, evidence.EffectiveTree, evidence.PatchesDigest)
+	if effective.ID != evidence.EffectiveTree {
+		return fmt.Errorf("staged effective tree %s differs from the verified deployment's %s", effective.ID, evidence.EffectiveTree)
 	}
 	return nil
-}
-
-// requirePlanEvidence requires the plan.yaml of root's candidate tree to
-// declare the deployment source the deployer verified. The plan is what the
-// controller and the next advance read, so a tree whose plan names another
-// source than the deployed one is never accepted.
-func requirePlanEvidence(ctx context.Context, root string, evidence SourceEvidence, catalogs planfile.Catalogs) error {
-	tree, err := ProposalTreeDigest(ctx, root)
-	if err != nil {
-		return err
-	}
-	plan, err := planAtTree(ctx, root, tree, catalogs)
-	if err != nil {
-		return err
-	}
-	if !rendered.SameDeploymentSource(plan.GetSource(), evidence.DeploymentSource) {
-		return errors.New("the staged tree's .sdo/deployment/plan.yaml names another deployment source than the verified deployment")
-	}
-	return nil
-}
-
-// planAtTree reads and decodes .sdo/deployment/plan.yaml of a tree object.
-func planAtTree(ctx context.Context, repository, tree string, catalogs planfile.Catalogs) (*contracts.DeploymentPlan, error) {
-	data, err := runGit(ctx, repository, "cat-file", "blob", tree+":"+layout.DeploymentPlanFile)
-	if err != nil {
-		return nil, fmt.Errorf("the tree has no %s (%w): %w", layout.DeploymentPlanFile, err, planfile.ErrAbsent)
-	}
-	plan, err := planfile.Parse(data, catalogs)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", layout.DeploymentPlanFile, err)
-	}
-	return plan, nil
 }
 
 func validSHA256(value string) bool {
@@ -117,28 +81,30 @@ func validSHA256(value string) bool {
 // sourceEvidenceRecord is the durable JSON form. Protobuf fields are stored as
 // ProtoJSON so their Any configs stay readable and survive Go struct changes.
 type sourceEvidenceRecord struct {
-	ContainerImages   []rendered.DeployedImage `json:"container_images,omitempty"`
-	DeploymentSource  json.RawMessage          `json:"deployment_source"`
-	BaseTree          string                   `json:"base_tree"`
-	EffectiveTree     string                   `json:"effective_tree"`
-	PatchesDigest     string                   `json:"patches_digest"`
-	ObservedRevision  string                   `json:"observed_revision"`
-	RenderDigest      string                   `json:"render_digest"`
-	EnvDigest         string                   `json:"env_digest"`
-	RenderEnvironment json.RawMessage          `json:"render_environment,omitempty"`
-	DeploymentPolicy  json.RawMessage          `json:"deployment_policy,omitempty"`
-	Images            []string                 `json:"images"`
-	ResourceIDs       []string                 `json:"resource_ids"`
-	Ready             bool                     `json:"ready"`
-	Recreated         []rendered.Recreation    `json:"recreated,omitempty"`
-	AcceptedCommit    string                   `json:"accepted_commit,omitempty"`
-	OperabilityDigest string                   `json:"operability_digest,omitempty"`
+	ContainerImages  []rendered.DeployedImage `json:"container_images,omitempty"`
+	DeploymentSource json.RawMessage          `json:"deployment_source"`
+	BaseTree         string                   `json:"base_tree"`
+	EffectiveTree    string                   `json:"effective_tree"`
+	// RetiredPatchesDigest is read and ignored: records written while
+	// deployment patches existed carry the digest of an empty series.
+	RetiredPatchesDigest string                `json:"patches_digest,omitempty"`
+	ObservedRevision     string                `json:"observed_revision"`
+	RenderDigest         string                `json:"render_digest"`
+	EnvDigest            string                `json:"env_digest"`
+	RenderEnvironment    json.RawMessage       `json:"render_environment,omitempty"`
+	DeploymentPolicy     json.RawMessage       `json:"deployment_policy,omitempty"`
+	Images               []string              `json:"images"`
+	ResourceIDs          []string              `json:"resource_ids"`
+	Ready                bool                  `json:"ready"`
+	Recreated            []rendered.Recreation `json:"recreated,omitempty"`
+	AcceptedCommit       string                `json:"accepted_commit,omitempty"`
+	OperabilityDigest    string                `json:"operability_digest,omitempty"`
 }
 
 // MarshalJSON encodes the ledger record.
 func (e SourceEvidence) MarshalJSON() ([]byte, error) {
 	record := sourceEvidenceRecord{
-		ContainerImages: e.ContainerImages, BaseTree: e.BaseTree, EffectiveTree: e.EffectiveTree, PatchesDigest: e.PatchesDigest, ObservedRevision: e.ObservedRevision,
+		ContainerImages: e.ContainerImages, BaseTree: e.BaseTree, EffectiveTree: e.EffectiveTree, ObservedRevision: e.ObservedRevision,
 		RenderDigest: e.RenderDigest, EnvDigest: e.EnvDigest, Images: e.Images, ResourceIDs: e.ResourceIDs,
 		Ready: e.Ready, Recreated: e.Recreated, AcceptedCommit: e.AcceptedCommit, OperabilityDigest: e.OperabilityDigest,
 	}
@@ -187,8 +153,7 @@ func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 	}
 	value := SourceEvidence{
 		ContainerImages: record.ContainerImages, DeploymentSource: &contracts.DeploymentSource{}, BaseTree: record.BaseTree,
-		EffectiveTree: record.EffectiveTree, PatchesDigest: record.PatchesDigest,
-		ObservedRevision: record.ObservedRevision, RenderDigest: record.RenderDigest, EnvDigest: record.EnvDigest,
+		EffectiveTree: record.EffectiveTree, ObservedRevision: record.ObservedRevision, RenderDigest: record.RenderDigest, EnvDigest: record.EnvDigest,
 		Images: record.Images, ResourceIDs: record.ResourceIDs, Ready: record.Ready, Recreated: record.Recreated, AcceptedCommit: record.AcceptedCommit, OperabilityDigest: record.OperabilityDigest,
 	}
 	if err := protojson.Unmarshal(record.DeploymentSource, value.DeploymentSource); err != nil {

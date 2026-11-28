@@ -24,7 +24,6 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operability"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
@@ -86,7 +85,6 @@ type SourceEvidence struct {
 	// deployed pod-template stamp, and so ObservedRevision, is EffectiveTree.
 	BaseTree         string
 	EffectiveTree    string
-	PatchesDigest    string
 	ObservedRevision string
 	RenderDigest     string
 	EnvDigest        string
@@ -308,11 +306,6 @@ func (b *Broker) createProposal(ctx context.Context, incidentID string, phase Ph
 				return err
 			}
 		}
-		if materializesPatches(phase) {
-			if _, err := patchset.Materialize(ctx, checkout); err != nil {
-				return fmt.Errorf("materialize the effective view of %s: %w", base, err)
-			}
-		}
 		proposal = Proposal{IncidentID: incidentID, Path: checkout, BaseCommit: base}
 		if err := validate.WritePublicationContext(ctx, checkout, validate.PublicationContext{BaseCommit: base, IncidentID: incidentID, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace}); err != nil {
 			return err
@@ -439,15 +432,10 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 				return err
 			}
 		}
-		if scratchChecked(actor, phase) {
-			if paths, err = requireCapturedScratch(ctx, proposal.Path, paths); err != nil {
-				return err
-			}
-		}
 		candidateRoot := proposal.Path
 		var sourceBody string
-		if actor == Responder && phase == ProposalPhase {
-			// The responder's .sdo/ edits are the working tree; its source is
+		if publishesCommittedSource(actor, phase) {
+			// The agent's .sdo/ edits are the working tree; its source is
 			// what it committed. Scratch (uncommitted app files) is never part
 			// of the publication.
 			change, err := SourceChangeOf(ctx, proposal.Path, proposal.BaseCommit)
@@ -457,35 +445,44 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 			if err := b.requireSourceRules(ctx, proposal.Path, proposal.BaseCommit, change); err != nil {
 				return err
 			}
-			paths = SourceRepairPaths(partitionPaths(paths).SDO)
-			paths = append(paths, change.Kept...)
-			sort.Strings(paths)
-			if len(paths) == 0 {
-				receipt = Receipt{IncidentID: incidentID, Phase: phase}
-				return nil
+			paths = partitionPaths(paths).SDO
+			if actor == Responder && phase == ProposalPhase {
+				// Working programs are never part of a responder's source publication.
+				paths = SourceRepairPaths(paths)
 			}
-			sourceBody = squashBody(change.Subjects)
-			// Validate the exact source-only submission in a private tree. Working
-			// programs are never included in a source publication or its compile check.
-			sourceStage, cleanup, err := b.privateClone(ctx)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			if _, err := runGit(ctx, sourceStage, "checkout", "--quiet", "--detach", proposal.BaseCommit); err != nil {
-				return err
-			}
-			for _, path := range paths {
-				if entry, kept := change.entries[path]; kept {
-					err = copyCommitted(ctx, proposal.Path, sourceStage, path, entry)
-				} else {
-					err = copyChange(proposal.Path, sourceStage, path)
+			// A memory-only reflection or deployer change publishes from the
+			// checkout as before (its scratch app files dropped); committed
+			// source is copied, as committed, into a private stage.
+			if len(change.Kept) > 0 || (actor == Responder && phase == ProposalPhase) {
+				paths = append(paths, change.Kept...)
+				sort.Strings(paths)
+				if len(paths) == 0 {
+					receipt = Receipt{IncidentID: incidentID, Phase: phase}
+					return nil
 				}
+				sourceBody = squashBody(change.Subjects)
+				// Validate the exact source submission in a private tree. Working
+				// programs are never included in a source publication or its compile check.
+				sourceStage, cleanup, err := b.privateClone(ctx)
 				if err != nil {
 					return err
 				}
+				defer cleanup()
+				if _, err := runGit(ctx, sourceStage, "checkout", "--quiet", "--detach", proposal.BaseCommit); err != nil {
+					return err
+				}
+				for _, path := range paths {
+					if entry, kept := change.entries[path]; kept {
+						err = copyCommitted(ctx, proposal.Path, sourceStage, path, entry)
+					} else {
+						err = copyChange(proposal.Path, sourceStage, path)
+					}
+					if err != nil {
+						return err
+					}
+				}
+				candidateRoot = sourceStage
 			}
-			candidateRoot = sourceStage
 		}
 		publication := &validate.PublicationContext{BaseCommit: proposal.BaseCommit, IncidentID: incidentID, VerifiedSourceTree: expectedSourceTree}
 		if phase == ReflectionPhase && decision == nil {
@@ -508,7 +505,7 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 			return nil
 		}
 		if expectedSourceTree != "" {
-			actualTree, err := ProposalTreeDigest(ctx, candidateRoot)
+			actualTree, err := stagedTreeDigest(ctx, candidateRoot, paths)
 			if err != nil {
 				return err
 			}
@@ -569,7 +566,7 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 			// A moved head carries memory history the verified tree does not
 			// have, so the replay is bound by its effective identity (below);
 			// at an unmoved head the whole tree must be the verified one.
-			stagedTree, err := ProposalTreeDigest(ctx, stage)
+			stagedTree, err := stagedTreeDigest(ctx, stage, paths)
 			if err != nil {
 				return err
 			}
@@ -577,9 +574,6 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 				return errors.New("staged source tree differs from verified deployment")
 			}
 			if err := requireEffectiveEvidence(ctx, stage, stagedTree, *evidence); err != nil {
-				return err
-			}
-			if err := requirePlanEvidence(ctx, stage, *evidence, b.PlanCatalogs); err != nil {
 				return err
 			}
 		}
@@ -616,6 +610,15 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 	return receipt, err
 }
 
+// publishesCommittedSource reports the publications whose app files are what
+// the agent committed: a responder's source repair, the reflection checkout
+// (where Go commits program source proposals) and the deployer's initial
+// change. Everything an agent leaves uncommitted there is scratch that is
+// never published or deployed.
+func publishesCommittedSource(actor Actor, phase Phase) bool {
+	return actor == Responder && (phase == ProposalPhase || phase == ReflectionPhase) || actor == Deployer && phase == InitialPhase
+}
+
 // ChangedPaths reports the actual proposal tree diff, including local agent
 // commits, staged changes, and untracked files. It never trusts worker claims.
 func (b *Broker) ChangedPaths(ctx context.Context, incidentID string, phase Phase) ([]string, error) {
@@ -624,10 +627,10 @@ func (b *Broker) ChangedPaths(ctx context.Context, incidentID string, phase Phas
 		return nil, err
 	}
 	paths, err := validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit)
-	if err != nil || phase != ProposalPhase {
+	if err != nil || (phase != ProposalPhase && phase != ReflectionPhase && phase != InitialPhase) {
 		return paths, err
 	}
-	// A responder's source is what it committed; its scratch is not a change.
+	// An agent's source is what it committed; its scratch is not a change.
 	change, err := SourceChangeOf(ctx, proposal.Path, proposal.BaseCommit)
 	if err != nil {
 		return nil, err
@@ -1016,39 +1019,30 @@ func gitText(ctx context.Context, cwd string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// ProposalTreeDigest computes the candidate Git tree an agent can publish: the
-// base tree (the checkout's recorded base when it has an effective view, else
-// HEAD) with the working .sdo/ directory in place. Agents write only .sdo/, so
-// app files never participate: scratch edits in the working tree are not part
-// of the candidate. The index is not changed. Both deployment and publish use
-// this exact convention.
+// ProposalTreeDigest computes the candidate Git tree an agent can publish: its
+// committed HEAD tree with the working .sdo/ directory in place. Agents edit
+// memory in the working tree and change app files by committing them, so
+// uncommitted app files (scratch) are never part of the candidate. The index is
+// not changed. Both deployment and publish use this exact convention.
 func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
-	return candidateTreeDigest(ctx, checkout, treeSDOOnly)
+	return candidateTreeDigest(ctx, checkout, treeSDOOnly, nil)
 }
 
-// advanceTreeDigest is the complete working tree of an upstream advance's
-// merge checkout. The advance is the one actor that changes app files, so the
-// merged files (staged by the three-way merge, not committed) are part of its
-// tree.
-func advanceTreeDigest(ctx context.Context, checkout string) (string, error) {
-	return candidateTreeDigest(ctx, checkout, treeComplete)
-}
-
-// advanceSourceTreeDigest is advanceTreeDigest without .sdo/: the source as
-// upstream knows it, for the mirror invariant.
-func advanceSourceTreeDigest(ctx context.Context, checkout string) (string, error) {
-	return candidateTreeDigest(ctx, checkout, treeNonSDO)
+// stagedTreeDigest is the tree of a broker stage: HEAD with the working
+// content of paths (the copied publication) in place. A stage holds nothing
+// else, so it equals ProposalTreeDigest of the proposal it was copied from.
+func stagedTreeDigest(ctx context.Context, stage string, paths []string) (string, error) {
+	return candidateTreeDigest(ctx, stage, treePaths, paths)
 }
 
 type treeScope int
 
 const (
 	treeSDOOnly treeScope = iota
-	treeComplete
-	treeNonSDO
+	treePaths
 )
 
-func candidateTreeDigest(ctx context.Context, checkout string, scope treeScope) (string, error) {
+func candidateTreeDigest(ctx context.Context, checkout string, scope treeScope, paths []string) (string, error) {
 	root, err := filepath.Abs(checkout)
 	if err != nil {
 		return "", err
@@ -1064,22 +1058,20 @@ func candidateTreeDigest(ctx context.Context, checkout string, scope treeScope) 
 		output, err := runGitEnv(ctx, root, env, args...)
 		return strings.TrimSpace(string(output)), err
 	}
-	base := "HEAD"
-	if scope == treeSDOOnly {
-		// An agent's local commit (for example of materialized patched files)
-		// must not move the base: the checkout recorded it at creation.
-		view, ok, err := patchset.LoadView(ctx, root)
-		if err != nil {
-			return "", err
-		}
-		if ok {
-			base = view.BaseTree
-		}
-	}
-	if _, err := run("read-tree", base); err != nil {
+	if _, err := run("read-tree", "HEAD"); err != nil {
 		return "", err
 	}
 	switch scope {
+	case treePaths:
+		if len(paths) > 0 {
+			list := filepath.Join(indexDir, "paths")
+			if err := os.WriteFile(list, []byte(strings.Join(paths, "\x00")+"\x00"), 0o600); err != nil {
+				return "", err
+			}
+			if _, err := run("--literal-pathspecs", "add", "-A", "--pathspec-from-file="+list, "--pathspec-file-nul"); err != nil {
+				return "", err
+			}
+		}
 	case treeSDOOnly:
 		if _, err := os.Lstat(filepath.Join(root, layout.Dir)); err == nil {
 			if _, err := run("add", "-A", "--", layout.Dir); err != nil {
@@ -1093,18 +1085,9 @@ func candidateTreeDigest(ctx context.Context, checkout string, scope treeScope) 
 		} else {
 			return "", err
 		}
-	default:
-		if _, err := run("add", "-A"); err != nil {
-			return "", err
-		}
 	}
 	if err := addIgnoredOperationalMemory(ctx, root, env); err != nil {
 		return "", err
-	}
-	if scope == treeNonSDO {
-		if _, err := run("rm", "-r", "--cached", "--ignore-unmatch", "-q", "--", layout.Dir); err != nil {
-			return "", err
-		}
 	}
 	tree, err := run("write-tree")
 	if err != nil {

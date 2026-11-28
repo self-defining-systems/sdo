@@ -47,14 +47,7 @@ const (
 	RuleManifestLocation = "manifest.location"
 	RuleSourcesInvalid   = "sources.invalid"
 
-	// Deployment class (.sdo/deployment): the strict patch format, the owner
-	// header, the stated upstream base, and the plan's catalog decode.
-	RulePatchInvalid      = "patch.invalid"
-	RulePatchOwner        = "patch.owner"
-	RulePatchUpstreamBase = "patch.upstream-base"
-	// RulePatchUncaptured is the broker publish rule: app files of the agent's
-	// checkout that the patch series does not reproduce are never published.
-	RulePatchUncaptured   = "patch.uncaptured"
+	// Deployment override (.sdo/deployment/plan.yaml): the plan's catalog decode.
 	RuleDeploymentInvalid = "deployment.invalid"
 
 	// Application source an agent committed (the broker's source publication):

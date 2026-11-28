@@ -85,7 +85,7 @@ func memoryInputProblem(label, contextRel, dockerfileRel string) string {
 		problems = append(problems, fmt.Sprintf("%s context_path %q is in operational memory (.sdo/); the build context is the application source (for example services/api).", label, contextRel))
 	}
 	if !imagesrc.BuildInputAllowed(dockerfileRel, true) {
-		problems = append(problems, fmt.Sprintf("%s dockerfile_path %q is memory a build may not read; an authored Dockerfile goes under %s/ (for example %s/api/Dockerfile).", label, dockerfileRel, imagesrc.AuthoredDockerfileDir, imagesrc.AuthoredDockerfileDir))
+		problems = append(problems, fmt.Sprintf("%s dockerfile_path %q is in operational memory (.sdo/), which a build never reads; commit the Dockerfile with the application source (for example deploy/sdo/build/api/Dockerfile).", label, dockerfileRel))
 	}
 	return strings.Join(problems, " ")
 }

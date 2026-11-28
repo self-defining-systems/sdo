@@ -1,9 +1,8 @@
-"""Source deployment plan worker. Go owns build, apply, verification, and acceptance."""
+"""Source deployment worker: the agent commits deployment files; Go builds, deploys, verifies and accepts."""
 
 from __future__ import annotations
 
 import os
-import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
@@ -26,10 +25,6 @@ from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
     AgentTask,
-    BuildKitImageConfig,
-    DeploymentPlan,
-    DeploymentSource,
-    RawRenderConfig,
     SourceDeploymentRequest,
     SourceDeploymentResult,
     parse_json,
@@ -47,86 +42,21 @@ class ResultPublisher(Protocol):
     def publish_payload(self, name: str, key: str, payload: str) -> None: ...
 
 
-class ImageBuildDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    image: str = Field(min_length=1)
-    context_path: str = Field(min_length=1)
-    dockerfile_path: str = Field(min_length=1)
-
-
 class SourceProposalDraft(BaseModel):
+    """The agent's reply: its work is the checkout's last commit, not the reply."""
+
     model_config = ConfigDict(extra="forbid")
 
     proposed: bool
     summary: str = Field(min_length=1)
-    image_builds: list[ImageBuildDraft]
-    manifest_paths: list[str]
-    expected_workload_ids: list[str]
 
 
 def _provider(agent: ResolvedAgent) -> Literal["codex", "claude"]:
     return "claude" if agent.provider == "claude" else "codex"
 
 
-# Deployment-class directories the effective tree exposes to renderers and builds (layout kinds
-# deployment-file and deployment-overlay). plan.yaml, patches and memory are never plan paths.
-_EFFECTIVE_DEPLOYMENT_DIRS = frozenset({"values", "manifests", "build", "overlays"})
-
-
-def _source_path(value: str) -> str:
-    """A plan path addresses the effective tree: application files or `.sdo/deployment/<dir>/...` files."""
-
-    path = Path(value)
-    if not value or path.is_absolute() or ".." in path.parts or value != value.strip():
-        raise ValueError(f"deployment plan path must stay in the effective tree: {value!r}")
-    if path.parts[:1] == (".sdo",) and not _authored_deployment_path(path):
-        raise ValueError(
-            "deployment plan path under .sdo/ must be .sdo/deployment/{values,manifests,build,overlays}/...: "
-            f"{value!r}"
-        )
-    return path.as_posix()
-
-
-def _authored_deployment_path(path: Path) -> bool:
-    return len(path.parts) >= 4 and path.parts[1] == "deployment" and path.parts[2] in _EFFECTIVE_DEPLOYMENT_DIRS
-
-
-# A DNS-1123 subdomain, the rule the Go host applies to --registry-host (buildkit.ValidateRegistryHost).
-_DNS_SUBDOMAIN = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
-# One OCI repository path component of an optional registry path prefix.
-_PATH_COMPONENT = re.compile(r"[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*")
-
-
-def _valid_registry_host(registry_host: str) -> bool:
-    """host[:port][/path] exactly as the Go host accepts it: the port is optional (a cloud registry serves HTTPS on
-    443) and a path prefix serves registries that need a repository path."""
-    authority, _, prefix = registry_host.partition("/")
-    if registry_host.endswith("/") or (prefix and not all(_PATH_COMPONENT.fullmatch(c) for c in prefix.split("/"))):
-        return False
-    name, has_port, port = authority.partition(":")
-    if has_port and not (port.isdigit() and port.isascii() and 1 <= int(port) <= 65535):
-        return False
-    return len(name) <= 253 and _DNS_SUBDOMAIN.fullmatch(name) is not None
-
-
-def _trusted_image(image: str, registry_host: str) -> str:
-    if not _valid_registry_host(registry_host):
-        raise ValueError("source deployment requires a trusted registry host")
-    if not image.startswith(registry_host + "/") or image == registry_host + "/":
-        raise ValueError(f"image build target must use trusted registry {registry_host!r}")
-    return image
-
-
-def _workload_id(value: str) -> str:
-    parts = value.split("/")
-    if len(parts) != 3 or any(not part or part.strip() != part for part in parts):
-        raise ValueError(f"expected workload ID must be Kind/namespace/name: {value!r}")
-    return value
-
-
 def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDeploymentResult:
-    """Let the built-in coding agent edit a proposal and return a constrained plan."""
+    """Let the built-in coding agent commit deployment files in its proposal checkout."""
 
     agent = resolve_agent("source_deployment", "deployment")
     prompt = render_prompt(
@@ -154,29 +84,7 @@ def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDe
         timeout_seconds=1800,
     )
     draft = SourceProposalDraft.model_validate_json(turn.output_json)
-    manifest_paths = [_source_path(path) for path in draft.manifest_paths]
-    expected_workload_ids = [_workload_id(value) for value in draft.expected_workload_ids]
-    if draft.proposed and (not manifest_paths or not expected_workload_ids):
-        raise ValueError("deployment proposal requires manifests and expected workloads")
-    plan = DeploymentPlan(
-        source=DeploymentSource(renderer_id="raw"),
-        expected_workload_ids=expected_workload_ids,
-    )
-    plan.source.config.Pack(RawRenderConfig(paths=manifest_paths))
-    for build in draft.image_builds:
-        image = plan.images.add(image=_trusted_image(build.image, request.registry_host), source_id="buildkit")
-        image.config.Pack(
-            BuildKitImageConfig(
-                context_path=_source_path(build.context_path),
-                dockerfile_path=_source_path(build.dockerfile_path),
-            )
-        )
-    return SourceDeploymentResult(
-        proposed=draft.proposed,
-        summary=draft.summary,
-        agent_session_id=turn.session_id,
-        plan=plan,
-    )
+    return SourceDeploymentResult(proposed=draft.proposed, summary=draft.summary, agent_session_id=turn.session_id)
 
 
 def run_deployment_task(
@@ -193,7 +101,7 @@ def run_deployment_task(
     request = SourceDeploymentRequest()
     if not task.request.Unpack(request):
         raise ValueError("source deployment request has wrong type")
-    if not request.application or not request.namespace or request.attempt < 1 or not request.registry_host:
+    if not request.application or not request.namespace or request.attempt < 1:
         raise ValueError("source deployment request is incomplete")
     typed = execute(request, Path(task.workspace.checkout_path))
     result = AgentResult(

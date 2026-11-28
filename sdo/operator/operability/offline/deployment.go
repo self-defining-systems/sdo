@@ -1,7 +1,7 @@
 // Package offline computes the operability checks that need no cluster:
-// patches apply, the effective tree renders, images are declared or derived
-// consistently, scope and registry limits hold. It only adapts results the
-// owning packages already compute (rendered, patchset, imagesrc) into
+// the effective tree renders, images are declared or derived consistently,
+// scope and registry limits hold. It only adapts results the owning packages
+// already compute (rendered, imagesrc) into
 // operability.Check values. Renderers are pure by construction (render's
 // purity tests), so a tree renders once.
 package offline
@@ -16,7 +16,6 @@ import (
 
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/operability"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/rendered"
 )
 
@@ -44,9 +43,9 @@ type Policy struct {
 
 // Deployment is everything the offline deployment checks read.
 type Deployment struct {
-	// PatchesErr is the error of applying the patch series
-	// (rendered.Effective); nil when the series applied.
-	PatchesErr error
+	// TreeErr is the error of computing the effective tree
+	// (rendered.Effective); nil when it was computed.
+	TreeErr error
 	// Render renders the effective tree with the one render environment.
 	Render func(context.Context) (rendered.DesiredSet, error)
 	// ServedAPIs are the recorded discovery's group/version and
@@ -60,7 +59,7 @@ type Deployment struct {
 }
 
 // Result is the checks of O1, O2 and O6 plus the desired set of the first
-// render (zero when patches or render failed), from which callers take the
+// render (zero when the tree or render failed), from which callers take the
 // render digests for the report subject.
 type Result struct {
 	Checks []operability.Check
@@ -70,7 +69,7 @@ type Result struct {
 	UnusedImages []string
 }
 
-// CheckDeployment runs the cheap-first offline deployment checks. A patch or
+// CheckDeployment runs the cheap-first offline deployment checks. A tree or
 // render failure stops the sequence: later checks would only repeat it.
 func CheckDeployment(ctx context.Context, d Deployment) Result {
 	var res Result
@@ -84,12 +83,10 @@ func CheckDeployment(ctx context.Context, d Deployment) Result {
 		return res
 	}
 
-	if d.PatchesErr != nil {
-		add(failure("O1.patches", classifyPatches(d.PatchesErr), d.PatchesErr, patchPaths(d.PatchesErr)))
-		return stop("O1.patches", afterPatches()...)
+	if d.TreeErr != nil {
+		add(failure("O1.render", classifyRender(d.TreeErr, operability.CauseInternal), d.TreeErr, nil))
+		return stop("O1.render", afterRender()...)
 	}
-	add(pass("O1.patches", "patch series applies"))
-
 	if d.Render == nil {
 		add(operability.Check{ID: "O1.render", Phase: operability.PhaseOffline, Status: operability.StatusFail, Cause: operability.CauseInternal, Detail: "no render function was supplied"})
 		return stop("O1.render", afterRender()...)
@@ -140,15 +137,13 @@ func CheckPolicy(set rendered.DesiredSet, p Policy) []operability.Check {
 // fails, in order. Adapters that stand in for the offline gate use it so they
 // cannot drift from the real producer.
 func DeploymentCheckIDs() []string {
-	return append([]string{"O1.patches", "O1.render"}, afterRender()...)
+	return append([]string{"O1.render"}, afterRender()...)
 }
 
 // Checks that depend on an earlier one, in the order CheckDeployment runs them.
 func afterRender() []string {
 	return []string{"O1.apis", "O2.images", "O6.scope", "O6.allowlist"}
 }
-
-func afterPatches() []string { return append([]string{"O1.render"}, afterRender()...) }
 
 func pass(id, detail string) operability.Check {
 	return operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusPass, Detail: operability.Clip(detail)}
@@ -160,28 +155,6 @@ func note(id, detail string, paths ...string) operability.Check {
 
 func failure(id string, cause operability.Cause, err error, paths []string) operability.Check {
 	return operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusFail, Cause: cause, Detail: operability.Clip(err.Error()), Paths: paths}
-}
-
-// classifyPatches maps the result of applying the series. A patch error is the
-// deployer's; unavailable git I/O is infrastructure; anything else is a defect.
-func classifyPatches(err error) operability.Cause {
-	var patchErr *patchset.PatchError
-	if errors.As(err, &patchErr) {
-		return operability.CausePatch
-	}
-	return classifyRender(err, operability.CauseInternal)
-}
-
-func patchPaths(err error) []string {
-	var patchErr *patchset.PatchError
-	if errors.As(err, &patchErr) {
-		paths := append([]string(nil), patchErr.Paths...)
-		if patchErr.Patch != "" {
-			paths = append([]string{patchset.Directory + "/" + patchErr.Patch}, paths...)
-		}
-		return paths
-	}
-	return nil
 }
 
 // ClassifyRender maps a render or source error to a cause for adapters outside

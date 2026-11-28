@@ -58,8 +58,8 @@ func TestGitTreeFSReadsTheLsTreeListing(t *testing.T) {
 			t.Errorf("Stat(%s) = %v, want not exist", name, err)
 		}
 	}
-	if _, err := fsys.Stat(".sdo/deployment/values/p.yaml"); err != nil {
-		t.Fatalf("deployment views must stay visible: %v", err)
+	if _, err := fsys.Stat(".sdo/deployment/values/p.yaml"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("no part of .sdo/ is a deployment input: %v", err)
 	}
 }
 

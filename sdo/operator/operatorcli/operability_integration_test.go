@@ -13,7 +13,6 @@ import (
 
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/operability"
-	"sdo.dev/operator/patchset"
 )
 
 // cleanPlan expects the one ConfigMap world has: no workloads.
@@ -52,7 +51,7 @@ func TestOperabilityCheckOfflineCleanCheckout(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("clean = %d\n%s%s", code, out, errOut)
 	}
-	for _, line := range []string{"pass     O1.patches", "pass     O1.render", "pass     O6.scope", "skipped  O6.allowlist", "decision: accepted"} {
+	for _, line := range []string{"pass     O1.render", "pass     O6.scope", "skipped  O6.allowlist", "decision: accepted"} {
 		if !strings.Contains(out, line) {
 			t.Errorf("missing %q in\n%s", line, out)
 		}
@@ -69,50 +68,27 @@ func TestOperabilityCheckOfflineCleanCheckout(t *testing.T) {
 
 func TestOperabilityCheckOfflineReportsTypedFailures(t *testing.T) {
 	work := cliWorld(t)
-	writePlan(t, work, strings.Replace(cleanPlan, `"paths":["k8s"]`, `"paths":["absent"]`, 1))
-	code, out, _ := operabilityCLI(t, nil, "check", "--offline", "--root", work, "--json")
-	o := decodeOutput(t, out)
-	if code != 1 || o.Decision.Kind != operability.Correct || o.Decision.Owner != operability.OwnerDeployer || len(o.Decision.Checks) != 1 || o.Decision.Checks[0] != "O1.render" {
-		t.Fatalf("missing manifests = %d %+v", code, o.Decision)
-	}
-	code, out, _ = operabilityCLI(t, nil, "check", "--offline", "--root", work, "--allow-registry", "ghcr.io")
-	if code != 1 || !strings.Contains(out, "fail     O1.render [render]") || !strings.Contains(out, "owner=deployer") {
-		t.Fatalf("text = %d\n%s", code, out)
-	}
-
-	// A series that does not apply stops at O1.patches; the subject is operability.Unavailable, not invented.
-	bad := "SDO-Patch: 1\nOwner: deployer\nReason: |\n  " + patchCLIReason + "\n\n" +
-		"diff --git a/README b/README\nindex " + strings.Repeat("1", 40) + ".." + strings.Repeat("2", 40) + " 100644\n--- a/README\n+++ b/README\n@@ -1 +1 @@\n-nope\n+x\n"
-	dir := filepath.Join(work, ".sdo", "deployment", "patches")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "0001-bad.patch"), []byte(bad), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	code, out, _ = operabilityCLI(t, nil, "check", "--offline", "--root", work, "--json")
-	o = decodeOutput(t, out)
-	if code != 1 || o.Decision.Kind != operability.Correct || o.Decision.Checks[0] != "O1.patches" {
-		t.Fatalf("broken series = %d %+v", code, o.Decision)
-	}
-	if o.Report.Subject.EffectiveTree != operability.Unavailable {
-		t.Fatalf("subject invented an effective tree: %+v", o.Report.Subject)
-	}
-	if got := o.Report.Items[0].Checks[0].Paths; len(got) == 0 || got[0] != ".sdo/deployment/patches/0001-bad.patch" {
-		t.Fatalf("patch paths = %v", got)
-	}
-
-	// An invalid plan is O1.plan; a missing plan is no error (the source is
-	// derived from the files), so the check runs and reports the broken series.
-	writePlan(t, work, "{")
-	if code, out, _ := operabilityCLI(t, nil, "check", "--offline", "--root", work); code != 1 || !strings.Contains(out, "fail     O1.plan [render]") {
-		t.Fatalf("invalid plan = %d\n%s", code, out)
-	}
+	// A committed tree with no deployment files is the deployer's O1.render
+	// failure (case A), found offline.
+	testutil.Git(t, work, "rm", "-rq", "k8s")
+	testutil.Git(t, work, "commit", "-qm", "no deployment files")
 	if err := os.Remove(filepath.Join(work, ".sdo", "deployment", "plan.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	if code, out, errOut := operabilityCLI(t, nil, "check", "--offline", "--root", work); code != 1 || !strings.Contains(out, "fail     O1.patches") {
-		t.Fatalf("missing plan = %d %s%s", code, out, errOut)
+	code, out, _ := operabilityCLI(t, nil, "check", "--offline", "--root", work, "--json")
+	o := decodeOutput(t, out)
+	if code != 1 || o.Decision.Kind != operability.Correct || o.Decision.Owner != operability.OwnerDeployer || len(o.Decision.Checks) != 1 || o.Decision.Checks[0] != "O1.render" {
+		t.Fatalf("no deployment files = %d %+v", code, o.Decision)
+	}
+	code, out, _ = operabilityCLI(t, nil, "check", "--offline", "--root", work, "--allow-registry", "ghcr.io")
+	if code != 1 || !strings.Contains(out, "fail     O1.render [render]") || !strings.Contains(out, "no deployment files") || !strings.Contains(out, "owner=deployer") {
+		t.Fatalf("text = %d\n%s", code, out)
+	}
+
+	// An invalid override is O1.plan.
+	writePlan(t, work, "{")
+	if code, out, _ := operabilityCLI(t, nil, "check", "--offline", "--root", work); code != 1 || !strings.Contains(out, "fail     O1.plan [render]") {
+		t.Fatalf("invalid plan = %d\n%s", code, out)
 	}
 }
 
@@ -123,10 +99,9 @@ func TestOperabilityCheckOfflinePolicyFlags(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(work, "k8s", "foreign.yaml"), []byte(foreign), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// The foreign object is app source, so capture it into the series first.
-	if code, out, errOut := patchCLI(t, "create", "--root", work, "--reason", patchCLIReason, "k8s/foreign.yaml"); code != 0 {
-		t.Fatalf("create = %d\n%s%s", code, out, errOut)
-	}
+	// The foreign object is app source: Go checks what is committed.
+	testutil.Git(t, work, "add", "k8s/foreign.yaml")
+	testutil.Git(t, work, "commit", "-qm", "foreign object")
 	if code, out, _ := operabilityCLI(t, nil, "check", "--offline", "--root", work); code != 0 || !strings.Contains(out, "note     O6.scope") {
 		t.Fatalf("default scope = %d\n%s", code, out)
 	}
@@ -192,9 +167,6 @@ func treeWorld(t *testing.T, files map[string]string) string {
 	testutil.Git(t, accepted, "commit", "-qm", "seed")
 	work := filepath.Join(t.TempDir(), "checkout")
 	testutil.Git(t, filepath.Dir(work), "clone", "-q", accepted, work)
-	if _, err := patchset.Materialize(context.Background(), work); err != nil {
-		t.Fatal(err)
-	}
 	return work
 }
 

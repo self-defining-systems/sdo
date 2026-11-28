@@ -33,7 +33,7 @@ func (r *offlineReadiness) CheckOffline(_ context.Context, checkout string, _ *c
 	}
 	out := lifecycle.OfflineChecks{Checks: res.checks}
 	if !strings.Contains(checkout, "never") {
-		out.BaseTree, out.EffectiveTree, out.PatchesDigest, out.RenderDigest, out.EnvDigest = "tree", "effective", "patches", "render", "env"
+		out.BaseTree, out.EffectiveTree, out.RenderDigest, out.EnvDigest = "tree", "effective", "render", "env"
 	}
 	return out, nil
 }
@@ -67,7 +67,7 @@ func TestOfflineGatePassesThroughToApply(t *testing.T) {
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
-	if r.calls != 1 || h.readiness.calls != 1 || h.workers.deployerAttempts() != 1 || h.installer.installs != 1 {
+	if r.calls != 1 || h.readiness.calls != 1 || h.workers.deployerAttempts() != 0 || h.installer.installs != 1 {
 		t.Fatalf("offline=%d apply=%d attempts=%d installs=%d", r.calls, h.readiness.calls, h.workers.deployerAttempts(), h.installer.installs)
 	}
 }
@@ -75,29 +75,29 @@ func TestOfflineGatePassesThroughToApply(t *testing.T) {
 func TestOfflineDeployerFailureIsCorrectedBeforeAnyApply(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
 	r := withOffline(h,
-		offlineResult{checks: failing(ck("O1.patches", operability.StatusFail, operability.CausePatch, "patch conflict 0001-x.patch"))},
+		offlineResult{checks: failing(ck("O1.render", operability.StatusFail, operability.CauseRender, "chart values: unknown key"))},
 		offlineResult{checks: passing()},
 	)
-	result, err := h.coordinator.Run(context.Background(), config())
-	if err != nil {
+	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
-	if result.Attempts != 2 || r.calls != 2 || h.readiness.calls != 1 {
-		t.Fatalf("attempts=%d offline=%d apply=%d: the failing attempt must not reach the cluster", result.Attempts, r.calls, h.readiness.calls)
+	if h.workers.deployerAttempts() != 1 || r.calls != 2 || h.readiness.calls != 1 {
+		t.Fatalf("tasks=%d offline=%d apply=%d: the failing deploy must not reach the cluster", h.workers.deployerAttempts(), r.calls, h.readiness.calls)
 	}
-	feedback := h.workers.deployer[1].GetCorrectionFeedback()
-	if !strings.Contains(feedback, "O1.patches [patch]: patch conflict 0001-x.patch") || !strings.Contains(feedback, "no cluster was touched") {
+	feedback := h.workers.deployer[0].GetCorrectionFeedback()
+	if !strings.Contains(feedback, "O1.render [render]: chart values: unknown key") || !strings.Contains(feedback, "no cluster was touched") {
 		t.Fatalf("deployer feedback = %q", feedback)
 	}
 }
 
-func TestOfflineProvidedPlanFailureIsTerminalAndCarriesTheReport(t *testing.T) {
+func TestOfflineFailureWithoutADeployerIsTerminalAndCarriesTheReport(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
+	h.coordinator.Registry = registryWithout(t, "source-deployment.json")
 	r := withOffline(h, offlineResult{checks: failing(ck("O1.render", operability.StatusFail, operability.CauseRender, "chart values: unknown key"))})
-	_, err := h.coordinator.Run(context.Background(), providedConfig(providedPlans(t)["helm"]))
-	var terminal *lifecycle.ProvidedPlanError
+	_, err := h.coordinator.Run(context.Background(), config())
+	var terminal *lifecycle.DeploymentHoldError
 	if !errors.As(err, &terminal) || terminal.Stage != "deploy" || terminal.Report == nil || !strings.Contains(err.Error(), "unknown key") {
-		t.Fatalf("error = %v, want a deploy-stage ProvidedPlanError with the report", err)
+		t.Fatalf("error = %v, want a deploy-stage DeploymentHoldError with the report", err)
 	}
 	if h.readiness.calls != 0 || h.workers.deployerAttempts() != 0 || r.calls != 1 {
 		t.Fatalf("apply=%d agent attempts=%d offline=%d", h.readiness.calls, h.workers.deployerAttempts(), r.calls)
@@ -109,15 +109,15 @@ func TestOfflineProvidedPlanFailureIsTerminalAndCarriesTheReport(t *testing.T) {
 	if err := terminal.Report.Validate(); err != nil {
 		t.Fatalf("terminal report is not a valid report: %v", err)
 	}
-	if d := terminal.Report.DecideIn(operability.ModeProvided, operability.StageItems(operability.StageDeployment)...); d.Owner != operability.OwnerHuman {
-		t.Fatalf("a provided plan's render failure routes to %s", d.Owner)
+	if d := terminal.Report.DecideIn(operability.ModeNoDeployer, operability.StageItems(operability.StageDeployment)...); d.Owner != operability.OwnerHuman {
+		t.Fatalf("a render failure without a deployer routes to %s", d.Owner)
 	}
 }
 
-func TestOfflineProvidedPlanNotesDoNotBlock(t *testing.T) {
+func TestOfflineNotesDoNotBlock(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
 	withOffline(h, offlineResult{checks: passing()})
-	if _, err := h.coordinator.Run(context.Background(), providedConfig(providedPlans(t)["raw"])); err != nil {
+	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
 	if h.readiness.calls != 1 {
@@ -128,22 +128,22 @@ func TestOfflineProvidedPlanNotesDoNotBlock(t *testing.T) {
 func TestOfflineInfrastructureCauseRetriesWithoutSpendingAnAttempt(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
 	r := withOffline(h,
-		offlineResult{checks: failing(ck("O1.patches", operability.StatusFail, operability.CauseInfrastructure, "git unavailable"))},
+		offlineResult{checks: failing(ck("O1.render", operability.StatusFail, operability.CauseInfrastructure, "git unavailable"))},
 		offlineResult{checks: passing()},
 	)
 	result, err := h.coordinator.Run(context.Background(), config())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Attempts != 1 || r.calls != 2 || len(h.waits) != 1 || h.workers.deployerAttempts() != 1 {
+	if result.Attempts != 1 || r.calls != 2 || len(h.waits) != 1 || h.workers.deployerAttempts() != 0 {
 		t.Fatalf("attempts=%d offline=%d waits=%v deployer attempts=%d", result.Attempts, r.calls, h.waits, h.workers.deployerAttempts())
 	}
 
 	h = newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-	r = withOffline(h, offlineResult{checks: failing(ck("O1.patches", operability.StatusFail, operability.CauseInfrastructure, "git unavailable"))})
+	r = withOffline(h, offlineResult{checks: failing(ck("O1.render", operability.StatusFail, operability.CauseInfrastructure, "git unavailable"))})
 	_, err = h.coordinator.Run(context.Background(), config())
 	var infra *lifecycle.InfrastructureError
-	if !errors.As(err, &infra) || infra.Attempts != 3 || r.calls != 3 || h.workers.deployerAttempts() != 1 || h.readiness.calls != 0 {
+	if !errors.As(err, &infra) || infra.Attempts != 3 || r.calls != 3 || h.workers.deployerAttempts() != 0 || h.readiness.calls != 0 {
 		t.Fatalf("err=%v offline=%d attempts=%d apply=%d", err, r.calls, h.workers.deployerAttempts(), h.readiness.calls)
 	}
 }
@@ -156,7 +156,7 @@ func TestOfflineNonAgentCauseEndsTheRunWithTheReport(t *testing.T) {
 	if !errors.As(err, &opErr) || opErr.Decision.Owner != operability.OwnerHuman || opErr.Report.Stage != operability.StageDeployment {
 		t.Fatalf("err = %v, want an OperabilityError routed to the human", err)
 	}
-	if h.workers.deployerAttempts() != 1 || h.readiness.calls != 0 {
+	if h.workers.deployerAttempts() != 0 || h.readiness.calls != 0 {
 		t.Fatalf("attempts=%d apply=%d: no correction and no apply for a non-agent cause", h.workers.deployerAttempts(), h.readiness.calls)
 	}
 }
@@ -191,7 +191,7 @@ func TestDeployedSourceIsPublishedWithItsDeploymentReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := h.coordinator.Broker.(*fakeBroker)
-	report, found, err := fake.OperabilityReport(context.Background(), "op-source-1", operability.StageDeployment)
+	report, found, err := fake.OperabilityReport(context.Background(), "op-source", operability.StageDeployment)
 	if err != nil || !found {
 		t.Fatalf("no deployment report was published: found=%v err=%v", found, err)
 	}

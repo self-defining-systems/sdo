@@ -12,7 +12,6 @@ import (
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/operability"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/renderenv"
@@ -29,7 +28,6 @@ func desiredOf(t *testing.T, d Deployer, root string, plan *contracts.Deployment
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer effective.Close()
 	fsys, err := rendered.GitTreeFS(context.Background(), effective)
 	if err != nil {
 		t.Fatal(err)
@@ -102,12 +100,12 @@ func TestLiveChecksFailPerReceiptDefect(t *testing.T) {
 	if c := statusOf(LiveChecks(LiveInput{Receipt: good, Desired: desiredOf(t, deployer, root, plan)}), "O2.inputs"); c.Status != operability.StatusPass {
 		t.Fatalf("a receipt with valid inputs must pass O2.inputs: %+v", c)
 	}
-	// An image built from upstream source with a deployer-authored Dockerfile, where the deployer's skill puts it.
+	// An image built from upstream source with a Dockerfile the deployer committed.
 	authored := good
 	authored.ContainerImages = []rendered.DeployedImage{good.ContainerImages[0]}
-	authored.ContainerImages[0].Inputs = rendered.ImageInputs{SourceImage: "web:1", ContextPath: "services/web", DockerfilePath: ".sdo/deployment/build/web/Dockerfile"}
+	authored.ContainerImages[0].Inputs = rendered.ImageInputs{SourceImage: "web:1", ContextPath: "services/web", DockerfilePath: "deploy/sdo/build/web/Dockerfile"}
 	if c := statusOf(LiveChecks(LiveInput{Receipt: authored, Desired: desiredOf(t, deployer, root, plan)}), "O2.inputs"); c.Status != operability.StatusPass {
-		t.Fatalf("an authored Dockerfile under .sdo/deployment/build must pass O2.inputs: %+v", c)
+		t.Fatalf("a committed Dockerfile under deploy/sdo/build must pass O2.inputs: %+v", c)
 	}
 	for name, tc := range map[string]struct {
 		mutate func(*lifecycle.DeploymentReceipt)
@@ -152,18 +150,15 @@ func TestClassifyDeploymentError(t *testing.T) {
 		err  error
 		want operability.Cause
 	}{
-		"renderer changed":        {&RendererChangedError{What: "render"}, operability.CauseEnvironment},
-		"patch digest changed":    {&PatchSetChangedError{What: "patch series digest"}, operability.CauseAttribution},
-		"patch no longer applies": {&PatchSetChangedError{What: "patch application", Err: &patchset.PatchError{}}, operability.CauseAttribution},
-		"patch git unavailable":   {&PatchSetChangedError{What: "patch application", Err: &rendered.SourceError{Kind: rendered.SourceUnavailable, Err: errors.New("io")}}, operability.CauseInfrastructure},
-		"patch error":             {&patchset.PatchError{}, operability.CausePatch},
-		"image timeout":           {fmt.Errorf("resolve images: %w", &imagesrc.TimeoutError{Image: "a", Limit: time.Second, Budget: true}), operability.CauseInfrastructure},
-		"image error":             {fmt.Errorf("resolve images: %w", &imagesrc.Error{Image: "a", SourceID: "s", Err: errors.New("bad")}), operability.CauseBuild},
-		"progressing rollout":     {&RolloutTimeoutError{Resource: "Deployment/a/b"}, operability.CauseInfrastructure},
-		"stalled rollout":         {fmt.Errorf("phase: %w", &RolloutTimeoutError{Resource: "Deployment/a/b", Stalled: true}), operability.CauseRollout},
-		"invalid source":          {&rendered.SourceError{Kind: rendered.SourceInvalid, Err: errors.New("x")}, operability.CauseRender},
-		"canceled":                {context.Canceled, operability.CauseInfrastructure},
-		"unknown":                 {errors.New("boom"), operability.CauseInternal},
+		"renderer changed":       {&RendererChangedError{What: "render"}, operability.CauseEnvironment},
+		"effective tree changed": {&EffectiveTreeChangedError{}, operability.CauseAttribution},
+		"image timeout":          {fmt.Errorf("resolve images: %w", &imagesrc.TimeoutError{Image: "a", Limit: time.Second, Budget: true}), operability.CauseInfrastructure},
+		"image error":            {fmt.Errorf("resolve images: %w", &imagesrc.Error{Image: "a", SourceID: "s", Err: errors.New("bad")}), operability.CauseBuild},
+		"progressing rollout":    {&RolloutTimeoutError{Resource: "Deployment/a/b"}, operability.CauseInfrastructure},
+		"stalled rollout":        {fmt.Errorf("phase: %w", &RolloutTimeoutError{Resource: "Deployment/a/b", Stalled: true}), operability.CauseRollout},
+		"invalid source":         {&rendered.SourceError{Kind: rendered.SourceInvalid, Err: errors.New("x")}, operability.CauseRender},
+		"canceled":               {context.Canceled, operability.CauseInfrastructure},
+		"unknown":                {errors.New("boom"), operability.CauseInternal},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := ClassifyDeploymentError(tc.err); got != tc.want {

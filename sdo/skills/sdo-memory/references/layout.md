@@ -3,12 +3,12 @@
 GENERATED from `memory/layout/paths.go` and `memory/validate/ownership.go`. Do not edit.
 Regenerate from `sdo/operator` with `SDO_UPDATE_LAYOUT_REFERENCE=1 go test ./memory/validate -run '^TestMemoryLayoutReference$'`.
 
-Schema version: 14. Paths are repository-relative and used only while editing a proposal checkout; worker results and memory prose use logical IDs.
+Schema version: 15. Paths are repository-relative and used only while editing a proposal checkout; worker results and memory prose use logical IDs.
 
 - Playbook, library and corpus IDs: `^[a-z][a-z0-9_-]*$`.
 - Detector IDs: `^[a-z0-9][a-z0-9_.-]*$`.
 - Script IDs: `<playbook-id>/<filename>.sh`.
-- Outcomes: SHA-256 of incident ID; patches: `NNNN-<slug>.patch` with `<slug>` matching `[a-z0-9][a-z0-9-]{0,48}`.
+- Outcomes: SHA-256 of incident ID.
 
 ## Paths, kinds and write authority
 
@@ -47,12 +47,7 @@ Schema version: 14. Paths are repository-relative and used only while editing a 
 | `.sdo/corpus/<case-id>/labels.json` | `corpus` | `case-id` | changeable by human in the import phase or responder in the reflection phase |
 | `.sdo/corpus/<case-id>/operator.json` | `corpus` | `case-id` | changeable by human in the import phase or responder in the reflection phase |
 | `.sdo/corpus/<case-id>/accepted.json` | `corpus` | `case-id` | changeable by human in the import phase or responder in the reflection phase |
-| `.sdo/deployment/plan.yaml` | `deployment-plan` | `—` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase |
-| `.sdo/deployment/values/<file>.yaml` | `deployment-file` | `values` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase |
-| `.sdo/deployment/manifests/<file>.yaml` | `deployment-file` | `manifests` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase |
-| `.sdo/deployment/build/Dockerfile` | `deployment-file` | `build` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase |
-| `.sdo/deployment/overlays/telemetry/<file>.yaml` | `deployment-overlay` | `telemetry` | changeable by health_judge in the initial phase or human in the initial phase |
-| `.sdo/deployment/patches/<NNNN-slug>.patch` | `deployment-patch` | `<NNNN-slug>` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase or responder in the proposal phase |
+| `.sdo/deployment/plan.yaml` | `deployment-plan` | `—` | changeable by deployer in the initial phase or human in the initial phase |
 | `.sdo/diagnostics/telemetry/sources.yaml` | `telemetry-sources` | `—` | changeable by health_judge in the initial phase |
 | `.sdo/diagnostics/telemetry/backends.yaml` | `telemetry-backends` | `—` | changeable by health_judge in the initial phase |
 | `.sdo/diagnostics/data/<check-id>.yaml` | `data-check` | `check-id` | changeable by health_judge in the initial phase |

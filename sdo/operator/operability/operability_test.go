@@ -13,7 +13,7 @@ import (
 func subject() Subject {
 	return Subject{
 		AcceptedCommit: "c0", BaseTree: "t-base", EffectiveTree: "t-eff",
-		PatchesDigest: "p0", RenderDigest: "r0", EnvDigest: "e0", SettingsDigest: "s0", DiagnosticsTree: "t-diag",
+		RenderDigest: "r0", EnvDigest: "e0", SettingsDigest: "s0", DiagnosticsTree: "t-diag",
 	}
 }
 
@@ -52,9 +52,9 @@ func TestDecideTable(t *testing.T) {
 		{"fail routes to owner", []Check{chk("O1.render", StatusFail, CauseRender)}, AllItems(), Correct, OwnerDeployer},
 		{"designer cause", []Check{chk("O3.cov", StatusFail, CauseCoverage)}, AllItems(), Correct, OwnerDesigner},
 		{"pending waits", []Check{chk("O4.d", StatusPending, CauseProbeUnavailable)}, AllItems(), Wait, ""},
-		{"fail beats pending", []Check{chk("O4.d", StatusPending, CauseProbeUnavailable), chk("O1.r", StatusFail, CausePatch)}, AllItems(), Correct, OwnerDeployer},
-		{"infrastructure beats everything", []Check{chk("O1.r", StatusFail, CausePatch), chk("O3.c", StatusFail, CauseCoverage), chk("O2.i", StatusFail, CauseInfrastructure)}, AllItems(), Retry, OwnerRetry},
-		{"internal beats deployer", []Check{chk("O1.r", StatusFail, CausePatch), chk("O5.m", StatusFail, CauseInternal)}, AllItems(), Hold, OwnerHuman},
+		{"fail beats pending", []Check{chk("O4.d", StatusPending, CauseProbeUnavailable), chk("O1.r", StatusFail, CauseBuild)}, AllItems(), Correct, OwnerDeployer},
+		{"infrastructure beats everything", []Check{chk("O1.r", StatusFail, CauseBuild), chk("O3.c", StatusFail, CauseCoverage), chk("O2.i", StatusFail, CauseInfrastructure)}, AllItems(), Retry, OwnerRetry},
+		{"internal beats deployer", []Check{chk("O1.r", StatusFail, CauseBuild), chk("O5.m", StatusFail, CauseInternal)}, AllItems(), Hold, OwnerHuman},
 		{"deployer beats designer", []Check{chk("O3.c", StatusFail, CauseCoverage), chk("O1.r", StatusFail, CauseRollout)}, AllItems(), Correct, OwnerDeployer},
 		{"attribution is the operator", []Check{chk("O2.a", StatusFail, CauseAttribution)}, AllItems(), Hold, OwnerOperator},
 		{"unrequired failing item ignored", []Check{chk("O4.d", StatusFail, CauseDetectorFault)}, StageItems(StageDeployment), Accepted, ""},
@@ -114,7 +114,7 @@ func TestDecideOwnsOnlyItsChecksAndFeedback(t *testing.T) {
 func TestDecideCauseIsTheWorstFailingCause(t *testing.T) {
 	r := allPass(t)
 	r, _ = r.With(chk("O1.a", StatusFail, CauseScope), chk("O2.b", StatusFail, CauseEnvironment))
-	d := r.DecideIn(ModeAdvance, AllItems()...)
+	d := r.DecideIn(ModeNoDeployer, AllItems()...)
 	if d.Cause != CauseEnvironment || d.Owner != OwnerHuman || len(d.Checks) != 2 {
 		t.Fatalf("decision = %+v, want environment/human over both checks", d)
 	}
@@ -157,37 +157,36 @@ func TestDecideMonotone(t *testing.T) {
 }
 
 func TestRouteTable(t *testing.T) {
-	type row struct{ fresh, provided, advance Owner }
+	type row struct{ fresh, noDeployer Owner }
 	want := map[Cause]row{
-		CausePatch:              {OwnerDeployer, OwnerHuman, OwnerDeployer},
-		CauseRender:             {OwnerDeployer, OwnerHuman, OwnerDeployer},
-		CauseBuild:              {OwnerDeployer, OwnerHuman, OwnerDeployer},
-		CauseRollout:            {OwnerDeployer, OwnerHuman, OwnerResponder},
-		CauseScope:              {OwnerDeployer, OwnerHuman, OwnerHuman},
-		CauseAllowlist:          {OwnerDeployer, OwnerHuman, OwnerHuman},
-		CauseBudget:             {OwnerDeployer, OwnerHuman, OwnerHuman},
-		CauseAttribution:        {OwnerOperator, OwnerOperator, OwnerOperator},
-		CauseBinding:            {OwnerDesigner, OwnerDesigner, OwnerDesigner},
-		CauseCoverage:           {OwnerDesigner, OwnerDesigner, OwnerDesigner},
-		CauseMemoryInvalid:      {OwnerDesigner, OwnerDesigner, OwnerDesigner},
-		CauseProbeUnavailable:   {OwnerDesigner, OwnerDesigner, OwnerDesigner},
-		CauseDetectorFault:      {OwnerDesigner, OwnerDesigner, OwnerDesigner},
-		CauseSourceFault:        {OwnerDeployer, OwnerHuman, OwnerResponder},
-		CauseInfrastructure:     {OwnerRetry, OwnerRetry, OwnerRetry},
-		CauseEnvironment:        {OwnerHuman, OwnerHuman, OwnerHuman},
-		CauseInternal:           {OwnerHuman, OwnerHuman, OwnerHuman},
-		CauseAgentNotConverging: {OwnerHuman, OwnerHuman, OwnerHuman},
-		CauseBaseInvalid:        {OwnerOperator, OwnerOperator, OwnerOperator},
-		CausePolicy:             {OwnerOperator, OwnerOperator, OwnerOperator},
-		CauseImmutableChange:    {OwnerDeployer, OwnerHuman, OwnerDeployer},
-		CauseDataBearingChange:  {OwnerHuman, OwnerHuman, OwnerHuman},
+		CauseRender:             {OwnerDeployer, OwnerHuman},
+		CauseBuild:              {OwnerDeployer, OwnerHuman},
+		CauseRollout:            {OwnerDeployer, OwnerHuman},
+		CauseScope:              {OwnerDeployer, OwnerHuman},
+		CauseAllowlist:          {OwnerDeployer, OwnerHuman},
+		CauseBudget:             {OwnerDeployer, OwnerHuman},
+		CauseAttribution:        {OwnerOperator, OwnerOperator},
+		CauseBinding:            {OwnerDesigner, OwnerDesigner},
+		CauseCoverage:           {OwnerDesigner, OwnerDesigner},
+		CauseMemoryInvalid:      {OwnerDesigner, OwnerDesigner},
+		CauseProbeUnavailable:   {OwnerDesigner, OwnerDesigner},
+		CauseDetectorFault:      {OwnerDesigner, OwnerDesigner},
+		CauseSourceFault:        {OwnerDeployer, OwnerHuman},
+		CauseInfrastructure:     {OwnerRetry, OwnerRetry},
+		CauseEnvironment:        {OwnerHuman, OwnerHuman},
+		CauseInternal:           {OwnerHuman, OwnerHuman},
+		CauseAgentNotConverging: {OwnerHuman, OwnerHuman},
+		CauseBaseInvalid:        {OwnerOperator, OwnerOperator},
+		CausePolicy:             {OwnerOperator, OwnerOperator},
+		CauseImmutableChange:    {OwnerDeployer, OwnerHuman},
+		CauseDataBearingChange:  {OwnerHuman, OwnerHuman},
 	}
 	for _, c := range Causes() {
 		w, ok := want[c]
 		if !ok {
 			t.Fatalf("cause %s has no expected row", c)
 		}
-		got := row{RouteIn(ModeFresh, c), RouteIn(ModeProvided, c), RouteIn(ModeAdvance, c)}
+		got := row{RouteIn(ModeFresh, c), RouteIn(ModeNoDeployer, c)}
 		if got != w || Route(c) != w.fresh {
 			t.Errorf("%s routes %+v, want %+v", c, got, w)
 		}
@@ -198,7 +197,7 @@ func TestRouteTable(t *testing.T) {
 }
 
 func TestUnknownCauseModeFailClosed(t *testing.T) {
-	if Route("made_up") != OwnerHuman || RouteIn("elsewhere", CausePatch) != OwnerHuman {
+	if Route("made_up") != OwnerHuman || RouteIn("elsewhere", CauseBuild) != OwnerHuman {
 		t.Fatal("unknown cause or mode must route to the human")
 	}
 	r := allPass(t)
@@ -215,13 +214,13 @@ func TestUnknownCauseModeFailClosed(t *testing.T) {
 func TestProvidedModeNeverCorrectsTheDeployer(t *testing.T) {
 	r := allPass(t)
 	r, _ = r.With(chk("O1.r", StatusFail, CauseRender), chk("O3.c", StatusFail, CauseCoverage))
-	if d := r.DecideIn(ModeProvided, AllItems()...); d.Kind != Hold || d.Owner != OwnerHuman {
-		t.Fatalf("provided render failure = %+v", d)
+	if d := r.DecideIn(ModeNoDeployer, AllItems()...); d.Kind != Hold || d.Owner != OwnerHuman {
+		t.Fatalf("no-deployer render failure = %+v", d)
 	}
 	r = allPass(t)
 	r, _ = r.With(chk("O3.c", StatusFail, CauseCoverage))
-	if d := r.DecideIn(ModeProvided, AllItems()...); d.Kind != Correct || d.Owner != OwnerDesigner {
-		t.Fatalf("provided designer failure = %+v", d)
+	if d := r.DecideIn(ModeNoDeployer, AllItems()...); d.Kind != Correct || d.Owner != OwnerDesigner {
+		t.Fatalf("no-deployer designer failure = %+v", d)
 	}
 }
 
@@ -273,7 +272,6 @@ func TestBindsTo(t *testing.T) {
 		"accepted_commit":  func(x *Subject) { x.AcceptedCommit = "other" },
 		"base_tree":        func(x *Subject) { x.BaseTree = "other" },
 		"effective_tree":   func(x *Subject) { x.EffectiveTree = "other" },
-		"patches_digest":   func(x *Subject) { x.PatchesDigest = "other" },
 		"render_digest":    func(x *Subject) { x.RenderDigest = "other" },
 		"env_digest":       func(x *Subject) { x.EnvDigest = "other" },
 		"settings_digest":  func(x *Subject) { x.SettingsDigest = "other" },
@@ -497,26 +495,6 @@ func TestWithUnavailableFillsOnlyEmptyFieldsAndNeverBinds(t *testing.T) {
 	}
 	if err := got.BindsTo(subject()); err == nil {
 		t.Fatal("an unavailable subject bound to a recomputed one")
-	}
-}
-
-func TestAdvanceStageRequiresDeploymentItemsAndTheDetectorVerdict(t *testing.T) {
-	if got := StageItems(StageAdvance); len(got) != 4 || got[0] != O1 || got[1] != O2 || got[2] != O4 || got[3] != O6 {
-		t.Fatalf("advance stage items = %v, want O1 O2 O4 O6", got)
-	}
-	r := report(t, StageAdvance, chk("O1.ok", StatusPass, ""), chk("O2.ok", StatusPass, ""), chk("O6.ok", StatusPass, ""))
-	if err := r.Validate(); err != nil {
-		t.Fatalf("an advance report must validate without O3 and O5: %v", err)
-	}
-	if d := r.Decide(StageItems(StageAdvance)...); d.Kind != Hold || len(d.Checks) != 1 || d.Checks[0].ID != "O4.present" {
-		t.Fatalf("an advance without a detector verdict must fail closed: %+v", d)
-	}
-	r, err := r.With(chk("O4.detectors", StatusPass, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d := r.Decide(StageItems(StageAdvance)...); d.Kind != Accepted {
-		t.Fatalf("complete advance report: %+v", d)
 	}
 }
 

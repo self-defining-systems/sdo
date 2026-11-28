@@ -45,12 +45,26 @@ def _pack(root: Path, manifest: str = _MANIFEST) -> SourcePack:
     return SourcePack(root)
 
 
-def test_plan_expects_every_workload_in_the_app_namespace(tmp_path: Path) -> None:
+def test_override_names_only_the_raw_manifests(tmp_path: Path) -> None:
     pack = _pack(tmp_path / "pack")
     plan = deployment_plan(pack.manifests(), "app-ns")
-    assert plan["source"]["renderer_id"] == "raw"
+    assert plan == {"source": {"renderer_id": "raw", "config": plan["source"]["config"]}}
     assert plan["source"]["config"]["paths"] == ["k8s"]
-    assert plan["expected_workload_ids"] == ["Deployment/app-ns/web", "StatefulSet/app-ns/store"]
+
+
+def test_override_is_committed_as_a_human_once(tmp_path: Path) -> None:
+    import subprocess
+
+    from benchmarks.fuzzops.pack import commit_override
+
+    pack = _pack(tmp_path / "pack")
+    repo = write_app_repository(pack, tmp_path / "app", description="synthetic")
+    plan = deployment_plan(pack.manifests(), "app-ns")
+    commit_override(repo, plan)
+    commit_override(repo, plan)
+    log = subprocess.run(["git", "-C", str(repo), "log", "--format=%B"], check=True, capture_output=True, text=True)
+    assert log.stdout.count("SDO-Actor: human") == 1
+    assert json.loads((repo / ".sdo/deployment/plan.yaml").read_text()) == plan
 
 
 def test_manifest_with_a_namespace_is_refused(tmp_path: Path) -> None:
@@ -123,10 +137,10 @@ def _install_config(tmp_path: Path, **overrides: object) -> InstallConfig:
 
 def test_host_launch_selects_agent_model_and_effort_through_the_environment(tmp_path: Path) -> None:
     cfg = _install_config(tmp_path, effort="xhigh")
-    args = cfg.host_args(tmp_path / "w" / "app", {"source": {}})
+    args = cfg.host_args(tmp_path / "w" / "app")
     assert args[1] == "host"
     assert not {"--agent-provider", "--model", "--agent-effort"} & set(args)
-    assert json.loads(args[args.index("--deployment-plan") + 1]) == {"source": {}}
+    assert "--deployment-plan" not in args
     env = cfg.host_env()
     assert (env["SDO_AGENT_PROVIDER"], env["SDO_AGENT_MODEL"], env["SDO_AGENT_EFFORT"]) == (
         "codex",

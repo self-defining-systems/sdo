@@ -2,6 +2,7 @@ package lifecycle_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -36,6 +37,8 @@ func TestDeployerRequestCarriesTheDeployersCatalogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.coordinator.Renderers, h.coordinator.ImageSources = renderers, sources
+	// One failed deploy makes Go dispatch the deployer.
+	h.readiness.errors = []error{errors.New("rollout stuck")}
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +58,7 @@ func TestDeployerRequestCarriesTheDeployersCatalogs(t *testing.T) {
 
 func TestDeployerRequestOffersNothingWithoutCatalogs(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
+	h.readiness.errors = []error{errors.New("rollout stuck")}
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}

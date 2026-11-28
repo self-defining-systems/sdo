@@ -1,81 +1,66 @@
 ---
 name: sdo-serving
-description: How SDO builds and deploys an application from its repository. Covers .sdo/deployment, the plan, images and registry, source changes and patches, and failed builds or rollouts.
+description: How SDO deploys an application from its repository - what Go derives from the files, the image rule, the optional override .sdo/deployment/plan.yaml, failing deploy steps.
 ---
 
 # Serving an application from its repository
 
-Go deploys the **effective tree**: the repository at a commit, with the patch series in
-`.sdo/deployment/patches/` applied and `.sdo/` memory projected away. It renders the tree, builds its images with
-BuildKit, pushes them to the trusted registry, applies the objects and waits for every rendered workload. The same
-tree serves every render, build, drift read and repair.
+The deployment is the repository's files. Go deploys a commit: it takes the commit's tree without `.sdo/`,
+derives the renderer and the image builds from the files, builds the images with BuildKit and pushes them to the
+trusted registry, applies the render and waits for every rendered workload. Uncommitted files are never deployed.
+The same tree serves every render, build, drift read and repair.
 
 ## What Go reads from the files
 
-`plan.yaml` is optional: it overrides only what the files cannot say.
-
 - Renderer: one Helm chart root (a `Chart.yaml` with no chart above it; vendored subcharts belong to it) is helm;
   else one kustomization that no other includes (components never count) is kustomize; else every file whose
-  documents are all Kubernetes objects is raw. Several roots, or a chart beside a kustomization, need `source` in
-  `plan.yaml`; so do Helm value files other than the chart's `values.yaml`.
-- Images: an image under the trusted registry named `<host>/.../N[:tag]` is built from `Dockerfile.N` or
-  `N.Dockerfile` (context: that file's directory), from a directory `N/` holding a `Dockerfile` (context: `N/`),
-  or from the tree's only Dockerfile. Anything else (build from another context) is an `images` entry in
-  `plan.yaml`.
+  documents are all Kubernetes objects is raw. Several roots, a chart beside a kustomization, or Helm value files
+  other than the chart's `values.yaml` need the override.
+- Images: an image under the trusted registry (a host, possibly with a path such as `host/team/app`) named
+  `<registry>/.../N[:tag]` is built from `Dockerfile.N` or
+  `N.Dockerfile` (context: that file's directory), from a directory `N/` holding a `Dockerfile` (context: `N/`), or
+  from the tree's only Dockerfile. Any other build is an `images` entry in the override. Every other image is
+  `prebuilt`: Go pins its tag to a digest.
 
-## Layout of `.sdo/deployment/`
+## Images and infrastructure
 
-| Path | Holds |
-|---|---|
-| `plan.yaml` | optional override: renderer and config, image builds ([catalog](references/catalog.md)) |
-| `manifests/**` | authored Kubernetes manifests (an app with no manifests, or one that lacks some config) |
-| `build/**` | authored Dockerfiles and `.dockerignore` |
-| `values/**` | inputs for renderers that read values (Helm value files, kustomize patches) |
-| `overlays/telemetry/**` | telemetry backends SDO applies with the application |
-| `patches/NNNN-<slug>.patch` | reasoned changes to application files ([patches](references/patch-rules.md)) |
-
-Any other path under `.sdo/deployment/` is rejected. Plan paths address the effective tree: a manifest reads
-`.sdo/deployment/manifests/app.yaml`, an image `context_path` is the upstream directory and its
-`dockerfile_path` may be `.sdo/deployment/build/api/Dockerfile`.
-
-## Where a change goes
-
-1. Missing deployment inputs (a manifest, a Dockerfile the repository lacks, config values): an authored file
-   under `manifests/`, `build/` or `values/`. This is the default.
-2. Existing manifests or a chart used as they are, with differences in `values/` or a kustomize layer.
-3. Application code that must change (instrumentation, a bug that stops it running): change the source.
-   - The onboarding agent commits the change directly in its repository.
-   - A responder commits source in its incident checkout; SDO publishes it after the incident closes. Never
-     edit a file a deployment patch changes; add a later patch instead.
-4. Never commit Secret values. Reference Secrets by name; generate test credentials at deploy time.
-
-## Images and registry
-
-- Every built image's name starts with the trusted registry (a host, possibly with a path such as
-  `host/team/app`); Go pushes there and pins what it deployed.
 - Third-party images use the `prebuilt` source; the operator pins tags to digests. Never write digests.
 - Run the databases, caches and queues the source is written for: its engine, and its version where the source
   pins one. Use another engine only when the goal says `Infrastructure: compatible`, and name the swap.
 - Builds are cached by layer, so a later deploy of the same tree to another environment is fast.
 
+## The override `.sdo/deployment/plan.yaml`
+
+Optional, and the only file under `.sdo/deployment/`. It names only what the files cannot say: `source` (renderer
+and config) and `images` ([catalog](references/catalog.md)). Without it, Go derives both.
+
+## Where a change goes
+
+1. An app with no deployment files: commit Dockerfiles and a kustomization (or a chart, or plain manifests) in the
+   repository, for example under `deploy/`.
+2. An app that ships its deployment: add only what is missing (a values file, a kustomize overlay, a Dockerfile),
+   and prefer layering to editing upstream files. Vendored Helm subcharts are changed through values only.
+3. Application code that must change (instrumentation, a bug that stops it running): commit the source change.
+   A responder commits source in its incident checkout; SDO publishes it after the incident closes.
+4. Never commit Secret values. Reference Secrets by name; generate test credentials at deploy time. What a commit
+   may hold: [committed source rules](references/rules.md).
+
 ## Reading a failed deploy
 
-SDO's operability report names each failing check as
-`<check id> [<cause>]: <detail> (<paths>)`:
+SDO's operability report names each failing check as `<check id> [<cause>]: <detail> (<paths>)`:
 
-- `patch`: a patch no longer applies. Re-create it against the current files.
 - `render`: a manifest or chart does not render, the tree has no deployment files, or it has several roots.
-- `build`: an image declaration or a build step failed. The detail carries the failing step and its log tail;
-  reproduce it locally with `docker build` on the same context before you change the plan.
+- `build`: an image declaration or a build step failed. The detail carries the failing step and its log tail.
 - `rollout` on `O1.entry`: the workloads are ready but a Service users enter through does not answer (no
   connection, or `GET /` returns 5xx). Compare the Service with the Pods it should reach, and read their logs.
-- `rollout`: a workload never became ready. Read its events, its Pods' status and the previous container's
-  logs (`kubectl logs --previous`) in the environment the report names.
+- `rollout`: a workload never became ready. Read its events, its Pods' status and the previous container's logs
+  (`kubectl logs --previous`). One that only ran out of time is not a file error.
 - `immutable_change`: the API server refuses an in-place update (a Service `clusterIP`, a running Job). Keep the
   field stable or wait for the Job. Go recreates finished Jobs and workloads whose selector changed.
 - `data_bearing_change`: a PersistentVolumeClaim would change. A person decides.
 - `scope` and `allowlist`: an object outside the application namespace, a cluster-scoped kind or an unlisted
   registry. Fix the files.
 
-Check your committed files the way Go will, without a cluster, in seconds:
+Check your last commit the way Go will, without a cluster, in seconds:
 `sdo-operator operability check --offline --registry-host <trusted registry>` (render, image rule, scope).
+Preview the render itself: `sdo-operator deployment render`.

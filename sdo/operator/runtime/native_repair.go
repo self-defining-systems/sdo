@@ -124,5 +124,5 @@ func (p PlainPublication) Repair(ctx context.Context, incidentID string) (Source
 		return SourceRepair{}, err
 	}
 	accepted, err := p.Repository.Publish(ctx, incidentID, broker.Responder, broker.ProposalPhase)
-	return SourceRepair{Commit: accepted.Commit, Undeployed: slices.ContainsFunc(paths, func(p string) bool { return layout.IsEffectiveDeploymentInput(p) || !layout.IsMemoryPath(p) })}, err
+	return SourceRepair{Commit: accepted.Commit, Undeployed: slices.ContainsFunc(paths, func(p string) bool { return !layout.IsMemoryPath(p) })}, err
 }

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -36,8 +35,7 @@ func boundEvidence(t *testing.T, c Candidate) CandidateEvidence {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer effective.Close()
-	return CandidateEvidence{Commit: c.Commit, Tree: c.Tree, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}
+	return CandidateEvidence{Commit: c.Commit, Tree: c.Tree, EffectiveTree: effective.ID}
 }
 
 func requireHead(t *testing.T, w *advanceWorld, want, why string) {
@@ -162,11 +160,10 @@ func TestAcceptRefusesEvidenceNotBoundToTheCandidate(t *testing.T) {
 	good := boundEvidence(t, c)
 	headTree := gitOut(t, w.accepted, "rev-parse", "HEAD^{tree}")
 	for name, mutate := range map[string]func(*CandidateEvidence){
-		"empty":                func(e *CandidateEvidence) { *e = CandidateEvidence{} },
-		"accepted head":        func(e *CandidateEvidence) { e.Commit = before },
-		"another tree":         func(e *CandidateEvidence) { e.Tree = headTree },
-		"another effective":    func(e *CandidateEvidence) { e.EffectiveTree = headTree },
-		"another patch digest": func(e *CandidateEvidence) { e.PatchesDigest = strings.Repeat("e", 64) },
+		"empty":             func(e *CandidateEvidence) { *e = CandidateEvidence{} },
+		"accepted head":     func(e *CandidateEvidence) { e.Commit = before },
+		"another tree":      func(e *CandidateEvidence) { e.Tree = headTree },
+		"another effective": func(e *CandidateEvidence) { e.EffectiveTree = headTree },
 	} {
 		evidence := good
 		mutate(&evidence)
@@ -296,8 +293,8 @@ func TestRejectedCandidateLeavesHeadAndCheckoutIntact(t *testing.T) {
 	for name, a := range map[string]attempt{
 		"ownership": {id: "judge", actor: HealthJudge, phase: InitialPhase,
 			files: map[string]string{layout.GoalFile: advanceGoal + "\nJudge\n"}, rule: "ownership.denied"},
-		"deployer source without verification": {id: "deploy-2", actor: Deployer, phase: InitialPhase,
-			files: map[string]string{"app.txt": "one\ntwo\nthree unverified\n"}},
+		"deployer override without verification": {id: "deploy-2", actor: Deployer, phase: InitialPhase,
+			files: map[string]string{layout.DeploymentPlanFile: "images: []\n"}},
 		"compile validator": {id: "goal-2", actor: Human, phase: InitialPhase,
 			files:     map[string]string{layout.GoalFile: advanceGoal + "\nInvalid\n"},
 			validator: func(context.Context, string, []string) error { return errors.New("synthetic compile failure") }},

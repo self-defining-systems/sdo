@@ -1,7 +1,8 @@
 // Package planfile is the stored form of a DeploymentPlan override: the YAML (or JSON)
 // document at .sdo/deployment/plan.yaml. It is the DeploymentPlan message in
-// ProtoJSON field names, decoded strictly: duplicate keys, unknown fields,
-// the retired strategy fields, and renderer or image-source configs the
+// ProtoJSON field names, decoded strictly: duplicate keys, unknown fields
+// (the retired strategy fields and expectedWorkloadIds among them), and
+// renderer or image-source configs the
 // registered catalogs do not accept are errors. The package names no catalog
 // type; callers pass whatever can Decode a config for an ID.
 package planfile
@@ -22,7 +23,6 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/safefs"
 )
 
 // ConfigDecoder checks that an ID is registered and that its config unpacks to
@@ -60,9 +60,6 @@ func Parse(data []byte, catalogs Catalogs) (*contracts.DeploymentPlan, error) {
 	plan := &contracts.DeploymentPlan{}
 	if err := protojson.Unmarshal(asJSON, plan); err != nil {
 		return nil, fmt.Errorf("deployment plan: %w", err)
-	}
-	if plan.GetStrategyId() != "" || plan.GetStrategyConfig() != nil {
-		return nil, errors.New("deployment plan sets the retired strategy fields; describe the deployment only with source, images and expectedWorkloadIds")
 	}
 	// No source: the files say how to render (rendered.DeriveSource).
 	if source := plan.GetSource(); source != nil && catalogs.Renderers != nil {
@@ -102,7 +99,7 @@ func Format(plan *contracts.DeploymentPlan) ([]byte, error) {
 }
 
 // ErrAbsent marks a checkout without .sdo/deployment/plan.yaml.
-var ErrAbsent = errors.New("no .sdo/deployment/plan.yaml: write it with `sdo-operator install-existing --deployment-source` (or let the deployment agent propose one)")
+var ErrAbsent = errors.New("no .sdo/deployment/plan.yaml (the optional override): the deployment is derived from the repository's files")
 
 // Read loads the plan of a checkout (the accepted repository, or a proposal
 // or candidate root). A missing file is ErrAbsent, wrapped with the path.
@@ -120,14 +117,4 @@ func Read(checkout string, catalogs Catalogs) (*contracts.DeploymentPlan, error)
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return plan, nil
-}
-
-// Write stores plan at its canonical path in checkout, creating directories.
-// The checkout is agent-controlled, so it never writes through a symlink.
-func Write(checkout string, plan *contracts.DeploymentPlan) error {
-	data, err := Format(plan)
-	if err != nil {
-		return err
-	}
-	return safefs.WriteFile(checkout, layout.DeploymentPlanFile, data, 0o644)
 }

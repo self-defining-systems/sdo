@@ -12,7 +12,6 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/operability"
 	"sdo.dev/operator/operability/offline"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/renderenv"
@@ -45,16 +44,15 @@ func LiveCheckIDs() []string {
 // ClassifyDeploymentError maps an error of ApplyAndVerify or VerifyAccepted to a
 // cause, by type and never by message: cancellation, rate limits, timeouts and
 // still-progressing rollouts are infrastructure; an unresolvable image is a
-// build fault; a stalled rollout is a rollout fault; a patch series or renderer
-// that no longer reproduces what was deployed is attribution or environment, not
-// the application's; unknown shapes are internal defects.
+// build fault; a stalled rollout is a rollout fault; an effective tree or
+// renderer that no longer reproduces what was deployed is attribution or
+// environment, not the application's; unknown shapes are internal defects.
 func ClassifyDeploymentError(err error) operability.Cause {
 	if err == nil {
 		return ""
 	}
 	var rendererChanged *RendererChangedError
-	var patchChanged *PatchSetChangedError
-	var patchErr *patchset.PatchError
+	var treeChanged *EffectiveTreeChangedError
 	var timeout *imagesrc.TimeoutError
 	var rollout *RolloutTimeoutError
 	var imageErr *imagesrc.Error
@@ -71,13 +69,8 @@ func ClassifyDeploymentError(err error) operability.Cause {
 		return immutable.Cause()
 	case errors.As(err, &rendererChanged):
 		return operability.CauseEnvironment
-	case errors.As(err, &patchChanged):
-		if patchChanged.Err != nil && !errors.As(patchChanged.Err, &patchErr) {
-			return offline.ClassifyRender(patchChanged.Err, operability.CauseEnvironment)
-		}
+	case errors.As(err, &treeChanged):
 		return operability.CauseAttribution
-	case errors.As(err, &patchErr):
-		return operability.CausePatch
 	case errors.As(err, &timeout), lifecycle.IsInfrastructureOutcome(err):
 		return operability.CauseInfrastructure
 	case errors.As(err, &rollout):
@@ -339,7 +332,6 @@ func (d Deployer) CheckLive(ctx context.Context, checkout string, plan *contract
 	if err != nil {
 		return LiveChecks(LiveInput{Receipt: receipt, Err: err}), nil
 	}
-	defer effective.Close()
 	fsys, err := rendered.GitTreeFS(ctx, effective)
 	if err != nil {
 		return nil, err

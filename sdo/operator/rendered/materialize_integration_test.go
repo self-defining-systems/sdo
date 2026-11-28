@@ -9,12 +9,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"sdo.dev/operator/patchset"
 )
 
 func TestMaterializeWritesTheEffectiveFilesOnly(t *testing.T) {
-	dir, base := patchedRepo(t)
+	dir, base := memoryRepo(t)
 	write(t, dir, ".gitignore", "ignored.txt\n")
 	write(t, dir, "ignored.txt", "scratch")
 	write(t, dir, "bin/run.sh", "#!/bin/sh\n")
@@ -33,16 +31,13 @@ func TestMaterializeWritesTheEffectiveFilesOnly(t *testing.T) {
 	if filepath.Dir(out) != root || filepath.Base(out) != eff.ID[:12] {
 		t.Fatalf("directory = %s", out)
 	}
-	if got := mustRead(t, filepath.Join(out, "app/deploy.yaml")); got != readAll(t, eff, "app/deploy.yaml") || !contains(got, "image: patched") {
+	if got := mustRead(t, filepath.Join(out, "app/deploy.yaml")); got != readAll(t, eff, "app/deploy.yaml") || !contains(got, "image: a") {
 		t.Fatalf("patched file = %q", got)
 	}
-	for _, gone := range []string{"ignored.txt", ".sdo/playbooks", ".sdo/deployment/plan.yaml", patchset.Directory} {
+	for _, gone := range []string{"ignored.txt", ".sdo", ".sdo-runtime"} {
 		if _, err := os.Lstat(filepath.Join(out, gone)); err == nil {
 			t.Errorf("%s must not be materialized", gone)
 		}
-	}
-	if _, err := os.Stat(filepath.Join(out, ".sdo/deployment/values/v.yaml")); err != nil {
-		t.Errorf("values must be materialized: %v", err)
 	}
 	if info, err := os.Stat(filepath.Join(out, "bin/run.sh")); err != nil || info.Mode().Perm()&0o111 == 0 {
 		t.Errorf("executable bit lost: %v %v", info, err)
@@ -60,7 +55,7 @@ func TestMaterializeWritesTheEffectiveFilesOnly(t *testing.T) {
 }
 
 func TestMaterializePrunesSupersededUnreferencedTrees(t *testing.T) {
-	dir, base := patchedRepo(t)
+	dir, base := memoryRepo(t)
 	store := ObjectStore{Dir: dir}
 	root := filepath.Join(t.TempDir(), "effective")
 	m := &Materializer{Root: root, Keep: 1, MinAge: time.Nanosecond}

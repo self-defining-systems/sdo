@@ -67,7 +67,6 @@ func openTree(t *testing.T, objects ObjectStore, base BaseTree) (render.FS, Effe
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(eff.Close)
 	fsys, err := GitTreeFS(context.Background(), eff)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +74,7 @@ func openTree(t *testing.T, objects ObjectStore, base BaseTree) (render.FS, Effe
 	return fsys, eff
 }
 
-func TestGitTreeFSExposesOnlyTrackedRegularFilesAndDeploymentMemory(t *testing.T) {
+func TestGitTreeFSExposesOnlyTrackedRegularFilesWithoutMemory(t *testing.T) {
 	dir, base := fixtureRepo(t)
 	fsys, eff := openTree(t, ObjectStore{Dir: dir}, base)
 	if eff.ID == string(base) {
@@ -91,11 +90,11 @@ func TestGitTreeFSExposesOnlyTrackedRegularFilesAndDeploymentMemory(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ".sdo/deployment/values/patch.yaml app/deploy.yaml app/sub/svc.yaml top.txt"
+	want := "app/deploy.yaml app/sub/svc.yaml top.txt"
 	if got := strings.Join(names, " "); got != want {
 		t.Fatalf("files = %q, want %q (symlink, gitlink and .sdo memory must be absent)", got, want)
 	}
-	for _, absent := range []string{"link", "vendor/mod", "vendor", ".sdo/goal.md"} {
+	for _, absent := range []string{"link", "vendor/mod", "vendor", ".sdo/goal.md", ".sdo/deployment/values/patch.yaml"} {
 		if _, err := fsys.Stat(absent); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("Stat(%s) = %v, want not exist", absent, err)
 		}
@@ -108,10 +107,10 @@ func TestGitTreeFSExposesOnlyTrackedRegularFilesAndDeploymentMemory(t *testing.T
 	for _, e := range root {
 		top = append(top, e.Name())
 	}
-	if got := strings.Join(top, " "); got != ".sdo app top.txt" {
+	if got := strings.Join(top, " "); got != "app top.txt" {
 		t.Fatalf("root entries = %q", got)
 	}
-	if err := fstest.TestFS(fsys, "app/deploy.yaml", "app/sub/svc.yaml", "top.txt", ".sdo/deployment/values/patch.yaml"); err != nil {
+	if err := fstest.TestFS(fsys, "app/deploy.yaml", "app/sub/svc.yaml", "top.txt"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -124,7 +123,6 @@ func TestGitTreeFSBlobAndSizeComeFromTheListingWithoutReadingBytes(t *testing.T)
 			catFiles.Add(1)
 		}
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", d}, args...)...)
-		cmd.Env = append(os.Environ(), GitEnvFrom(ctx)...)
 		return cmd.Output()
 	}}
 	fsys, _ := openTree(t, objects, base)
@@ -226,7 +224,6 @@ func TestGitTreeFSReadFailureMidRenderIsUnavailable(t *testing.T) {
 			return nil, errors.New("disk gone")
 		}
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", d}, args...)...)
-		cmd.Env = append(os.Environ(), GitEnvFrom(ctx)...)
 		return cmd.Output()
 	}}
 	fsys, _ := openTree(t, objects, base)

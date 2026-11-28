@@ -128,26 +128,3 @@ func TestPinsFollowTheImageInputsAcrossEffectiveTreeChanges(t *testing.T) {
 		})
 	}
 }
-
-// A responder patch (a real patch file in the series) that edits a non-image
-// manifest field keeps the pins; one that edits a built image's context does not.
-func TestPinsAcrossAnAcceptedPatchSeries(t *testing.T) {
-	for name, tc := range map[string]struct {
-		path string
-		body string
-		want string
-	}{
-		"patch of a manifest field":  {path: "k8s/web.yaml", body: strings.Replace(twoContainerManifest, "namespace: app}", "namespace: app, labels: {tier: x}}", 1), want: inheritedDigest},
-		"patch of the build context": {path: "app/web/main.go", body: "package main // fixed\n", want: "example/web:1"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			dir, pins := pinFixture(t)
-			text := patchText(t, dir, func() { write(t, dir, tc.path, tc.body) })
-			write(t, dir, ".sdo/deployment/patches/0001-fix.patch", text)
-			commitTree(t, dir)
-			if got := containerImages(t, dir, pins)["web"]; got != tc.want {
-				t.Fatalf("web image = %s, want %s", got, tc.want)
-			}
-		})
-	}
-}
