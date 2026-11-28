@@ -142,3 +142,53 @@ func TestScriptRefusalNamesEveryFailedIdentityClause(t *testing.T) {
 		}
 	}
 }
+
+// A read whose client went away (a script's finished `kubectl rollout status`
+// watch) ends at once. The runner's shutdown, and the controller step waiting
+// on the script's result, never wait on it until the drain deadline. A read
+// whose client stays keeps streaming until the drain ends.
+func TestScriptReadEndsWithItsClientOrTheDrain(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		clientLeaves bool
+	}{{"client leaves", true}, {"client stays", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			gate, err := apihistory.PrepareMutationGate(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			upstream, _ := url.Parse("https://synthetic.invalid")
+			watching, done := make(chan struct{}), make(chan struct{})
+			drain, stopDrain := context.WithTimeout(t.Context(), time.Minute)
+			defer stopDrain()
+			var drainEnded error
+			transport := secretCaptureTransport(func(r *http.Request) (*http.Response, error) {
+				close(watching)
+				<-r.Context().Done()
+				drainEnded = drain.Err()
+				return nil, r.Context().Err()
+			})
+			proxy := drainScriptRequests(t.Context(), drain, scriptProxy(upstream, transport, transport, nil, gate))
+			client, leave := context.WithCancel(t.Context())
+			defer leave()
+			req := httptest.NewRequest(http.MethodGet, "/apis/apps/v1/namespaces/app/deployments?watch=true", nil).WithContext(client)
+			go func() {
+				proxy.ServeHTTP(httptest.NewRecorder(), req)
+				close(done)
+			}()
+			<-watching
+			if c.clientLeaves {
+				leave()
+			} else {
+				stopDrain()
+			}
+			<-done
+			if c.clientLeaves && drainEnded != nil {
+				t.Fatal("a watch whose client left held the proxy until the drain deadline")
+			}
+			if !c.clientLeaves && drainEnded == nil {
+				t.Fatal("a watch whose client stayed ended before the drain did")
+			}
+		})
+	}
+}
