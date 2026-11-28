@@ -693,7 +693,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			CoverageProvider:   selectedCodePath.Coverage,
 			APIProxyImage:      apiProxyImage,
 			Recording:          policy.Agent.Recording,
-			Investigators:      investigatorRegistry(policy.Response.Investigators, time.Duration(policy.Response.InvestigatorDelay)),
+			Investigators:      investigatorRegistry(agentInvestigators(policy), time.Duration(policy.Response.InvestigatorDelay)),
+			HideFindings:       policy.Detection.HideFindingsFromAgent,
 			ToolchainImage:     *toolchainImage,
 			Client:             bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
@@ -713,6 +714,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					loop.Traffic = proberAPI
 				}
 				loop.WorkingProgramRoot = request.RepositoryWorktree
+				loop.HideFindings = policy.Detection.HideFindingsFromAgent
 				if policy.Response.ExternalClues && request.ExternalMessage != "" {
 					loop.Detectors, loop.ExternalClues = detectors, true
 				}
@@ -820,7 +822,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if !clientInjected && jobDispatch && isJobDispatcher && policy.Response.Standby && standbyEnabled(jobEnvironment) {
 		d := jobDispatcher
 		standbyEnvironment := standbyWorkerEnvironment(jobEnvironment)
-		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{Recording: d.Recording, APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true}, d.AgentID, *application)
+		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{Recording: d.Recording, APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true, HiddenNamespaces: d.hiddenNamespaces()}, d.AgentID, *application)
 		standbyCtx, stopStandby := context.WithCancel(renewalCtx)
 		if err := pool.Start(standbyCtx); err != nil {
 			stopStandby()

@@ -220,6 +220,9 @@ type ResponderLoop struct {
 	restoreEvidence *sourceRestoreEvidence
 	// ExternalClues lets `detect` run for an external incident as the candidate
 	// view; check and verify stay without detector authority.
+	// HideFindings is detection.hide_findings_from_agent: every sdo command is
+	// answered by hiddenToolResponse (hide_findings.go).
+	HideFindings  bool
 	ExternalClues bool
 	// BuiltinRestoreAuto lets the automatic stage apply the built-in
 	// source-restore playbook; off, the responder decides (response.builtin_restore_auto).
@@ -298,15 +301,15 @@ type ResponderLoop struct {
 	stageNotes          []StageNote
 	timing              toolTiming
 	// trace times the phases of the Handle call in progress (nil outside one).
-	trace *phaseTrace
-	preApplyCaptured    bool
-	saveToolState       func(context.Context, []byte) error
-	operationMu         sync.RWMutex
-	mu                  sync.Mutex
-	sessionID           string
-	plans               map[string]selectedPlan
-	applications        map[string]PlanApplicationResult
-	applicationsLog     []RecordedPlanApplication
+	trace            *phaseTrace
+	preApplyCaptured bool
+	saveToolState    func(context.Context, []byte) error
+	operationMu      sync.RWMutex
+	mu               sync.Mutex
+	sessionID        string
+	plans            map[string]selectedPlan
+	applications     map[string]PlanApplicationResult
+	applicationsLog  []RecordedPlanApplication
 	// Restored application evidence has no live plan or rollback handles.
 	archivedApplications []RecordedPlanApplication
 	completedRepairs     []continuationRepair
@@ -540,7 +543,16 @@ func (l *ResponderLoop) Exhausted() bool {
 // probes) and refresh is the time spent in refresh, which includes capture.
 type toolTiming struct{ capture, refresh, persist time.Duration }
 
-func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
+// Handle answers one sdo command. Under detection.hide_findings_from_agent the
+// answer is hiddenToolResponse's (hide_findings.go).
+func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) ToolResponse {
+	if l.HideFindings {
+		return l.hiddenToolResponse(ctx, request)
+	}
+	return l.handle(ctx, request)
+}
+
+func (l *ResponderLoop) handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
 	if !request.isolatedRead && concurrentRead(request.Command) {
 		return l.handleRead(ctx, request)
 	}
@@ -884,7 +896,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Error = fmt.Sprintf("unknown sdo command %q", request.Command)
 	}
 	response.LoopsUsed = l.batches
-	if notes := l.takeStageNotes(request); len(notes) > 0 {
+	if notes := l.takeStageNotes(request); len(notes) > 0 && !l.HideFindings {
 		response.PriorStages = notes
 		lines := make([]string, len(notes))
 		for i, note := range notes {

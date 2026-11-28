@@ -112,11 +112,12 @@ type Agent struct {
 // Detection is the operator timing detectors and closure apply. It never says what is broken (accepted memory does);
 // it is stamped into every detector observation and bound into the operability report's subject (DetectionDigest).
 type Detection struct {
-	SelfHealHold         Duration `yaml:"self_heal_hold" doc:"how long a Kubernetes condition without a give-up signal must hold before it opens an incident; carried in every detector observation and bound into the operability report"`
-	StabilityWindow      Duration `yaml:"stability_window" doc:"how long the alert set (opening alerts and user tests that failed during the incident) must stay clear after SDO's last write settled before the incident counts as recovered"`
-	DriftBatchWindow     Duration `yaml:"drift_batch_window" doc:"batch window for unexplained drift"`
-	RequestMetricsShadow bool     `yaml:"request_metrics_shadow" doc:"shadow mode of the request-metrics detector: its per-operation findings are recorded as clues in sdo detect and the evidence sink but never open or hold an incident. Off by default: a failing operation or route in real user traffic opens an incident"`
-	PagesOnly            bool     `yaml:"pages_only,omitempty" doc:"only a page (the external-incident inbox) opens an incident: every detector finding, failing user tests, failing user traffic and Kubernetes conditions included, is a clue that never opens, joins or holds one. Clues still ride in a page's incident as evidence, so learned playbooks still run on it, and the page is Recovered when every health detector stays clear. Off by default; for runs where someone else pages SDO (a benchmark arm without SDO's own paging)"`
+	SelfHealHold          Duration `yaml:"self_heal_hold" doc:"how long a Kubernetes condition without a give-up signal must hold before it opens an incident; carried in every detector observation and bound into the operability report"`
+	StabilityWindow       Duration `yaml:"stability_window" doc:"how long the alert set (opening alerts and user tests that failed during the incident) must stay clear after SDO's last write settled before the incident counts as recovered"`
+	DriftBatchWindow      Duration `yaml:"drift_batch_window" doc:"batch window for unexplained drift"`
+	RequestMetricsShadow  bool     `yaml:"request_metrics_shadow" doc:"shadow mode of the request-metrics detector: its per-operation findings are recorded as clues in sdo detect and the evidence sink but never open or hold an incident. Off by default: a failing operation or route in real user traffic opens an incident"`
+	PagesOnly             bool     `yaml:"pages_only,omitempty" doc:"only a page (the external-incident inbox) opens an incident: every detector finding, failing user tests, failing user traffic and Kubernetes conditions included, is a clue that never opens, joins or holds one. Clues still ride in a page's incident as evidence, so learned playbooks still run on it, and the page is Recovered when every health detector stays clear. Off by default; for runs where someone else pages SDO (a benchmark arm without SDO's own paging)"`
+	HideFindingsFromAgent bool     `yaml:"hide_findings_from_agent,omitempty" doc:"with pages_only: the agent is told the page and nothing SDO's detectors found. Its task carries no finding, clue, drift, state change or stage report; its sdo commands that show detector output (status, detect, diagnose, map, changes, timeline, investigations, menu and the mitigation verbs) answer that detector output is hidden, verify keeps only its healthy bit and detect --wait only waits for Recovered; its Kubernetes proxy refuses SDO's control namespace and cluster-wide ConfigMap, Secret, Event, Lease and custom-resource lists; no investigators start. A page is accepted at once. Kubectl, pod logs and exec, and the application's own metrics, logs and traces stay. Off by default; for a benchmark arm that measures what detector findings are worth to the agent"`
 }
 
 // DefaultSelfHealHold is written here, not referenced from the SDK, because the contracts module cannot depend on
@@ -319,6 +320,9 @@ func (c Config) Validate() error {
 	oneOf("learning.reflection_guidance", c.Learning.ReflectionGuidance, "baseline", "generalize", "generalize-spec")
 	if c.Detection.PagesOnly && c.Mode != ModeOperate && c.Mode != ModeFrozen {
 		bad("detection.pages_only", "requires mode %s or %s (pages are read in detector mode), not %s", ModeOperate, ModeFrozen, c.Mode)
+	}
+	if c.Detection.HideFindingsFromAgent && !c.Detection.PagesOnly {
+		bad("detection.hide_findings_from_agent", "requires detection.pages_only (only a page may open the incident whose findings are hidden)")
 	}
 	if c.Response.ExternalClues && c.Mode != ModeExternal {
 		bad("response.external_clues", "requires mode %s, not %s", ModeExternal, c.Mode)

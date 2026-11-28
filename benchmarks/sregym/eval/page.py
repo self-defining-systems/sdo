@@ -196,8 +196,71 @@ class ImpactPageHook:
         return self.records.get(cell.id)
 
 
-def page_hook(config: EvalConfig, cluster: PageCluster, now: Callable[[], float]) -> FallbackPageHook | ImpactPageHook:
-    """The SDO arm's page hook the config names (``EvalConfig.page``); ``fallback_page_seconds`` is its deadline."""
+@dataclass
+class ScheduledPageHook:
+    """Pages SDO once, at ``injected_at + offset_seconds``, whatever SDO or the prober saw.
+
+    For the arm that hides detector findings from the agent (``detection.pages_only`` and
+    ``detection.hide_findings_from_agent``): ``offset_seconds`` is the offset of SDO's own page from the injection start
+    in the paired cell ``paired_cell``, so the agent is told at the same time as in that cell and only what it is told
+    differs. The text is the generic notice (``lane_notice``). ``record`` is what the row writes to ``page.json``:
+    ``source`` ``scheduled``, ``offset_s``, ``paired_cell``, ``scheduled_at``, ``paged_at`` (the write's
+    acknowledgement), ``text`` and ``sdo_incident_before_page``.
+    """
+
+    offset_seconds: float
+    paired_cell: str
+    cluster: PageCluster
+    now: Callable[[], float]
+    notice: Callable[[Lane], str] = lane_notice
+    new_id: Callable[[], str] = _page_id
+    records: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.offset_seconds < 0:
+            raise ValueError("offset_seconds must not be negative")
+        if not self.paired_cell:
+            raise ValueError("a scheduled page names its paired cell")
+
+    def page(
+        self, lane: Lane, cell: Cell, injected_at: float, known_incident_ids: frozenset[str] = frozenset()
+    ) -> float | None:
+        if cell.arm != "sdo" or cell.id in self.records:
+            return None
+        scheduled = injected_at + self.offset_seconds
+        if self.now() < scheduled:
+            return None
+        own = self.cluster.own_incident(lane, known_incident_ids)
+        text = self.notice(lane)
+        self.cluster.send(lane, self.new_id(), text)
+        at = self.now()
+        self.records[cell.id] = {
+            "source": "scheduled",
+            "injected_at": injected_at,
+            "offset_s": self.offset_seconds,
+            "paired_cell": self.paired_cell,
+            "scheduled_at": scheduled,
+            "paged_at": at,
+            "text": text,
+            "sdo_incident_before_page": own,
+        }
+        return at
+
+    def own_incident_at(self, cell: Cell) -> float | None:
+        return None
+
+    def record(self, cell: Cell) -> dict[str, Any] | None:
+        return self.records.get(cell.id)
+
+
+def page_hook(
+    config: EvalConfig, cluster: PageCluster, now: Callable[[], float]
+) -> FallbackPageHook | ImpactPageHook | ScheduledPageHook:
+    """The SDO arm's page hook the config names (``EvalConfig.page``); ``fallback_page_seconds`` is the deadline of
+    the fallback and impact pages."""
+    if config.page == "scheduled":
+        assert config.page_offset_seconds is not None
+        return ScheduledPageHook(config.page_offset_seconds, config.page_paired_cell, cluster, now)
     if config.page == "impact":
         return ImpactPageHook(
             config.fallback_page_seconds, cluster, now, probes=lambda cell: cell.directory(config) / "probes.jsonl"

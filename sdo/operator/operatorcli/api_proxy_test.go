@@ -41,3 +41,12 @@ func TestAnUnopenableStoreRefusesWritesInsteadOfForwardingThemUnrecorded(t *test
 		t.Fatal("an unopenable store must fail admission")
 	}
 }
+
+func TestHiddenNamespacesParseTheSidecarEnvironment(t *testing.T) {
+	if got := hiddenNamespaces(""); got != nil {
+		t.Fatalf("empty environment hides %v", got)
+	}
+	if got := hiddenNamespaces(" demo-sdo, ,other "); len(got) != 2 || got[0] != "demo-sdo" || got[1] != "other" {
+		t.Fatalf("parsed %v", got)
+	}
+}

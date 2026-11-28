@@ -67,7 +67,12 @@ class EvalConfig(BaseModel):
     #: Which page the SDO arm gets: ``fallback`` (only when SDO opened no incident of its own) or ``impact`` (always,
     #: at the runner prober's first unhealthy sample, for a controller with ``detection.pages_only``;
     #: ``page.ImpactPageHook``). Both page by ``fallback_page_seconds`` at the latest.
-    page: Literal["fallback", "impact"] = "fallback"
+    page: Literal["fallback", "impact", "scheduled"] = "fallback"
+    #: ``scheduled`` only (``page.ScheduledPageHook``): the page goes out this long after the injection start, the
+    #: offset of SDO's own page in the paired cell ``page_paired_cell``. For a controller with
+    #: ``detection.pages_only`` and ``detection.hide_findings_from_agent``.
+    page_offset_seconds: float | None = Field(default=None, ge=0)
+    page_paired_cell: str = ""
     cell_cap_seconds: float = Field(default=1800.0, gt=0)
     #: After the agent ends, keep probing at most this long for the hold to be satisfied.
     settle_cap_seconds: float = Field(default=300.0, gt=0)
@@ -84,6 +89,13 @@ class EvalConfig(BaseModel):
     lane_memory_cap_gib: float = Field(default=32.0, gt=0)
     #: Budget for the summed caps of the lanes this plan uses; ``None`` leaves it unchecked.
     lane_budget_gib: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def scheduled_page(self) -> Self:
+        scheduled = self.page == "scheduled"
+        if scheduled != (self.page_offset_seconds is not None) or scheduled != bool(self.page_paired_cell):
+            raise ValueError("page_offset_seconds and page_paired_cell are set exactly when page is scheduled")
+        return self
 
     @model_validator(mode="after")
     def lanes_for_passes(self) -> Self:

@@ -73,19 +73,22 @@ type KubernetesExecutor struct {
 	ToolchainImage         string
 	TaskPayload            string
 	CapturedCorpusReadOnly bool
-	RepositoryReadOnly     bool
-	OnPhase                func(context.Context, string) error
-	Client                 kubernetes.Interface
-	Namespace              string
-	Registry               *Registry
-	ServiceAccount         string
-	RepositoryPVC          string
-	RepositoryMountPath    string
-	RepositoryPVCSubPath   string
-	SessionPVCSubPath      string
-	HealthyBaseline        bool
-	CredentialsSecret      string
-	Environment            map[string]string
+	// HiddenNamespaces are namespaces the agent's Kubernetes proxy refuses (detection.hide_findings_from_agent),
+	// passed to the proxy sidecar as --hidden-namespaces.
+	HiddenNamespaces     []string
+	RepositoryReadOnly   bool
+	OnPhase              func(context.Context, string) error
+	Client               kubernetes.Interface
+	Namespace            string
+	Registry             *Registry
+	ServiceAccount       string
+	RepositoryPVC        string
+	RepositoryMountPath  string
+	RepositoryPVCSubPath string
+	SessionPVCSubPath    string
+	HealthyBaseline      bool
+	CredentialsSecret    string
+	Environment          map[string]string
 	// Clock controls polling; nil uses the Kubernetes wall clock.
 	Clock        clock.WithTicker
 	PollInterval time.Duration

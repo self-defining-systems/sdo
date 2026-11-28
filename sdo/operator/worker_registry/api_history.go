@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -75,6 +76,7 @@ func (e KubernetesExecutor) addAPIHistory(job *batchv1.Job, task *contracts.Agen
 			}
 		}
 	}
+	command = append(command, e.hiddenNamespacesArgs()...)
 	always := corev1.ContainerRestartPolicyAlways
 	sidecar := corev1.Container{
 		Name: "kube-api-history", Image: image,
@@ -105,4 +107,12 @@ func (e KubernetesExecutor) prepareHistory(directory string) error {
 		return fmt.Errorf("api history generation: %w", err)
 	}
 	return nil
+}
+
+// hiddenNamespacesArgs is the proxy's --hidden-namespaces flag (detection.hide_findings_from_agent), or nothing.
+func (e KubernetesExecutor) hiddenNamespacesArgs() []string {
+	if len(e.HiddenNamespaces) == 0 {
+		return nil
+	}
+	return []string{"--hidden-namespaces", strings.Join(e.HiddenNamespaces, ",")}
 }

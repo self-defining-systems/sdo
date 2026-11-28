@@ -60,6 +60,10 @@ type KubernetesJobDispatcher struct {
 	beforeClaim           func()
 	// Investigators is response.investigators and its running sessions; nil or Count 0 starts none.
 	Investigators *InvestigatorRegistry
+	// HideFindings is detection.hide_findings_from_agent: the encoded task is
+	// hiddenFindingsRequest of the incident, no earlier attempt is attached, and
+	// every agent proxy refuses the control namespace (hide_findings.go).
+	HideFindings bool
 }
 
 // PrepareDispatch freezes the worker task before the controller records its
@@ -153,12 +157,14 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 		if err != nil {
 			return IncidentRequest{}, fmt.Errorf("read logical operational memory: %w", err)
 		}
-		if snapshot, err = d.withEarlierAttempts(ctx, snapshot, request); err != nil {
-			return IncidentRequest{}, err
+		if !d.HideFindings {
+			if snapshot, err = d.withEarlierAttempts(ctx, snapshot, request); err != nil {
+				return IncidentRequest{}, err
+			}
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	_, payload, err := encodeIncidentAgentTask(request, d.Registry, d.AgentID, snapshots...)
+	_, payload, err := encodeIncidentAgentTask(d.agentTaskRequest(request), d.Registry, d.AgentID, snapshots...)
 	if err != nil {
 		return IncidentRequest{}, fmt.Errorf("%w: %w", ErrDispatchPermanent, err)
 	}
@@ -293,10 +299,11 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		environment["SDO_RESPONDER_USAGE_DIR"] = "/sdo/session/usage"
 	}
 	executor := worker_registry.KubernetesExecutor{
-		APIProxyImage:  d.APIProxyImage,
-		Recording:      d.Recording,
-		ToolchainImage: d.ToolchainImage,
-		Client:         d.Client, Namespace: d.Namespace, Registry: d.Registry,
+		APIProxyImage:    d.APIProxyImage,
+		Recording:        d.Recording,
+		ToolchainImage:   d.ToolchainImage,
+		HiddenNamespaces: d.hiddenNamespaces(),
+		Client:           d.Client, Namespace: d.Namespace, Registry: d.Registry,
 		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
 		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
 		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,
@@ -519,4 +526,22 @@ func dispatchPreparationTiming(incident, phase string) func() {
 	return func() {
 		slog.Info("responder_dispatch_preparation", "incident_id", incident, "phase", phase, "duration_ms", lifecycleio.Since(started).Milliseconds())
 	}
+}
+
+// agentTaskRequest is the incident as the agent's task carries it: all of it, or
+// hiddenFindingsRequest of it under HideFindings.
+func (d KubernetesJobDispatcher) agentTaskRequest(request IncidentRequest) IncidentRequest {
+	if d.HideFindings {
+		return hiddenFindingsRequest(request)
+	}
+	return request
+}
+
+// hiddenNamespaces are the namespaces an agent's Kubernetes proxy refuses: the
+// control namespace under HideFindings, none otherwise.
+func (d KubernetesJobDispatcher) hiddenNamespaces() []string {
+	if !d.HideFindings || d.Namespace == "" {
+		return nil
+	}
+	return []string{d.Namespace}
 }

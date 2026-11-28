@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +45,27 @@ type Config struct {
 	Checkout func() (commit string, dirty bool)
 	// ReadOnly refuses writes and exec, attach and port-forward sessions with 403, recording each refusal.
 	ReadOnly bool
+	// HiddenNamespaces (detection.hide_findings_from_agent) are refused with 403: every request in them, and every
+	// cluster-wide request for a kind that can hold SDO's state there (ConfigMaps, Secrets, Events, Leases, sdo.dev
+	// kinds), so no detector finding the controller keeps reaches the agent through Kubernetes.
+	HiddenNamespaces []string
+}
+
+// clusterWideHidden are the kinds a cluster-wide request may not read while a namespace is hidden.
+var clusterWideHidden = map[string]bool{"configmaps": true, "secrets": true, "events": true, "leases": true}
+
+// hiddenRequest reports a request HiddenNamespaces refuses.
+func hiddenRequest(e apihistory.Event, hidden []string) bool {
+	if len(hidden) == 0 || e.Resource == "" {
+		return false
+	}
+	if e.Namespace != "" {
+		return slices.Contains(hidden, e.Namespace)
+	}
+	if e.Resource == "namespaces" {
+		return false
+	}
+	return clusterWideHidden[e.Resource] || e.Group == "sdo.dev" || strings.HasSuffix(e.Group, ".sdo.dev")
 }
 
 // New forwards request and response bytes through the incident connection pool.
@@ -68,6 +90,11 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 		write := mutating(r.Method) || session
 		if write && config.ReadOnly && !nonPersistingReview(e) {
 			refuseReadOnly(w, recorder, e)
+			return
+		}
+		if hiddenRequest(e, config.HiddenNamespaces) {
+			writeStatus(w, http.StatusForbidden, "Forbidden", "scope_hidden",
+				"SDO's own state is hidden from the agent in this run (detection.hide_findings_from_agent)")
 			return
 		}
 		if write && recorder != nil {

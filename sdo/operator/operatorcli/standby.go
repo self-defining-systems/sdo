@@ -30,6 +30,7 @@ func RunStandbyHistory(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("standby-history", flag.ContinueOnError)
 	directory := flags.String("directory", "", "private history directory")
 	recording := flags.Bool("recording", false, "record the agent's Kubernetes calls")
+	hidden := flags.String("hidden-namespaces", "", "namespaces the proxy refuses (detection.hide_findings_from_agent)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -47,6 +48,9 @@ func RunStandbyHistory(ctx context.Context, args []string) error {
 	proxyArgs := []string{"--scope", "incident:" + request.GetIncidentId(), "--directory", *directory}
 	if *recording {
 		proxyArgs = append(proxyArgs, "--recording")
+	}
+	if *hidden != "" {
+		proxyArgs = append(proxyArgs, "--hidden-namespaces", *hidden)
 	}
 	return RunAPIProxy(ctx, proxyArgs)
 }

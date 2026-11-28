@@ -144,7 +144,7 @@ func TestResponderLoopLocksAreDeferredOrHelped(t *testing.T) {
 	}
 	// Positive control: the scan must resolve the loop type and see known
 	// deferred sites, so it cannot pass by finding nothing.
-	for _, site := range []string{"Handle:l.operationMu.Lock", "Handle:l.mu.Lock", "RefreshPendingMitigations:l.operationMu.TryLock", "RefreshPendingMitigations:l.mu.TryLock"} {
+	for _, site := range []string{"handle:l.operationMu.Lock", "handle:l.mu.Lock", "RefreshPendingMitigations:l.operationMu.TryLock", "RefreshPendingMitigations:l.mu.TryLock"} {
 		if !found[site] {
 			t.Errorf("lock scan did not find known site %s; found %v", site, found)
 		}

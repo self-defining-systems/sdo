@@ -49,6 +49,10 @@ type ControllerConfig struct {
 	// PagesOnly makes every detector finding a clue: only a page opens an
 	// incident (detection.pages_only).
 	PagesOnly bool
+	// HideFindings (detection.hide_findings_from_agent, with PagesOnly) opens a
+	// page's incident at once and with no clue, state change or drift: the agent
+	// is told the page and nothing SDO's detectors found (hide_findings.go).
+	HideFindings bool
 	// WatchOnly detects, opens, verifies and closes incidents as usual but never
 	// responds: the controller's dispatcher is replaced by one that idles until
 	// the incident ends, and no automatic stage is selected.
@@ -352,6 +356,7 @@ func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig 
 	c.ExternalClues = policy.Response.ExternalClues
 	c.RequestMetricsOpens = !policy.Detection.RequestMetricsShadow
 	c.PagesOnly = policy.Detection.PagesOnly
+	c.HideFindings = policy.Detection.HideFindingsFromAgent
 	return c
 }
 

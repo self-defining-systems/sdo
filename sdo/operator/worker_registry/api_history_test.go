@@ -155,3 +155,48 @@ func TestAgentProxyRecordsWhenRecordingIsOn(t *testing.T) {
 		t.Fatalf("sidecar not asked to record with recording on: %v", sidecar(job).Command)
 	}
 }
+
+// detection.hide_findings_from_agent reaches the proxy sidecar as --hidden-namespaces, on job and standby pods
+// alike; with none set the flag is absent.
+func TestHiddenNamespacesReachTheProxySidecar(t *testing.T) {
+	request, err := anypb.New(&contracts.IncidentRequest{IncidentId: "incident-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flagValue := func(command []string) string {
+		for i, arg := range command {
+			if arg == "--hidden-namespaces" && i+1 < len(command) {
+				return command[i+1]
+			}
+		}
+		return ""
+	}
+	for _, hidden := range [][]string{nil, {"demo-sdo"}} {
+		client := fake.NewSimpleClientset()
+		executor := KubernetesExecutor{Client: client, Namespace: "sdo", RepositoryPVC: "repo", RepositoryMountPath: t.TempDir(), SessionPVCSubPath: "sessions/s1", APIProxyImage: "operator-image", HiddenNamespaces: hidden}
+		task := &contracts.AgentTask{TaskId: "incident-1", Request: request, Workspace: &contracts.ProposalWorkspace{CheckoutPath: "/work", BaseCommit: "abc"}}
+		if err := executor.ensureJob(context.Background(), task, &contracts.KubernetesJobLaunch{Image: "worker"}, "job-1", requestSource{ConfigMap: "req"}, "job-1-result", ""); err != nil {
+			t.Fatal(err)
+		}
+		job, err := client.BatchV1().Jobs("sdo").Get(context.Background(), "job-1", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		proxy := sidecar(job)
+		if proxy == nil {
+			t.Fatal("no proxy sidecar")
+		}
+		want := ""
+		if hidden != nil {
+			want = "demo-sdo"
+		}
+		if got := flagValue(proxy.Command); got != want {
+			t.Fatalf("job sidecar --hidden-namespaces %q, want %q (%v)", got, want, proxy.Command)
+		}
+		executor.standbySubPath = "standby/s1"
+		executor.configureStandby(job, &contracts.KubernetesJobLaunch{Command: []string{"worker"}})
+		if got := flagValue(sidecar(job).Command); got != want {
+			t.Fatalf("standby sidecar --hidden-namespaces %q, want %q", got, want)
+		}
+	}
+}

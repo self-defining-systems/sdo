@@ -104,7 +104,7 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 	if busy || c.startupHolds(now) {
 		return ErrExternalIncidentBusy
 	}
-	if c.config.PagesOnly && !c.pageEvidenceReady(now, alert.ID) {
+	if c.config.PagesOnly && !c.config.HideFindings && !c.pageEvidenceReady(now, alert.ID) {
 		return ErrExternalIncidentBusy
 	}
 	if snapshot == nil {
@@ -115,6 +115,11 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 	}
 	// The clues active now ride as evidence; none is an alert of the page.
 	clues := c.activeClues(nil)
+	if c.config.HideFindings {
+		// Nothing a detector found rides in the page's incident: the agent is
+		// told the page only (hide_findings.go).
+		clues = nil
+	}
 	request := c.incidentRequest(now, clues)
 	request.Page = alert.Message
 	request.StandingKeys = findingKeys(clues)
@@ -128,7 +133,7 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 	c.mu.Lock()
 	c.lastPageID = alert.ID
 	c.mu.Unlock()
-	slog.Info("page_opened", "incident_id", request.IncidentID, "page_id", alert.ID)
+	slog.Info("page_opened", "incident_id", request.IncidentID, "page_id", alert.ID, "findings_hidden", c.config.HideFindings)
 	if c.config.CorpusSessionRoot != "" {
 		if err := c.bindIncidentHealthyBaseline(request.IncidentID); err != nil {
 			c.reportHealthyCaptureError(err)

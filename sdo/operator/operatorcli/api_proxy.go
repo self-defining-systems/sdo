@@ -31,6 +31,7 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	directory := flags.String("directory", "", "runtime history directory")
 	worktree := flags.String("worktree", "", "the responder's checkout; each recorded write names its commit")
 	recording := flags.Bool("recording", false, "record every Kubernetes call in the history directory (agent.recording)")
+	hidden := flags.String("hidden-namespaces", "", "comma-separated namespaces the proxy refuses (detection.hide_findings_from_agent)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -81,6 +82,7 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 		}
 	}
 	proxyConfig := scope.config(recorder, gate)
+	proxyConfig.HiddenNamespaces = hiddenNamespaces(*hidden)
 	if *worktree != "" && scope.Kind == "incident" {
 		proxyConfig.Checkout = func() (string, bool) {
 			return processio.HeadCommit(ctx, *worktree), processio.Dirty(ctx, *worktree)
@@ -136,4 +138,15 @@ func apiProxyTransports(config *rest.Config) (http.RoundTripper, http.RoundTripp
 		return nil, nil, err
 	}
 	return reads, reads, nil
+}
+
+// hiddenNamespaces parses --hidden-namespaces (detection.hide_findings_from_agent).
+func hiddenNamespaces(value string) []string {
+	var namespaces []string
+	for _, namespace := range strings.Split(value, ",") {
+		if namespace = strings.TrimSpace(namespace); namespace != "" {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	return namespaces
 }
