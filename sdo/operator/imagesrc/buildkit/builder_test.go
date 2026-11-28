@@ -105,21 +105,6 @@ func TestBuildJobSharesLayerCacheThroughTheImageRepository(t *testing.T) {
 			t.Fatalf("build script lacks %s:\n%s", want, script)
 		}
 	}
-	if strings.Contains(environment["BUILDKITD_FLAGS"], "--config") {
-		t.Fatal("a TLS registry needs no buildkitd registry config")
-	}
-}
-
-func TestBuildJobCacheReachesAnInsecureLaneRegistry(t *testing.T) {
-	backend := testBackend(t.TempDir(), fake.NewSimpleClientset(), time.Minute)
-	backend.RegistryInsecure = true
-	environment, script := jobEnvironment(t, backend, "reg.example/app/api:1")
-	if environment["SDO_REGISTRY_HOST"] != "reg.example" || !strings.Contains(environment["BUILDKITD_FLAGS"], "--config /tmp/buildkitd.toml") {
-		t.Fatalf("insecure registry must be configured for the cache client too: %v", environment)
-	}
-	if !strings.Contains(script, "http = true") {
-		t.Fatalf("script must write the registry config:\n%s", script)
-	}
 }
 
 const buildMetadata = buildMetadataPrefix + `{"containerimage.digest":"` + synthDigest + `"}` + "\n"

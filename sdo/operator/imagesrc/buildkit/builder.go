@@ -36,9 +36,10 @@ const ID = "buildkit"
 
 // Doc tells an agent what the buildkit source does and when to choose it.
 const Doc = `Builds the image from a Dockerfile in the source tree and pushes it to the operator's registry. Choose it for each image whose code lives in this repository, and declare it for the exact image name the manifests use; an undeclared image under the operator's registry host is rejected.
-Config: context_path, the tree-relative build context directory; dockerfile_path, the tree-relative Dockerfile. Paths are checked before any build starts, so a wrong path costs no build time. Builds run in a bounded rootless job that sees only the committed tree (the repository's tracked files of your last commit), not your working directory.`
+Config: context_path, the tree-relative build context directory; dockerfile_path, the tree-relative Dockerfile. Paths are checked before any build starts, so a wrong path costs no build time. Builds run in a bounded job that sees only the committed tree (the repository's tracked files of your last commit), not your working directory, and share the install's BuildKit daemon, so steps that finished in an earlier build, even a failed one, are reused.`
 
-// Builder builds candidate source in a bounded rootless BuildKit Job. The Job
+// Builder builds candidate source in a bounded BuildKit client Job of the
+// install's shared rootless daemon (ensureDaemon). The Job
 // sees only a materialized effective tree (rendered.Materializer, below
 // CheckoutRoot), mounted read-only, and its own registry-push
 // Secret. The accepted checkout and broker credentials are absent. It is the
@@ -91,6 +92,9 @@ func (b Builder) buildImage(ctx context.Context, checkout string, build *contrac
 	suffix := b.JobSuffix
 	if suffix == nil {
 		suffix = jobio.JobSuffix
+	}
+	if err := b.ensureDaemon(bounded); err != nil {
+		return "", &BuildFailureError{Image: build.GetImage(), Cause: BuildFailureInfrastructure, Message: err.Error()}
 	}
 	name := "sdo-image-build-" + suffix()
 	job := b.job(name, subPath, contextRel, dockerfileRel, build.GetImage(), limit)
@@ -260,32 +264,29 @@ func (b Builder) job(name, subPath, contextRel, dockerfileRel, image string, lim
 	// and bounded by the registry's own retention. Import of a missing cache is
 	// a warning, and a failed export never fails a build that succeeded.
 	cacheRef := imagesrc.Repository(image) + ":sdo-buildcache"
-	flags := "--oci-worker-no-process-sandbox"
-	script := `buildctl-daemonless.sh build --frontend dockerfile.v0 --local "context=$SDO_CONTEXT" --local dockerfile=/workspace --opt "filename=$SDO_DOCKERFILE" --import-cache "type=registry,ref=$SDO_CACHE_REF" --export-cache "type=registry,ref=$SDO_CACHE_REF,mode=max,ignore-error=true" --output "$SDO_OUTPUT" --metadata-file /tmp/sdo-metadata.json
+	// The Job is a client of the install's daemon (ensureDaemon): it uploads
+	// the committed tree and authenticates pulls and pushes with its own
+	// registry Secret through the build session.
+	script := `i=0
+until buildctl --addr "$SDO_BUILDKIT_ADDR" debug workers >/dev/null 2>&1; do
+  i=$((i+1)); if [ "$i" -ge 90 ]; then echo "could not connect to sdo-buildkitd after $i trials"; exit 1; fi; sleep 2
+done
+buildctl --addr "$SDO_BUILDKIT_ADDR" build --frontend dockerfile.v0 --local "context=$SDO_CONTEXT" --local dockerfile=/workspace --opt "filename=$SDO_DOCKERFILE" --import-cache "type=registry,ref=$SDO_CACHE_REF" --export-cache "type=registry,ref=$SDO_CACHE_REF,mode=max,ignore-error=true" --output "$SDO_OUTPUT" --metadata-file /tmp/sdo-metadata.json
 printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
 	output := "type=image,name=" + image + ",push=true"
 	if b.RegistryInsecure {
 		output += ",registry.insecure=true"
-		// The cache client resolves the registry through buildkitd's own
-		// configuration, not the exporter attribute.
-		flags += " --config /tmp/buildkitd.toml"
-		script = `printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$SDO_REGISTRY_HOST" > /tmp/buildkitd.toml
-` + script
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: b.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", "sdo.dev/component": "image-build"}},
 		Spec: batchv1.JobSpec{BackoffLimit: ptr32(0), ActiveDeadlineSeconds: &deadline, TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: b.ServiceAccount, AutomountServiceAccountToken: &no,
-				SecurityContext: &corev1.PodSecurityContext{RunAsUser: ptr64(1000), RunAsGroup: ptr64(1000), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}},
+				SecurityContext: &corev1.PodSecurityContext{RunAsUser: ptr64(1000), RunAsGroup: ptr64(1000), RunAsNonRoot: ptrBool(true)},
 				Containers: []corev1.Container{{Name: "buildkit", Image: b.BuildKitImage, Command: []string{"/bin/sh", "-ec"}, Args: []string{script},
-					Env:          []corev1.EnvVar{{Name: "BUILDKITD_FLAGS", Value: flags}, {Name: "SDO_CACHE_REF", Value: cacheRef}, {Name: "SDO_REGISTRY_HOST", Value: registryHostOf(b.AllowedRegistryHost)}, {Name: "DOCKER_CONFIG", Value: "/docker-config"}, {Name: "SDO_OUTPUT", Value: output}, {Name: "SDO_CONTEXT", Value: path.Join("/workspace", contextRel)}, {Name: "SDO_DOCKERFILE", Value: dockerfileRel}},
-					VolumeMounts: []corev1.VolumeMount{{Name: "candidate", MountPath: "/workspace", SubPath: subPath, ReadOnly: true}, {Name: "registry-auth", MountPath: "/docker-config/config.json", SubPath: ".dockerconfigjson", ReadOnly: true}, {Name: "buildkit-state", MountPath: "/home/user/.local/share/buildkit"}},
-					// RootlessKit needs newuidmap's setuid transition to create a
-					// subordinate UID map. Disabling privilege escalation breaks
-					// rootless BuildKit even though the container runs as UID 1000.
-					SecurityContext: &corev1.SecurityContext{RunAsNonRoot: ptrBool(true), AppArmorProfile: &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined}},
+					Env:          []corev1.EnvVar{{Name: "SDO_BUILDKIT_ADDR", Value: b.daemonAddress()}, {Name: "SDO_CACHE_REF", Value: cacheRef}, {Name: "DOCKER_CONFIG", Value: "/docker-config"}, {Name: "SDO_OUTPUT", Value: output}, {Name: "SDO_CONTEXT", Value: path.Join("/workspace", contextRel)}, {Name: "SDO_DOCKERFILE", Value: dockerfileRel}},
+					VolumeMounts: []corev1.VolumeMount{{Name: "candidate", MountPath: "/workspace", SubPath: subPath, ReadOnly: true}, {Name: "registry-auth", MountPath: "/docker-config/config.json", SubPath: ".dockerconfigjson", ReadOnly: true}},
 				}},
-				Volumes: []corev1.Volume{{Name: "candidate", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: b.RepositoryPVC, ReadOnly: true}}}, {Name: "registry-auth", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: b.RegistrySecret}}}, {Name: "buildkit-state", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+				Volumes: []corev1.Volume{{Name: "candidate", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: b.RepositoryPVC, ReadOnly: true}}}, {Name: "registry-auth", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: b.RegistrySecret}}}},
 			}},
 		},
 	}

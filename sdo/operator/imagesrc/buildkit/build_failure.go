@@ -88,7 +88,7 @@ var (
 	missingSource    = regexp.MustCompile(`failed to calculate checksum of ref \S+: "([^"]+)": not found`)
 	networkPattern   = regexp.MustCompile(`(?i)could not resolve|temporary failure resolving|failed to fetch|unable to locate package|dial tcp|i/o timeout|connection (refused|timed out|reset)|tls handshake|name or service not known|404\s+not found|no such host|received http code|couldn't connect|gnutls_handshake|hash sum mismatch|unable to fetch some archives`)
 	compilePattern   = regexp.MustCompile(`(?i)\berror:|\berror\[E|undefined reference|compilation terminated|make(\[\d+\])?: \*\*\*|npm ERR!|cannot find package|no matching function|syntax error|SyntaxError|cannot find symbol|BUILD FAILURE|ld returned`)
-	daemonDown       = regexp.MustCompile(`could not connect to \S*buildkitd\S* after \d+ trials`)
+	daemonDown       = regexp.MustCompile(`could not connect to \S*buildkitd\S* after \d+ trials|code = Unavailable desc|error reading from server: EOF|transport is closing`)
 	summaryLine      = regexp.MustCompile(`(?m)^(#\d+ ERROR: |error: failed to solve).*$`)
 	solveFailurePart = regexp.MustCompile(`^error: failed to solve: (.*)$`)
 )
