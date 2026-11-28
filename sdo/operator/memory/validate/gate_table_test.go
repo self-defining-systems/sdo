@@ -498,6 +498,48 @@ var gateRows = []gateRow{
 		edit: func(t *testing.T, r string) {
 			gateRestoreLearnedDirectory(t, r)
 		}},
+	// A schema upgrade's own rewrites belong to Upkeep, whatever artifact
+	// class they touch: here the pre-schema-15 plan fields and views.
+	{name: "upkeep migration drops retired deployment plan fields", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
+		prepare: gatePreDeploymentSchema(false), edit: gateMigrate},
+	{name: "upkeep migration moves retired deployment views and applies their patches", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
+		prepare: gatePreDeploymentSchema(true), edit: gateMigrate},
+	{name: "upkeep may not rewrite the deployment plan beyond the migration", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: layout.DeploymentPlanFile,
+		prepare: gatePreDeploymentSchema(false), edit: func(t *testing.T, r string) {
+			gateMigrate(t, r)
+			write(t, r, layout.DeploymentPlanFile, gateDeploymentPlan)
+		}},
+	{name: "upkeep may not change source beside a migration", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: "app.txt",
+		prepare: gatePreDeploymentSchema(true), edit: func(t *testing.T, r string) {
+			gateMigrate(t, r)
+			write(t, r, "app.txt", "not the migration\n")
+		}},
+	{name: "upkeep may not change the deployment plan without a migration", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: layout.DeploymentPlanFile,
+		edit: gateWrite(layout.DeploymentPlanFile, gateDeploymentPlan)},
+	{name: "upkeep may not commit part of a migration", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleUpkeepMigration}, path: "deploy/sdo/manifests/web.yaml",
+		prepare: gatePreDeploymentSchema(true), edit: func(t *testing.T, r string) {
+			gateMigrate(t, r)
+			remove(t, r, "deploy")
+		}},
+	{name: "upkeep migration whose patches leave their target as it was", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
+		prepare: func(t *testing.T, r string) {
+			gatePreDeploymentSchema(true)(t, r)
+			write(t, r, layout.DeploymentDir+"/patches/0002-unpull.patch", "SDO-Patch: 1\nOwner: deployer\nReason: synthetic\n\n"+
+				"diff --git a/chart/job.yaml b/chart/job.yaml\n--- a/chart/job.yaml\n+++ b/chart/job.yaml\n@@ -1,3 +1,2 @@\n kind: Job\n-pull: IfNotPresent\n name: migrate\n")
+		}, edit: gateMigrate},
+	{name: "upkeep migration ignores archive attributes of patched files", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
+		prepare: func(t *testing.T, r string) {
+			gatePreDeploymentSchema(true)(t, r)
+			write(t, r, ".gitattributes", "chart/** export-ignore\n")
+		}, edit: gateMigrate},
+	{name: "upkeep change on a base the migration refuses is denied, not an error", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: "app.txt",
+		prepare: func(t *testing.T, r string) {
+			gatePreDeploymentSchema(false)(t, r)
+			write(t, r, layout.DeploymentPlanFile, "{not yaml: [\n")
+		}, edit: func(t *testing.T, r string) {
+			write(t, r, layout.SchemaVersionFile, "15\n")
+			write(t, r, "app.txt", "x\n")
+		}},
 	{name: "a responder cannot write the retired incidents directory", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied},
 		edit: gateWrite(".sdo/diagnostics/detectors/incidents/old/detector.go", "package old\n")},
 	{name: "upkeep migration cannot drop an authored detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleUpkeepMigration},
@@ -1097,6 +1139,32 @@ func gateAppFileDenied(actor Actor, phase Phase) gateRow {
 
 // gateStrandedDetector writes a synthetic health detector package with the
 // given originating commit ("lifecycle-bootstrap" marks a Go-installed one).
+// gatePreDeploymentSchema shapes a schema-14 base whose plan.yaml still lists
+// the fields schema 15 retired and, with views, the retired deployment views
+// and a patch to an application file.
+func gatePreDeploymentSchema(views bool) func(*testing.T, string) {
+	return func(t *testing.T, r string) {
+		write(t, r, layout.SchemaVersionFile, "14\n")
+		paths := `["k8s"]`
+		if views {
+			paths = `[".sdo/deployment/manifests","k8s"]`
+			write(t, r, layout.DeploymentDir+"/manifests/web.yaml", "kind: Deployment\n")
+			write(t, r, layout.DeploymentDir+"/patches/0001-pull.patch", "SDO-Patch: 1\nOwner: deployer\nReason: synthetic\n\n"+
+				"diff --git a/chart/job.yaml b/chart/job.yaml\n--- a/chart/job.yaml\n+++ b/chart/job.yaml\n@@ -1,2 +1,3 @@\n kind: Job\n+pull: IfNotPresent\n name: migrate\n")
+			write(t, r, "chart/job.yaml", "kind: Job\nname: migrate\n")
+		}
+		write(t, r, layout.DeploymentPlanFile, `{"source":{"rendererId":"raw","config":{"@type":"type.googleapis.com/sdodev.contracts.v1alpha1.RawRenderConfig","paths":`+paths+`}},"expectedWorkloadIds":["Deployment/app/web"],"strategyId":"raw-manifests-v1"}`+"\n")
+	}
+}
+
+// gateMigrate is the Upkeep schema step exactly as the controller runs it.
+func gateMigrate(t *testing.T, r string) {
+	t.Helper()
+	if changed, err := layout.Migrate(r); err != nil || !changed {
+		t.Fatalf("Migrate = %v, %v", changed, err)
+	}
+}
+
 func gateStrandedDetector(t *testing.T, root, id, origin string) {
 	t.Helper()
 	manifest := strings.Replace(gateRead(t, root, gateHealthManifest), "id: health", "id: "+id, 1)
