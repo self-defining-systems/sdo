@@ -65,6 +65,10 @@ func (c *Controller) AttachOnboardingSoak(ctx context.Context, store OnboardingS
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.soak = &onboardingSoak{store: store, duration: c.config.OnboardingSoak, done: record != nil, ctx: ctx, check: check}
+	if record != nil {
+		bounds := record.LatencyBoundsByScenario()
+		c.soakBounds.Store(&bounds)
+	}
 	return nil
 }
 
@@ -102,6 +106,8 @@ func (c *Controller) soakHoldsLocked(now time.Time, snapshot sdk.DetectionContex
 	record := soak.running.Judge(now.UTC())
 	record.Results = append(record.Results, checked...)
 	soak.judged, soak.running = &record, nil
+	bounds := record.LatencyBoundsByScenario()
+	c.soakBounds.Store(&bounds)
 	slog.Info("onboarding_soak", "event", "judged", "red", len(record.Red()), "results", len(record.Results))
 	return false, ""
 }
@@ -162,5 +168,15 @@ func (c *Controller) recordOnboardingSoak(ctx context.Context) error {
 	c.mu.Lock()
 	soak.done = true
 	c.mu.Unlock()
+	return nil
+}
+
+// latencyBounds is the latency bounds the install's soak calibrated, by
+// "workload/scenario"; nil before the soak is judged or without one. It takes
+// no controller lock: the traffic observer calls it while building snapshots.
+func (c *Controller) latencyBounds() map[string]time.Duration {
+	if bounds := c.soakBounds.Load(); bounds != nil {
+		return *bounds
+	}
 	return nil
 }

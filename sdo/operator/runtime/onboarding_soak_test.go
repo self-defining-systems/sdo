@@ -179,3 +179,38 @@ func TestSoakRecordsAJourneyCheckThatCouldNotRun(t *testing.T) {
 		t.Fatalf("record = %+v", store.record)
 	}
 }
+
+// After the soak the detectors judge each scenario whose workload sets no
+// maxLatency against the bound SDO calibrated from the soak (three times its
+// slowest healthy sample): a slow healthy endpoint does not page on the
+// default bound, and an authored bound is left alone. A restart keeps the
+// calibration, since it reads the recorded soak.
+func TestSoakCalibratedLatencyBoundsReachTheDetectorsWindows(t *testing.T) {
+	store := &memorySoakStore{}
+	slow := []traffic.Sample{{At: at(10), Iteration: 1, Outcome: traffic.OutcomeOK, Latency: 2740 * time.Millisecond}}
+	c := soakController(t, store, slow, probeSamples(1, func(int) bool { return false }))
+	observer := NewTrafficObserver(&fixedProber{}, []string{"probe-call"}, nil, 0)
+	observer.UseLatencyBounds(c.latencyBounds)
+	authored := probeWindow(nil, "sign-in", "bounded")
+	authored.Workload.Name = "probe-call"
+	authored.Workload = authored.Workload.WithScenarioMaxLatency("bounded", 2*time.Second)
+	observer.windows = map[string]traffic.Window{"probe-call": authored}
+	if got := observer.Windows()["probe-call"].Workload.ScenarioSLO("sign-in").MaxLatency.Duration(); got != traffic.DefaultMaxLatency {
+		t.Fatalf("before the soak sign-in is bounded at %s, want the default", got)
+	}
+	runSeconds(t, c, 0, 310)
+	if store.record == nil || len(store.record.LatencyBounds) != 1 {
+		t.Fatalf("record = %+v, want sign-in calibrated", store.record)
+	}
+	window := observer.Windows()["probe-call"]
+	if got := window.Workload.ScenarioSLO("sign-in").MaxLatency.Duration(); got != 8300*time.Millisecond {
+		t.Fatalf("sign-in bounded at %s, want 8.3s", got)
+	}
+	if got := window.Workload.ScenarioSLO("bounded").MaxLatency.Duration(); got != 2*time.Second {
+		t.Fatalf("authored bound became %s", got)
+	}
+	restarted := soakController(t, store, slow)
+	if got := restarted.latencyBounds()["probe-call/sign-in"]; got != 8300*time.Millisecond {
+		t.Fatalf("after a restart sign-in is calibrated at %s", got)
+	}
+}

@@ -45,9 +45,10 @@ func TestOnboardingInitScaffoldsGoalJourneysWithoutReplacingAuthoredFiles(t *tes
 		t.Fatalf("generator = %s, error = %v", source, err)
 	}
 	// The call probes run at once: init writes their workload, and the map's
-	// probe lines place them in it.
+	// probe lines place them in it. It sets no maxLatency: the install's soak
+	// calibrates each scenario's bound.
 	workload, err := os.ReadFile(filepath.Join(root, initCallWorkload))
-	if err != nil || !strings.Contains(string(workload), "name: probe-call") || strings.Contains(string(workload), "scenarios") {
+	if err != nil || !strings.Contains(string(workload), "name: probe-call") || strings.Contains(string(workload), "scenarios") || strings.Contains(string(workload), "maxLatency") {
 		t.Fatalf("call workload = %s, error = %v", workload, err)
 	}
 	testArch, err := os.ReadFile(filepath.Join(root, ".sdo/arch.md"))

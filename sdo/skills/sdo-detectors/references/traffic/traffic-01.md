@@ -52,6 +52,15 @@ const (
     Values of Sample.ExistingRecords: what a ReadsExistingRecords step saw.
 
 const (
+	LatencyCalibrationFactor = 3
+	MinCalibratedLatency     = time.Second
+)
+    LatencyCalibrationFactor and MinCalibratedLatency set the latency bound SDO
+    calibrates for a health-probe scenario whose workload sets none: three times
+    its slowest healthy run, at least MinCalibratedLatency. The margin keeps an
+    ordinary slow moment green, while a path slowed several times over fires.
+
+const (
 	// LinkRuleIDPrefix prefixes the rule ID of each link finding
 	// ("link-reachability.<from>.<to>.<port>").
 	LinkRuleIDPrefix = "link-reachability."
@@ -209,18 +218,4 @@ const MaxLinkExcerpt = 256
 const MaxRateLimitWait = 5 * time.Minute
     MaxRateLimitWait caps the wait a Retry-After can ask for, so a broken header
     cannot blind the probe for long.
-
-const MethodExec = "EXEC"
-    MethodExec is the method of a request to an "ssh" target: Path is the
-    remote command line, run as the target's User signed in with the key of
-    the scenario's probe user that declares SSHKey; Body is the command's
-    standard input, closed after it is written. Its Response has the command's
-    exit status as Status and its standard output, bounded by MaxResponseBody,
-    as Body. Query and Headers are not allowed. An EXEC is always a write:
-    it carries the Marker, so it runs only in setup, cleanup, or the steps of a
-    write scenario.
-
-const RuleIDPrefix = "scenario-slo."
-    RuleIDPrefix prefixes the rule ID of each scenario finding
-    ("scenario-slo.<id>").
 ```

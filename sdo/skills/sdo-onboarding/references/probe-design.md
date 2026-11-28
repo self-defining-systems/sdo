@@ -30,7 +30,7 @@ once per remaining interval, within 10–120 s. Explicit workload fields overrid
 Check the worst detection time and the requests/s cap with `onboarding journeys --plan`.
 Give each scenario one home workload. Spend remaining budget on the most used journeys, adding faster workloads
 for core paths when their planned time is too long.
-- Set `maxLatency` to about three times the slowest healthy run, at least 1 s. A run over budget starts confirmation.
+- Leave `maxLatency` out: after install SDO sets it from the soak to three times the slowest healthy run, at least 1 s.
 
 ## Checks
 

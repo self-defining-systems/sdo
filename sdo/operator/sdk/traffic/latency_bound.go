@@ -6,12 +6,12 @@ import (
 )
 
 // DefaultLatencyScenarios returns, sorted, the scenarios of health-probe
-// workloads whose effective SLO keeps DefaultMaxLatency. The default bound is
+// workloads whose author set no maxLatency (LatencyBoundAuthored). Until SDO
+// calibrates one after install, they keep DefaultMaxLatency, which is
 // generous so that any application starts green; a saturated service often
 // slows its path many times over long before it fails, and a read that
 // normally takes tens of milliseconds can stay under the default while its
-// service is pinned at its CPU limit. Each scenario returned is a critical
-// path whose slowdown health cannot see.
+// service is pinned at its CPU limit.
 func DefaultLatencyScenarios(workloads []Workload) []string {
 	seen := map[string]bool{}
 	var ids []string
@@ -20,7 +20,7 @@ func DefaultLatencyScenarios(workloads []Workload) []string {
 			continue
 		}
 		for _, selected := range workload.Scenarios {
-			if seen[selected.ID] || workload.ScenarioSLO(selected.ID).MaxLatency.Duration() != DefaultMaxLatency {
+			if seen[selected.ID] || workload.LatencyBoundAuthored(selected.ID) {
 				continue
 			}
 			seen[selected.ID] = true
@@ -34,7 +34,7 @@ func DefaultLatencyScenarios(workloads []Workload) []string {
 // DefaultLatencyNote is the non-blocking memory-check note for a scenario
 // DefaultLatencyScenarios returns.
 func DefaultLatencyNote(id string) string {
-	return fmt.Sprintf("health-probe scenario %s keeps the default p%d latency bound of %s: bound its median "+
-		"(slo.latencyPercentile 50, slo.maxLatency) at three times its slowest healthy iteration under load, at least 1s, "+
-		"so a service slowed many times over on its path fires", id, DefaultLatencyPercentile, DefaultMaxLatency)
+	return fmt.Sprintf("health-probe scenario %s sets no maxLatency: an install's onboarding soak calibrates it to %d times "+
+		"its slowest healthy run, at least %s; without a soak the default p%d bound of %s applies", id,
+		LatencyCalibrationFactor, MinCalibratedLatency, DefaultLatencyPercentile, DefaultMaxLatency)
 }

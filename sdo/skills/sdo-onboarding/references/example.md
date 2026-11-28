@@ -150,7 +150,7 @@ name: probe-write
 purpose: health-probe
 timeout: 5s
 iterationTimeout: 30s
-slo: {window: 4, minSamples: 1, maxAge: 10m, maxErrorRate: 1, maxTimeoutRate: 1, maxLatency: 10s}
+slo: {window: 4, minSamples: 1, maxAge: 10m, maxErrorRate: 1, maxTimeoutRate: 1}
 ```
 
 A faster extra workload for a core journey (`probe-fast-write.yaml`, `ratePerSecond: 0.1`) lists its scenarios.

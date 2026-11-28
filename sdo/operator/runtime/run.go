@@ -1046,6 +1046,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		controller.config.StartupWarmupSettled = trafficObserver.WarmupSettled
 		trafficObserver.UseUserTests(controller.userTests)
+		trafficObserver.UseLatencyBounds(controller.latencyBounds)
 	}
 	// Promoted store baselines are controller state below the repository
 	// mount, so a restart (an accepted upgrade among them) keeps them.

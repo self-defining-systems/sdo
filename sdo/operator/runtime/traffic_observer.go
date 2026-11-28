@@ -62,6 +62,8 @@ type TrafficObserver struct {
 	interval  time.Duration
 
 	mu sync.Mutex
+	// latencyBounds returns the soak's calibrated latency bounds.
+	latencyBounds func() map[string]time.Duration
 	// userTests returns the scenario IDs of the accepted map's user tests.
 	userTests func() map[string]bool
 	windows   map[string]traffic.Window
@@ -101,6 +103,35 @@ func (o *TrafficObserver) UseUserTests(tests func() map[string]bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.userTests = tests
+}
+
+// UseLatencyBounds gives, by "workload/scenario", the maxLatency SDO
+// calibrated for scenarios whose workload sets none; Windows applies them.
+func (o *TrafficObserver) UseLatencyBounds(bounds func() map[string]time.Duration) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.latencyBounds = bounds
+}
+
+// boundLatency returns windows whose workloads carry the calibrated latency
+// bounds of the scenarios their author left unbounded.
+func (o *TrafficObserver) boundLatency(windows map[string]traffic.Window) map[string]traffic.Window {
+	o.mu.Lock()
+	source := o.latencyBounds
+	o.mu.Unlock()
+	if source == nil {
+		return windows
+	}
+	bounds := source()
+	for name, window := range windows {
+		for _, scenario := range window.Workload.Scenarios {
+			if bound, ok := bounds[name+"/"+scenario.ID]; ok && !window.Workload.LatencyBoundAuthored(scenario.ID) {
+				window.Workload = window.Workload.WithScenarioMaxLatency(scenario.ID, bound)
+			}
+		}
+		windows[name] = window
+	}
+	return windows
 }
 
 // markUserTests returns windows with the user tests marked. The map is read
@@ -430,7 +461,7 @@ func (o *TrafficObserver) warm() bool {
 // so the detector reports an error: a health verdict that cannot be observed
 // must not count as clear.
 func (o *TrafficObserver) Windows() map[string]traffic.Window {
-	return o.markUserTests(o.consumed())
+	return o.markUserTests(o.boundLatency(o.consumed()))
 }
 
 func (o *TrafficObserver) consumed() map[string]traffic.Window {
