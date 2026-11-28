@@ -14,7 +14,7 @@ the [worked example](references/example.md), [probe design](references/probe-des
 2. Run `sdo-operator onboarding init --repo DIR --namespace NS`; fill in routes, paths and exact assertions.
 3. Write one scenario at a time; run `onboarding journeys --only ID --quick` after each edit (one pass, every
    request and answer). SDO runs the full checks after the session.
-4. Map a request counter by route, method and status if the app has one (`onboarding check --metrics`,
+4. `init` maps request counters SDO's Prometheus scrapes; map others (`onboarding check --metrics`,
    [example](../sdo-operations-map/references/request-metrics.md)).
 
 What the checks require, so plan for it: every operation in a `call` probe; a writing one also in a `write-read`
