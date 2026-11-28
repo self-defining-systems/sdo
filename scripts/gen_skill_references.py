@@ -358,7 +358,8 @@ def render_onboarding_card() -> str:
     return "\n".join(lines) + "\n".join(
         [
             "Imports: the standard library and the SDK, except network, files, processes and own randomness:"
-            f" {' '.join(imports)} and below (but net/url, net/textproto and math/rand/v2, whose `*rand.Rand` Build gets)."
+            f" {' '.join(imports)} and below"
+            " (but net/url, net/textproto and math/rand/v2, whose `*rand.Rand` Build gets)."
             " Time: `state[traffic.StateNow]`, not `time.Now`.",
             f"Map evidence: {', '.join(f'`{value}`' for value in evidence)}. Use `config` for application source.",
         ]
