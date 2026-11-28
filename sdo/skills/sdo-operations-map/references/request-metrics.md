@@ -1,6 +1,8 @@
 # Request metrics and observe pointers
 
-`onboarding check --metrics` reads these fields. One request counter per entry Service goes under `entries`
+`onboarding init` writes the `entries` record and `observe.metrics` for each Service whose scraped pods expose a
+request counter with a route label; edit only what it could not resolve (a counter name two Services share needs a
+`selector`). `onboarding check --metrics` reads these fields. One request counter per entry Service goes under `entries`
 (`labels` names the counter's route, method and status labels; `route` on an operation is the route label value
 when it differs from `entry.path`). Each component's `observe` says, in a few words, where its metrics, logs and
 spans are. A component that counts no requests (a static file server) gets `observe.logs` only and one reason per
