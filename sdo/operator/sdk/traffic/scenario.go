@@ -125,6 +125,14 @@ type Request struct {
 	Query   map[string]string `json:"query,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Body    string            `json:"body,omitempty"`
+	// readOnly is set by an HTTPEndpoint marked Reads.
+	readOnly bool
+}
+
+// writes reports whether the request may change application state: any
+// method but GET and HEAD, unless its endpoint was marked Reads.
+func (r Request) writes() bool {
+	return r.Method != http.MethodGet && r.Method != http.MethodHead && !r.readOnly
 }
 
 // Response is what the engine received for a Request. Body is bounded.
@@ -436,15 +444,15 @@ func (s Scenario) Validate() error {
 	}
 	switch s.SideEffect {
 	case SideEffectRead:
-		if len(s.Cleanup) > 0 || (s.Marker != "" && len(s.Setup) == 0 && len(s.Users) == 0) {
-			return fmt.Errorf("scenario %s: SideEffectRead allows Marker only with Setup or Users, and never Cleanup; remove the unused fields or use SideEffectWriteWithCleanup for a write followed by deletion", s.ID)
+		if len(s.Cleanup) > 0 {
+			return fmt.Errorf("scenario %s: SideEffectRead never has Cleanup; remove it, or use SideEffectWriteWithCleanup for a write followed by deletion", s.ID)
 		}
 		for _, step := range s.Steps {
 			if s.stepTarget(step).Scheme == "ssh" {
 				return fmt.Errorf("scenario %s: read scenario step %s runs an EXEC on an ssh target, which writes; move it to a setup step or declare a write side effect", s.ID, step.Name)
 			}
-			if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.Method != http.MethodGet && endpoint.Method != http.MethodHead {
-				return fmt.Errorf("scenario %s: read scenario step %s sends %s; move the write to a setup step or declare a write side effect", s.ID, step.Name, endpoint.Method)
+			if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.Method != http.MethodGet && endpoint.Method != http.MethodHead && !endpoint.readOnly {
+				return fmt.Errorf("scenario %s: read scenario step %s sends %s; mark it .Reads() if it changes nothing (a search, a sign-in), move the write to a setup step, or declare a write side effect", s.ID, step.Name, endpoint.Method)
 			}
 		}
 	case SideEffectIdempotentWrite, SideEffectWriteWithCleanup:
@@ -457,6 +465,11 @@ func (s Scenario) Validate() error {
 		if s.SideEffect == SideEffectIdempotentWrite && len(s.Cleanup) > 0 {
 			return fmt.Errorf("scenario %s: SideEffectIdempotentWrite cannot have Cleanup; use SideEffectWriteWithCleanup for writes that depend on deletion", s.ID)
 		}
+	case "":
+		if _, err := InferSideEffect(s); err != nil {
+			return fmt.Errorf("scenario %s: %w", s.ID, err)
+		}
+		return fmt.Errorf("scenario %s: SideEffect is empty; run it through CompleteCatalog, which infers it", s.ID)
 	default:
 		return fmt.Errorf("scenario %s: sideEffect must be %q, %q, or %q",
 			s.ID, SideEffectRead, SideEffectIdempotentWrite, SideEffectWriteWithCleanup)
@@ -498,7 +511,7 @@ func (c Catalog) Scenario(id string) (Scenario, bool) {
 // checkRequest enforces the per-request safety rules the engine applies to
 // every built request. Writes and cleanup requests carry the marker; a read
 // scenario writes only in its setup steps.
-func checkRequest(scenario Scenario, target Target, request Request, phase stepPhase) error {
+func checkRequest(scenario Scenario, target Target, request Request, phase stepPhase, state State) error {
 	if target.Scheme == "ssh" {
 		if request.Method != MethodExec {
 			return fmt.Errorf("an ssh target runs only %s requests, not %q", MethodExec, request.Method)
@@ -520,13 +533,13 @@ func checkRequest(scenario Scenario, target Target, request Request, phase stepP
 			return fmt.Errorf("headers may not set %s", name)
 		}
 	}
-	write := request.Method != "GET" && request.Method != "HEAD"
+	write := request.writes()
 	if write && scenario.SideEffect == SideEffectRead && phase != phaseSetup {
-		return fmt.Errorf("read scenario sent %s; declare a write side effect or move the write to a setup step", request.Method)
+		return fmt.Errorf("read scenario sent %s; mark the step .Reads() if it changes nothing, declare a write side effect, or move the write to a setup step", request.Method)
 	}
 	marked := phase == phaseCleanup || (write && (phase == phaseSetup || scenario.SideEffect != SideEffectRead))
-	if marked && !requestMentions(request, scenario.Marker) {
-		return fmt.Errorf("request must carry the synthetic marker %q in its path, body or query (including Cleanup reads)", scenario.Marker)
+	if marked && !requestMentions(request, scenario.Marker) && !namesOwnValue(request, state) {
+		return fmt.Errorf("request must carry the synthetic marker %q in its path, body or query, or address a record by the value a marked write of this scenario saved (SaveJSON)", scenario.Marker)
 	}
 	return nil
 }

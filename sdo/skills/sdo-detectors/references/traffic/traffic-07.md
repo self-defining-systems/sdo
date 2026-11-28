@@ -34,6 +34,15 @@ type Scenario struct {
     make them idempotent (OrExisting) because a restarted prober runs them
     again. Values they save are visible to every iteration.
 
+func (s Scenario) DeleteReadBack() (Step, bool)
+    DeleteReadBack is the read SDO sends after Cleanup to see the data gone:
+    when the last cleanup write is a declarative DELETE, no read follows it, and
+    a step of the scenario reads the same path (so the path has a GET route that
+    answers while the record exists), SDO GETs that path with the DELETE's query
+    and headers and requires 404 or 410. A scenario whose application answers
+    a deleted path otherwise (a trash, a soft delete) reads it back itself;
+    that read replaces this one.
+
 func (s Scenario) Describe() Descriptor
     Describe returns the scenario's descriptor with its effective fault classes.
 
@@ -113,6 +122,13 @@ const (
 	// it again with their Cleanup steps.
 	SideEffectWriteWithCleanup SideEffect = "write-with-cleanup"
 )
+func InferSideEffect(s Scenario) (SideEffect, error)
+    InferSideEffect derives a scenario's side effect from its steps: read when
+    every step sends GET or HEAD (or is marked Reads), write-with-cleanup when a
+    step writes and the scenario has Cleanup. A write without Cleanup, or a step
+    whose method only its own Build knows (a custom Endpoint), must be declared:
+    only the author knows whether such a write leaves data behind.
+
 type Source interface {
 	TrafficWindow(workload string) (Window, bool)
 }

@@ -283,17 +283,18 @@ def card_coverage_failures() -> list[str]:
     return [f"program action {name} is missing from the SDK card groups" for name in sorted(actions - listed)]
 
 
-# SKILL.md is capped at 8000 characters, so only the group whose signatures hide
-# the most (how parameters and State values are generated) carries doc comments.
-DOC_GROUPS = ("Values",)
+# SKILL.md is capped at 8000 characters, so only the groups whose signatures hide
+# the most (how requests are built and checked, how values are generated) carry
+# doc comments, cut to their first clause.
+DOC_GROUPS = ("Values", "HTTP")
 
 
-def _with_doc(line: str, head: str, doc: str) -> str:
+def _with_doc(line: str, head: str, doc: str, short: bool = False) -> str:
     """The declaration line with its doc's first clause as a trailing comment."""
     match = re.match(r"(?:type|const|func(?: \([^)]*\))?) (\w+)", head)
     if match:
         doc = doc.removeprefix(match[1] + " ")
-    doc = re.split(r"[;:]", doc)[0].removesuffix(".")
+    doc = re.split(r"[;:]|, (?:so|for|and|which) | \(" if short else r"[;:]", doc)[0].removesuffix(".")
     doc = re.sub(r"^(?:is|are) (?:an? |the )?", "", doc)
     return f"{line} // {doc}" if doc else line
 
@@ -305,7 +306,11 @@ def render_onboarding_card() -> str:
     docs = {id(declaration): _first_sentence(comment) for declaration, comment in split if declaration}
     groups = {
         "Scenarios": r"type (?:Catalog|Scenario|Step|Target|ProbeUser|SideEffect|FaultClass)\b",
-        "HTTP": r"(?:type HTTPEndpoint|func .*\*HTTPEndpoint(?=$|\))|func \(\w+ \*HTTPEndpoint\))",
+        # Build, Check and the two report methods implement the engine's side, not authoring.
+        "HTTP": (
+            r"(?!func \(\w+ \*HTTPEndpoint\) (?:Build|Check|ChecksContent|MarksExistingRecords)\b)"
+            r"(?:type HTTPEndpoint|func .*\*HTTPEndpoint(?=$|\)))"
+        ),
         "Values": (
             r"(?:type (?:Params?|State)\b|func (?:\(p Params\)|\w+\(.*\) (?:Param|\(Param, Param\))$)"
             r"|const (?:StateNow|DateLayout|UniqueWidth)\b)"
@@ -320,8 +325,13 @@ def render_onboarding_card() -> str:
         for declaration in declarations:
             head = declaration[0]
             if re.match(pattern, head):
-                compact = _compact(declaration)
-                lines.append(_with_doc(compact, head, docs[id(declaration)]) if title in DOC_GROUPS else compact)
+                # The endpoint's fields are set through its chainable methods.
+                compact = (
+                    "type HTTPEndpoint struct{...}" if head.startswith("type HTTPEndpoint ") else _compact(declaration)
+                )
+                lines.append(
+                    _with_doc(compact, head, docs[id(declaration)], title == "HTTP") if title in DOC_GROUPS else compact
+                )
             elif title == "Scenarios" and head == "const (":
                 values = [
                     " ".join(line.split())
@@ -333,17 +343,20 @@ def render_onboarding_card() -> str:
     lines += ["```", ""]
 
     builder = (SDK.parent / "builder/native_traffic.go").read_text()
-    allowlist = re.search(r"var allowedGeneratorImports = map\[string\]bool\{(.*?)\n}", builder, re.DOTALL)
-    if not allowlist:
-        raise ValueError("traffic generator import allowlist not found")
-    imports = sorted(re.findall(r'"([^"]+)": true', allowlist[1]))
+    refused = re.search(r"var refusedGeneratorImports = \[\]string\{(.*?)\}", builder)
+    if not refused:
+        raise ValueError("traffic generator refused import prefixes not found")
+    imports = re.findall(r'"([^"]+)"', refused[1])
     appmap = (SDK.parent / "memory/appmap/map.go").read_text()
     evidence = re.findall(r'^\s+Evidence\w+\s+= "([^"]+)"', appmap, re.MULTILINE)
     if not evidence or not imports:
         raise ValueError("empty traffic generator import or map evidence list")
     return "\n".join(lines) + "\n".join(
         [
-            f"Generator imports (+ the local generator package): {', '.join(f'`{path}`' for path in imports)}.",
+            "Generator imports: the standard library and the SDK, except what reaches the network, files or processes"
+            f" or draws its own randomness: {', '.join(f'`{path}`' for path in imports)} and below"
+            " (`net/url`, `net/textproto`, `math/rand/v2` are fine; Build's rng is a math/rand/v2 `*rand.Rand`)."
+            " Read the iteration's time from `state[traffic.StateNow]`, not `time.Now`.",
             f"Map evidence: {', '.join(f'`{value}`' for value in evidence)}. Use `config` for application source.",
         ]
     )

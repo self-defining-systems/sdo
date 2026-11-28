@@ -10,8 +10,8 @@
   that checks more over two.
 - Two probers may run it at once, beside real users: name every object per iteration, look up by id or marker,
   never assume a list is yours or a fixture is the only one. Writers that contend share one identity per journey.
-- Clean up in the same iteration, in an order the application allows while its background work runs, and end the
-  cleanup with a read that shows the data gone (404, or absent from the list). A delete answered 2xx may only schedule
+- Clean up in the same iteration, in an order the application allows while its background work runs. SDO reads a
+  DELETEd path back itself; any other cleanup ends with a read that shows the data gone (404, or absent from the list). A delete answered 2xx may only schedule
   the removal (delayed deletion, trash, soft delete): use the application's remove-for-good path, and accept only
   success or not-found, never a refusal. Data that cannot be deleted stays one fixed object (`idempotent-write`, no `Unique`), or is bounded and noted.
 - Probe data must never change what users see. The read of records users already have lists the way a user first

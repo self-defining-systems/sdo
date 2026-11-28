@@ -252,6 +252,8 @@ type HTTPEndpoint struct {
 	basicUser, basicPassword string
 	// existingRecords is set by ReadsExistingRecords.
 	existingRecords *existingRecordsRead
+	// readOnly is set by Reads.
+	readOnly bool
 }
 
 type existingAnswer struct {
@@ -278,6 +280,11 @@ func PUT(path string, query Params) *HTTPEndpoint {
 func DELETE(path string, query Params) *HTTPEndpoint {
 	return &HTTPEndpoint{Method: http.MethodDelete, Path: path, Query: query}
 }
+
+// Reads marks a POST, PUT or PATCH that changes nothing (a search, a sign-in):
+// it counts as a read for the scenario's side effect and runs in a read
+// scenario's steps. Mark only requests whose method misleads.
+func (e *HTTPEndpoint) Reads() *HTTPEndpoint { e.readOnly = true; return e }
 
 // WithForm adds a URL-encoded form body.
 func (e *HTTPEndpoint) WithForm(form Params) *HTTPEndpoint { e.Form = form; return e }
@@ -507,7 +514,7 @@ func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Re
 	if err != nil {
 		return Request{}, err
 	}
-	request := Request{Method: e.Method, Path: path, Query: query}
+	request := Request{Method: e.Method, Path: path, Query: query, readOnly: e.readOnly}
 	if len(e.Headers) > 0 {
 		request.Headers = make(map[string]string, len(e.Headers))
 		for name, value := range e.Headers {

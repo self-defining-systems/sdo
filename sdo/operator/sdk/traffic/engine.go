@@ -584,6 +584,14 @@ func (e *Engine) IterateWithTrace(ctx context.Context, iteration uint64, trace f
 				break
 			}
 		}
+		if gone, ok := scenario.DeleteReadBack(); ok && sample.CleanupError == "" {
+			if trace != nil {
+				trace(gone.Name)
+			}
+			if result := e.step(cleanupCtx, scenario, gone, rng, state, passwords, phaseCleanup); result.outcome != OutcomeOK {
+				sample.CleanupError = gone.Name + ": still there after DELETE (SDO reads a deleted path back and expects 404 or 410; if the application answers it otherwise, end Cleanup with your own read): " + result.err
+			}
+		}
 	}
 	return scenario.ID, sample
 }
@@ -698,7 +706,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		lineTarget = &target
 	}
 	line := requestLine(request, lineTarget)
-	if err := checkRequest(scenario, target, request, phase); err != nil {
+	if err := checkRequest(scenario, target, request, phase, state); err != nil {
 		return stepResult{outcome: OutcomeInvalid, request: line, err: err.Error()}
 	}
 	if phase == phaseSetup && target.Scheme != "ssh" {
@@ -720,6 +728,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		before := state.clone()
 		result := e.send(ctx, scenario, step, target, request, state, passwords, line)
 		if result.outcome == OutcomeOK {
+			creditOwn(step, request, scenario, state)
 			e.setups.mu.Lock()
 			if e.setups.fixtures == nil {
 				e.setups.fixtures = map[string]State{}
@@ -741,7 +750,11 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		}
 		return result
 	}
-	return e.send(ctx, scenario, step, target, request, state, passwords, line)
+	result := e.send(ctx, scenario, step, target, request, state, passwords, line)
+	if result.outcome == OutcomeOK {
+		creditOwn(step, request, scenario, state)
+	}
+	return result
 }
 
 // untilNotPending runs a Setup or Steps step; while its check answers NotYet it

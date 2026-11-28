@@ -42,6 +42,9 @@ func cleanupGaps(s traffic.Scenario) []string {
 	if len(unverified) == 0 {
 		return nil
 	}
+	if _, ok := s.DeleteReadBack(); ok {
+		return nil // SDO reads the deleted path back itself
+	}
 	var gaps []string
 	for _, step := range unverified {
 		endpoint, ok := step.Endpoint.(*traffic.HTTPEndpoint)
@@ -58,7 +61,7 @@ func cleanupGaps(s traffic.Scenario) []string {
 			gaps = append(gaps, fmt.Sprintf("step %s accepts %s, so a %s the application refused counts as done", step.Name, strings.Join(refused, ", "), endpoint.Method))
 		}
 	}
-	return append(gaps, "no step reads the data back gone after the last cleanup write: end Cleanup with a GET or HEAD expecting 404/410, or a list assertion that checks the deleted data is absent")
+	return append(gaps, "no step reads the data back gone after the last cleanup write: delete with a DELETE of a path a step reads (SDO then reads it back), or end Cleanup with a GET or HEAD expecting 404/410, or a list assertion that checks the deleted data is absent")
 }
 
 func cleanupResult(s traffic.Scenario) (Result, bool) {

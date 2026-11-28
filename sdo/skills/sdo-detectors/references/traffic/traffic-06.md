@@ -53,6 +53,8 @@ type Request struct {
 	Query   map[string]string `json:"query,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Body    string            `json:"body,omitempty"`
+
+	// Has unexported fields.
 }
     Request is one request relative to a step's target Service: an HTTP request,
     or an EXEC on an "ssh" target.

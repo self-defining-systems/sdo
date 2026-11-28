@@ -147,6 +147,15 @@ const (
 type Catalog []Scenario
     Catalog is the set of scenarios an application's generators provide.
 
+func CompleteCatalog(catalog Catalog, dependsOn map[string][]string) Catalog
+    CompleteCatalog fills what Go derives instead of the author: an empty
+    SideEffect from the steps' methods (InferSideEffect), and an empty DependsOn
+    from dependsOn, the Services the application map's probe line for the
+    scenario reaches. Scenarios whose side effect cannot be inferred keep it
+    empty, and Validate says what to declare. The generated catalog runs every
+    scenario through it, so the prober, the checks and the controller see the
+    same values.
+
 func (c Catalog) Scenario(id string) (Scenario, bool)
     Scenario returns the scenario with the given ID.
 
@@ -219,13 +228,4 @@ func (d Duration) Duration() time.Duration
 func (d Duration) MarshalJSON() ([]byte, error)
 
 func (d *Duration) UnmarshalJSON(data []byte) error
-
-type Endpoint interface {
-	Build(ctx context.Context, rng *rand.Rand, state State) (Request, error)
-	Check(response Response, state State) Verdict
-}
-    Endpoint builds one request and judges its response. Build must derive
-    every varying value from rng and state; the engine seeds rng per iteration,
-    so the same iteration always builds the same requests. Check may save values
-    into state for later steps. Neither may measure time or send requests.
 ```
