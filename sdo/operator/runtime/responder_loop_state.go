@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
+	"maps"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"slices"
+	"time"
 )
 
 // applicationEvidence stores historical executor facts, never prepared handles.
@@ -38,18 +41,22 @@ type responderToolState struct {
 	ApplicationEvidence []applicationEvidence
 	Continuation        responderContinuation
 	SessionID           string
-	MenuSession         *contracts.MitigationSession
-	MenuReports         []*contracts.MitigationReport
-	MenuRepairs         []RepairActionReceipt
-	MenuExecutions      map[string][]MenuRoundExecution
-	Version             int
-	IncidentID          string
-	SourceCommit        string
-	FailureSignals      []string
-	Batches             int
-	LoopOpen            bool
-	ApplySeq            int
-	MaxBatches          int
+	// EffectShown and NewShown are what `sdo detect` already reported: the
+	// newest change whose result a wait returned and the new findings shown.
+	EffectShown    time.Time `json:",omitzero"`
+	NewShown       []string  `json:",omitempty"`
+	MenuSession    *contracts.MitigationSession
+	MenuReports    []*contracts.MitigationReport
+	MenuRepairs    []RepairActionReceipt
+	MenuExecutions map[string][]MenuRoundExecution
+	Version        int
+	IncidentID     string
+	SourceCommit   string
+	FailureSignals []string
+	Batches        int
+	LoopOpen       bool
+	ApplySeq       int
+	MaxBatches     int
 }
 
 func (l *ResponderLoop) persistToolState(ctx context.Context) error {
@@ -72,7 +79,7 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	for _, repair := range l.applicationRepairsLocked() {
 		repairs = append(repairs, recordedRepairEvidence{continuationRepair: repair, Owners: repair.Receipt.Owners})
 	}
-	payload, err := json.Marshal(responderToolState{ApplicationBindings: l.applicationBindings, ApplicationEvidence: evidence, StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: repairs, Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, LoopOpen: l.loopOpen, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
+	payload, err := json.Marshal(responderToolState{ApplicationBindings: l.applicationBindings, ApplicationEvidence: evidence, StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: repairs, Continuation: l.continuation, Version: 2, SessionID: l.sessionID, EffectShown: l.effectShown, NewShown: slices.Sorted(maps.Keys(l.newShown)), MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, LoopOpen: l.loopOpen, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -126,6 +133,14 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	l.archivedApplications = archived
 	if state.SessionID != "" {
 		l.sessionID = state.SessionID
+	}
+	l.effectShown = state.EffectShown
+	l.newShown = nil
+	for _, key := range state.NewShown {
+		if l.newShown == nil {
+			l.newShown = map[string]bool{}
+		}
+		l.newShown[key] = true
 	}
 	l.stageProgress = state.StageProgress
 	l.applicationBindings = state.ApplicationBindings

@@ -84,25 +84,50 @@ func latestKnownChange(view sdk.DetectionContext, applications []RecordedPlanApp
 		for _, o := range view.PersistentVolumeClaims() {
 			note("PersistentVolumeClaim", o.ObjectMeta, false)
 		}
+		for _, o := range view.Ingresses() {
+			note("Ingress", o.ObjectMeta, false)
+		}
+		for _, o := range view.HorizontalPodAutoscalers() {
+			note("HorizontalPodAutoscaler", o.ObjectMeta, false)
+		}
+		for _, o := range view.PodDisruptionBudgets() {
+			note("PodDisruptionBudget", o.ObjectMeta, false)
+		}
+		for _, o := range view.ServiceAccounts() {
+			note("ServiceAccount", o.ObjectMeta, false)
+		}
+		for _, o := range view.Jobs() {
+			note("Job", o.ObjectMeta, false)
+		}
+		for _, o := range view.CronJobs() {
+			note("CronJob", o.ObjectMeta, false)
+		}
 		for _, o := range view.Pods() {
 			note("Pod", o.ObjectMeta, false)
 		}
 	}
 	for _, application := range applications {
-		at := application.CompletedAt
-		if at.IsZero() {
-			at = application.StartedAt
-		}
+		// The start, not the completion: a pending application keeps one time.
+		at := application.StartedAt
 		if !at.After(after) {
 			continue
 		}
 		change.Writes = append(change.Writes, "plan "+strings.Join(application.PlanIDs, ","))
+		for _, effect := range application.Result.ObjectEffects {
+			if effect.Ref.Kind == "Deployment" || effect.Ref.Kind == "StatefulSet" || effect.Ref.Kind == "DaemonSet" {
+				ref := effect.Ref
+				ref.APIVersion = "apps/v1"
+				change.Workloads = append(change.Workloads, ref)
+			}
+		}
 		if at.After(change.At) {
 			change.At = at.UTC()
 		}
 	}
 	sort.Strings(change.Writes)
 	change.Writes = slices.Compact(change.Writes)
+	slices.SortFunc(change.Workloads, func(a, b sdk.ObjectRef) int { return strings.Compare(a.Kind+"/"+a.Name, b.Kind+"/"+b.Name) })
+	change.Workloads = slices.Compact(change.Workloads)
 	return change, !change.At.IsZero()
 }
 
@@ -119,7 +144,10 @@ func rolloutPending(view sdk.DetectionContext, ref sdk.ObjectRef, since time.Tim
 				if !deployment.DeploymentRolloutComplete(&view.Deployments()[i]) {
 					pending = fmt.Sprintf("%d/%d updated, %d available", o.Status.UpdatedReplicas, replicasOf(o.Spec.Replicas), o.Status.AvailableReplicas)
 				}
-				if c := deploymentCondition(o, appsv1.DeploymentProgressing); c != nil && c.Status == corev1.ConditionFalse {
+				// Only a verdict on this change: the controller saw its generation
+				// and wrote the condition after it.
+				if c := deploymentCondition(o, appsv1.DeploymentProgressing); c != nil && c.Status == corev1.ConditionFalse &&
+					o.Status.ObservedGeneration >= o.Generation && c.LastUpdateTime.After(since) {
 					failed = c.Reason
 				}
 			}
@@ -228,6 +256,16 @@ func (w *effectWatch) evaluate(view sdk.DetectionContext, change knownChange, fa
 	}
 	if len(pending) > 0 {
 		return effectResult{line: "waited for " + head + ": " + strings.Join(pending, "; ")}
+	}
+	if len(failing) == 0 {
+		// A request-metrics or condition alert has no sample to wait on: its
+		// window still holds requests from before the change, so only its
+		// clearing says the change worked.
+		done := "rolled out"
+		if len(rolled) == 0 {
+			done = "written"
+		}
+		return effectResult{line: fmt.Sprintf("waited for %s: %s; no failing user test to sample, so an alert change", head, done)}
 	}
 	samples, missing := freshSamples(view, failing, settled)
 	if len(missing) > 0 {

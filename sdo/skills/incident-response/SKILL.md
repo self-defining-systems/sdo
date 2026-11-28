@@ -12,9 +12,9 @@ description: Incident repair.
   Passing proves liveness only.
   See stage writes in `sdo detect`. Own repairs after handoff. Test auth on Secret drift.
 - **Hold a rival.** Check what best splits the top two explanations.
-- **Test each change.** Predict its fix; `sdo detect --wait` returns when its result is in, never a fixed sleep. No change counts against the hypothesis.
+- **Test each change.** Predict its fix; wait on its effect (`sdo detect --wait`), not a sleep. No change counts against the hypothesis.
 - **Restore lost data.** Restore from its authoritative copy first. Before recreating, search all app and deployment backups or copies: configuration, jobs, object stores, replicas. Never seed substitute data to pass health checks.
-- Prefer the fastest supported equivalent, including for cache invalidation.
+- Prefer the fastest supported equivalent, also for cache invalidation.
 - **Late background work**: drain the queue (workers, bulk work, poison jobs); never edit app code; escalate if nothing drains.
 - Replace processes not yet using the fix.
 - **Verify recovery.** The operation must keep passing. For paged incidents, return `completed` if verified, else `failed`.

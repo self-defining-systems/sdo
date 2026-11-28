@@ -975,14 +975,15 @@ func buildDetectSummary(in detectInput) detectSummary {
 	items["background"] = backgroundAll.String()
 
 	shownNew := min(len(fresh), detectShownNew)
-	if _, item := newSinceHandoffBlock(fresh, in.Request.DriftEvents, 0); item != "" {
+	newDetail := true
+	if _, item := newSinceHandoffBlock(fresh, in.Request.DriftEvents, 0, true); item != "" {
 		items["new"] = item
 	}
 	shownOps := min(len(opBlocks), detectShownTests)
 	shownTests, shownConditions, shownAlso := min(len(testBlocks), detectShownTests), min(len(conditionBlocks), detectShownTests), min(len(alsoBlocks), 2)
 	observation := func() string {
 		out := slices.Clone(header)
-		block, _ := newSinceHandoffBlock(fresh, in.Request.DriftEvents, shownNew)
+		block, _ := newSinceHandoffBlock(fresh, in.Request.DriftEvents, shownNew, newDetail)
 		out = append(out, block...)
 		if len(testBlocks)+len(conditionBlocks)+len(opBlocks) > 0 {
 			out = append(out, "", "OPENED ON")
@@ -1024,6 +1025,8 @@ shrink:
 			shownAlso--
 		case shownNew > 1:
 			shownNew--
+		case newDetail:
+			newDetail = false
 		case len(clearedLines) > 1:
 			clearedLines = clearedLines[:1]
 		case shownOps > 2:

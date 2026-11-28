@@ -70,7 +70,7 @@ def test_the_first_message_carries_the_pacing_principle() -> None:
     """The agent reads the first message before any skill: waiting on effects, not time, must be there."""
 
     template = (PROMPTS / "incident_prompt.md").read_text(encoding="utf-8")
-    assert "Fix every cause you can see, then wait on the effect with `sdo detect --wait`, never a fixed sleep." in template
+    assert "Wait on a change's effect with `sdo detect --wait`, not a sleep." in template
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])
@@ -179,4 +179,4 @@ def test_the_responder_is_told_to_work_signals_in_parallel_and_wait_on_condition
     text = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8").lower()
 
     assert "every failing signal in parallel" in text
-    assert "wait on a specific condition, not a fixed sleep" in text
+    assert "wait on its effect (`sdo detect --wait`), not a sleep" in text

@@ -103,7 +103,7 @@ func TestDetectWaitReturnsWhenTheChangeRolledOutAndAFreshSampleRan(t *testing.T)
 	// The same change is not reported again: the next wait runs to its bound
 	// and says what it waited for.
 	again := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 6})
-	if line := waitLine(again.Text); !strings.HasPrefix(line, "wait: no change in 6s; waited for an alert change (no write of yours since 07:28:40Z)") {
+	if line := waitLine(again.Text); !strings.HasPrefix(line, "wait: no change in 6s; waited for an alert change (no write of yours SDO can see since 07:28:40Z)") {
 		t.Fatalf("second wait = %q", line)
 	}
 }
@@ -151,7 +151,41 @@ func TestEffectWatchNeedsASampleAfterTheRolloutWasSeenDone(t *testing.T) {
 	if result := watch.evaluate(view, change, []string{"create"}, at.Add(time.Minute)); result.in {
 		t.Fatalf("a sample older than the observed rollout counted: %q", result.line)
 	}
-	if result := watch.evaluate(view, change, nil, at.Add(time.Minute)); !result.in {
-		t.Fatalf("with no failing user test the rollout alone is the result: %q", result.line)
+	// A request-metrics or condition alert has no sample to wait on: the
+	// rollout alone is not its result, so the wait leaves it to the alert.
+	if result := watch.evaluate(view, change, nil, at.Add(time.Minute)); result.in || !strings.Contains(result.line, "no failing user test to sample") {
+		t.Fatalf("without a failing user test the result must wait for an alert change: %+v", result)
+	}
+}
+
+func TestEffectWatchIgnoresAProgressingVerdictOlderThanTheChange(t *testing.T) {
+	at := detectNow()
+	view := detectApp("create")
+	stale := appsv1.DeploymentCondition{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded", LastUpdateTime: metav1.NewTime(at.Add(-time.Hour))}
+	view.DeploymentList = []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app", Generation: 2},
+		Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 2, UpdatedReplicas: 1, AvailableReplicas: 1, Conditions: []appsv1.DeploymentCondition{stale}}}}
+	change := knownChange{At: at.Add(-5 * time.Second), Workloads: []sdk.ObjectRef{{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}}, Writes: []string{"Deployment/api"}}
+	var watch effectWatch
+	if result := watch.evaluate(view, change, []string{"create"}, at); result.in {
+		t.Fatalf("a Progressing=False written before the change is no verdict on it: %q", result.line)
+	}
+	view.DeploymentList[0].Status.Conditions[0].LastUpdateTime = metav1.NewTime(at)
+	if result := watch.evaluate(view, change, []string{"create"}, at); !result.in || !strings.Contains(result.line, "rollout failed: ProgressDeadlineExceeded") {
+		t.Fatalf("a fresh Progressing=False is the result: %+v", result)
+	}
+}
+
+func TestKnownChangeIncludesTheWorkloadsAPlanApplicationWrote(t *testing.T) {
+	at := detectNow()
+	applications := []RecordedPlanApplication{{PlanIDs: []string{"restore"}, StartedAt: at, Pending: true, Result: PlanApplicationResult{ObjectEffects: []PlanObjectEffect{
+		{Ref: sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}}, {Ref: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "cfg"}}}}}}
+	change, ok := latestKnownChange(detectApp(), applications, at.Add(-time.Minute))
+	if !ok || !change.At.Equal(at) || len(change.Workloads) != 1 || change.Workloads[0].Name != "api" {
+		t.Fatalf("change = %+v, want the plan's Deployment at its start", change)
+	}
+	// Completing it does not make it a second change.
+	applications[0].Pending, applications[0].CompletedAt = false, at.Add(9*time.Second)
+	if again, _ := latestKnownChange(detectApp(), applications, at); !again.At.IsZero() {
+		t.Fatalf("a completed application was reported as a new change: %+v", again)
 	}
 }

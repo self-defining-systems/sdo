@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"sdo.dev/operator/sdk"
 )
@@ -31,55 +32,85 @@ func newSinceHandoff(findings []sdk.Finding, handoff map[string]bool, alerts []s
 	return fresh
 }
 
-// newFindingLines renders one new finding: its label and summary, and for
-// drift on its object the changed fields, the writer and when it wrote.
-func newFindingLines(finding sdk.Finding, drift []sdk.DriftEvent) []string {
+// detectNewDriftFields bounds the changed fields shown per new finding.
+const detectNewDriftFields = 3
+
+// newBlockTitle heads the block; a response holding it showed the findings.
+const newBlockTitle = "NEW SINCE THE HANDOFF"
+
+// newFindingLines renders one new finding: its label and summary and, with
+// detail, the newest drift on its object: up to detectNewDriftFields changed
+// fields, the writer and when it wrote.
+func newFindingLines(finding sdk.Finding, drift []sdk.DriftEvent, detail bool) []string {
 	lines := []string{fmt.Sprintf("%s  %s", plainName(detectFindingLabel(finding), 80), redactDetectText(finding.Summary, 140))}
 	ref := finding.PrimaryResource
-	for _, event := range drift {
+	var newest *sdk.DriftEvent
+	for i, event := range drift {
 		if ref.Name == "" || event.Ref.Kind != ref.Kind || event.Ref.Name != ref.Name || event.Ref.Namespace != ref.Namespace {
 			continue
 		}
-		var fields []string
-		for _, field := range event.Fields {
-			change := plainName(field.Path, 60)
-			if field.Old != "" || field.New != "" {
-				change += " " + redactDetectText(field.Old, 40) + " -> " + redactDetectText(field.New, 40)
-			}
-			fields = append(fields, change)
+		if newest == nil || driftAt(event).After(driftAt(*newest)) {
+			newest = &drift[i]
 		}
-		at := event.ObservedAt
-		if event.ManagerAt != nil {
-			at = *event.ManagerAt
-		}
-		writer := event.Manager
-		if writer == "" {
-			writer = "unknown"
-		}
-		lines = append(lines, fmt.Sprintf("  changed %s by %s at %s", orQuestion(strings.Join(fields, "; ")), plainName(writer, 40), hms(at)))
 	}
-	return lines
+	if !detail || newest == nil {
+		return lines
+	}
+	var fields []string
+	for _, field := range newest.Fields[:min(len(newest.Fields), detectNewDriftFields)] {
+		change := plainName(field.Path, 60)
+		if field.Old != "" || field.New != "" {
+			change += " " + redactDetectText(field.Old, 30) + " -> " + redactDetectText(field.New, 30)
+		}
+		fields = append(fields, change)
+	}
+	if more := len(newest.Fields) - detectNewDriftFields; more > 0 {
+		fields = append(fields, fmt.Sprintf("+%d more fields", more))
+	}
+	writer := newest.Manager
+	if writer == "" {
+		writer = "unknown"
+	}
+	return append(lines, fmt.Sprintf("  changed %s by %s at %s", orQuestion(strings.Join(fields, "; ")), plainName(writer, 40), hms(driftAt(*newest))))
 }
 
-// newSinceHandoffBlock is the block `sdo detect` leads with, the first
-// `shown` findings inline, and the full list for `sdo detect new`.
-func newSinceHandoffBlock(fresh []sdk.Finding, drift []sdk.DriftEvent, shown int) (block []string, item string) {
+func driftAt(event sdk.DriftEvent) time.Time {
+	if event.ManagerAt != nil {
+		return *event.ManagerAt
+	}
+	return event.ObservedAt
+}
+
+// newSinceHandoffBlock is the block `sdo detect` leads with: the first
+// `shown` findings inline (with their drift when detail is set); item is the
+// full list for `sdo detect new`, bounded like every item.
+func newSinceHandoffBlock(fresh []sdk.Finding, drift []sdk.DriftEvent, shown int, detail bool) (block []string, item string) {
 	if len(fresh) == 0 {
 		return nil, ""
 	}
 	var all []string
-	block = []string{"", "NEW SINCE THE HANDOFF (not in the alerts and clues you were given)"}
+	block = []string{"", newBlockTitle + " (not in the alerts and clues you were given)"}
 	for i, finding := range fresh {
-		lines := newFindingLines(finding, drift)
-		all = append(all, lines...)
+		all = append(all, newFindingLines(finding, drift, true)...)
 		if i < shown {
-			block = append(block, lines...)
+			block = append(block, newFindingLines(finding, drift, detail)...)
 		}
 	}
-	if dropped := len(fresh) - shown; dropped > 0 {
-		block = append(block, fmt.Sprintf("+%d more new: sdo detect new", dropped))
+	if dropped := len(fresh) - shown; dropped > 0 || !detail {
+		block = append(block, fmt.Sprintf("+%d more new, with their changes: sdo detect new", dropped))
 	}
-	return block, strings.Join(all, "\n") + "\n"
+	item = strings.Join(all, "\n") + "\n"
+	if runes := []rune(item); len(runes) > detectItemCap {
+		item = string(runes[:detectItemCap]) + "\n+more: sdo detect --json\n"
+	}
+	return block, item
+}
+
+// showsNewFindings reports whether a detect response showed the new block
+// (the summary, a wait that named them, or `sdo detect new`), so a named test
+// or item read does not mark them seen.
+func showsNewFindings(request ToolRequest, text string) bool {
+	return strings.Contains(text, newBlockTitle) || strings.Contains(text, "new since the handoff: ") || request.Name == "new" || request.Finding == "new"
 }
 
 // newKeys are the finding keys of fresh, sorted.

@@ -355,11 +355,6 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 				change = detectRecoveredMessage
 				break
 			}
-			live := read.liveRequest()
-			if fresh := unshownNew(response.Findings, handoff, alertKeys(&live), newShown); fresh != "" {
-				change = "new since the handoff: " + fresh
-				break
-			}
 			result, at := effect(read, response)
 			waitedFor = result.line
 			if result.in {
@@ -369,6 +364,11 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 						l.effectShown = at
 					}
 				})
+				break
+			}
+			live := read.liveRequest()
+			if fresh := unshownNew(response.Findings, handoff, alertKeys(&live), newShown); fresh != "" {
+				change = "new since the handoff: " + fresh
 				break
 			}
 			remaining := deadline.Sub(clock.Now())
@@ -453,9 +453,10 @@ func (l *ResponderLoop) newEffectCheck(shown time.Time, name string, now func() 
 		if read.Request.DetectedAt.After(after) {
 			after = read.Request.DetectedAt
 		}
-		change, ok := latestKnownChange(read.lastView, read.applicationsLog, after)
+		applications := append(slices.Clone(read.archivedApplications), read.applicationsLog...)
+		change, ok := latestKnownChange(read.lastView, applications, after)
 		if !ok {
-			return effectResult{line: "waited for an alert change (no write of yours since " + hms(after) + ")"}, time.Time{}
+			return effectResult{line: "waited for an alert change (no write of yours SDO can see since " + hms(after) + ")"}, time.Time{}
 		}
 		return watch.evaluate(read.lastView, change, failingAlertTests(active), now()), change.At
 	}

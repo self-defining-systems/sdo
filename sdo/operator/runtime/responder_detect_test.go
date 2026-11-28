@@ -208,7 +208,7 @@ func TestDetectWaitReturnsAtTheTimeoutWithoutAChange(t *testing.T) {
 	loop, clock := detectWorldLoop(&detectWorld{})
 	started := clock.Now()
 	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 5})
-	if first := strings.SplitN(response.Text, "\n", 2)[0]; first != "wait: no change in 5s; waited for an alert change (no write of yours since 07:28:14Z)" {
+	if first := strings.SplitN(response.Text, "\n", 2)[0]; first != "wait: no change in 5s; waited for an alert change (no write of yours SDO can see since 07:28:14Z)" {
 		t.Fatalf("first line = %q", first)
 	}
 	if got := clock.Since(started); got != 5*time.Second {
