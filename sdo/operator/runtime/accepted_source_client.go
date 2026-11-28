@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -161,6 +162,46 @@ func (r acceptedResource) renderDefaults(ctx context.Context, ref sdk.ObjectRef,
 		return nil, err
 	}
 	return decodeAcceptedObject(raw, probe)
+}
+
+// dryRunUpdateAttempts bounds the dry-run update's retries of a stale
+// resourceVersion.
+const dryRunUpdateAttempts = 3
+
+// dryRunUpdate is the server's dry-run replacement of the object by object.
+// Custom resources refuse an update without a resourceVersion, so it sends
+// object's. A dry run never persists: when another write made that version
+// stale (409), it retries with the stored object's current version, at most
+// dryRunUpdateAttempts times.
+func (r acceptedResource) dryRunUpdate(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	replacement := object.DeepCopy()
+	metadata, _ := replacement.Object["metadata"].(map[string]any)
+	for _, field := range []string{"managedFields", "creationTimestamp", "generation"} {
+		delete(metadata, field)
+	}
+	delete(replacement.Object, "status")
+	var err error
+	for attempt := 0; attempt < dryRunUpdateAttempts; attempt++ {
+		if attempt > 0 {
+			stored, getErr := r.get(ctx, ref)
+			if getErr != nil {
+				return nil, getErr
+			}
+			replacement.SetResourceVersion(stored.GetResourceVersion())
+		}
+		var body, raw []byte
+		if body, err = json.Marshal(replacement.Object); err != nil {
+			return nil, err
+		}
+		raw, err = bodyOf(ctx, r.client.Put().AbsPath(r.path).Param("dryRun", metav1.DryRunAll).Param("fieldManager", sdk.DeployerFieldManager).Body(body))
+		if err == nil {
+			return decodeAcceptedObject(raw, ref)
+		}
+		if !apierrors.IsConflict(err) {
+			return nil, err
+		}
+	}
+	return nil, err
 }
 
 func (r acceptedResource) applyAs(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool, manager string) (*unstructured.Unstructured, error) {

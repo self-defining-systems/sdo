@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	"maps"
 	"reflect"
 
@@ -61,11 +62,17 @@ func legacyAcceptedSourceShape(source *unstructured.Unstructured) string {
 // HPA ownership comes from the captured target identity, not a manager name or
 // a live-only API read; offline replay uses exactly the same evidence.
 func (v LiveReadView) hpaOwnsReplicas(ref sdk.ObjectRef) bool {
+	return hpaTargets(v.HorizontalPodAutoscalers(), ref)
+}
+
+// hpaTargets reports whether one of hpas scales ref: source comparison and
+// the restore share it, so both leave the same replicas to the autoscaler.
+func hpaTargets(hpas []autoscalingv2.HorizontalPodAutoscaler, ref sdk.ObjectRef) bool {
 	groupVersion, err := schema.ParseGroupVersion(ref.APIVersion)
 	if err != nil {
 		return false
 	}
-	for _, hpa := range v.HorizontalPodAutoscalers() {
+	for _, hpa := range hpas {
 		target := hpa.Spec.ScaleTargetRef
 		targetVersion, err := schema.ParseGroupVersion(target.APIVersion)
 		if err == nil && hpa.Namespace == ref.Namespace && target.Name == ref.Name && target.Kind == ref.Kind && targetVersion.Group == groupVersion.Group {

@@ -28,6 +28,9 @@ const (
 	// workloads that read it only at container start (subPath, env, envFrom)
 	// still run Pods that loaded the departed content (Consumers).
 	DepartureNotReloaded DepartureKind = "not_reloaded"
+	// DepartureUncompared: the API server refused the object's source
+	// comparison (an immutable field written after acceptance); Error says why.
+	DepartureUncompared DepartureKind = "uncompared"
 )
 
 // SourceDeparture is one object that differs from accepted source because a
@@ -55,6 +58,8 @@ type SourceDeparture struct {
 	// role). They get no command and never make the built-in restore match:
 	// restarting a data store is the responder's call.
 	DataConsumers []sdk.ObjectRef
+	// Error is why an uncompared object's comparison was refused.
+	Error string
 }
 
 // Command is the responder command that puts the object back to accepted
@@ -107,6 +112,8 @@ func (d SourceDeparture) Text() string {
 			return name + " is missing; accepted source declares it"
 		}
 		return fmt.Sprintf("%s was deleted at %s by %s (not sdo); accepted source declares it", name, hms(d.At), orQuestion(d.Manager))
+	case DepartureUncompared:
+		return name + " could not be compared with accepted source: " + d.Error
 	case DepartureNotReloaded:
 		readers := refNames(append(slices.Clone(d.Consumers), d.DataConsumers...))
 		text := fmt.Sprintf("%s changed at %s by %s (not sdo) and matches accepted source again, but %s still run Pods started with the changed content (read only at start: subPath, env or envFrom)", name, hms(d.At), orQuestion(d.Manager), readers)
@@ -183,6 +190,13 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 			continue
 		}
 		diff, err := in.View.DiffAgainstSource(ref)
+		var refused *SourceComparisonRefusedError
+		if errors.As(err, &refused) {
+			// Not a departure SDO can restore, but never hidden: the
+			// responder sees the object and the server's reason.
+			result = append(result, SourceDeparture{Ref: ref, Kind: DepartureUncompared, Error: redactDetectText(refused.Err.Error(), 160)})
+			continue
+		}
 		if err != nil {
 			continue
 		}

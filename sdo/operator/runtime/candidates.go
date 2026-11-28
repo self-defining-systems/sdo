@@ -418,7 +418,7 @@ var routineRolloutPaths = []string{"annotations", "restartedat", "replicas", "ge
 // routineChange reports a departure that is a rollout or churn write rather
 // than an unexplained difference.
 func routineChange(row IncidentChange) bool {
-	if row.Source != "kubernetes" || row.After == string(DepartureMissing) || row.After == string(DepartureExtra) || row.After == string(DepartureNotReloaded) {
+	if row.Source != "kubernetes" || row.After == string(DepartureMissing) || row.After == string(DepartureExtra) || row.After == string(DepartureNotReloaded) || row.After == string(DepartureUncompared) {
 		return false
 	}
 	if strings.Contains(strings.ToLower(row.Writer), "rollout") {
@@ -455,6 +455,8 @@ func rowEvidence(row IncidentChange, onset time.Time) (candidateEvidence, bool) 
 			body = object + " missing, accepted source declares it"
 		case string(DepartureNotReloaded):
 			body = object + " matches accepted source again, but Pods started with the changed content still run; they read it only at start"
+		case string(DepartureUncompared):
+			body = object + " could not be compared with accepted source"
 		default:
 			body = object + " " + clean(row.After) + " vs accepted source"
 		}

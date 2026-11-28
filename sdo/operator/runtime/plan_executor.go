@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"time"
@@ -764,12 +765,17 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if err != nil {
 			return nil, err
 		}
-		next, err = sourceFields(next, source, a.Ref)
+		next, err = sourceRestoreObject(next, current, source, a.Ref)
 		if err != nil {
 			return nil, err
 		}
-		removeAddedFields(next, current, source)
-		preserveSourceControllerFields(next, current)
+		// Replicas follow the comparison's rule: an autoscaler that targets
+		// the object owns them, otherwise accepted source does.
+		autoscaled, err := e.autoscaled(ctx, a.Ref)
+		if err != nil {
+			return nil, err
+		}
+		preserveSubresourceFields(next, current, autoscaled)
 		// A source repair owns the revision it applies. Carry the original
 		// UID-bound acceptance baseline across that repair; never accept an
 		// unknown incarnation or absorb another writer's added/changed fields.
@@ -954,7 +960,48 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 	return next, nil
 }
 
+// sourceRestoreObject is current replaced by accepted source: declared values
+// restored (lists whole, keeping the entries and fields the acceptance record
+// says they held at acceptance) and fields added since acceptance removed,
+// keeping SDO's bookkeeping. ReconcileFromSource writes it and also keeps what
+// controllers wrote through a subresource; source comparison compares with
+// the server's dry-run update of it, where a declared field such as replicas
+// stays compared unless an autoscaler targets the object.
+func sourceRestoreObject(next, current, source *unstructured.Unstructured, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	var keep func(string, any) any
+	if record, ok := currentAcceptanceRecord(current, source); ok {
+		keep = acceptedEntries(record)
+	}
+	next, err := restoreSourceFields(next, source, ref, keep)
+	if err != nil {
+		return nil, err
+	}
+	removeAddedFields(next, current, source)
+	preserveSourceBookkeeping(next, current)
+	return next, nil
+}
+
+// autoscaled reports whether an autoscaler targets ref, by the same live
+// HorizontalPodAutoscaler check source comparison uses. A client that cannot
+// list autoscalers sees none.
+func (e PlanExecutor) autoscaled(ctx context.Context, ref sdk.ObjectRef) (bool, error) {
+	lister, ok := e.Client.(interface {
+		AutoscalerTargets(context.Context, sdk.ObjectRef) (bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	return lister.AutoscalerTargets(ctx, ref)
+}
+
 func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	return restoreSourceFields(current, source, ref, nil)
+}
+
+// restoreSourceFields writes source's declared values into current. keep, when
+// set, is consulted for each live list entry and field a declared list would
+// otherwise drop: what it returns stays (nil drops it).
+func restoreSourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef, keep func(string, any) any) (*unstructured.Unstructured, error) {
 	if source == nil || !samePlanRef(source, ref) {
 		return nil, fmt.Errorf("source object does not match %s/%s", ref.Kind, ref.Name)
 	}
@@ -976,25 +1023,138 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 					currentMetadata = map[string]any{}
 					current.Object["metadata"] = currentMetadata
 				}
-				currentMetadata[key] = restoreDeclaredValue(currentMetadata[key], declared)
+				currentMetadata[key] = restoreDeclaredValueAt("metadata."+key, currentMetadata[key], declared, keep)
 			}
 		default:
-			current.Object[field] = restoreDeclaredValue(current.Object[field], value)
+			current.Object[field] = restoreDeclaredValueAt(field, current.Object[field], value, keep)
 		}
 	}
 	return current, nil
 }
 
+// acceptedEntries keeps, inside a declared list, what the object carried at
+// acceptance: each live leaf whose path the record holds, at its accepted value
+// when the record has one. Paths match flattenDriftObject's.
+func acceptedEntries(record acceptanceRecord) func(string, any) any {
+	present := make(map[string]bool, len(record.Paths))
+	for _, path := range record.Paths {
+		present[path] = true
+	}
+	var keep func(string, any) any
+	keep = func(path string, live any) any {
+		switch typed := live.(type) {
+		case map[string]any:
+			kept := map[string]any{}
+			for key, child := range typed {
+				if value := keep(path+"."+key, child); value != nil {
+					kept[key] = value
+				}
+			}
+			if len(kept) == 0 {
+				return nil
+			}
+			return kept
+		case []any:
+			kept := []any{}
+			for index, child := range typed {
+				value := keep(fmt.Sprintf("%s[%d]", path, index), child)
+				if value == nil {
+					// Positions stay aligned with the record.
+					break
+				}
+				kept = append(kept, value)
+			}
+			if len(kept) == 0 {
+				return nil
+			}
+			return kept
+		case nil:
+			return nil
+		}
+		if !present[path] {
+			return nil
+		}
+		if accepted, ok := record.Values[path]; ok && !sameScalar(live, accepted) {
+			return jsonInteger(accepted)
+		}
+		return runtime.DeepCopyJSONValue(live)
+	}
+	return keep
+}
+
+// jsonInteger turns a decoded integral JSON number back into an int64.
+func jsonInteger(value any) any {
+	if number, ok := value.(float64); ok && number == math.Trunc(number) && math.Abs(number) < 1<<53 {
+		return int64(number)
+	}
+	return value
+}
+
+func restoreDeclaredValue(current, declared any) any {
+	return restoreDeclaredValueAt("", current, declared, nil)
+}
+
 // Maps restore their declared keys; lists/scalars restore their entire declared
 // value. Unspecified server defaults and other controllers' map entries survive.
-func restoreDeclaredValue(current, declared any) any {
+// With keep, a declared list also keeps what keep returns for the live entries
+// and fields it does not declare.
+func restoreDeclaredValueAt(path string, current, declared any, keep func(string, any) any) any {
+	join := func(key string) string {
+		if path == "" {
+			return key
+		}
+		return path + "." + key
+	}
 	if source, ok := declared.(map[string]any); ok {
 		result, _ := current.(map[string]any)
 		if result == nil {
 			result = map[string]any{}
 		}
 		for key, value := range source {
-			result[key] = restoreDeclaredValue(result[key], value)
+			result[key] = restoreDeclaredValueAt(join(key), result[key], value, keep)
+		}
+		return result
+	}
+	if keep == nil {
+		return runtime.DeepCopyJSONValue(declared)
+	}
+	return withAcceptedEntries(path, current, declared, keep)
+}
+
+// withAcceptedEntries is declared with, under each declared list, the live
+// entries and fields keep says were there at acceptance.
+func withAcceptedEntries(path string, live, declared any, keep func(string, any) any) any {
+	switch typed := declared.(type) {
+	case map[string]any:
+		liveMap, _ := live.(map[string]any)
+		result := map[string]any{}
+		for key, child := range liveMap {
+			if _, declared := typed[key]; !declared {
+				if value := keep(path+"."+key, child); value != nil {
+					result[key] = value
+				}
+			}
+		}
+		for key, child := range typed {
+			result[key] = withAcceptedEntries(path+"."+key, liveMap[key], child, keep)
+		}
+		return result
+	case []any:
+		liveList, _ := live.([]any)
+		result := make([]any, 0, len(typed))
+		for index, child := range typed {
+			var liveChild any
+			if index < len(liveList) {
+				liveChild = liveList[index]
+			}
+			result = append(result, withAcceptedEntries(fmt.Sprintf("%s[%d]", path, index), liveChild, child, keep))
+		}
+		for index := len(typed); index < len(liveList); index++ {
+			value := keep(fmt.Sprintf("%s[%d]", path, index), liveList[index])
+			if value == nil {
+				break
+			}
+			result = append(result, value)
 		}
 		return result
 	}

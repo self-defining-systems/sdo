@@ -519,6 +519,9 @@ func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.T
 				if departure.Kind == DepartureNotReloaded {
 					key = refNames(append(slices.Clone(departure.Consumers), departure.DataConsumers...))
 				}
+				if departure.Kind == DepartureUncompared {
+					key = departure.Error
+				}
 				rows = append(rows, IncidentChange{
 					At: departure.At, Source: "kubernetes", Component: component.Name,
 					ReaderOrObject: departure.Ref.Kind + "/" + departure.Ref.Name, Key: key,

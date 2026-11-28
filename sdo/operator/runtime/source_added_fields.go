@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,6 +48,21 @@ func (e *AcceptanceUnknownError) Error() string {
 }
 
 func (e *AcceptanceUnknownError) Unwrap() error { return ErrAcceptanceRecordUnavailable }
+
+// SourceComparisonRefusedError is a source comparison the API server refused:
+// it would not accept the object replaced by accepted source (an immutable
+// field written after acceptance). The difference is real but unknown, so it
+// is reported as an error, never as a match.
+type SourceComparisonRefusedError struct {
+	Ref sdk.ObjectRef
+	Err error
+}
+
+func (e *SourceComparisonRefusedError) Error() string {
+	return fmt.Sprintf("the API server refused %s/%s replaced by accepted source: %v", e.Ref.Kind, e.Ref.Name, e.Err)
+}
+
+func (e *SourceComparisonRefusedError) Unwrap() error { return e.Err }
 
 // declaredSourceDiff is the comparison the controller's drift admission,
 // verification and closure need: whether declared fields match accepted
@@ -507,9 +521,7 @@ func RecordAcceptance(object, source *unstructured.Unstructured) error {
 // exists. Reconciliation has already restored the declared lists, so an index
 // the source does not have is simply skipped.
 func setLeaf(object map[string]any, path string, value any) {
-	if number, ok := value.(float64); ok && number == math.Trunc(number) && math.Abs(number) < 1<<53 {
-		value = int64(number)
-	}
+	value = jsonInteger(value)
 	var node any = object
 	segments := strings.Split(path, ".")
 	for position, segment := range segments {
