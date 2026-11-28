@@ -36,6 +36,15 @@ func addClue(t *testing.T, c *Controller, clue sdk.Finding, active bool) {
 	}
 }
 
+// admitClue is the clue's detector reporting it active at the current step:
+// the controller's one admission path for a new finding.
+func admitClue(t *testing.T, c *Controller, clue sdk.Finding) {
+	t.Helper()
+	c.tracker.SetPolicy(clue.DetectorID, 1, 1, 0)
+	c.tracker.Observe(c.clock(), clue.DetectorID, []sdk.Finding{clue})
+	c.admitActivation(t.Context(), clue, c.clock(), sdk.DetectorSpec{})
+}
+
 // Two faults on one failing path: the stage restarted api, which the user
 // test's path runs through, and the store's data changed before that, which
 // no applied program targeted and api neither calls nor is called by. The
@@ -60,9 +69,10 @@ func TestAStageThatDidNotCoverACauseHandsOffOnceItsWritesSettle(t *testing.T) {
 }
 
 // What the stage's writes may still clear keeps today's wait: a clue on the
-// written component, on one that calls it or that it calls (a misconfigured
-// caller shows up in its store's state), off every alert's path, no longer
-// active, first seen after the stage applied, or with no map to place it; and
+// written component (also one first seen after the stage applied), on one
+// that calls it or that it calls (a misconfigured caller shows up in its
+// store's state), off every alert's path, no longer active, or with no map to
+// place it; and
 // any clue while no alert on its path failed again after the writes settled
 // (the alerts may still be clearing).
 func TestACauseTheStageMayHaveAddressedKeepsTheWait(t *testing.T) {
@@ -79,7 +89,7 @@ func TestACauseTheStageMayHaveAddressedKeepsTheWait(t *testing.T) {
 		"on a callee of the written one":    {read: buyMap("web, api, store", "{from: web, to: api}, {from: api, to: store}"), clue: storeStateClue("StatefulSet", "store")},
 		"off every alert's path":            {read: buyMap("web, api", "{from: web, to: api}, {from: web, to: store}"), clue: storeStateClue("StatefulSet", "store")},
 		"no longer active":                  {read: path, clue: storeStateClue("StatefulSet", "store"), inactive: true},
-		"first seen after the stage":        {read: path, clue: storeStateClue("StatefulSet", "store"), late: true},
+		"late, on the written component":    {read: path, clue: storeStateClue("Deployment", "api"), late: true},
 		"the user test passes since settle": {read: path, clue: storeStateClue("StatefulSet", "store"), failing: func(at time.Duration) bool { return at < 2*time.Second }},
 		"no application map":                {clue: storeStateClue("StatefulSet", "store")},
 	} {
@@ -96,7 +106,11 @@ func TestACauseTheStageMayHaveAddressedKeepsTheWait(t *testing.T) {
 					t.Fatal("the stage did not apply in the first step")
 				}
 			}
-			addClue(t, c, tc.clue, !tc.inactive)
+			if tc.late {
+				admitClue(t, c, tc.clue)
+			} else {
+				addClue(t, c, tc.clue, !tc.inactive)
+			}
 			if at, ok := handoffAfter(t, c, world, test.start, horizon(test)-time.Second); ok {
 				t.Fatalf("handed off at %s, want no earlier than %s", at, horizon(test))
 			}
@@ -171,11 +185,72 @@ func TestCausesBeyondAStageThatRestoredAConfigMapOrAService(t *testing.T) {
 				live = *tc.view
 			}
 			windowed := windowSnapshot{DetectionContext: live, windows: (&buyTest{every: 2 * time.Second, failing: alwaysFails, start: settled}).window(settled.Add(10 * time.Second))}
-			before := func(string) (bool, time.Time) { return true, settled.Add(-time.Minute) }
-			got := causesBeyondStage(windowed, m, request, report, settled, before)
+			got := causesBeyondStage(windowed, m, request, report, settled, func(string) bool { return true })
 			if (len(got) == 1 && got[0] == findingKey(clue)) != tc.want || len(got) > 1 {
 				t.Fatalf("uncovered = %q, want the clue: %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// Multi-fault timeline, a fault that lands after the stage's look: the stage
+// restarted api at the page, and the store's data changes 20 s later, off the
+// written component's paths in both directions. Its finding joins the
+// incident while the stage still owns it, and the agent starts at the next
+// step with the late cause among its findings, not after the user test's full
+// window or the stage's bound.
+func TestALateCauseTheStageDidNotCoverHandsOffAtOnce(t *testing.T) {
+	test := &buyTest{failing: alwaysFails}
+	c, world, key := freshWorld(t, test, settings.AfterPlaybookAgent)
+	c.gitRead = buyMap("web, api, store", "{from: web, to: api}, {from: web, to: store}")
+	if at, ok := handoffAfter(t, c, world, test.start, 20*time.Second); ok {
+		t.Fatalf("handed off at %s with every cause covered", at)
+	}
+	clue := storeStateClue("StatefulSet", "store")
+	admitClue(t, c, clue)
+	if !slices.ContainsFunc(c.currentIncidentRequest.Findings, func(f sdk.Finding) bool { return findingKey(f) == findingKey(clue) }) {
+		t.Fatal("the late finding did not join the incident the stage owns")
+	}
+	at, ok := handoffAfter(t, c, world, test.start, horizon(test))
+	report := autoReport(c)
+	if !ok || at > 22*time.Second {
+		t.Fatalf("handoff = %v at %s, want within a step of the late finding at 20s", ok, at)
+	}
+	if !slices.Contains(report.GetHandoffKeys(), key) || !slices.Contains(report.GetHandoffKeys(), findingKey(clue)) ||
+		report.GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_UNCOVERED || world.restarts.Load() != 1 {
+		t.Fatalf("report = %v, %d writes", report, world.restarts.Load())
+	}
+	agent := stageDispatchRequest(*c.currentIncidentRequest)
+	if !slices.ContainsFunc(agent.Findings, func(f sdk.Finding) bool { return findingKey(f) == findingKey(clue) }) {
+		t.Fatalf("the agent's findings %v omit the uncovered cause", findingKeys(agent.Findings))
+	}
+}
+
+// A late finding a learned playbook links is the stage's first: it runs one
+// more pass for it while it owns the incident, and only what that pass did not
+// cover reaches the agent.
+func TestALateFindingALearnedPlaybookLinksGetsAStagePassFirst(t *testing.T) {
+	test := &buyTest{failing: alwaysFails}
+	c, world, _ := freshWorld(t, test, settings.AfterPlaybookAgent)
+	c.gitRead = buyMap("web, api, store", "{from: web, to: api}, {from: web, to: store}")
+	var passes []bool
+	c.tuneMidStage = func(stage *DeterministicResponseStage) {
+		passes = append(passes, autoReport(c).GetHandoffSelected())
+	}
+	if at, ok := handoffAfter(t, c, world, test.start, 20*time.Second); ok {
+		t.Fatalf("handed off at %s with every cause covered", at)
+	}
+	clue := storeStateClue("StatefulSet", "store")
+	clue.Playbooks = []string{"api-request-stall"}
+	admitClue(t, c, clue)
+	if !c.midStage.pending {
+		t.Fatal("no stage pass queued for the late finding its learned playbook links")
+	}
+	at, ok := handoffAfter(t, c, world, test.start, horizon(test))
+	if len(passes) == 0 || slices.Contains(passes, true) {
+		t.Fatalf("stage passes (handoff selected at each) = %v, want them all before the handoff", passes)
+	}
+	if !ok || at > 23*time.Second || !slices.Contains(autoReport(c).GetHandoffKeys(), findingKey(clue)) {
+		t.Fatalf("handoff = %v at %s, keys %v: the pass could not bind the store, so its cause goes to the agent", ok, at, autoReport(c).GetHandoffKeys())
 	}
 }
