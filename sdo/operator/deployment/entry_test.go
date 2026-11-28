@@ -44,6 +44,18 @@ func port(number int64, name string) map[string]any {
 	return map[string]any{"port": number, "name": name}
 }
 
+// Users enter over TCP; a UDP or SCTP port (a trace agent, a DNS server) is
+// not dialed, so it can never fail the check.
+func TestEntryPointsAreTCPPortsOnly(t *testing.T) {
+	udp := map[string]any{"port": int64(6831), "name": "agent", "protocol": "UDP"}
+	sctp := map[string]any{"port": int64(9999), "name": "s", "protocol": "SCTP"}
+	tcp := map[string]any{"port": int64(16686), "name": "query", "protocol": "TCP"}
+	got := EntryPoints(entrySet(service("tracing", "", "", udp, sctp, tcp)))
+	if want := []EntryPoint{{"tracing", 16686, false}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("entries = %v, want only the TCP port %v", got, want)
+	}
+}
+
 func TestEntryPointsAreTheExposedServicesElseEveryServiceWithAnIP(t *testing.T) {
 	ingress := map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "metadata": map[string]any{"name": "web"},
 		"spec": map[string]any{"rules": []any{map[string]any{"http": map[string]any{"paths": []any{

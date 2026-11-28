@@ -41,9 +41,9 @@ type EntryResult struct {
 	Err   error
 }
 
-// EntryPoints are the Service ports the desired set exposes to users: Services
-// of type NodePort or LoadBalancer and the Services Ingress rules route to.
-// With none exposed, every Service with a cluster IP is an entry.
+// EntryPoints are the TCP Service ports the desired set exposes to users:
+// Services of type NodePort or LoadBalancer and the Services Ingress rules
+// route to. With none exposed, every Service with a cluster IP is an entry.
 func EntryPoints(set rendered.DesiredSet) []EntryPoint {
 	services := map[string]*unstructured.Unstructured{}
 	exposed := map[string]bool{}
@@ -84,6 +84,11 @@ func EntryPoints(set rendered.DesiredSet) []EntryPoint {
 				}
 			}
 			if !ok {
+				continue
+			}
+			// Users enter over TCP (Kubernetes' default protocol); a UDP or SCTP
+			// port cannot answer a connection, so it is not an entry.
+			if transport, _ := port["protocol"].(string); transport != "" && transport != "TCP" {
 				continue
 			}
 			portName, _ := port["name"].(string)
