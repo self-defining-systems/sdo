@@ -41,14 +41,28 @@ or `applied_still_matching`) and that is still in progress when the match is dec
 touched Deployment still rolling out, or the 90 s recovery window after the write still open; the same holds after a
 controller restart, where the write is found in the restored applications); the earlier attempt keeps settlement credit. Before this
 rule, a second program restarting the same Deployment superseded the first (`SETTLEMENT_REJECTION_REASON_SUPERSEDED`).
+With several stage applications, each is credited on its own evidence: settlement reruns its own Diagnose and
+rejects one that still matches (`SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR`); every other one whose
+settlement passes is credited and earns its credited pair. Before batching, any stage with more than one effective
+application credited none, and all its applications were rejected as `SUPERSEDED`.
 A plan application rejected with `SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED` carries `effect_confirmation`: `reason`
 (a failure before any comparison, such as no pre-image or an unreadable or replaced object), `mismatches` (object, path, expected,
 observed; Secret data redacted) and `rollout_status` when settlement ran. Its `error` starts `effect_not_confirmed:` and replaces
 the apply-time error (often a stale `rollout_pending`).
 `rollout_pending_at_handoff` is the apply receipt's pending-rollout label. The controller owns the actual handoff decision. Join `apply_completed_at`, `recovery_deadline`, the optional `stability_deadline`, and `handoff_keys` to episode timing. `rollout_unsettled_at_deadline` is terminal trust evidence for the recorded program revision. Historically a stalled rollout could trigger an early handoff or a separate lag wait.
 
-The stage applies matched bindings sequentially with a single rollout sample, re-running Diagnose on fresh
-state after the preceding application returns. It then observes all pending applications under one durable shared recovery deadline (up to 90 seconds, bounded by the response deadline). A pending handoff
+The stage works in turns. A turn diagnoses and plans every match on one live view, then applies the planned
+bindings as a batch: one application per plan, back to back, each with a single rollout sample, plans that only
+write Kubernetes objects (source restores) before plans with a data or command effect, and then one verify (each
+plan's post-apply Diagnose plus one detector round) for the whole batch; the executor's own per-apply health check
+is skipped for batched applies. A plan that reaches an object an earlier plan of the turn writes (a data repair's
+reach includes the controller owner chain of the Pods it acts on), or whose write set is unknown, is skipped for that
+turn as `object_shared_in_turn` and diagnosed again in the next one; a source restore displaces a data repair it
+conflicts with, so restores never wait behind data repairs. `planned_in_turn` marks a planned attempt its batch had
+not applied yet, and `findings_cleared` one dropped because every finding cleared before the batch applied; a restart
+redoes `object_shared_in_turn` and `planned_in_turn` attempts. The ordering holds within a turn: a restore deferred to
+a later turn (its Diagnose did not match yet) runs after that earlier turn's data repairs. Runs
+before this rule applied bindings one at a time with a verify after each, re-running Diagnose after every write. It then observes all pending applications under one durable shared recovery deadline (up to 90 seconds, bounded by the response deadline). A pending handoff
 (`admission_blocked`, stalled or bounded rollout) keeps the pass: later matches
 still get their fresh diagnosis and may unblock it. A failed application does not starve independent matches. After writes, uncovered faults, execution failures and verified admission dependencies hand off to another actor. Runs before this rule ended the pass at the first pending handoff. A nonmatching or
 unavailable diagnosis gets one deferred turn after the other candidates, without increasing write authority. A pending stage snapshot is superseded for reflection staleness only by a later verified final application with the same ID, plan, program IDs and start time. Missing, failed, rolled-back or ambiguous final receipts cannot excuse it; unresolved own findings and later hand repairs still require refinement.

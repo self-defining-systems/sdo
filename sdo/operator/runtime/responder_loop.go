@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sdo.dev/operator/provenance"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,9 +32,9 @@ const maxRecordedToolResponse = 2048
 
 // maxRecordedApplyResponse bounds an apply record that lists the runs of the
 // applied plans. The agent records at most MaxBatches (5) applies; the automatic
-// stage adds one apply per pass over all its matched plans, and a pass never
-// retries a binding it already attempted, so a restart adds at most one more.
-// That is a handful of applies at 8 KiB (tens of KiB); the other tool calls are
+// stage adds one apply per bound plan, never retries a binding it already
+// attempted, and verifies its batch outside the apply records, so its records
+// carry no runs. That is a handful of applies at 8 KiB (tens of KiB); the other tool calls are
 // 2 KiB each, well under 100 of them (200 KiB). Together they stay far inside
 // the 768 KiB state ConfigMap budget. A compact run is about 250 B, so 8 KiB holds about 30 runs,
 // several per applied plan.
@@ -96,6 +97,14 @@ type ToolRequest struct {
 	// rolloutTimeout bounds a stage apply's rollout wait; it is not decodable
 	// either, and an agent call keeps the executor's own timeout.
 	rolloutTimeout time.Duration
+	// batchVerify marks a stage apply that is one of a turn's batch: it skips
+	// the per-apply verify, and the stage's "stage-verify" call runs one for
+	// the whole turn's batchApplications.
+	batchVerify       bool
+	batchApplications []string
+	// afterBatchWrite marks a batched apply that follows another write of the
+	// same batch: its plan's snapshot predates that write.
+	afterBatchWrite bool
 }
 
 // VerificationBlocker names observation work that cannot yet establish health.
@@ -346,6 +355,11 @@ type ResponderLoop struct {
 	batches  int
 	loopOpen bool
 	applySeq int
+	// batchVerified holds, per stage application applied with batchVerify,
+	// whether its execution succeeded, until verifyStageBatch completes its
+	// verification. It is not persisted: a restart leaves the application
+	// unverified, which recovery settlement observes afresh.
+	batchVerified map[string]bool
 }
 
 // ResponderLoopOptions supplies sources that must replay across simulated runs.
@@ -891,6 +905,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.MitigationHealth = result.MitigationHealth
 			response.TargetedHealthy = result.VerificationPassed
 		}
+	case "stage-verify":
+		// Internal to the automatic stage; a tool call cannot set stage.
+		if !request.stage {
+			response.Error = fmt.Sprintf("unknown sdo command %q", request.Command)
+			break
+		}
+		l.verifyStageBatch(ctx, request.batchApplications, &response)
 	case "verify":
 		if l.Traffic == nil && (request.Workload != "" || len(request.Scenarios) > 0) {
 			response.Error = "bounded traffic verification is unavailable"
@@ -1472,7 +1493,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	// between, so its plan's snapshot is the pre-write state; an agent may
 	// have written between its plan and apply, so its apply reads afresh.
 	var preWrite sdk.DetectionContext
-	if request.stage && len(selected) == 1 {
+	if request.stage && len(selected) == 1 && !request.afterBatchWrite {
 		preWrite = selected[0].snapshot
 	}
 	endPreApply := l.phase("preapply_capture")
@@ -1519,6 +1540,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if request.stage && request.rolloutTimeout > 0 {
 		executor.RolloutTimeout = request.rolloutTimeout
 	}
+	executor.batchVerify = request.stage && request.batchVerify
 	endExecutor := l.phase("executor_apply")
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
 	endExecutor()
@@ -1535,7 +1557,15 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		response.Error = err.Error()
 	}
 	response.RolloutPending = result.RolloutPending
-	if result.RolloutPending == nil {
+	if request.batchVerify {
+		if result.Applied && result.RolloutPending == nil {
+			if l.batchVerified == nil {
+				l.batchVerified = map[string]bool{}
+			}
+			l.batchVerified[id] = err == nil
+		}
+		result.VerificationPassed = false
+	} else if result.RolloutPending == nil {
 		endVerify := l.phase("verify")
 		l.verify(ctx, selected, response, request.stage)
 		endVerify()
@@ -1546,7 +1576,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	// The application is recorded as observed and left in place; whether to roll
 	// it back, apply again or edit is the responder's decision.
-	if result.Applied && result.RolloutPending == nil {
+	if result.Applied && result.RolloutPending == nil && !request.batchVerify {
 		// Application credit is binding-scoped; closure still independently
 		// requires global health. A different open fault is not a failed repair.
 		result.VerificationPassed = err == nil && response.Error == "" && result.VerificationCompleted &&
@@ -1586,6 +1616,45 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		response.Summary = fmt.Sprintf("%s applied; %d open findings", id, len(response.Findings))
 	}
 	response.Unresolved = l.loopsRemaining() == 0 && !response.Healthy
+}
+
+// verifyStageBatch runs the one verification of a stage turn's applications,
+// each applied with batchVerify: one post-apply Diagnose per applied plan on one
+// fresh view, and one detector round. Each application's verification passes
+// on its own evidence: its execution, its plans' own Diagnose and its targets.
+func (l *ResponderLoop) verifyStageBatch(ctx context.Context, ids []string, response *ToolResponse) {
+	var selected []selectedPlan
+	plansOf := map[string][]selectedPlan{}
+	for _, entry := range l.applicationsLog {
+		if !slices.Contains(ids, entry.ID) || entry.Result.RolloutPending != nil || !entry.Result.Applied {
+			continue
+		}
+		for _, planID := range entry.PlanIDs {
+			if plan, ok := l.plans[planID]; ok {
+				plansOf[entry.ID] = append(plansOf[entry.ID], plan)
+				selected = append(selected, plan)
+			}
+		}
+	}
+	endVerify := l.phase("verify")
+	l.verify(ctx, selected, response, true)
+	endVerify()
+	for i := range l.applicationsLog {
+		entry := &l.applicationsLog[i]
+		executed, ok := l.batchVerified[entry.ID]
+		if !ok || !slices.Contains(ids, entry.ID) {
+			continue
+		}
+		delete(l.batchVerified, entry.ID)
+		plans := plansOf[entry.ID]
+		entry.Result.VerificationCompleted = executed && response.Error == ""
+		entry.Result.VerificationPassed = executed && response.Error == "" && len(plans) > 0 &&
+			boundPlansNoMatch(plans, response.ProgramRuns) &&
+			targetedFindingsClear(l.mitigationIncident(plans).Findings, response.Findings)
+		if _, live := l.applications[entry.ID]; live {
+			l.applications[entry.ID] = entry.Result
+		}
+	}
 }
 
 // verify observes fresh findings. stage is true for the automatic stage's own

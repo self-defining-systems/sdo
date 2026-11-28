@@ -119,6 +119,10 @@ type PlanExecutor struct {
 	deferConvergence bool
 	// PollRollouts returns pending after one observation instead of waiting.
 	PollRollouts bool
+	// batchVerify leaves terminal health verification to the automatic
+	// stage's one verify after its batch: VerificationCompleted stays false
+	// and MitigationHealth (agent tool feedback) is not sampled.
+	batchVerify  bool
 	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error
 	// RolloutTimeout can shorten the default ninety-second rollout budget.
 	RecordPrimitive func(sdktest.PrimitiveCall) error
@@ -258,6 +262,9 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		// (a detector that cannot read a store the plan is restarting) leaves
 		// verification incomplete for recovery settlement to finish; it is not
 		// the writes failing. Only cancellation ends the application.
+		if e.batchVerify {
+			return result, nil
+		}
 		passed, verifyErr := e.Verifier.Verify(ctx)
 		if ctx.Err() != nil {
 			return result, ctx.Err()
