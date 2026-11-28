@@ -273,14 +273,12 @@ func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
 	}
 	responderPlans, recorded := resultPlans, false
 	if loop != nil {
-		loop.locked(func() {
-			responderPlans = responderPlans || len(loop.applicationsLog) > 0
-			if loop.ExternalReceipts != nil {
-				joinContext.Recording = true
-				receipts, _, _, err := loop.ExternalReceipts()
-				recorded = recorded || err == nil && len(receipts) > 0
-			}
-		})
+		responderPlans = responderPlans || loop.mayHavePlanWrites()
+		if loop.ExternalReceipts != nil {
+			joinContext.Recording = true
+			receipts, _, _, err := loop.ExternalReceipts()
+			recorded = err == nil && len(receipts) > 0
+		}
 	}
 	if responderPlans {
 		joinContext.WriteSources = append(joinContext.WriteSources, "responder_plan")

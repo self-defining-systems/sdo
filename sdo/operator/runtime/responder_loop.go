@@ -421,6 +421,18 @@ func (l *ResponderLoop) continuationAttempts() int {
 	return l.continuation.Attempts
 }
 
+// mayHavePlanWrites reports whether this loop has journaled a plan
+// application. Controller observation calls it and must never wait behind a
+// loop operation (an apply holds l.mu for as long as its script or rollout
+// poll runs), so a busy loop counts as a possible write.
+func (l *ResponderLoop) mayHavePlanWrites() bool {
+	if !l.mu.TryLock() {
+		return true
+	}
+	defer l.mu.Unlock()
+	return len(l.applicationsLog) > 0
+}
+
 func (l *ResponderLoop) observeMutations() (*apihistory.MutationObservation, error) {
 	// A cancelled turn may still be unwinding a tool. Controller observation
 	// retries on contention instead of waiting behind responder-owned work.
