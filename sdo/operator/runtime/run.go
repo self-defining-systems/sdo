@@ -805,7 +805,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return loop
 		}
 		if options.NativeBroker != nil {
-			options.NativeBroker.LiveCheck = NewLivePlaybookCheck(buildLoop, *namespace)
+			options.NativeBroker.LiveCheck = NewLivePlaybookCheck(buildLoop, *namespace, func() bool { return controller != nil && controller.IncidentOpen() })
 		}
 		dispatcher = KubernetesJobDispatcher{
 			AcceptedRepository: resolvedRoot,
