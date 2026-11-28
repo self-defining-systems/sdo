@@ -52,3 +52,19 @@ func TestUncoveredDataNeedsAnOperationThatReadsTheData(t *testing.T) {
 		t.Fatalf("data a read operation reaches must still be read later: %v", got)
 	}
 }
+
+// A probe whose kind's workload file does not exist yet is told to create
+// that file, which needs no scenario list.
+func TestAMissingKindWorkloadNamesTheFileToCreate(t *testing.T) {
+	m := mustParse(t, shopYAML)
+	only := []Workload{{Name: "probe-call"}}
+	var hint string
+	for _, f := range m.Check(ParseInventory(shopInventory), only) {
+		if strings.Contains(f.Message, "probe write-item is in none of the workloads") {
+			hint = f.Hint
+		}
+	}
+	if !strings.Contains(hint, "create .sdo/diagnostics/traffic/workloads/probe-write.yaml") || !strings.Contains(hint, "no scenario list") {
+		t.Fatalf("hint %q", hint)
+	}
+}

@@ -528,7 +528,9 @@ func (c *checker) probes(workloads []Workload) {
 	for kind, name := range WorkloadForKind {
 		byKind[name] = kind
 	}
+	present := map[string]bool{}
 	for _, w := range workloads {
+		present[w.Name] = true
 		if _, ok := byKind[w.Name]; !ok {
 			continue
 		}
@@ -574,6 +576,8 @@ func (c *checker) probes(workloads []Workload) {
 		}
 		in := holder[p.Scenario]
 		switch {
+		case len(in) == 0 && kindOK && !present[want]:
+			c.add(RuleSchema, fmt.Sprintf("create .sdo/diagnostics/traffic/workloads/%s.yaml (apiVersion sdo.dev/v1alpha1, kind TrafficWorkload, name %s, purpose health-probe, timeouts and slo as in probe-call.yaml); it needs no scenario list: this probe line places the scenario there", want, want), "probe %s is in none of the workloads probe-call, probe-write, probe-read-later", p.Scenario)
 		case len(in) == 0:
 			c.add(RuleSchema, fmt.Sprintf("add the scenario to health-probe workload %s, or remove the probe entry", want), "probe %s is in none of the workloads probe-call, probe-write, probe-read-later", p.Scenario)
 		case len(in) > 1:

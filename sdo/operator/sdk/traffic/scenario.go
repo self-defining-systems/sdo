@@ -509,7 +509,7 @@ func (c Catalog) Scenario(id string) (Scenario, bool) {
 }
 
 // checkRequest enforces the per-request safety rules the engine applies to
-// every built request. Writes and cleanup requests carry the marker; a read
+// every built request. Writes carry the marker (reads never need it); a read
 // scenario writes only in its setup steps.
 func checkRequest(scenario Scenario, target Target, request Request, phase stepPhase, state State) error {
 	if target.Scheme == "ssh" {
@@ -537,7 +537,8 @@ func checkRequest(scenario Scenario, target Target, request Request, phase stepP
 	if write && scenario.SideEffect == SideEffectRead && phase != phaseSetup {
 		return fmt.Errorf("read scenario sent %s; mark the step .Reads() if it changes nothing, declare a write side effect, or move the write to a setup step", request.Method)
 	}
-	marked := phase == phaseCleanup || (write && (phase == phaseSetup || scenario.SideEffect != SideEffectRead))
+	// Only writes carry the marker: a read changes nothing, wherever it runs.
+	marked := write && (phase != phaseStep || scenario.SideEffect != SideEffectRead)
 	if marked && !requestMentions(request, scenario.Marker) && !namesOwnValue(request, state) {
 		return fmt.Errorf("request must carry the synthetic marker %q in its path, body or query, or address a record by the value a marked write of this scenario saved (SaveJSON)", scenario.Marker)
 	}

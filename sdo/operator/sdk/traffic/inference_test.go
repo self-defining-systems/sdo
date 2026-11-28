@@ -207,3 +207,17 @@ func TestDependsOnIsDerivedFromTheMapPaths(t *testing.T) {
 		t.Fatalf("a declared DependsOn is kept: %v", got)
 	}
 }
+
+// A read in Cleanup (here a search that shows a restore took) writes nothing,
+// so it needs no marker.
+func TestACleanupReadNeedsNoMarker(t *testing.T) {
+	s := createReadDelete()
+	s.Cleanup = []Step{
+		{Name: "delete", Endpoint: DELETE("/records/{id}", nil).Status(204)},
+		{Name: "search", Endpoint: GET("/records", nil).Status(404)},
+	}
+	store := &recordStore{records: map[string]string{}}
+	if _, sample := inferenceEngine(t, s, store).Iterate(context.Background(), 1); sample.CleanupError != "" {
+		t.Fatalf("%+v", sample)
+	}
+}
