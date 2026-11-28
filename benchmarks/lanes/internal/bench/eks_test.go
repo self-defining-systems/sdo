@@ -469,16 +469,24 @@ func TestEksStandInsReadTheStdinTheyAreHanded(t *testing.T) {
 
 // --- a plan item through the manager on an eks host ---
 
-// The eks host makes its lane with the platform script (sized from the footprint), the host-safety gates do not run,
-// the cluster is kept while the lane is fresh, deleted once the host is unwanted and idle, and its cost is recorded.
-func TestBenchEksHostLaneLifecycle(t *testing.T) {
+// newEksLab is a lab whose host is an eks host of the given clusters, on the stand-in AWS tools.
+func newEksLab(t *testing.T, clusters string, vcpuQuota int) *lab {
+	t.Helper()
 	l := newLab(t)
 	inv, err := os.ReadFile(l.root.path("hosts.yaml"))
 	must(t, err)
-	s := strings.Replace(string(inv), "clusters: [c1]}", `clusters: [c1], provider: eks, eks: {region: us-west-2, account: "123456789012", budget_per_hour: 3, vcpu_quota: 16, idle_timeout: 1s, max_load5_per_core: 0}}`, 1)
+	s := strings.Replace(string(inv), "clusters: [c1]}", fmt.Sprintf(`clusters: [%s], provider: eks, eks: {region: us-west-2, account: "123456789012", budget_per_hour: 3, vcpu_quota: %d, idle_timeout: 1s, max_load5_per_core: 0}}`, clusters, vcpuQuota), 1)
 	must(t, os.WriteFile(l.root.path("hosts.yaml"), []byte(s), 0o644))
 	t.Setenv("PATH", testdata("fakeeks")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HOST_CANARY_PROCSYS", "/nonexistent") // a canary read would fail: the eks host must not take one
+	t.Setenv("HOST_CANARY_PROCSYS", "/nonexistent") // a canary read would fail: an eks host must not take one
+	t.Cleanup(l.drain)                              // while the stand-ins are still on PATH
+	return l
+}
+
+// The eks host makes its lane with the platform script (sized from the footprint), the host-safety gates do not run,
+// the cluster is kept while the lane is fresh, deleted once the host is unwanted and idle, and its cost is recorded.
+func TestBenchEksHostLaneLifecycle(t *testing.T) {
+	l := newEksLab(t, "c1", 16)
 	l.add("e1", l.hooked, "a@x", "[[1]]", 0)
 	l.until("run done", func() bool { return l.exp("e1").Count(0).Done == 1 })
 	st, err := StatusOf(l.root, "")
@@ -630,14 +638,8 @@ func TestEksBuildLimitIsTheLaneCapNotMaxBuilds(t *testing.T) {
 // A plan with several items starts every lane's cluster-up at once, not one after the other: the cold up (about 20 minutes
 // on AWS) is paid once per batch.
 func TestBenchEksLanesAreMadeInParallel(t *testing.T) {
-	l := newLab(t)
-	inv, err := os.ReadFile(l.root.path("hosts.yaml"))
-	must(t, err)
-	s := strings.Replace(string(inv), "clusters: [c1]}", `clusters: [c1, c2], provider: eks, eks: {region: us-west-2, account: "123456789012", budget_per_hour: 3, vcpu_quota: 32, idle_timeout: 1s, max_load5_per_core: 0}}`, 1)
-	must(t, os.WriteFile(l.root.path("hosts.yaml"), []byte(s), 0o644))
-	t.Setenv("PATH", testdata("fakeeks")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	l := newEksLab(t, "c1, c2", 32)
 	t.Setenv("FAKE_EKS_CREATE_SECONDS", "2")
-	t.Setenv("HOST_CANARY_PROCSYS", "/nonexistent")
 	l.add("p1", l.hooked, "a@x", "[[1]]", 0)
 	l.add("p2", l.hooked, "a@x", "[[1]]", 0)
 	l.until("both runs done", func() bool { return l.exp("p1").Count(0).Done == 1 && l.exp("p2").Count(0).Done == 1 })
