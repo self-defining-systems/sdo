@@ -37,8 +37,16 @@ takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound i
   repeat/first ratios per sequence, churn findings, false alarms from healthy runs and alarms while gating).
 - `hooks.py`: SDO's operator hooks for fuzzops-bench (below).
 - `cellevidence.py` / `capture.py`: the per-cell evidence manifest and validator (below); `capture.py` takes build identity, host load, the Prometheus/Jaeger stores for the window and all application and control pod logs at collect time.
+- `vanilla.py`: the plain Claude Code subject. It pages the agent at the first harm onset (`FUZZOPS_TRAFFIC`'s
+  `first_bad`) and, because SDO keeps watching and would open a new incident, pages it again when users are harmed
+  anew (`repage.py`): a bad second after 15 s without one (SDO's stability window), still going while no agent is
+  working. Each page is a new session with the same scoped identity and prompt, nothing carried over, at most faults
+  + 1 pages per run; users who never had the quiet period are not paged again. While it only watches, `idle` answers
+  idle and `FUZZOPS_STANDBY` lets FuzzOps' early stop apply; `collect` ends the watch. Needs a FuzzOps pin whose
+  traffic samples carry `last_bad` (an older one pages once; a multi-fault row then fails its evidence).
 - `external.py`: the plain Claude arm (`vanilla.py`) around any agent command (`settings.external`: `command`, `label`, `model`), called with
   the external-agent contract of `benchmarks/sregym/fastloop/README.md` (`--phase incident` only, never `--state-in`).
+  It is paged once: the re-page is the plain Claude subject's only.
   The command confines its own agent, stops it at `--deadline-epoch`, and adds `incident/transcript.jsonl` (Claude Code
   JSONL, shell calls as `Bash`) and `incident/usage.json` to its result; a missing one makes the row's evidence
   incomplete. Host setup: `hook_command` entry `external: ... python -m benchmarks.fuzzops.external`.
