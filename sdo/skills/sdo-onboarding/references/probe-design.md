@@ -3,7 +3,9 @@
 - A journey is what a user does: write something with a fresh unique name, then read it back exactly through the
   route a user reads, including the background effect (wrap that read in `traffic.Eventually`, or return `NotYet`). Read journeys check exact content of
   fixtures Setup made, and one step lists records users already have.
-- Write values the size and shape users write, where users write them.
+- Write values the size and shape users write. The goal's `Test writes:` line says whose data probes act on:
+  `own` (the default) means probe accounts and probe records only; `shared` also allows users' own records and
+  the accounts the goal names, so a fault that hits only users' data is seen.
 - Cover each way in (API, other protocols, sign-in) and each store or component on its path, refused access as well
   as granted access where the journey is about permissions.
 - Several journeys fit in one scenario only when they share data; a scenario has at most 8 steps. Prefer one request
@@ -14,7 +16,7 @@
   DELETEd path back itself; any other cleanup ends with a read that shows the data gone (404, or absent from the list). A delete answered 2xx may only schedule
   the removal (delayed deletion, trash, soft delete): use the application's remove-for-good path, and accept only
   success or not-found, never a refusal. Data that cannot be deleted stays one fixed object (`idempotent-write`, no `Unique`), or is bounded and noted.
-- Probe data must never change what users see. The read of records users already have lists the way a user first
+- Probe data left behind must never change what users see. The read of records users already have lists the way a user first
   sees them (default order, first page, no filter that hides other people's records) by a member that shows names,
   so probe records left behind show up there and the healthy run turns red.
 - Keep probe work small: few concurrent heavy writes, small objects, low-cost reads.
