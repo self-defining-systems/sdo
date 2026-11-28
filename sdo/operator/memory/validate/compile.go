@@ -28,10 +28,12 @@ var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?(?:(?:[^\r\n:]*/)?sd
 // telemetryBindingViolation is one generated query-to-source binding failure.
 var telemetryBindingViolation = regexp.MustCompile(`(?m)(telemetry\.(?:unbound|kind))(?:\[[a-z0-9][a-z0-9_.-]*\])?: .+?$`)
 
-// healthyBaselineViolation is one generated healthy-baseline test failure:
-// the learned detector ID and the violation.
+// findingAdmissionViolation is one generated finding-admission test failure:
+// the learned detector ID and the controller's refusal.
 var findingAdmissionViolation = regexp.MustCompile(`(?m)` + regexp.QuoteMeta(RuleDetectorFindingAdmission) + `\[([a-z0-9][a-z0-9_.-]*)\]: (.+?)\s*$`)
 
+// healthyBaselineViolation is one generated healthy-baseline test failure:
+// the learned detector ID and the violation.
 var healthyBaselineViolation = regexp.MustCompile(`(?m)detector\.healthy-baseline\[([a-z0-9][a-z0-9_.-]*)\]: (.+?)\s*$`)
 
 // ownIncidentViolation is one generated own-incident replay failure: the

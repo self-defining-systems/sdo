@@ -124,24 +124,13 @@ func (e findingAdmissionError) Error() string { return e.err.Error() }
 func (e findingAdmissionError) Unwrap() error { return e.err }
 
 // admitFindings is the controller's admission of one evaluation's findings
-// (validateDetectorObservation): it fills the detector ID, the declared
-// playbooks and the fingerprint, then validates each finding.
+// (core.AdmitFindings), its refusal typed as a findingAdmissionError.
 func admitFindings(spec sdk.DetectorSpec, findings []sdk.Finding) ([]sdk.Finding, error) {
-	findings = append([]sdk.Finding(nil), findings...)
-	for i := range findings {
-		f := &findings[i]
-		if f.DetectorID == "" {
-			f.DetectorID = spec.ID
-		}
-		if len(f.Playbooks) == 0 {
-			f.Playbooks = append([]string(nil), spec.Playbooks...)
-		}
-		f.Fingerprint = FindingFingerprint(*f)
-		if err := core.ValidateFinding(spec, *f); err != nil {
-			return nil, findingAdmissionError{err}
-		}
+	admitted, err := core.AdmitFindings(spec, findings)
+	if err != nil {
+		return nil, findingAdmissionError{err}
 	}
-	return findings, nil
+	return admitted, nil
 }
 
 // evaluateAdmittedDetectors is evaluateDetectors with the controller's
