@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"sdo.dev/operator/safefs"
 )
 
 // findingAdmissionFixtures holds one directory per captured state the
@@ -74,13 +76,10 @@ func generateFindingAdmissionTest(capture, root string) error {
 		if err != nil {
 			continue // an unreadable state is not evaluated; other checks report it
 		}
-		dir := filepath.Join(root, "generated", "testdata", findingAdmissionFixtures, fmt.Sprintf("%03d", index))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(dir, filepath.Base(path)), data, 0o644); err != nil {
+		name := filepath.Join("generated", "testdata", findingAdmissionFixtures, fmt.Sprintf("%03d", index), filepath.Base(path))
+		if err := safefs.WriteFile(root, name, data, 0o644); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(filepath.Join(root, "generated", "finding_admission_test.go"), []byte(findingAdmissionTest), 0o644)
+	return safefs.WriteFile(root, "generated/finding_admission_test.go", []byte(findingAdmissionTest), 0o644)
 }
