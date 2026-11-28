@@ -35,7 +35,7 @@ A path that is a kustomization file or root is rejected: use the kustomize rende
 
 // Register adds the raw renderer to c.
 func Register(c *render.Catalog) error {
-	return render.Register[*v1alpha1.RawRenderConfig](c, ID, render.RendererFunc[*v1alpha1.RawRenderConfig](renderRaw), render.WithDoc(Doc))
+	return render.Register[*v1alpha1.RawRenderConfig](c, ID, render.RendererFunc[*v1alpha1.RawRenderConfig](renderRaw), render.WithDoc(Doc), render.WithDetect(Detect, true))
 }
 
 func renderRaw(_ context.Context, fsys render.FS, env render.Env, config *v1alpha1.RawRenderConfig) (render.Result, error) {

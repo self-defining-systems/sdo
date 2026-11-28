@@ -48,6 +48,9 @@ type DesiredPhase struct {
 
 // DesiredSet is the one desired-state computation deploy and reads share.
 type DesiredSet struct {
+	// Source is the deployment source that rendered the set: the override, or
+	// the one the tree's files imply.
+	Source *contracts.DeploymentSource
 	Phases []DesiredPhase
 	Inputs []render.Input
 	// RenderDigest is sha256 over the canonical JSON of the non-ephemeral
@@ -107,12 +110,14 @@ func (d DesiredSet) For(op render.Operation) []DesiredPhase {
 // Desired renders src from fsys through cat, normalizes every object to
 // env.Namespace, rejects any duplicate ref (all kinds, every phase), marks
 // foreign-namespace objects and computes the digests. Every error is a
-// *SourceError: a nil src is SourceUnconfigured; renderer, config, limit and
+// *SourceError: a nil src is derived from the files (ResolveSource), and a
+// tree with no deployment files is SourceUnconfigured; renderer, config, limit and
 // duplicate failures are SourceInvalid unless the cause is unavailable Git
 // I/O or a context error, which stay SourceUnavailable.
 func Desired(ctx context.Context, fsys render.FS, env render.Env, cat *render.Catalog, src *contracts.DeploymentSource) (DesiredSet, error) {
-	if src == nil {
-		return DesiredSet{}, &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
+	src, err := ResolveSource(fsys, cat, src)
+	if err != nil {
+		return DesiredSet{}, err
 	}
 	if cat == nil {
 		return DesiredSet{}, &SourceError{Kind: SourceInvalid, Err: fmt.Errorf("deployment source uses renderer %q but no renderer catalog is wired", src.GetRendererId())}
@@ -124,7 +129,7 @@ func Desired(ctx context.Context, fsys render.FS, env render.Env, cat *render.Ca
 	if err != nil {
 		return DesiredSet{}, desiredError(err)
 	}
-	set := DesiredSet{Inputs: result.Inputs}
+	set := DesiredSet{Inputs: result.Inputs, Source: src}
 	seen := map[sdk.ObjectRef][]render.Operation{}
 	for _, phase := range result.Phases {
 		desired := DesiredPhase{Name: phase.Name, Gate: phase.Gate, Ephemeral: phase.Ephemeral, Runs: phase.Runs}

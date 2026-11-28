@@ -7,10 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operability"
@@ -145,14 +144,14 @@ func operabilityCheck(ctx context.Context, args []string, getenv func(string) st
 
 // offlineDeploymentChecks reads the checkout the way "deployment render" does
 // (working .sdo/deployment over the recorded base tree) and runs the offline
-// deployment checks. A plan that does not parse is an O1.plan failure; only
-// infrastructure problems are errors.
+// deployment checks. The plan is optional (the source is then derived from the
+// files); one that does not parse is an O1.plan failure; only infrastructure
+// problems are errors.
 func offlineDeploymentChecks(ctx context.Context, root, namespace string, policy offline.Policy, subject *operability.Subject) ([]operability.Check, error) {
-	data, err := os.ReadFile(filepath.Join(root, ".sdo", "deployment", "plan.yaml"))
-	if err != nil {
-		return nil, fmt.Errorf("read the deployment plan: %w (write .sdo/deployment/plan.yaml)", err)
+	plan, err := planfile.Read(root, planCatalogs())
+	if errors.Is(err, planfile.ErrAbsent) {
+		plan, err = &contracts.DeploymentPlan{}, nil
 	}
-	plan, err := planfile.Parse(data, planCatalogs())
 	if err != nil {
 		return []operability.Check{{
 			ID: "O1.plan", Phase: operability.PhaseOffline, Status: operability.StatusFail,
@@ -192,9 +191,8 @@ func offlineDeploymentChecks(ctx context.Context, root, namespace string, policy
 			}
 			return rendered.Desired(ctx, fsys, env, renderers.Catalog(), plan.GetSource())
 		},
-		ExpectedWorkloads: plan.GetExpectedWorkloadIds(),
-		Declared:          declared,
-		Policy:            policy,
+		Declare: func(rendered.DesiredSet) ([]imagesrc.Declared, error) { return declared, nil },
+		Policy:  policy,
 	})
 	if result.Set.RenderDigest != "" {
 		subject.RenderDigest, subject.EnvDigest = result.Set.RenderDigest, result.Set.EnvDigest

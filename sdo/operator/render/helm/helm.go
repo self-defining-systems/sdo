@@ -74,7 +74,7 @@ func Register(c *render.Catalog, run Runner) error {
 	renderer := func(ctx context.Context, fsys render.FS, env render.Env, cfg *contracts.HelmRenderConfig) (render.Result, error) {
 		return renderChart(ctx, fsys, env, cfg, run)
 	}
-	return render.Register[*contracts.HelmRenderConfig](c, ID, render.RendererFunc[*contracts.HelmRenderConfig](renderer), render.WithDoc(Doc))
+	return render.Register[*contracts.HelmRenderConfig](c, ID, render.RendererFunc[*contracts.HelmRenderConfig](renderer), render.WithDoc(Doc), render.WithDetect(Detect, false))
 }
 
 // RenderTimeLimit bounds one chart render's wall-clock time, counted from when

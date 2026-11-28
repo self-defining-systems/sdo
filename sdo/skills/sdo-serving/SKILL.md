@@ -6,15 +6,28 @@ description: How SDO builds and deploys an application from its repository. Cove
 # Serving an application from its repository
 
 Go deploys the **effective tree**: the repository at a commit, with the patch series in
-`.sdo/deployment/patches/` applied and `.sdo/` memory projected away. It renders the plan's manifests, builds
-the plan's images with BuildKit, pushes them to the trusted registry, applies the objects and waits for the
-expected workloads. The same tree serves every render, build, drift read and repair.
+`.sdo/deployment/patches/` applied and `.sdo/` memory projected away. It renders the tree, builds its images with
+BuildKit, pushes them to the trusted registry, applies the objects and waits for every rendered workload. The same
+tree serves every render, build, drift read and repair.
+
+## What Go reads from the files
+
+`plan.yaml` is optional: it overrides only what the files cannot say.
+
+- Renderer: one Helm chart root (a `Chart.yaml` with no chart above it; vendored subcharts belong to it) is helm;
+  else one kustomization that no other includes (components never count) is kustomize; else every file whose
+  documents are all Kubernetes objects is raw. Several roots, or a chart beside a kustomization, need `source` in
+  `plan.yaml`; so do Helm value files other than the chart's `values.yaml`.
+- Images: an image under the trusted registry named `<host>/.../N[:tag]` is built from `Dockerfile.N` or
+  `N.Dockerfile` (context: that file's directory), from a directory `N/` holding a `Dockerfile` (context: `N/`),
+  or from the tree's only Dockerfile. Anything else (build from another context) is an `images` entry in
+  `plan.yaml`.
 
 ## Layout of `.sdo/deployment/`
 
 | Path | Holds |
 |---|---|
-| `plan.yaml` | what is deployed: renderer, images, expected workloads ([catalog](references/catalog.md)) |
+| `plan.yaml` | optional override: renderer and config, image builds ([catalog](references/catalog.md)) |
 | `manifests/**` | authored Kubernetes manifests (an app with no manifests, or one that lacks some config) |
 | `build/**` | authored Dockerfiles and `.dockerignore` |
 | `values/**` | inputs for renderers that read values (Helm value files, kustomize patches) |
@@ -48,8 +61,7 @@ SDO's operability report names each failing check as
 `<check id> [<cause>]: <detail> (<paths>)`:
 
 - `patch`: a patch no longer applies. Re-create it against the current files.
-- `render`: a manifest or chart does not render; `render_nondeterministic`: two renders differ (remove clocks,
-  random values and map-order output).
+- `render`: a manifest or chart does not render, the tree has no deployment files, or it has several roots.
 - `build`: an image declaration or a build step failed. The detail carries the failing step and its log tail;
   reproduce it locally with `docker build` on the same context before you change the plan.
 - `rollout`: a workload never became ready. Read its events, its Pods' status and the previous container's

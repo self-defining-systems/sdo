@@ -6,7 +6,7 @@ by each reader, so a stored claim never accepts anything.
 
 | Item | Means | Typical checks |
 |---|---|---|
-| O1 | patches apply, render deterministically, deploy, ready, served APIs | `O1.patches`, `O1.render`, `O1.deterministic`, `O1.deploy`, `O1.ready`, `O1.apis` (rendered kinds served by the recorded discovery; skipped when none was recorded or an earlier check failed) |
+| O1 | patches apply, render, deploy, ready, served APIs | `O1.patches`, `O1.render`, `O1.deploy`, `O1.ready`, `O1.apis` (rendered kinds served by the recorded discovery; skipped when none was recorded or an earlier check failed) |
 | O2 | every live object attributable to accepted source | `O2.images`, `O2.stamps`, `O2.pins`, `O2.inputs`, `O2.resources` |
 | O3, O5 | detection coverage and bound sources; memory consistent | coverage and memory-validation findings; `O3.detector-coverage` (note, never a gate): firing or unobserved clue signals, such as an unavailable designer-authored store reader or missing CPU throttling counters. Also includes explicit observation gaps on clear detectors, such as a Go-installed `store-state-<component>` reader that has never read its store healthy (no CLI, credentials not exposed, read refused), `request-metrics: request metrics not applicable to operation(s) ...` for operations whose entry service has no `entries` record (the app exports no request metric; never a firing finding or an O4 fail), or a health-probe scenario declared `knownBroken` in its workload (a route broken in the deployed application) that now meets its SLO or fails differently from its `failsWith` |
 | O4 | incident-opening signals clear | `O4.detectors` uses the incident-opening policy. An unreadable opener waits within the verification bound. |
@@ -35,7 +35,7 @@ field carries the verdict's notes.
 
 ## Causes and owners
 
-`patch`, `render`, `render_nondeterministic`, `build`, `immutable_change` are the deployer's (`immutable_change`: a refused in-place update the recreate policy did not resolve; `data_bearing_change`, a PersistentVolumeClaim change, is a human's; recreated objects are in the evidence's `recreated` list and the O1.deploy detail); `rollout` is the deployer's in onboarding
+`patch`, `render`, `build`, `immutable_change` are the deployer's (`immutable_change`: a refused in-place update the recreate policy did not resolve; `data_bearing_change`, a PersistentVolumeClaim change, is a human's; recreated objects are in the evidence's `recreated` list and the O1.deploy detail); `rollout` is the deployer's in onboarding
 and the responder's in an advance; `scope`, `allowlist`, `budget`, `environment` and `internal` end with a human
 (`scope`/`allowlist`/`budget` are the deployer's only in fresh onboarding); `coverage`, `binding`, `memory_invalid`,
 `detector_fault`, `probe_unavailable` are the designer's; `source_fault` is the deployer's in onboarding and the

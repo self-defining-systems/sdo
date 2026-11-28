@@ -5,24 +5,23 @@ package operability
 type Cause string
 
 const (
-	CausePatch                  Cause = "patch"
-	CauseRender                 Cause = "render"
-	CauseRenderNondeterministic Cause = "render_nondeterministic"
-	CauseBuild                  Cause = "build"
-	CauseRollout                Cause = "rollout"
-	CauseAttribution            Cause = "attribution"
-	CauseScope                  Cause = "scope"
-	CauseAllowlist              Cause = "allowlist"
-	CauseBudget                 Cause = "budget"
-	CauseBinding                Cause = "binding"
-	CauseCoverage               Cause = "coverage"
-	CauseMemoryInvalid          Cause = "memory_invalid"
-	CauseDetectorFault          Cause = "detector_fault"
-	CauseSourceFault            Cause = "source_fault"
-	CauseProbeUnavailable       Cause = "probe_unavailable"
-	CauseInfrastructure         Cause = "infrastructure"
-	CauseEnvironment            Cause = "environment"
-	CauseInternal               Cause = "internal"
+	CausePatch            Cause = "patch"
+	CauseRender           Cause = "render"
+	CauseBuild            Cause = "build"
+	CauseRollout          Cause = "rollout"
+	CauseAttribution      Cause = "attribution"
+	CauseScope            Cause = "scope"
+	CauseAllowlist        Cause = "allowlist"
+	CauseBudget           Cause = "budget"
+	CauseBinding          Cause = "binding"
+	CauseCoverage         Cause = "coverage"
+	CauseMemoryInvalid    Cause = "memory_invalid"
+	CauseDetectorFault    Cause = "detector_fault"
+	CauseSourceFault      Cause = "source_fault"
+	CauseProbeUnavailable Cause = "probe_unavailable"
+	CauseInfrastructure   Cause = "infrastructure"
+	CauseEnvironment      Cause = "environment"
+	CauseInternal         Cause = "internal"
 	// CauseAgentNotConverging: an agent's proposals keep being rejected with
 	// the same rules and paths, or spent their retry budget. Terminal: more
 	// turns of the same agent repeat the failure.
@@ -51,7 +50,7 @@ const (
 // declared in this package.
 func Causes() []Cause {
 	return []Cause{
-		CausePatch, CauseRender, CauseRenderNondeterministic, CauseBuild, CauseRollout,
+		CausePatch, CauseRender, CauseBuild, CauseRollout,
 		CauseAttribution, CauseScope, CauseAllowlist, CauseBudget, CauseBinding,
 		CauseCoverage, CauseMemoryInvalid, CauseDetectorFault, CauseSourceFault,
 		CauseProbeUnavailable, CauseInfrastructure, CauseEnvironment, CauseInternal,
@@ -113,7 +112,7 @@ const (
 // route is the one cause-to-owner table.
 func route(c Cause) (routing, bool) {
 	switch c {
-	case CausePatch, CauseRender, CauseRenderNondeterministic, CauseBuild, CauseImmutableChange:
+	case CausePatch, CauseRender, CauseBuild, CauseImmutableChange:
 		return routing{OwnerDeployer, OwnerHuman, OwnerDeployer, rankDeployer}, true
 	case CauseRollout:
 		return routing{OwnerDeployer, OwnerHuman, OwnerResponder, rankDeployer}, true

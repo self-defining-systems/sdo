@@ -33,7 +33,7 @@ Config: path, the tree-relative directory that holds the kustomization file. Onl
 
 // Register adds the kustomize renderer to c under ID.
 func Register(c *render.Catalog) error {
-	return render.Register[*contracts.KustomizeRenderConfig](c, ID, render.RendererFunc[*contracts.KustomizeRenderConfig](renderRoot), render.WithDoc(Doc))
+	return render.Register[*contracts.KustomizeRenderConfig](c, ID, render.RendererFunc[*contracts.KustomizeRenderConfig](renderRoot), render.WithDoc(Doc), render.WithDetect(Detect, false))
 }
 
 var kustomizationFiles = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}

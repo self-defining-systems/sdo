@@ -154,11 +154,12 @@ func TestSourceReadsRawSelections(t *testing.T) {
 		want  []string
 		kind  error
 	}{
-		"directory":         {paths: []string{"k8s"}, want: []string{"Secret/app/creds", "ConfigMap/app/a", "ConfigMap/app/b", "Namespace//app", "Service/app/web", "Deployment/app/web"}},
-		"nested directory":  {paths: []string{"k8s/sub"}, want: []string{"Service/app/web"}},
-		"file and nested":   {paths: []string{"loose.yaml", "k8s/sub"}, want: []string{"Service/app/web", "Deployment/app/web"}},
-		"json":              {paths: []string{"k8s/ns.json"}, want: []string{"Namespace//app"}},
-		"no paths":          {kind: rendered.ErrSourceUnconfigured},
+		"directory":        {paths: []string{"k8s"}, want: []string{"Secret/app/creds", "ConfigMap/app/a", "ConfigMap/app/b", "Namespace//app", "Service/app/web", "Deployment/app/web"}},
+		"nested directory": {paths: []string{"k8s/sub"}, want: []string{"Service/app/web"}},
+		"file and nested":  {paths: []string{"loose.yaml", "k8s/sub"}, want: []string{"Service/app/web", "Deployment/app/web"}},
+		"json":             {paths: []string{"k8s/ns.json"}, want: []string{"Namespace//app"}},
+		// No override: the source is derived, here from the one kustomization.
+		"no paths":          {want: []string{"Deployment/app/web"}},
 		"decode failure":    {paths: []string{"bad"}, kind: rendered.ErrSourceInvalid},
 		"missing":           {paths: []string{"absent"}, kind: rendered.ErrSourceInvalid},
 		"selected twice":    {paths: []string{"k8s/sub", "k8s/sub/svc.yml"}, kind: rendered.ErrSourceInvalid},

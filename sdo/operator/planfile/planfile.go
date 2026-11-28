@@ -1,4 +1,4 @@
-// Package planfile is the stored form of a DeploymentPlan: the YAML (or JSON)
+// Package planfile is the stored form of a DeploymentPlan override: the YAML (or JSON)
 // document at .sdo/deployment/plan.yaml. It is the DeploymentPlan message in
 // ProtoJSON field names, decoded strictly: duplicate keys, unknown fields,
 // the retired strategy fields, and renderer or image-source configs the
@@ -64,11 +64,8 @@ func Parse(data []byte, catalogs Catalogs) (*contracts.DeploymentPlan, error) {
 	if plan.GetStrategyId() != "" || plan.GetStrategyConfig() != nil {
 		return nil, errors.New("deployment plan sets the retired strategy fields; describe the deployment only with source, images and expectedWorkloadIds")
 	}
-	source := plan.GetSource()
-	if source == nil {
-		return nil, errors.New("deployment plan names no deployment source; set source to a renderer ID and its config")
-	}
-	if catalogs.Renderers != nil {
+	// No source: the files say how to render (rendered.DeriveSource).
+	if source := plan.GetSource(); source != nil && catalogs.Renderers != nil {
 		if _, err := catalogs.Renderers.Decode(source.GetRendererId(), source.GetConfig()); err != nil {
 			return nil, fmt.Errorf("deployment plan source: %w", err)
 		}

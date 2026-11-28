@@ -35,6 +35,9 @@ type Catalog struct {
 	entries   map[string]entry
 	defaultID string
 	pushHost  string
+	// buildID and buildConfig make Derive's build declarations.
+	buildID     string
+	buildConfig func(contextPath, dockerfile string) (*anypb.Any, error)
 }
 
 type entry struct {
