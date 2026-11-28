@@ -140,6 +140,8 @@ A fixed tool image executes a control-namespace Job with `backoffLimit: 0` under
 slim `script-tools` build target; existing installations reuse the cached trusted
 controller image. Script execution defaults to 60 seconds, bounded by five minutes
 and the remaining incident budget, including a short evidence-publication reserve.
+The runner's proxy lets an admitted write finish after the script stops; a read ends with its client, so the
+Job publishes its result when the script exits, not at the drain deadline.
 Script text is bounded at 64 KiB. A best-effort Job prewarms the dedicated script image on the controller node independently of controller startup.
 
 A private control-namespace ConfigMap reserves the application before Job creation

@@ -233,12 +233,24 @@ func scriptProxy(upstream *url.URL, reads, writes http.RoundTripper, recorder ku
 	return kubeproxy.NewRecording(upstream, reads, writes, (proxyScope{Kind: "incident"}).config(recorder, gate))
 }
 
+// drainScriptRequests lets an admitted write finish after the script stops, so
+// its receipt is recorded; it runs on drainCtx, never the client's context. A
+// read writes nothing, so it also ends when its client goes away: a finished
+// `kubectl rollout status` leaves no watch that holds the runner's shutdown,
+// and the controller waiting on the result, until the drain deadline.
 func drainScriptRequests(runCtx, drainCtx context.Context, handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if runCtx.Err() != nil {
 			http.Error(w, "script stopped", http.StatusServiceUnavailable)
 			return
 		}
-		handler.ServeHTTP(w, r.WithContext(drainCtx))
+		ctx := drainCtx
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			read, cancel := context.WithCancel(drainCtx)
+			defer cancel()
+			defer context.AfterFunc(r.Context(), cancel)()
+			ctx = read
+		}
+		handler.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

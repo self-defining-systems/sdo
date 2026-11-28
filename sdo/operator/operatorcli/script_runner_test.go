@@ -142,3 +142,37 @@ func TestScriptRefusalNamesEveryFailedIdentityClause(t *testing.T) {
 		}
 	}
 }
+
+// A read whose client went away (a script's finished `kubectl rollout status`
+// watch) ends at once. The runner's shutdown, and the controller step waiting
+// on the script's result, never wait on it until the drain deadline.
+func TestScriptReadEndsWhenItsClientGoes(t *testing.T) {
+	gate, err := apihistory.PrepareMutationGate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream, _ := url.Parse("https://synthetic.invalid")
+	watching, done := make(chan struct{}), make(chan struct{})
+	drain, stopDrain := context.WithTimeout(t.Context(), time.Minute)
+	defer stopDrain()
+	var drainEnded error
+	transport := secretCaptureTransport(func(r *http.Request) (*http.Response, error) {
+		close(watching)
+		<-r.Context().Done()
+		drainEnded = drain.Err()
+		return nil, r.Context().Err()
+	})
+	proxy := drainScriptRequests(t.Context(), drain, scriptProxy(upstream, transport, transport, nil, gate))
+	client, leave := context.WithCancel(t.Context())
+	req := httptest.NewRequest(http.MethodGet, "/apis/apps/v1/namespaces/app/deployments?watch=true", nil).WithContext(client)
+	go func() {
+		proxy.ServeHTTP(httptest.NewRecorder(), req)
+		close(done)
+	}()
+	<-watching
+	leave()
+	<-done
+	if drainEnded != nil {
+		t.Fatal("a watch whose client left held the proxy until the drain deadline")
+	}
+}
