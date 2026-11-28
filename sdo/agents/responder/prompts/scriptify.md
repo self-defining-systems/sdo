@@ -4,6 +4,6 @@ Read ${skills_root}/playbook-writing/SKILL.md. Edit only .sdo/playbooks/, .sdo/l
 ${changes}
 ${branch_instruction}
 For a distinct signal, add a learned detector naming its playbook, with a test and a near-miss test: ${skills_root}/playbook-writing/detector.md.
-Memory may name this application's tables, resources and commands. Generalize over what varies, not away from the application. A program for just the mechanical part beats none; leave judgement to the README.
+Memory may name this application's commands and fields. Generalize over what varies, not away from the application. A program for just the mechanical part beats none; leave judgement to the README.
 Check learned diagnoses and mitigations against recorded evidence before use. Use supported cause classes and plan forms.
 One-line note: map repairs to playbooks or explain omissions.

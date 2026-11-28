@@ -1059,7 +1059,8 @@ func (l *ResponderLoop) RefreshDiagnose(ctx context.Context, findings []sdk.Find
 		return nil, err
 	}
 	registry, deadline := l.Programs, l.deadline()
-	keyed := KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: true, Attempted: attempted, Restore: sourceRestoreCandidates(view, l.Request, findings)}
+	keyed := l.keyedMatching(view, findings, true)
+	keyed.Attempted = attempted
 	var runs []ProgramRun
 	err = withoutResponderLocks(l, "diagnose", true, func() {
 		runs = SelectKeyedProgramCandidates(ctx, registry, view, findings, deadline, keyed)
@@ -1088,7 +1089,7 @@ func (l *ResponderLoop) RediagnosePrograms(ctx context.Context, ids map[string]b
 	if err != nil {
 		return nil
 	}
-	runs := SelectKeyedProgramCandidates(ctx, onlyPrograms{ProgramRegistry: l.Programs, ids: ids}, view, l.findings, l.deadline(), KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: true, Restore: sourceRestoreCandidates(view, l.Request, l.findings)})
+	runs := SelectKeyedProgramCandidates(ctx, onlyPrograms{ProgramRegistry: l.Programs, ids: ids}, view, l.findings, l.deadline(), l.keyedMatching(view, l.findings, true))
 	l.stampProgramRuns(runs)
 	l.runs = append(l.runs, runs...)
 	return runs
@@ -1151,7 +1152,14 @@ func (l *ResponderLoop) scanPage(ctx context.Context) []ProgramRun {
 // automatic stage, which ranks a playbook's credited pairs before its
 // finding-bound bindings and keeps one Match per credited playbook.
 func (l *ResponderLoop) selectCandidates(ctx context.Context, view program.ReadView, findings []sdk.Finding, stage bool) []ProgramRun {
-	return SelectKeyedProgramCandidates(ctx, l.Programs, view, findings, l.deadline(), KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: stage, Restore: sourceRestoreCandidates(view, l.Request, findings)})
+	return SelectKeyedProgramCandidates(ctx, l.Programs, view, findings, l.deadline(), l.keyedMatching(view, findings, stage))
+}
+
+// keyedMatching is how the incident's candidates for findings bind against
+// view: its credits and the suspects the findings and view point at.
+func (l *ResponderLoop) keyedMatching(view program.ReadView, findings []sdk.Finding, stage bool) KeyedMatching {
+	set := buildSuspectSet(detectInput{Request: l.Request, View: view, Findings: findings})
+	return KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: stage, Restore: set.restoreCandidates(), Suspect: set.suspects(view)}
 }
 
 func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding, stage bool) []ProgramRun {

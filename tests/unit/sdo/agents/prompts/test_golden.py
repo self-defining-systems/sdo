@@ -74,7 +74,7 @@ def test_memory_authoring_text_says_memory_is_per_application(path: str) -> None
     root = Path(__file__).resolve().parents[5]
     text = " ".join((root / path).read_text().split())
     assert "this application" in text
-    assert "tables, resources and commands" in text
+    assert "commands and fields" in text
     assert "not away from the application" in text
     for stale in ("never by name", "no app names", "never by app name", "Avoid hard-coded service or app names"):
         assert stale not in text

@@ -30,7 +30,27 @@ func storeLiteralCapture() string {
 var storeDiagnose = strings.Replace(genericDiagnose, `strings.Contains(strings.ToUpper(sample.Error), "NOPERM")`, `strings.Contains(sample.Error, "shopdb/user-orders")`, 1)
 
 func gateStoreLiteral(name string, edit func(t *testing.T, r string), rules ...string) gateRow {
-	row := gateComponentLiteral(name, false, []string{"cache-acl-restore"}, edit, rules...)
+	return withStoreCapture(gateComponentLiteral(name, false, []string{"cache-acl-restore"}, edit, rules...))
+}
+
+// gateAcceptedStoreLiteral edits a playbook whose accepted version already
+// names the captured collection, and keeps naming it.
+func gateAcceptedStoreLiteral(name string) gateRow {
+	const diagnose = ".sdo/playbooks/orders-cache-acl/diagnose.go"
+	const named = `strings.ToUpper(sample.Error), "shopdb/user-orders")`
+	row := withStoreCapture(gateComponentLiteral(name, true, []string{"orders-cache-acl"}, func(t *testing.T, r string) {
+		edit(t, r, diagnose, named, named+` || sample.Error == "shopdb/user-orders"`)
+	}))
+	prepare := row.prepare
+	row.prepare = func(t *testing.T, r string) {
+		prepare(t, r)
+		edit(t, r, diagnose, `strings.ToUpper(sample.Error), "NOPERM")`, named)
+	}
+	return row
+}
+
+// withStoreCapture gives the row's request an incident capture with a store read.
+func withStoreCapture(row gateRow) gateRow {
 	request := row.request
 	row.request = func(r *Request) {
 		request(r)
@@ -49,6 +69,9 @@ func gateStoreLiteral(name string, edit func(t *testing.T, r string), rules ...s
 var storeLiteralRows = []gateRow{
 	gateStoreLiteral("new playbook names a store collection captured state shows",
 		writePlaybook("cache-acl-restore", storeDiagnose, genericMitigate), RulePlaybookComponentLiteral),
+	gateStoreLiteral("new playbook names a captured collection as database.collection",
+		writePlaybook("cache-acl-restore", strings.Replace(storeDiagnose, "shopdb/user-orders", "shopdb.user-orders", 1), genericMitigate), RulePlaybookComponentLiteral),
+	gateAcceptedStoreLiteral("playbook edit keeps the store collection it had"),
 	gateStoreLiteral("new playbook names no store collection",
 		writePlaybook("cache-acl-restore", genericDiagnose, genericMitigate)),
 }

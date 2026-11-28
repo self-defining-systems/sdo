@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -196,18 +195,40 @@ func (r sourceRestoreRegistry) Mitigator(id string) (program.Mitigator, bool) {
 	return r.ProgramRegistry.Mitigator(id)
 }
 
-// sourceRestoreCandidates binds the playbook to each component on a failing
-// path (or the opening condition's own component), for the opening findings.
-// A passing path through the same component does not exclude it: Diagnose
-// matches only on a non-SDO departure from accepted source made before the
-// onset, and that departure is the evidence; the path only keeps components
-// that cannot affect a failing operation out. Nothing here decides to apply it.
-func sourceRestoreCandidates(view program.ReadView, request IncidentRequest, findings []sdk.Finding) []sourceRestoreCandidate {
-	set := buildSuspectSet(detectInput{Request: request, View: view, Findings: findings, Now: time.Time{}})
+// suspectNode reports whether node is a suspect: a mapped component on a
+// failing path, or the opening condition's own. A passing path through it does
+// not exclude it.
+func suspectNode(node *candidateNode) bool {
+	onFailing := node.Class == PositionFailingOnly || node.Class == PositionShared
+	return (node.Condition || onFailing) && node.Component.Workload != ""
+}
+
+// suspects reports whether a resource of view belongs to a suspect's workload.
+func (set detectSuspectSet) suspects(view sdk.DetectionContext) func(sdk.ObjectRef) bool {
+	workloads := map[string]bool{}
+	for _, node := range set.nodes {
+		if suspectNode(node) {
+			workloads[node.Component.Workload] = true
+		}
+	}
+	return func(ref sdk.ObjectRef) bool {
+		// A namesake in another namespace is no component of this application.
+		if ref.Namespace != "" && view.Namespace() != "" && ref.Namespace != view.Namespace() {
+			return false
+		}
+		return workloads[program.WorkloadOf(view, ref)]
+	}
+}
+
+// restoreCandidates binds the built-in playbook to each suspect component, for
+// the opening findings. Diagnose matches only on a non-SDO departure from
+// accepted source made before the onset, and that departure is the evidence;
+// being a suspect only keeps components that cannot affect a failing operation
+// out. Nothing here decides to apply it.
+func (set detectSuspectSet) restoreCandidates() []sourceRestoreCandidate {
 	var result []sourceRestoreCandidate
 	for rank, node := range set.nodes {
-		onFailing := node.Class == PositionFailingOnly || node.Class == PositionShared
-		if !node.Condition && !onFailing || node.Component.Workload == "" {
+		if !suspectNode(node) {
 			continue
 		}
 		bindings := program.Bindings{Values: map[string]any{SourceRestoreComponentParam: node.Name}}

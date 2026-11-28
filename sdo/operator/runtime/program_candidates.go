@@ -101,6 +101,11 @@ type KeyedMatching struct {
 	// Diagnose matches still applies. Of several Matches of one credited
 	// playbook only the first in rank order is kept: one application per pass.
 	Stage bool
+	// Suspect reports whether a resource is the workload of a component on a
+	// failing path, or of an opening condition's own component. In the stage
+	// only such a resource lets a finding bind a credited playbook to a
+	// sibling, so an unrelated clue never does; nil admits no sibling.
+	Suspect func(sdk.ObjectRef) bool
 	// Restore are the built-in source-restore candidates: components on a
 	// failing path, bound by component name. They are offered like any playbook's
 	// candidates; whether the stage applies one is the loop's BuiltinRestoreAuto.
@@ -188,6 +193,9 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 			if ok {
 				rank := 0
 				if keyed.Stage && keyed.Credits.Has(spec.ID) {
+					if !keyed.suspectSibling(bindings, finding) {
+						continue
+					}
 					// After every credited pair, in finding order.
 					rank = findingBoundRank + index
 				}
@@ -343,6 +351,27 @@ func keyedStageRuns(runs []ProgramRun, keyed KeyedMatching) []ProgramRun {
 		best, ok := first[run.ProgramID]
 		return ok && run.Verdict.Result == program.Match && !run.Bindings.Equal(best.Bindings)
 	})
+}
+
+// suspectSibling reports whether finding may bind a credited playbook in the
+// stage: the bound component is a suspect. A binding without the component
+// role is judged by its other objects, and one with no object by the
+// resources the finding names.
+func (k KeyedMatching) suspectSibling(bindings program.Bindings, finding sdk.Finding) bool {
+	if k.Suspect == nil {
+		return false
+	}
+	if ref, ok := bindings.Objects[ComponentRole]; ok {
+		return k.Suspect(ref)
+	}
+	var refs []sdk.ObjectRef
+	for _, ref := range bindings.Objects {
+		refs = append(refs, ref)
+	}
+	if len(refs) == 0 {
+		refs = objectOfFinding(finding)
+	}
+	return slices.ContainsFunc(refs, k.Suspect)
 }
 
 // findingProgramBindings is the shared candidate/target boundary. Optional
