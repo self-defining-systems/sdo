@@ -33,7 +33,7 @@ func ResolveSource(fsys render.FS, cat *render.Catalog, override *contracts.Depl
 // (SourceUnconfigured).
 func DeriveSource(fsys render.FS, cat *render.Catalog) (*contracts.DeploymentSource, error) {
 	if cat == nil {
-		return nil, &SourceError{Kind: SourceInvalid, Err: errors.New("deriving a deployment source needs a renderer catalog")}
+		return nil, &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured and no renderer catalog is wired to derive one")}
 	}
 	detected, err := cat.Detect(fsys)
 	if err != nil {
