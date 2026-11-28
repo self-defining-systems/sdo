@@ -47,7 +47,8 @@ func admitClue(t *testing.T, c *Controller, clue sdk.Finding) {
 
 // Two faults on one failing path: the stage restarted api, which the user
 // test's path runs through, and the store's data changed before that, which
-// no applied program targeted and api neither calls nor is called by. The
+// no applied program targeted and api neither calls nor is called by. That
+// clue became active after the incident opened. The
 // agent starts once the user test failed again after the restart settled,
 // not after its full window or the bound.
 func TestAStageThatDidNotCoverACauseHandsOffOnceItsWritesSettle(t *testing.T) {
@@ -72,7 +73,9 @@ func TestAStageThatDidNotCoverACauseHandsOffOnceItsWritesSettle(t *testing.T) {
 // written component (also one first seen after the stage applied), on one
 // that calls it or that it calls (a misconfigured caller shows up in its
 // store's state), off every alert's path, no longer active, or with no map to
-// place it; and
+// place it; a clue
+// already active when the incident opened, or first seen past the join
+// window; and
 // any clue while no alert on its path failed again after the writes settled
 // (the alerts may still be clearing).
 func TestACauseTheStageMayHaveAddressedKeepsTheWait(t *testing.T) {
@@ -82,7 +85,10 @@ func TestACauseTheStageMayHaveAddressedKeepsTheWait(t *testing.T) {
 		clue     sdk.Finding
 		inactive bool
 		late     bool
-		failing  func(time.Duration) bool
+		standing bool
+		// past admits the late clue after the incident's join window.
+		past    bool
+		failing func(time.Duration) bool
 	}{
 		"on the written component":          {read: path, clue: storeStateClue("Deployment", "api")},
 		"on a caller of the written one":    {read: path, clue: storeStateClue("Deployment", "web")},
@@ -92,6 +98,8 @@ func TestACauseTheStageMayHaveAddressedKeepsTheWait(t *testing.T) {
 		"late, on the written component":    {read: path, clue: storeStateClue("Deployment", "api"), late: true},
 		"the user test passes since settle": {read: path, clue: storeStateClue("StatefulSet", "store"), failing: func(at time.Duration) bool { return at < 2*time.Second }},
 		"no application map":                {clue: storeStateClue("StatefulSet", "store")},
+		"standing when the incident opened": {read: path, clue: storeStateClue("StatefulSet", "store"), standing: true},
+		"first seen past the join window":   {read: path, clue: storeStateClue("StatefulSet", "store"), late: true, past: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			test := &buyTest{failing: alwaysFails}
@@ -106,10 +114,16 @@ func TestACauseTheStageMayHaveAddressedKeepsTheWait(t *testing.T) {
 					t.Fatal("the stage did not apply in the first step")
 				}
 			}
+			if tc.past {
+				c.currentIncidentRequest.DetectedAt = world.clock.Now().Add(-AlertJoinWindow - time.Second)
+			}
 			if tc.late {
 				admitClue(t, c, tc.clue)
 			} else {
 				addClue(t, c, tc.clue, !tc.inactive)
+			}
+			if tc.standing {
+				c.currentIncidentRequest.StandingKeys = []string{findingKey(tc.clue)}
 			}
 			if at, ok := handoffAfter(t, c, world, test.start, horizon(test)-time.Second); ok {
 				t.Fatalf("handed off at %s, want no earlier than %s", at, horizon(test))

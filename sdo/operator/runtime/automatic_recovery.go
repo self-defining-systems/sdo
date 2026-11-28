@@ -518,9 +518,11 @@ func operationComponents(m appmap.Map, pm program.AppMap, ids []string) ([]strin
 // settled at settled. No applied program targeted one, and its component is
 // on that test's path and neither is, calls nor is called by a component the
 // stage wrote, directly or indirectly: a misconfigured caller shows up in its
-// store's state, and a callee's fault in its callers' findings. When it was
-// first seen does not matter: a fault that lands after the stage applied is
-// as far from the writes as one that was there before. Each is then positive
+// store's state, and a callee's fault in its callers' findings. A clue already
+// standing when the incident opened (StandingKeys) is baseline and never
+// counts; active decides which of the others do. Whether one appeared before
+// or after the stage applied does not matter: a fault that lands later is as
+// far from the writes as one that was there before. Each is then positive
 // evidence of a cause the writes cannot clear, so waiting for a stability
 // window or the test's full window gains nothing. Unknown writes, a component
 // the map does not place, or no fresh failure after the settle (the alerts
@@ -545,7 +547,8 @@ func causesBeyondStage(view sdk.DetectionContext, m appmap.Map, request Incident
 	var uncovered []string
 	for _, finding := range request.Findings {
 		key := findingKey(finding)
-		if slices.Contains(alerts, key) || slices.Contains(uncovered, key) || targeted[FindingFingerprint(finding)] {
+		if slices.Contains(alerts, key) || slices.Contains(uncovered, key) || slices.Contains(request.StandingKeys, key) ||
+			targeted[FindingFingerprint(finding)] {
 			continue
 		}
 		if !active(key) {
@@ -586,7 +589,8 @@ func failedSince(view sdk.DetectionContext, request IncidentRequest, key string,
 
 // uncoveredStageCauses are causesBeyondStage once the stage's writes settled
 // (applied, rolled out and Ready), with no stability window: the writes
-// cannot clear them, however long they are given.
+// cannot clear them, however long they are given. A clue first seen after
+// AlertJoinWindow of detection is not this incident's cause.
 func (c *Controller) uncoveredStageCauses(ctx context.Context, snapshot sdk.DetectionContext, request IncidentRequest) []string {
 	report := deterministicStageReport(request.PriorStages)
 	c.mu.Lock()
@@ -600,7 +604,10 @@ func (c *Controller) uncoveredStageCauses(ctx context.Context, snapshot sdk.Dete
 	}
 	m, _ := acceptedVerificationMap(ctx, c.gitRead, request)
 	states := c.tracker.Snapshot()
-	return causesBeyondStage(snapshot, m, request, report, settled, func(key string) bool { return states[key].Active })
+	joinBy := request.DetectedAt.Add(AlertJoinWindow)
+	return causesBeyondStage(snapshot, m, request, report, settled, func(key string) bool {
+		return states[key].Active && !states[key].FirstSeenAt.After(joinBy)
+	})
 }
 
 // newestSampleFailed reports a qualified scenario whose newest usable sample
