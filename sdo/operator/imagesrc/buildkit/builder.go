@@ -73,10 +73,9 @@ func (b Builder) buildImage(ctx context.Context, checkout string, build *contrac
 		return "", errors.New("image build target contains invalid characters")
 	}
 	if err := ValidateRegistryHost(b.AllowedRegistryHost); err != nil {
-		return "", fmt.Errorf("trusted registry host: %w", err)
+		return "", fmt.Errorf("trusted registry: %w", err)
 	}
-	actualHost, _, found := strings.Cut(build.GetImage(), "/")
-	if !found || actualHost != b.AllowedRegistryHost {
+	if !imagesrc.UnderTarget(build.GetImage(), b.AllowedRegistryHost) {
 		return "", fmt.Errorf("image build target %q is outside trusted registry %q", build.GetImage(), b.AllowedRegistryHost)
 	}
 	subPath, contextRel, dockerfileRel, err := b.proposalPaths(checkout, build)
@@ -151,11 +150,23 @@ func (b Builder) buildImage(ctx context.Context, checkout string, build *contrac
 	}
 }
 
-// ValidateRegistryHost accepts an explicit OCI image registry authority. A
-// scheme, path, credentials, or implicit Docker Hub target is not trusted.
-func ValidateRegistryHost(host string) error {
-	if host == "" || strings.ContainsAny(host, "/@ \t\n") {
-		return errors.New("registry host[:port] is required without scheme or path")
+// ValidateRegistryHost accepts the trusted push target: an explicit OCI
+// registry authority (host[:port]) with an optional repository path prefix of
+// lowercase path components (registry:5000, or
+// registry.example/team/app for registries that need a
+// repository path). A scheme, credentials or an implicit Docker Hub target is
+// not trusted.
+func ValidateRegistryHost(target string) error {
+	if target == "" || strings.ContainsAny(target, "@ \t\n") || strings.Contains(target, "://") {
+		return errors.New("registry host[:port][/path] is required without scheme or credentials")
+	}
+	host, prefix := imagesrc.SplitRegistryTarget(target)
+	if prefix != "" || strings.HasSuffix(target, "/") {
+		for _, component := range strings.Split(prefix, "/") {
+			if !pathComponent.MatchString(component) {
+				return fmt.Errorf("registry path %q must be lowercase path components separated by /", prefix)
+			}
+		}
 	}
 	name, port, hasPort := strings.Cut(host, ":")
 	if hasPort {
@@ -169,6 +180,9 @@ func ValidateRegistryHost(host string) error {
 	}
 	return nil
 }
+
+// pathComponent is one OCI repository path component.
+var pathComponent = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 
 func (b Builder) proposalPaths(checkout string, build *contracts.ImageBuild) (string, string, string, error) {
 	root, err := filepath.Abs(b.CheckoutRoot)
@@ -264,7 +278,7 @@ printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: b.ServiceAccount, AutomountServiceAccountToken: &no,
 				SecurityContext: &corev1.PodSecurityContext{RunAsUser: ptr64(1000), RunAsGroup: ptr64(1000), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}},
 				Containers: []corev1.Container{{Name: "buildkit", Image: b.BuildKitImage, Command: []string{"/bin/sh", "-ec"}, Args: []string{script},
-					Env:          []corev1.EnvVar{{Name: "BUILDKITD_FLAGS", Value: flags}, {Name: "SDO_CACHE_REF", Value: cacheRef}, {Name: "SDO_REGISTRY_HOST", Value: b.AllowedRegistryHost}, {Name: "DOCKER_CONFIG", Value: "/docker-config"}, {Name: "SDO_OUTPUT", Value: output}, {Name: "SDO_CONTEXT", Value: path.Join("/workspace", contextRel)}, {Name: "SDO_DOCKERFILE", Value: dockerfileRel}},
+					Env:          []corev1.EnvVar{{Name: "BUILDKITD_FLAGS", Value: flags}, {Name: "SDO_CACHE_REF", Value: cacheRef}, {Name: "SDO_REGISTRY_HOST", Value: registryHostOf(b.AllowedRegistryHost)}, {Name: "DOCKER_CONFIG", Value: "/docker-config"}, {Name: "SDO_OUTPUT", Value: output}, {Name: "SDO_CONTEXT", Value: path.Join("/workspace", contextRel)}, {Name: "SDO_DOCKERFILE", Value: dockerfileRel}},
 					VolumeMounts: []corev1.VolumeMount{{Name: "candidate", MountPath: "/workspace", SubPath: subPath, ReadOnly: true}, {Name: "registry-auth", MountPath: "/docker-config/config.json", SubPath: ".dockerconfigjson", ReadOnly: true}, {Name: "buildkit-state", MountPath: "/home/user/.local/share/buildkit"}},
 					// RootlessKit needs newuidmap's setuid transition to create a
 					// subordinate UID map. Disabling privilege escalation breaks
@@ -366,4 +380,11 @@ func (b Builder) pause(ctx context.Context, d time.Duration) error {
 		return b.Wait(ctx, d)
 	}
 	return jobio.Wait(ctx, d)
+}
+
+// registryHostOf is the registry authority of the push target: buildkitd's
+// registry configuration and credentials are keyed by host, never by path.
+func registryHostOf(target string) string {
+	host, _ := imagesrc.SplitRegistryTarget(target)
+	return host
 }

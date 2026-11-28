@@ -187,8 +187,10 @@ func TestResolveAllVerifiesRefs(t *testing.T) {
 func TestPushRegistryImagesMustBeDeclared(t *testing.T) {
 	c := catalogWith(t, "fake", &imagesrctest.Fake{}, imagesrc.Options{})
 	must(t, c.SetTrustedPushHost("push.example:5000"))
-	if err := c.SetTrustedPushHost("bad/host"); err == nil {
-		t.Fatal("bad host accepted")
+	for _, bad := range []string{"bad host", "push.example/", "/prefix", "push.example//x", "user@push.example"} {
+		if err := c.SetTrustedPushHost(bad); err == nil {
+			t.Fatalf("bad push target %q accepted", bad)
+		}
 	}
 	_, err := c.ResolveAll(context.Background(), []string{"push.example:5000/app:v1"}, nil, imagesrc.Request{})
 	if err == nil || !strings.Contains(err.Error(), "must be declared") {

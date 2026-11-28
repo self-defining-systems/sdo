@@ -51,7 +51,8 @@ Any other path under `.sdo/deployment/` is rejected. Plan paths address the effe
 
 ## Images and registry
 
-- Every built image's name starts with the trusted registry host; Go pushes there and pins what it deployed.
+- Every built image's name starts with the trusted registry (a host, possibly with a path such as
+  `host/team/app`); Go pushes there and pins what it deployed.
 - Third-party images use the `prebuilt` source; the operator pins tags to digests. Never write digests.
 - Run the databases, caches and queues the source is written for: its engine, and its version where the source
   pins one. Use another engine only when the goal says `Infrastructure: compatible`, and name the swap.

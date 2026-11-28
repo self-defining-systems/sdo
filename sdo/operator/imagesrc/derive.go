@@ -27,7 +27,7 @@ func (c *Catalog) Derive(images []string, declared []Declared, fsys fs.FS) ([]De
 		return out, nil
 	}
 	for _, image := range images {
-		if registryHost(image) != c.pushHost {
+		if !UnderTarget(image, c.pushHost) {
 			continue
 		}
 		if _, ok := Match(out, image); ok {
@@ -37,7 +37,10 @@ func (c *Catalog) Derive(images []string, declared []Declared, fsys fs.FS) ([]De
 		if err != nil {
 			return nil, err
 		}
-		config, err := c.buildConfig(contextPath, dockerfile)
+		var config *anypb.Any
+		if c.buildConfig != nil {
+			config, err = c.buildConfig(contextPath, dockerfile)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("imagesrc: image %q: %w", image, err)
 		}

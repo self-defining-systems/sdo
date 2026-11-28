@@ -122,11 +122,12 @@ func (c *Catalog) SetDefault(id string) error {
 	return nil
 }
 
-// SetTrustedPushHost names the registry host the operator pushes built images
-// to. ResolveAll then rejects an undeclared image under that host.
+// SetTrustedPushHost names the push target the operator pushes built images
+// to: a registry host with an optional repository path prefix
+// (SplitRegistryTarget). ResolveAll then rejects an undeclared image under it.
 func (c *Catalog) SetTrustedPushHost(host string) error {
-	if host == "" || strings.ContainsAny(host, "/@ ") {
-		return fmt.Errorf("imagesrc: push host %q must be a bare registry host", host)
+	if host == "" || strings.ContainsAny(host, "@ ") || strings.HasPrefix(host, "/") || strings.HasSuffix(host, "/") || strings.Contains(host, "//") {
+		return fmt.Errorf("imagesrc: push target %q must be a registry host with an optional path prefix", host)
 	}
 	c.pushHost = host
 	return nil

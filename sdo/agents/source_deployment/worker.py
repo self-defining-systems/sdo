@@ -94,11 +94,17 @@ def _authored_deployment_path(path: Path) -> bool:
 
 # A DNS-1123 subdomain, the rule the Go host applies to --registry-host (buildkit.ValidateRegistryHost).
 _DNS_SUBDOMAIN = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
+# One OCI repository path component of an optional registry path prefix.
+_PATH_COMPONENT = re.compile(r"[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*")
 
 
 def _valid_registry_host(registry_host: str) -> bool:
-    """host[:port] exactly as the Go host accepts it: the port is optional (a cloud registry serves HTTPS on 443)."""
-    name, has_port, port = registry_host.partition(":")
+    """host[:port][/path] exactly as the Go host accepts it: the port is optional (a cloud registry serves HTTPS on
+    443) and a path prefix serves registries that need a repository path."""
+    authority, _, prefix = registry_host.partition("/")
+    if registry_host.endswith("/") or (prefix and not all(_PATH_COMPONENT.fullmatch(c) for c in prefix.split("/"))):
+        return False
+    name, has_port, port = authority.partition(":")
     if has_port and not (port.isdigit() and port.isascii() and 1 <= int(port) <= 65535):
         return False
     return len(name) <= 253 and _DNS_SUBDOMAIN.fullmatch(name) is not None
