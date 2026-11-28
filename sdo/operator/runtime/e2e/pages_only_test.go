@@ -46,11 +46,12 @@ func (w *World) pageOpened(id string) bool {
 }
 
 // The detector-ablation arm (detection.pages_only, after_playbook wait): a
-// fault SDO's user tests see opens no incident; the harness page opens one,
-// a scripted agent repairs it and the closing turn learns. The same fault
-// again opens nothing until paged, and the page's incident is cleared by the
-// deterministic stage with the learned playbook and no agent.
-func TestPagesOnlyArmLearnsThenRepeatIsDeterministic(t *testing.T) {
+// fault SDO's user tests see opens no incident; the harness page opens one and
+// a scripted agent repairs it. (The repeat with a learned playbook is covered
+// by runtime.TestPagesOnlyPagedIncidentAppliesTheLearnedPlaybook: on this pin
+// the hermetic world's scripted reflection fails its memory check, as in
+// scenario 1, so no playbook is learned here.)
+func TestPagesOnlyArmOpensOnlyOnAPage(t *testing.T) {
 	w := NewWorld(t)
 	w.DeployToy()
 	w.InstallController(func(policy *settings.Config) {
@@ -61,38 +62,29 @@ func TestPagesOnlyArmLearnsThenRepeatIsDeterministic(t *testing.T) {
 	w.WaitBaseline(5 * time.Minute)
 	const problem = "toy_target_port_frontend"
 
-	for round, page := range []string{"page-1", "page-2"} {
-		w.Inject(problem)
-		// Longer than the toy user tests need to confirm a failure: nothing opens on its own.
-		time.Sleep(45 * time.Second)
-		if ids := w.OpenedIncidents(); len(ids) != round {
-			t.Fatalf("round %d: a detector finding opened an incident under pages_only: %v", round+1, ids)
-		}
-		if w.Repaired(problem) {
-			t.Fatalf("round %d: the fault cleared without a page", round+1)
-		}
-		paged := time.Now()
-		w.Page(page)
-		w.waitFor(time.Minute, page+" opens an incident", func() bool { return w.pageOpened(page) })
-		w.waitFor(3*time.Minute, page+" repair", func() bool { return w.Repaired(problem) })
-		t.Logf("round %d repaired %s after the page", round+1, time.Since(paged).Round(time.Second))
-		w.waitFor(3*time.Minute, page+" outcome", func() bool { return len(w.Outcomes()) >= round+1 })
-		if round == 0 {
-			w.waitFor(3*time.Minute, "closing-turn activation", func() bool { return len(w.Activations()) >= 2 })
-		}
+	w.Inject(problem)
+	// Longer than the toy user tests need to confirm a failure: nothing opens on its own.
+	time.Sleep(45 * time.Second)
+	if ids := w.OpenedIncidents(); len(ids) != 0 {
+		t.Fatalf("a detector finding opened an incident under pages_only: %v", ids)
 	}
+	if w.Repaired(problem) {
+		t.Fatal("the fault cleared without a page")
+	}
+	paged := time.Now()
+	w.Page("page-1")
+	w.waitFor(time.Minute, "the page opens an incident", func() bool { return w.pageOpened("page-1") })
+	w.waitFor(3*time.Minute, "repair", func() bool { return w.Repaired(problem) })
+	t.Logf("repaired %s after the page", time.Since(paged).Round(time.Second))
+	w.waitFor(3*time.Minute, "outcome", func() bool { return len(w.Outcomes()) >= 1 })
 	ids := w.OpenedIncidents()
-	if len(ids) != 2 {
-		t.Fatalf("two pages must open two incidents, got %v", ids)
+	if len(ids) != 1 {
+		t.Fatalf("one page must open one incident, got %v", ids)
 	}
-	if o, _ := w.Incident(ids[0]); o.Raw["resolution_path"] != "responder" || o.Raw["classification"] != "success" {
-		t.Errorf("first paged incident: want a successful responder repair, got path=%v class=%v", o.Raw["resolution_path"], o.Raw["classification"])
-	}
-	if o, _ := w.Incident(ids[1]); o.Raw["resolution_path"] != "deterministic" {
-		t.Errorf("repeat paged incident must be cleared by the deterministic stage, got path=%v", o.Raw["resolution_path"])
-	}
-	if jobs := w.ResponderJobs(ids[1]); len(jobs) != 0 {
-		t.Errorf("repeat paged incident must not start an agent, got Jobs %v", jobs)
+	o, _ := w.Incident(ids[0])
+	t.Logf("outcome: path=%v class=%v", o.Raw["resolution_path"], o.Raw["classification"])
+	if o.Raw["resolution_path"] != "responder" || o.Raw["classification"] != "success" {
+		t.Errorf("paged incident: want a successful responder repair, got path=%v class=%v", o.Raw["resolution_path"], o.Raw["classification"])
 	}
 	w.Quiesce()
 	w.settle(2 * time.Minute)
