@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -192,5 +193,21 @@ func TestRefreshHealthDoesNotGateOnExistingRecords(t *testing.T) {
 	receipt, err := h.coordinator.RefreshHealth(context.Background(), refreshConfig(), refreshRevision())
 	if err != nil || receipt.Commit == "" || fake.accepts != 1 {
 		t.Fatalf("receipt=%+v accepts=%d err=%v: a clear refresh was refused for an unexercised existing-records step", receipt, fake.accepts, err)
+	}
+}
+
+// An evaluation that observes for minutes spends the pending window: a refresh
+// whose probes stay pending answers after the window's elapsed time, not after
+// the full count of evaluations, each minutes long (8 x 2.5 minutes on a cold
+// prober kept a gated refresh from ever answering within its budget).
+func TestPendingWindowIsElapsedTimeNotOnlyACount(t *testing.T) {
+	h, _ := gateHarness(t, pending)
+	clock := time.Unix(1000, 0)
+	h.coordinator.Now = func() time.Time { clock = clock.Add(3 * time.Minute); return clock }
+	cfg := refreshConfig()
+	cfg.PendingEvaluations, cfg.PendingInterval = 8, 15*time.Second
+	_, _ = h.coordinator.RefreshHealth(context.Background(), cfg, refreshRevision())
+	if h.verifier.calls == 0 || h.verifier.calls > 2*h.workers.judgeRuns {
+		t.Fatalf("verifications = %d over %d judge runs, want at most two per candidate once the 2-minute window is spent", h.verifier.calls, h.workers.judgeRuns)
 	}
 }
