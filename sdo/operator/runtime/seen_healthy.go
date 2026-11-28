@@ -16,8 +16,8 @@ const absentContent = "absent"
 
 // objectContent is the digest of what the source comparison sees of an object.
 // Empty values are dropped so a typed and an unstructured read of one object
-// agree. A gone object has its own value; an unreadable one, and a Secret, has
-// none.
+// agree. A gone object has its own value; an unreadable one has none, as does a
+// Secret, which the restore never writes (SourceDepartures).
 func objectContent(view any, ref sdk.ObjectRef) string {
 	reader, ok := view.(sdk.ObjectReader)
 	if !ok || ref.Kind == "Secret" {
