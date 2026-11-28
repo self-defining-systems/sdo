@@ -254,7 +254,12 @@ type HTTPEndpoint struct {
 	existingRecords *existingRecordsRead
 	// readOnly is set by Reads.
 	readOnly bool
+	// samples are the SampleSaved picks Build makes before it fills the
+	// request.
+	samples []savedSample
 }
+
+type savedSample struct{ list, field, key string }
 
 type existingAnswer struct {
 	status int
@@ -473,6 +478,60 @@ func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern s
 	return e
 }
 
+// SampleSaved picks one member of the JSON array an earlier step saved under
+// list (SaveJSON of an array path), with the iteration's random source, and
+// stores its value at field ("" for the element itself) in State under key
+// before the request is built, so {key} in the path, query, body or a check
+// names it. Successive iterations open different members, so a probe checks a
+// bounded, rotating sample of records users made instead of one fixed record.
+// An empty or unsaved list sends nothing and the sample is invalid, so sample
+// from a listing that requires members (Each).
+func (e *HTTPEndpoint) SampleSaved(list string, field string, key string) *HTTPEndpoint {
+	e.samples = append(e.samples, savedSample{list: list, field: field, key: key})
+	return e
+}
+
+func (s savedSample) pick(rng *rand.Rand, state State) error {
+	var document any
+	if err := json.Unmarshal([]byte(state[s.list]), &document); err != nil {
+		return fmt.Errorf("SampleSaved: no earlier step saved a JSON array under %q", s.list)
+	}
+	members, err := jsonMembers(document, "", s.field)
+	if err != nil {
+		return fmt.Errorf("SampleSaved(%s): %w", s.list, err)
+	}
+	if len(members) == 0 {
+		return fmt.Errorf("SampleSaved: the array saved under %q is empty", s.list)
+	}
+	state[s.key] = members[rng.IntN(len(members))]
+	return nil
+}
+
+// Includes requires the JSON array at dotted path ("" for the whole body) to
+// hold a member whose value at field ("" for the element itself) equals want,
+// with each {key} filled from State. Use it where the probe knows one member a
+// healthy answer must hold but not the whole set, such as the other side of a
+// relation read from a record users made.
+func (e *HTTPEndpoint) Includes(path string, field string, want string) *HTTPEndpoint {
+	e.jsonChecks = append(e.jsonChecks, func(document any, state State) error {
+		expected, err := fillState(want, state)
+		if err != nil {
+			return err
+		}
+		members, err := jsonMembers(document, path, field)
+		if err != nil {
+			return err
+		}
+		for _, member := range members {
+			if member == expected {
+				return nil
+			}
+		}
+		return fmt.Errorf("%q has no member %q among %d", path, bounded(expected), len(members))
+	})
+	return e
+}
+
 // MarksExistingRecords reports whether the step was built with
 // ReadsExistingRecords.
 func (e *HTTPEndpoint) MarksExistingRecords() bool { return e.existingRecords != nil }
@@ -506,6 +565,11 @@ func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint {
 
 // Build implements Endpoint.
 func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Request, error) {
+	for _, sample := range e.samples {
+		if err := sample.pick(rng, state); err != nil {
+			return Request{}, err
+		}
+	}
 	path, err := fillPath(e.Path, state)
 	if err != nil {
 		return Request{}, err

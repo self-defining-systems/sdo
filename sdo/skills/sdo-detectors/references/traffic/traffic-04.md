@@ -85,6 +85,13 @@ func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTP
     filled from State. Use it when the probe owns the data, so the healthy set
     is known exactly.
 
+func (e *HTTPEndpoint) Includes(path string, field string, want string) *HTTPEndpoint
+    Includes requires the JSON array at dotted path ("" for the whole body) to
+    hold a member whose value at field ("" for the element itself) equals want,
+    with each {key} filled from State. Use it where the probe knows one member a
+    healthy answer must hold but not the whole set, such as the other side of a
+    relation read from a record users made.
+
 func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint
     JSONEquals requires the JSON value at dotted path (object keys and array
     indexes, for example "data.items.0.id") to equal want exactly. Each {key} in
@@ -117,6 +124,16 @@ func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern s
     the probe did not create (Sample.ExistingRecords). Unlike Each, emptiness is
     not a failure. The step must not template a key a write step of the scenario
     saved.
+
+func (e *HTTPEndpoint) SampleSaved(list string, field string, key string) *HTTPEndpoint
+    SampleSaved picks one member of the JSON array an earlier step saved under
+    list (SaveJSON of an array path), with the iteration's random source,
+    and stores its value at field ("" for the element itself) in State under key
+    before the request is built, so {key} in the path, query, body or a check
+    names it. Successive iterations open different members, so a probe checks a
+    bounded, rotating sample of records users made instead of one fixed record.
+    An empty or unsaved list sends nothing and the sample is invalid, so sample
+    from a listing that requires members (Each).
 
 func (e *HTTPEndpoint) SaveCookie(name string, key string) *HTTPEndpoint
     SaveCookie stores the value of the response's Set-Cookie named name in State
@@ -197,40 +214,4 @@ type KnownBroken struct {
 	FailsWith []string `json:"failsWith"`
 }
     KnownBroken is why a scenario fails at baseline and how.
-
-type Link struct {
-	From     string           `json:"from"`
-	To       string           `json:"to"`
-	Port     int              `json:"port"`
-	Protocol LinkProtocol     `json:"protocol,omitempty"`
-	HTTP     *LinkHTTPOptions `json:"http,omitempty"`
-	GRPC     *LinkGRPCOptions `json:"grpc,omitempty"`
-}
-    Link is one declared dependency edge: From calls To on Port.
-
-func (l Link) EffectiveProtocol() LinkProtocol
-    EffectiveProtocol preserves the TCP default for older observations.
-
-func (l Link) ID() string
-    ID names the edge.
-
-func (l Link) String() string
-    String renders the edge for humans.
-
-type LinkCondition string
-    LinkCondition names how a reported link is unhealthy.
-
-const (
-	// LinkUnreachable: the last Failures dials all failed.
-	LinkUnreachable LinkCondition = "unreachable"
-	// LinkIntermittent: at least LinkLossPercent of the last LinkLossWindow
-	// dials failed.
-	LinkIntermittent LinkCondition = "intermittent"
-	// LinkSlow: the median latency of each of the last LinkSlowWindows
-	// windows of Failures dials is above the bound derived from the healthy
-	// baseline, its spread and the slowdown the link's peers share.
-	LinkSlow LinkCondition = "slow"
-)
-type LinkFailureClass string
-    LinkFailureClass identifies a deterministic failure category.
 ```

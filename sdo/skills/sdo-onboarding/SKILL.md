@@ -48,10 +48,12 @@ func PUT(path string, query Params) *HTTPEndpoint // sends generated query param
 func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint // requires the response body to contain text
 func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndpoint // requires the JSON array at dotted path
 func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTPEndpoint // requires the JSON array at dotted path
+func (e *HTTPEndpoint) Includes(path string, field string, want string) *HTTPEndpoint // requires the JSON array at dotted path
 func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint // requires the JSON value at dotted path
 func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint // makes the step an ensure step
 func (e *HTTPEndpoint) Reads() *HTTPEndpoint // marks a POST, PUT or PATCH that changes nothing
 func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern string) *HTTPEndpoint // marks the step as one that reads records users made or the deployment seeded
+func (e *HTTPEndpoint) SampleSaved(list string, field string, key string) *HTTPEndpoint // picks one member of the JSON array an earlier step saved under list
 func (e *HTTPEndpoint) SaveCookie(name string, key string) *HTTPEndpoint // stores the value of the response's Set-Cookie named name in State under key
 func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint // stores the JSON field at dotted path
 func (e *HTTPEndpoint) Status(codes ...int) *HTTPEndpoint // replaces the accepted statuses

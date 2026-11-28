@@ -115,7 +115,22 @@ func (s Scenario) ExistingRecordsSteps() []ExistingRecordsStep {
 	for _, step := range marked {
 		endpoint, _ := declaredHTTP(step.Endpoint)
 		fact := ExistingRecordsStep{Name: step.Name, ChecksContent: endpoint.existingRecords.compileErr == nil}
-		request, err := endpoint.Build(context.Background(), rand.New(rand.NewPCG(1, 2)), sentinels.clone())
+		state := sentinels.clone()
+		for _, sample := range endpoint.samples {
+			// A member sampled from a saved list carries that list's key.
+			if _, ok := state[sample.list]; ok {
+				var member any = sentinel(sample.list)
+				if sample.field != "" {
+					parts := strings.Split(sample.field, ".")
+					for i := len(parts) - 1; i >= 0; i-- {
+						member = map[string]any{parts[i]: member}
+					}
+				}
+				encoded, _ := json.Marshal([]any{member})
+				state[sample.list] = string(encoded)
+			}
+		}
+		request, err := endpoint.Build(context.Background(), rand.New(rand.NewPCG(1, 2)), state)
 		if err == nil {
 			text := request.Path + "\x00" + request.Body
 			for key, value := range request.Query {
