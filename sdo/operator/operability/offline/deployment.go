@@ -1,9 +1,9 @@
 // Package offline computes the operability checks that need no cluster:
-// patches apply, the effective tree renders deterministically, expected
-// workloads match, images are declared consistently, scope and registry limits
-// hold. It only adapts results the owning packages already compute (rendered,
-// patchset, imagesrc) into operability.Check values; it renders nothing a
-// second time except the one determinism comparison.
+// patches apply, the effective tree renders, images are declared or derived
+// consistently, scope and registry limits hold. It only adapts results the
+// owning packages already compute (rendered, patchset, imagesrc) into
+// operability.Check values. Renderers are pure by construction (render's
+// purity tests), so a tree renders once.
 package offline
 
 import (
@@ -47,17 +47,16 @@ type Deployment struct {
 	// PatchesErr is the error of applying the patch series
 	// (rendered.Effective); nil when the series applied.
 	PatchesErr error
-	// Render renders the effective tree with the one render environment. It is
-	// called twice to check determinism, so it must not memoize.
+	// Render renders the effective tree with the one render environment.
 	Render func(context.Context) (rendered.DesiredSet, error)
-	// ExpectedWorkloads are the plan's expected workload IDs.
-	ExpectedWorkloads []string
 	// ServedAPIs are the recorded discovery's group/version and
 	// group/version/Kind entries; empty is unknown and O1.apis is reported skipped.
 	ServedAPIs []string
-	// Declared are the plan's image declarations.
-	Declared []imagesrc.Declared
-	Policy   Policy
+	// Declare returns the image declarations for a rendered set: the plan's,
+	// plus a build for every image the tree has a Dockerfile for
+	// (imagesrc.Catalog.Derive). Nil declares nothing.
+	Declare func(rendered.DesiredSet) ([]imagesrc.Declared, error)
+	Policy  Policy
 }
 
 // Result is the checks of O1, O2 and O6 plus the desired set of the first
@@ -103,14 +102,6 @@ func CheckDeployment(ctx context.Context, d Deployment) Result {
 	res.Set = first
 	add(pass("O1.render", fmt.Sprintf("renders %d objects", len(first.Objects()))))
 
-	add(determinism(ctx, d, first))
-
-	if err := rendered.CheckExpectedWorkloads(first, d.ExpectedWorkloads); err != nil {
-		add(failure("O1.workloads", operability.CauseRender, err, nil))
-	} else {
-		add(pass("O1.workloads", "expected workloads match the rendered workloads"))
-	}
-
 	switch {
 	case len(d.ServedAPIs) == 0:
 		add(operability.Check{ID: "O1.apis", Phase: operability.PhaseOffline, Status: operability.StatusSkipped, Detail: "not run: no cluster discovery was recorded"})
@@ -122,8 +113,16 @@ func CheckDeployment(ctx context.Context, d Deployment) Result {
 		}
 	}
 
-	add(images(first, d.Declared))
-	res.UnusedImages = imagesrc.UnusedRepositories(rendered.ImageSites(first), d.Declared)
+	var declared []imagesrc.Declared
+	if d.Declare != nil {
+		declared, err = d.Declare(first)
+	}
+	if err != nil {
+		add(failure("O2.images", operability.CauseBuild, err, nil))
+	} else {
+		add(images(first, declared))
+		res.UnusedImages = imagesrc.UnusedRepositories(rendered.ImageSites(first), declared)
+	}
 	for _, c := range CheckPolicy(first, d.Policy) {
 		add(c)
 	}
@@ -146,7 +145,7 @@ func DeploymentCheckIDs() []string {
 
 // Checks that depend on an earlier one, in the order CheckDeployment runs them.
 func afterRender() []string {
-	return []string{"O1.deterministic", "O1.workloads", "O1.apis", "O2.images", "O6.scope", "O6.allowlist"}
+	return []string{"O1.apis", "O2.images", "O6.scope", "O6.allowlist"}
 }
 
 func afterPatches() []string { return append([]string{"O1.render"}, afterRender()...) }
@@ -210,37 +209,6 @@ func classifyRender(err error, invalid operability.Cause) operability.Cause {
 		}
 	}
 	return operability.CauseInternal
-}
-
-// determinism renders again and requires equal digests: a render whose bytes
-// depend on anything but the tree and the environment cannot be verified on
-// restart (VerifyAccepted compares digests).
-func determinism(ctx context.Context, d Deployment, first rendered.DesiredSet) operability.Check {
-	second, err := d.Render(ctx)
-	if err != nil {
-		if cause := classifyRender(err, operability.CauseRenderNondeterministic); cause != operability.CauseInternal {
-			return failure("O1.deterministic", cause, fmt.Errorf("second render of the same tree failed: %w", err), nil)
-		}
-		return failure("O1.deterministic", operability.CauseInternal, err, nil)
-	}
-	var differing []string
-	for _, f := range []struct{ name, a, b string }{
-		{"render", first.RenderDigest, second.RenderDigest},
-		{"shape", first.ShapeDigest, second.ShapeDigest},
-		{"env", first.EnvDigest, second.EnvDigest},
-	} {
-		if f.a != f.b {
-			differing = append(differing, f.name)
-		}
-	}
-	if len(differing) > 0 {
-		return operability.Check{
-			ID: "O1.deterministic", Phase: operability.PhaseOffline, Status: operability.StatusFail,
-			Cause:  operability.CauseRenderNondeterministic,
-			Detail: "two renders of the same tree and environment differ in digest: " + strings.Join(differing, ", "),
-		}
-	}
-	return pass("O1.deterministic", "two renders of the same tree agree")
 }
 
 // images applies the declaration rules ResolveAll enforces, before any

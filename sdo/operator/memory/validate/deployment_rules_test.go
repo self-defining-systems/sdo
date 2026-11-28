@@ -88,8 +88,10 @@ var deploymentRuleRows = []gateRow{
 	// deployment.invalid: plan.yaml decodes strictly.
 	{name: "plan with an unknown field", kind: gateStatic, rules: []string{RuleDeploymentInvalid}, path: layout.DeploymentPlanFile,
 		edit: gateWrite(layout.DeploymentPlanFile, strings.Replace(gateValidPlan, "{\"source\"", "{\"colour\":1,\"source\"", 1))},
-	{name: "plan without a source", kind: gateStatic, rules: []string{RuleDeploymentInvalid}, path: layout.DeploymentPlanFile,
-		edit: gateWrite(layout.DeploymentPlanFile, "expectedWorkloadIds: [a]\n")},
+	// A plan without a source is an override that names only images: the
+	// renderer is derived from the files.
+	{name: "plan without a source", kind: gateStatic, rules: nil,
+		edit: gateWrite(layout.DeploymentPlanFile, "images: []\n")},
 	{name: "plan that is not YAML", kind: gateStatic, rules: []string{RuleDeploymentInvalid}, path: layout.DeploymentPlanFile,
 		edit: gateWrite(layout.DeploymentPlanFile, "source: [unclosed\n")},
 	{name: "plan with duplicate keys", kind: gateStatic, rules: []string{RuleDeploymentInvalid}, path: layout.DeploymentPlanFile,

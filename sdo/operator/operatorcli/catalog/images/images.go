@@ -57,6 +57,9 @@ func Catalog(cfg Config) (*imagesrc.Catalog, error) {
 	if err := c.SetTrustedPushHost(cfg.Builder.AllowedRegistryHost); err != nil {
 		return nil, fmt.Errorf("images: %w", err)
 	}
+	// An undeclared image under the push host is built from the Dockerfile
+	// the tree names for it.
+	c.SetBuildDerivation(buildkit.ID, buildkit.DerivedConfig)
 	return c, nil
 }
 

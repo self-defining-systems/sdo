@@ -147,7 +147,7 @@ HOLD_ROUTES: dict[str, frozenset[tuple[str, str, tuple[str, ...]]]] = {
     "scope": frozenset({("scope", "human", ("O6",)), ("allowlist", "human", ("O6",))}),
     "merge_conflict": frozenset({("patch", "deployer", ("O1",))}),
     "patch_conflict": frozenset({("patch", "deployer", ("O1",))}),
-    "render": frozenset({("render", "deployer", ("O1",)), ("render_nondeterministic", "deployer", ("O1",))}),
+    "render": frozenset({("render", "deployer", ("O1",))}),
     "build": frozenset({("build", "deployer", ("O1",)), ("build", "deployer", ("O2",))}),
     "shape_change": frozenset({("coverage", "designer", ("O3",))}),
     "rollout": frozenset({("rollout", "responder", ("O1",))}),

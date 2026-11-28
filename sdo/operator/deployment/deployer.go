@@ -85,12 +85,6 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err := d.validate(); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	if plan == nil || plan.GetSource() == nil {
-		return lifecycle.DeploymentReceipt{}, errors.New("deployment plan needs a source")
-	}
-	if len(plan.GetExpectedWorkloadIds()) == 0 {
-		return lifecycle.DeploymentReceipt{}, errors.New("deployment plan needs expected workloads")
-	}
 	base, err := d.TreeDigest(ctx, checkout)
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
@@ -115,9 +109,9 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err := rendered.CheckServedAPIs(set, d.Environment.GetApiVersions()); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	declared := make([]imagesrc.Declared, 0, len(plan.GetImages()))
-	for _, image := range plan.GetImages() {
-		declared = append(declared, imagesrc.Declared{Image: image.GetImage(), SourceID: image.GetSourceId(), Config: image.GetConfig()})
+	declared, err := d.declare(set, plan, fsys)
+	if err != nil {
+		return lifecycle.DeploymentReceipt{}, fmt.Errorf("resolve images: %w", err)
 	}
 	request := imagesrc.Request{Tree: effective.ID, FS: fsys}
 	if d.Materializer != nil {
@@ -131,9 +125,6 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	resolved, err := d.Images.ResolveAll(ctx, rendered.ImageSites(set), declared, request)
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, fmt.Errorf("resolve images: %w", err)
-	}
-	if err := rendered.CheckExpectedWorkloads(set, plan.GetExpectedWorkloadIds()); err != nil {
-		return lifecycle.DeploymentReceipt{}, err
 	}
 	operation, err := d.operation(ctx, set)
 	if err != nil {
@@ -153,7 +144,7 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if _, err := run.pruneSuperseded(ctx, set); err != nil {
 		slog.Warn("deploy_prune_superseded_failed", "namespace", d.Namespace, "error", err)
 	}
-	receipt.Source = proto.Clone(plan.GetSource()).(*contracts.DeploymentSource)
+	receipt.Source = proto.Clone(set.Source).(*contracts.DeploymentSource)
 	receipt.RenderDigest, receipt.EnvDigest = set.RenderDigest, set.EnvDigest
 	if d.Environment != nil {
 		receipt.Environment = proto.Clone(d.Environment).(*contracts.RenderEnvironment)
@@ -162,6 +153,17 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 		receipt.Policy = proto.Clone(d.Policy).(*contracts.DeploymentPolicy)
 	}
 	return receipt, nil
+}
+
+// declare is the image declarations of a rendered set: the plan's, plus a
+// build for every image under the trusted push host the tree has a Dockerfile
+// for. ApplyAndVerify and the offline checks share it.
+func (d Deployer) declare(set rendered.DesiredSet, plan *contracts.DeploymentPlan, fsys render.FS) ([]imagesrc.Declared, error) {
+	declared := make([]imagesrc.Declared, 0, len(plan.GetImages()))
+	for _, image := range plan.GetImages() {
+		declared = append(declared, imagesrc.Declared{Image: image.GetImage(), SourceID: image.GetSourceId(), Config: image.GetConfig()})
+	}
+	return d.Images.Derive(rendered.ImageSites(set), declared, fsys)
 }
 
 // PolicyError is a desired set that violates the install-time deployment

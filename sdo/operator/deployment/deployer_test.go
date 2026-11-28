@@ -512,11 +512,6 @@ func TestReceiptRecordsResolvedImagesAndEvidence(t *testing.T) {
 func TestDeployerRejectsPlansBeforeApplying(t *testing.T) {
 	root, source := depRawFixture(t)
 	for name, plan := range map[string]*contracts.DeploymentPlan{
-		"no source":             {ExpectedWorkloadIds: []string{depRawWeb}},
-		"no expected workloads": {Source: source},
-		"unexpected workload":   depPlan(t, source, depRawWeb, "Deployment/demo/ghost"),
-		"missing workload":      depPlan(t, source, "Deployment/demo/ghost"),
-		"duplicate expected":    depPlan(t, source, depRawWeb, depRawWeb),
 		"image declared but unused": {Source: source, ExpectedWorkloadIds: []string{depRawWeb}, Images: []*contracts.ImageSource{
 			{Image: "never:1", SourceId: depImages, Config: depAny(t, &emptypb.Empty{})}}},
 		"unknown renderer": {Source: &contracts.DeploymentSource{RendererId: "nope"}, ExpectedWorkloadIds: []string{depRawWeb}},
@@ -769,5 +764,20 @@ func TestEachPhaseIsRecordedAsTheTargetBeforeItIsApplied(t *testing.T) {
 		if strings.HasPrefix(event, "apply ") {
 			t.Fatalf("applied without a record: %v", refused.events)
 		}
+	}
+}
+
+// With no plan the deployment is the files: the source is derived from them
+// and the receipt records the derived source.
+func TestDeployerDerivesTheSourceFromTheFilesWithoutAPlan(t *testing.T) {
+	root, _ := depRawFixture(t)
+	deployer, _ := depDeployer(t, root, &clusterFake{})
+	receipt, err := deployer.ApplyAndVerify(context.Background(), root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := depSource(t, raw.ID, &contracts.RawRenderConfig{Paths: []string{"k8s/cm.yaml", "k8s/web.yaml"}})
+	if !proto.Equal(receipt.Source, want) || len(receipt.ResourceIDs) != 1 || receipt.ResourceIDs[0] != depRawWeb {
+		t.Fatalf("receipt source %v resources %v, want the derived raw source and %s", receipt.Source, receipt.ResourceIDs, depRawWeb)
 	}
 }

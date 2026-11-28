@@ -32,10 +32,8 @@ images:
       "@type": type.googleapis.com/sdodev.contracts.v1alpha1.BuildKitImageConfig
       contextPath: services/api
       dockerfilePath: .sdo/deployment/build/api/Dockerfile
-expectedWorkloadIds: [Deployment/demo/api]
 ```
 
-A plan that must keep matching later upstream releases declares release-independent entries: an image with no tag
-and no digest (`image: registry.example/api`) covers every tag of that repository, and a Job whose name carries a
-generated suffix (a hash of its inputs, five to ten lowercase alphanumerics) is `Job/demo/migrate-*`. `*` is allowed
-only as that final `-*`; every other workload keeps its literal ID, and a renamed Deployment is a different workload.
+Both fields are optional: without `source` Go derives the renderer from the files, and images it can match to a
+Dockerfile need no entry. A plan that must keep matching later upstream releases declares an image with no tag and
+no digest (`image: registry.example/api`): it covers every tag of that repository.

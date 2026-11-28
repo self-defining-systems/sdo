@@ -67,7 +67,6 @@ func TestParseRejects(t *testing.T) {
 		{"empty", "", "empty"},
 		{"unknown field", strings.Replace(goodPlan, "images:", "colour: red\nimages:", 1), "colour"},
 		{"duplicate key", goodPlan + "source: {}\n", "duplicate YAML key"},
-		{"no source", "expectedWorkloadIds: [a]\n", "deployment source"},
 		{"unknown renderer", strings.Replace(goodPlan, "rendererId: raw", "rendererId: jsonnet", 1), "unknown renderer"},
 		{"wrong config type", strings.Replace(strings.Replace(goodPlan, "RawRenderConfig", "KustomizeRenderConfig", 1), "paths: [.sdo/deployment/manifests]", "path: .sdo/deployment/manifests", 1), "takes config"},
 		{"unknown config field", strings.Replace(goodPlan, "paths:", "pathz:", 1), "pathz"},
@@ -81,6 +80,14 @@ func TestParseRejects(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// The override may leave out the source: the files then say how to render.
+func TestParseAcceptsAnOverrideWithoutASource(t *testing.T) {
+	plan, err := Parse([]byte("images: []\n"), catalogs(t))
+	if err != nil || plan.GetSource() != nil {
+		t.Fatalf("plan = %v, err = %v", plan, err)
 	}
 }
 

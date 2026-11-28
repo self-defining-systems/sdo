@@ -35,6 +35,8 @@ type entry struct {
 	typeURL   string
 	newConfig func() proto.Message
 	render    func(context.Context, FS, Env, proto.Message) (Result, error)
+	detect    Detector
+	fallback  bool
 }
 
 // NewCatalog returns an empty catalog with DefaultLimits.
@@ -50,7 +52,11 @@ func (c *Catalog) WithLimits(l Limits) *Catalog {
 // Option adjusts one Register call.
 type Option func(*registration)
 
-type registration struct{ doc string }
+type registration struct {
+	doc      string
+	detect   Detector
+	fallback bool
+}
 
 // WithDoc sets the usage doc an agent reads in Describe: what the renderer
 // does and when to choose it. The implementation package exports it as Doc.
@@ -91,6 +97,8 @@ func Register[C proto.Message](c *Catalog, id string, r Renderer[C], opts ...Opt
 		desc:      desc,
 		typeURL:   typeURL,
 		newConfig: func() proto.Message { return mt.New().Interface() },
+		detect:    reg.detect,
+		fallback:  reg.fallback,
 		render: func(ctx context.Context, f FS, e Env, m proto.Message) (Result, error) {
 			cfg, ok := m.(C)
 			if !ok {

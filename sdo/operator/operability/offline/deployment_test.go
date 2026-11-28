@@ -42,7 +42,7 @@ func renderer(t *testing.T, files rendertest.MapFS) func(context.Context) (rende
 }
 
 func deployment(t *testing.T, files rendertest.MapFS) offline.Deployment {
-	return offline.Deployment{Render: renderer(t, files), ExpectedWorkloads: []string{webID}}
+	return offline.Deployment{Render: renderer(t, files)}
 }
 
 func byID(t *testing.T, checks []operability.Check) map[string]operability.Check {
@@ -77,7 +77,7 @@ func TestCleanDeploymentPassesAndFitsTheReport(t *testing.T) {
 	d.Policy = offline.Policy{AllowedRegistries: []string{"registry.example"}}
 	res := offline.CheckDeployment(context.Background(), d)
 	got := byID(t, res.Checks)
-	for _, id := range []string{"O1.patches", "O1.render", "O1.deterministic", "O1.workloads", "O6.scope", "O6.allowlist"} {
+	for _, id := range []string{"O1.patches", "O1.render", "O6.scope", "O6.allowlist"} {
 		want(t, got, id, operability.StatusPass, "")
 	}
 	want(t, got, "O2.images", operability.StatusNote, "") // undeclared tag: default source
@@ -120,7 +120,7 @@ func TestPatchFailuresAreTheDeployersAndStopTheSequence(t *testing.T) {
 			d.PatchesErr = tc.err
 			res := offline.CheckDeployment(context.Background(), d)
 			got := byID(t, res.Checks)
-			if len(got) != 8 {
+			if len(got) != 6 {
 				t.Fatalf("checks after a patch failure: %+v", res.Checks)
 			}
 			for id, c := range got {
@@ -140,9 +140,9 @@ func TestRenderFailureClassification(t *testing.T) {
 	d := deployment(t, rendertest.MapFS{"k8s/bad.yaml": "kind: [unterminated\n"})
 	got := byID(t, offline.CheckDeployment(context.Background(), d).Checks)
 	want(t, got, "O1.render", operability.StatusFail, operability.CauseRender)
-	want(t, got, "O1.deterministic", operability.StatusSkipped, "")
+	want(t, got, "O1.apis", operability.StatusSkipped, "")
 	want(t, got, "O6.allowlist", operability.StatusSkipped, "")
-	if len(got) != 8 {
+	if len(got) != 6 {
 		t.Fatalf("render failure must skip later checks: %v", got)
 	}
 	d.Render = func(context.Context) (rendered.DesiredSet, error) {
@@ -153,50 +153,6 @@ func TestRenderFailureClassification(t *testing.T) {
 	d.Render = nil
 	got = byID(t, offline.CheckDeployment(context.Background(), d).Checks)
 	want(t, got, "O1.render", operability.StatusFail, operability.CauseInternal)
-}
-
-// Negative control: a renderer whose output changes between calls.
-func TestNondeterministicRenderFails(t *testing.T) {
-	inner := renderer(t, rendertest.MapFS{"k8s/web.yaml": web})
-	calls := 0
-	d := offline.Deployment{ExpectedWorkloads: []string{webID}, Render: func(ctx context.Context) (rendered.DesiredSet, error) {
-		set, err := inner(ctx)
-		calls++
-		if calls == 2 {
-			set.RenderDigest = "drifted"
-		}
-		return set, err
-	}}
-	got := byID(t, offline.CheckDeployment(context.Background(), d).Checks)
-	c := want(t, got, "O1.deterministic", operability.StatusFail, operability.CauseRenderNondeterministic)
-	if !strings.Contains(c.Detail, "render") || calls != 2 {
-		t.Fatalf("detail %q calls %d", c.Detail, calls)
-	}
-}
-
-func TestSecondRenderFailureIsNondeterminism(t *testing.T) {
-	inner := renderer(t, rendertest.MapFS{"k8s/web.yaml": web})
-	calls := 0
-	d := offline.Deployment{ExpectedWorkloads: []string{webID}, Render: func(ctx context.Context) (rendered.DesiredSet, error) {
-		calls++
-		if calls == 2 {
-			return rendered.DesiredSet{}, &rendered.SourceError{Kind: rendered.SourceInvalid, Err: errors.New("flaked")}
-		}
-		return inner(ctx)
-	}}
-	want(t, byID(t, offline.CheckDeployment(context.Background(), d).Checks), "O1.deterministic", operability.StatusFail, operability.CauseRenderNondeterministic)
-}
-
-func TestExpectedWorkloadsMismatch(t *testing.T) {
-	d := deployment(t, rendertest.MapFS{"k8s/web.yaml": web})
-	d.ExpectedWorkloads = []string{webID, "Deployment/app/ghost"}
-	got := byID(t, offline.CheckDeployment(context.Background(), d).Checks)
-	want(t, got, "O1.workloads", operability.StatusFail, operability.CauseRender)
-	// The check is the shared function, not a copy.
-	set, _ := d.Render(context.Background())
-	if err := rendered.CheckExpectedWorkloads(set, d.ExpectedWorkloads); err == nil || !strings.Contains(got["O1.workloads"].Detail, err.Error()) {
-		t.Fatalf("detail %q does not carry the shared error %v", got["O1.workloads"].Detail, err)
-	}
 }
 
 func TestImageDeclarations(t *testing.T) {
@@ -212,7 +168,8 @@ func TestImageDeclarations(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := deployment(t, files)
-			d.Declared = tc.declared
+			declared := tc.declared
+			d.Declare = func(rendered.DesiredSet) ([]imagesrc.Declared, error) { return declared, nil }
 			want(t, byID(t, offline.CheckDeployment(context.Background(), d).Checks), "O2.images", tc.status, tc.cause)
 		})
 	}
@@ -339,26 +296,20 @@ func TestEarlyFailureDecidesTheReportNotSilence(t *testing.T) {
 }
 
 // A CronJob or bare Pod runs images like any workload: an off-allowlist image
-// there fails O6.allowlist and the plan must name the object (O1.workloads).
+// there fails O6.allowlist.
 func TestAllowlistCoversCronJobAndPod(t *testing.T) {
 	cron := "apiVersion: batch/v1\nkind: CronJob\nmetadata: {name: nightly}\nspec: {schedule: '0 * * * *', jobTemplate: {spec: {template: {spec: {containers: [{name: c, image: 'evil.example/job:1'}]}}}}}\n"
 	pod := "apiVersion: v1\nkind: Pod\nmetadata: {name: shell}\nspec: {containers: [{name: c, image: 'evil.example/shell:1'}]}\n"
 	for name, tc := range map[string]struct{ manifest, id string }{"CronJob": {cron, "CronJob/app/nightly"}, "Pod": {pod, "Pod/app/shell"}} {
 		t.Run(name, func(t *testing.T) {
 			d := offline.Deployment{
-				Render:            renderer(t, rendertest.MapFS{"k8s/web.yaml": web, "k8s/extra.yaml": tc.manifest}),
-				ExpectedWorkloads: []string{webID, tc.id},
-				Policy:            offline.Policy{AllowedRegistries: []string{"registry.example"}},
+				Render: renderer(t, rendertest.MapFS{"k8s/web.yaml": web, "k8s/extra.yaml": tc.manifest}),
+				Policy: offline.Policy{AllowedRegistries: []string{"registry.example"}},
 			}
 			c := byID(t, offline.CheckDeployment(context.Background(), d).Checks)
-			want(t, c, "O1.workloads", operability.StatusPass, "")
 			got := want(t, c, "O6.allowlist", operability.StatusFail, operability.CauseAllowlist)
 			if !strings.Contains(got.Detail, "evil.example/") {
 				t.Fatalf("detail = %q", got.Detail)
-			}
-			d.ExpectedWorkloads = []string{webID}
-			if c := byID(t, offline.CheckDeployment(context.Background(), d).Checks); c["O1.workloads"].Status != operability.StatusFail {
-				t.Fatalf("plan without %s accepted: %+v", tc.id, c["O1.workloads"])
 			}
 		})
 	}

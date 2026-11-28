@@ -27,8 +27,9 @@ var gitRevision = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 // emits, tag or digest. Deploy and reads share the one Desired function.
 type Source struct {
 	Repository string
-	// Deployment names the renderer and its config. Nil reads fail with
-	// SourceUnconfigured.
+	// Deployment is the repository's override source. Nil derives the source
+	// from each revision's files (ResolveSource); a revision with no
+	// deployment files reads as SourceUnconfigured.
 	Deployment *contracts.DeploymentSource
 	// Catalog holds the renderers Deployment may name.
 	Catalog *render.Catalog
@@ -227,22 +228,24 @@ func (s Source) ShapeDigest(ctx context.Context, revision, namespace string) (st
 }
 
 // ShapeOf adapts the source to the injected function memory.AcceptedHealthRevision
-// takes: the shape of repository at revision, in namespace. A source with no
-// DeploymentSource has no renderer to read a shape from, so its "shape" is the
+// takes: the shape of repository at revision, in namespace. A revision with no
+// deployment files has no renderer to read a shape from, so its "shape" is the
 // effective tree ID: it changes exactly when a source file, a deployment view
 // or the patch series changes, never for memory-only commits.
 func (s Source) ShapeOf(namespace string) func(ctx context.Context, repository, revision string) (string, error) {
 	return func(ctx context.Context, repository, revision string) (string, error) {
 		s.Repository, s.cache = repository, nil
-		if s.Deployment == nil {
-			effective, err := s.effectiveAt(ctx, revision)
-			if err != nil {
-				return "", classifySource(err)
-			}
-			defer effective.Close()
-			return effective.ID, nil
+		shape, err := s.ShapeDigest(ctx, revision, namespace)
+		var unconfigured *SourceError
+		if !errors.As(err, &unconfigured) || unconfigured.Kind != SourceUnconfigured {
+			return shape, err
 		}
-		return s.ShapeDigest(ctx, revision, namespace)
+		effective, err := s.effectiveAt(ctx, revision)
+		if err != nil {
+			return "", classifySource(err)
+		}
+		defer effective.Close()
+		return effective.ID, nil
 	}
 }
 
@@ -273,9 +276,6 @@ func (s Source) desired(ctx context.Context, revision, namespace string) (Desire
 }
 
 func (s Source) requireDesired(namespace string) error {
-	if s.Deployment == nil {
-		return &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
-	}
 	if namespace == "" {
 		return sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
 	}

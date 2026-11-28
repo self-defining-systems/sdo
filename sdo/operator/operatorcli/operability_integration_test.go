@@ -51,7 +51,7 @@ func TestOperabilityCheckOfflineCleanCheckout(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("clean = %d\n%s%s", code, out, errOut)
 	}
-	for _, line := range []string{"pass     O1.patches", "pass     O1.render", "pass     O1.deterministic", "pass     O1.workloads", "pass     O6.scope", "skipped  O6.allowlist", "decision: accepted"} {
+	for _, line := range []string{"pass     O1.patches", "pass     O1.render", "pass     O6.scope", "skipped  O6.allowlist", "decision: accepted"} {
 		if !strings.Contains(out, line) {
 			t.Errorf("missing %q in\n%s", line, out)
 		}
@@ -67,14 +67,15 @@ func TestOperabilityCheckOfflineCleanCheckout(t *testing.T) {
 }
 
 func TestOperabilityCheckOfflineReportsTypedFailures(t *testing.T) {
-	work := cliWorld(t) // plan expects Deployment/default/app, which the tree does not render
+	work := cliWorld(t)
+	writePlan(t, work, strings.Replace(cleanPlan, `"paths":["k8s"]`, `"paths":["absent"]`, 1))
 	code, out, _ := operabilityCLI(t, nil, "check", "--offline", "--root", work, "--json")
 	o := decodeOutput(t, out)
-	if code != 1 || o.Decision.Kind != operability.Correct || o.Decision.Owner != operability.OwnerDeployer || len(o.Decision.Checks) != 1 || o.Decision.Checks[0] != "O1.workloads" {
-		t.Fatalf("expected workloads = %d %+v", code, o.Decision)
+	if code != 1 || o.Decision.Kind != operability.Correct || o.Decision.Owner != operability.OwnerDeployer || len(o.Decision.Checks) != 1 || o.Decision.Checks[0] != "O1.render" {
+		t.Fatalf("missing manifests = %d %+v", code, o.Decision)
 	}
 	code, out, _ = operabilityCLI(t, nil, "check", "--offline", "--root", work, "--allow-registry", "ghcr.io")
-	if code != 1 || !strings.Contains(out, "fail     O1.workloads [render]") || !strings.Contains(out, "owner=deployer") {
+	if code != 1 || !strings.Contains(out, "fail     O1.render [render]") || !strings.Contains(out, "owner=deployer") {
 		t.Fatalf("text = %d\n%s", code, out)
 	}
 
@@ -100,7 +101,8 @@ func TestOperabilityCheckOfflineReportsTypedFailures(t *testing.T) {
 		t.Fatalf("patch paths = %v", got)
 	}
 
-	// An invalid plan is O1.plan, and a missing plan is an infrastructure error.
+	// An invalid plan is O1.plan; a missing plan is no error (the source is
+	// derived from the files), so the check runs and reports the broken series.
 	writePlan(t, work, "{")
 	if code, out, _ := operabilityCLI(t, nil, "check", "--offline", "--root", work); code != 1 || !strings.Contains(out, "fail     O1.plan [render]") {
 		t.Fatalf("invalid plan = %d\n%s", code, out)
@@ -108,8 +110,8 @@ func TestOperabilityCheckOfflineReportsTypedFailures(t *testing.T) {
 	if err := os.Remove(filepath.Join(work, ".sdo", "deployment", "plan.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := operabilityCLI(t, nil, "check", "--offline", "--root", work); code != 2 || !strings.Contains(errOut, "plan.yaml") {
-		t.Fatalf("missing plan = %d %s", code, errOut)
+	if code, out, errOut := operabilityCLI(t, nil, "check", "--offline", "--root", work); code != 1 || !strings.Contains(out, "fail     O1.patches") {
+		t.Fatalf("missing plan = %d %s%s", code, out, errOut)
 	}
 }
 

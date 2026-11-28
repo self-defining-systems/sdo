@@ -95,10 +95,6 @@ func TestCheckOfflineFailsWhereApplyRejectsBeforeTheCluster(t *testing.T) {
 		plan *contracts.DeploymentPlan
 		want string
 	}{
-		"no expected workloads":     {&contracts.DeploymentPlan{Source: source}, "O1.workloads"},
-		"unexpected workload":       {depPlan(t, source, depRawWeb, "Deployment/demo/ghost"), "O1.workloads"},
-		"missing workload":          {depPlan(t, source, "Deployment/demo/ghost"), "O1.workloads"},
-		"duplicate expected":        {depPlan(t, source, depRawWeb, depRawWeb), "O1.workloads"},
 		"image declared but unused": {&contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: []string{depRawWeb}, Images: []*contracts.ImageSource{{Image: "never:1", SourceId: depImages, Config: depAny(t, &emptypb.Empty{})}}}, "O2.images"},
 		"unknown renderer":          {&contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "nope"}, ExpectedWorkloadIds: []string{depRawWeb}}, "O1.render"},
 	} {
@@ -115,10 +111,6 @@ func TestCheckOfflineFailsWhereApplyRejectsBeforeTheCluster(t *testing.T) {
 				t.Fatalf("failing checks = %v, want %s first: %+v", bad, tc.want, got.Checks)
 			}
 		})
-	}
-	deployer, _ := depDeployer(t, root, &clusterFake{})
-	if _, err := deployer.CheckOffline(context.Background(), root, &contracts.DeploymentPlan{ExpectedWorkloadIds: []string{depRawWeb}}); err == nil {
-		t.Fatal("a plan with no source is a wiring error, like apply's")
 	}
 }
 
