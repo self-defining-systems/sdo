@@ -87,17 +87,11 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	} else if !stageEscalatedIn(request.PriorStages) {
 		keys = findingKeys(request.Findings)
 	}
-	if scoped && len(keys) == 0 && report.StabilityDeadline == nil && !page {
-		interval := time.Second
-		for _, id := range c.recoveryDetectorIDs(*request) {
-			interval = max(interval, c.detectorSpecs[id].Interval)
+	if scoped && len(keys) == 0 && !page {
+		if extension, ok := c.clearAlertsExtensionLocked(observedAt, report, check); ok {
+			report.StabilityDeadline = contractTimestamp(extension)
+			return
 		}
-		stabilityDeadline := observedAt.Add(c.config.ClosureStabilityWindow + interval)
-		if response := request.ResponseDeadline; !response.IsZero() && response.Before(stabilityDeadline) {
-			stabilityDeadline = response
-		}
-		report.StabilityDeadline = contractTimestamp(stabilityDeadline)
-		return
 	}
 	if applied {
 		exit := contracts.RecoveryWait_EXIT_REASON_DEADLINE
@@ -130,6 +124,40 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	c.responderCompletedAt = time.Time{}
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	c.resetDispatchRetryLocked()
+}
+
+// clearAlertsExtensionLocked is how long a stage whose alerts all cleared
+// keeps waiting for Recovered: nothing is failing and nothing is left to hand
+// off. The stability window runs from this observation. When it ends with
+// Recovered pending only because the alert set's user tests have not yet
+// sampled enough since SDO's settled writes, it runs again, up to Recovered's
+// own horizon, instead of escalating a repair that reached users; an alert
+// that fires again still hands off within one window. An unsettled write, or
+// a proof still pending past that horizon, ends the wait, and the response
+// deadline caps it. ok is false when the wait is over.
+func (c *Controller) clearAlertsExtensionLocked(observedAt time.Time, report *contracts.StageReport, check recoveryCheck) (time.Time, bool) {
+	interval := time.Second
+	for _, id := range c.recoveryDetectorIDs(*c.currentIncidentRequest) {
+		interval = max(interval, c.detectorSpecs[id].Interval)
+	}
+	settle := c.config.ClosureStabilityWindow + interval
+	extension := observedAt.Add(settle)
+	if report.StabilityDeadline != nil {
+		record := check.record
+		if check.verdict != recoveryPending || !record.GetWritesSettled() || !record.GetSince().IsValid() {
+			return time.Time{}, false
+		}
+		if proof := record.GetSince().AsTime().Add(check.horizon + settle); proof.Before(extension) {
+			extension = proof
+		}
+	}
+	if response := c.currentIncidentRequest.ResponseDeadline; !response.IsZero() && response.Before(extension) {
+		extension = response
+	}
+	if report.StabilityDeadline != nil && !extension.After(report.GetStabilityDeadline().AsTime()) {
+		return time.Time{}, false
+	}
+	return extension, true
 }
 
 // handOffUnappliedStageLocked dispatches the agent as soon as a stage that
