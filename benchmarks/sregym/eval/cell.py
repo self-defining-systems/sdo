@@ -56,12 +56,18 @@ class Verdict:
     harm: str | None = None
 
 
+#: Page sources that are the harness's timed fallback (``results.csv`` column ``fallback_page``).
+HARNESS_FALLBACK_SOURCES = frozenset({"fallback", "deadline"})
+
+
 @dataclass(frozen=True)
 class ArmResult:
     """What an arm reports. Times are epoch seconds; ``paged_at`` is ``None`` when no page happened."""
 
     paged_at: float | None
-    page_source: str  # own | fallback | instruction | none
+    #: own | fallback | instruction | none; a harness page carries the ``source`` its ``page.json`` names
+    #: (``fallback``, or the impact hook's ``impact`` or ``deadline``).
+    page_source: str
     agent_ended_at: float
     status: str = "completed"  # completed | escalated | timeout | error
     recovered_at: float | None = None
@@ -538,7 +544,7 @@ def _finish(
         t_page=t_page,
         page_source=result.page_source if result else "none",
         no_page=t_page is None,
-        fallback_page=bool(result and result.page_source == "fallback"),
+        fallback_page=bool(result and result.page_source in HARNESS_FALLBACK_SOURCES),
         t_healthy=healthy,
         t_recovered=recovered,
         t_closed=result.closed_at if result else None,

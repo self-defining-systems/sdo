@@ -143,7 +143,9 @@ def first_unhealthy_at(probes: Path, since: float) -> float | None:
 @dataclass
 class ImpactPageHook:
     """Pages SDO once, at the first unhealthy sample of the runner's own prober after injection (not SDO's detectors),
-    or at ``injected_at + deadline_seconds`` when the prober saw nothing by then. For the detector-ablation arm, whose
+    or at ``injected_at + deadline_seconds`` when the prober saw nothing by then. ``injected_at`` is the injection
+    start the row recorded before calling the injector (``fastloop.injection_marker``), so a slow injector return
+    delays neither. For the detector-ablation arm, whose
     controller runs with ``detection.pages_only``: SDO's detectors never open an incident, so this page always does.
 
     The text is the same generic notice as the fallback page (``lane_notice``): no detector, alert or diagnosis content.

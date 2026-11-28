@@ -29,7 +29,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -225,12 +225,20 @@ def injection_cause(record: IncidentRecord) -> str:
     return f"injection:invalid/{reason[:120]}"
 
 
+@dataclass(frozen=True)
+class HarnessPage:
+    """A page the harness itself sent: when, and the ``source`` written to ``page.json``."""
+
+    at: float
+    source: str
+
+
 def map_record(
-    record: IncidentRecord, cell: Cell, memory_head: str | None, fallback_page_at: float | None = None
+    record: IncidentRecord, cell: Cell, memory_head: str | None, harness_page: HarnessPage | None = None
 ) -> ArmResult:
     """The arm-neutral view of a fastloop incident record.
 
-    ``fallback_page_at`` is when the harness paged SDO because it had no incident of its own; it is then the clock.
+    ``harness_page`` is the page the harness sent SDO; it is then the clock and names the page source.
     """
     injected = _epoch(record.injection_started_at)
     agent_end = (
@@ -239,8 +247,8 @@ def map_record(
     sdo = cell.arm == "sdo"
     page: float | None
     source: str
-    if sdo and fallback_page_at is not None:
-        page, source = fallback_page_at, "fallback"
+    if sdo and harness_page is not None:
+        page, source = harness_page.at, harness_page.source
     elif sdo:
         detected = _epoch(record.detected_at)
         if detected is not None and injected is not None and detected - injected <= OWN_PAGE_WINDOW_SECONDS:
@@ -591,7 +599,7 @@ class FastloopRowRunner:
                     "handles": (out, err),
                     "started": started,
                     "online_end": None,
-                    "fallback_page_at": None,
+                    "harness_page": None,
                 }
             )
             deadline = started + context.config.cell_cap_seconds + 600
@@ -607,9 +615,7 @@ class FastloopRowRunner:
                 self.records[cell.id] = record
                 state["online_end"] = self._now()
                 self._record_attempt(directory, row_id, started, None, retried=False)
-                return replace(
-                    map_record(record, cell, None, state["fallback_page_at"]), app_source=_ran_source(results)
-                )
+                return replace(map_record(record, cell, None, state["harness_page"]), app_source=_ran_source(results))
             completed = self._finish_process(directory, state)
             cause = _rejected_before_injection(results)
             longest = max(longest, self._now() - started)
@@ -649,7 +655,7 @@ class FastloopRowRunner:
         if head and self._import_memory is not None:
             self._import_memory(cell.app, cell.problem, environment.workspace, head)
         state["finished"] = True
-        return replace(map_record(record, cell, head, state["fallback_page_at"]), app_source=_ran_source(results))
+        return replace(map_record(record, cell, head, state["harness_page"]), app_source=_ran_source(results))
 
     def _fallback_page(
         self, lane: Lane, cell: Cell, directory: Path, state: dict[str, Any], context: ArmContext
@@ -658,7 +664,7 @@ class FastloopRowRunner:
 
         A failing page is recorded and retried at the next poll; it never stops the row.
         """
-        if state["fallback_page_at"] is not None:
+        if state["harness_page"] is not None:
             return
         marker = read_injection_marker(state["results"])
         if marker is None or state.get("own_incident_at") is not None:
@@ -681,9 +687,9 @@ class FastloopRowRunner:
                 encoding="utf-8",
             )
         if paged_at is not None:
-            state["fallback_page_at"] = paged_at
             page = {"injected_at": injected, "paged_at": paged_at, "source": "fallback"}
             page |= context.page_hook.record(cell) or {}
+            state["harness_page"] = HarnessPage(paged_at, str(page["source"]))
             (directory / "page.json").write_text(json.dumps(page) + "\n", encoding="utf-8")
 
     def _stop(self, process: Any) -> None:

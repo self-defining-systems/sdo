@@ -10,7 +10,14 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from benchmarks.sregym.eval.cell import ArmContext, Injection, Lane, NoPageHook
-from benchmarks.sregym.eval.fastloop_row import FastloopRowRunner, RowSettings, map_record, row_command, run_id
+from benchmarks.sregym.eval.fastloop_row import (
+    FastloopRowRunner,
+    HarnessPage,
+    RowSettings,
+    map_record,
+    row_command,
+    run_id,
+)
 from benchmarks.sregym.eval.plan import Arm, Cell, PlanPass
 from benchmarks.sregym.eval.timings import PHASES
 from benchmarks.sregym.fastloop.records import IncidentRecord
@@ -206,7 +213,7 @@ def test_a_late_sdo_incident_without_a_fallback_page_is_no_page() -> None:
 
 def test_a_fallback_page_is_the_clock_even_though_the_incident_it_opened_is_late() -> None:
     page = T0.timestamp() + 121
-    result = map_record(record(detected_at=at(125)), cell(), None, fallback_page_at=page)
+    result = map_record(record(detected_at=at(125)), cell(), None, HarnessPage(page, "fallback"))
     assert result.paged_at == page
     assert result.page_source == "fallback"
 

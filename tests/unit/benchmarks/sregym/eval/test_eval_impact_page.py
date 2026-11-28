@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from benchmarks.sregym.eval.cell import ArmContext, Injection
+from benchmarks.sregym.eval.cell import HARNESS_FALLBACK_SOURCES, ArmContext, Injection
 from benchmarks.sregym.eval.page import (
     FallbackPageHook,
     ImpactPageHook,
@@ -27,6 +27,8 @@ from tests.unit.benchmarks.sregym.eval.test_eval_page import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from benchmarks.sregym.eval.cell import ArmResult
 
 INJECTED = 1000.0
 DEADLINE = 120.0
@@ -108,20 +110,17 @@ def test_the_config_selects_the_hook_and_the_fallback_stays_the_default(tmp_path
         make_config(tmp_path, page="detector")
 
 
-def test_the_row_records_the_impact_page_and_uses_it_as_the_clock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def impact_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, unhealthy: bool) -> tuple[ArmResult, dict[str, Any]]:
+    """A fastloop row paged by the impact hook; its prober sees the app unhealthy from injection, or never."""
     monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.apply_lane_cpu", lambda *args, **kwargs: None)
     fake = Row(tmp_path, monkeypatch, online_after=400, exit_after=500)
     plain_start = fake.start
-    injected: list[float] = []
 
     def start(command: list[str], **kwargs: Any) -> Any:
         process = plain_start(command, **kwargs)
         assert fake.results is not None
-        injected.append(fake.time.now())
-        write_injection_marker_at(fake.results, injected[0])
-        write_probes(tmp_path / "probes.jsonl", [{"at": injected[0], "healthy": False}])
+        write_injection_marker_at(fake.results, fake.time.now())
+        write_probes(tmp_path / "probes.jsonl", [{"at": fake.time.now(), "healthy": not unhealthy}])
         return process
 
     fake.start = start  # type: ignore[method-assign]
@@ -133,11 +132,26 @@ def test_the_row_records_the_impact_page_and_uses_it_as_the_clock(
     context = ArmContext(config=make_config(tmp_path), page_hook=hook, now=fake.time.now, sleep=fake.time.sleep)
     lane = runner.claim(sdo_cell(), "h1", None)
     result = runner.execute(lane, sdo_cell(), Injection(at=0), tmp_path, context)
-
     assert cluster.sent == [("page-fixed", lane_notice(make_lane_for(fake)))]
     page = json.loads((tmp_path / "page.json").read_text())
-    assert page["source"] == "impact"
-    assert page["impact_at"] == injected[0]
-    assert page["impact_at"] <= page["paged_at"] <= page["impact_at"] + 2  # fake poll step is one second
     assert page["text"] == lane_notice(make_lane_for(fake))
     assert result.paged_at == page["paged_at"]
+    return result, page
+
+
+def test_the_row_records_the_impact_page_and_uses_it_as_the_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, page = impact_row(tmp_path, monkeypatch, unhealthy=True)
+    assert page["source"] == "impact"
+    assert page["impact_at"] == page["injected_at"]
+    assert page["impact_at"] <= page["paged_at"] <= page["impact_at"] + 2  # fake poll step is one second
+
+
+@pytest.mark.parametrize(("unhealthy", "source", "fallback"), [(True, "impact", False), (False, "deadline", True)])
+def test_results_name_the_page_that_page_json_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unhealthy: bool, source: str, fallback: bool
+) -> None:
+    result, page = impact_row(tmp_path, monkeypatch, unhealthy=unhealthy)
+    assert page["source"] == result.page_source == source
+    assert (result.page_source in HARNESS_FALLBACK_SOURCES) is fallback

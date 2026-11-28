@@ -49,7 +49,7 @@ from benchmarks.sregym.fastloop.evidence_queue import (
     snapshot_id_for,
     stash_checkpoint_inputs,
 )
-from benchmarks.sregym.fastloop.injection_marker import write_injection_marker
+from benchmarks.sregym.fastloop.injection_marker import clear_injection_marker, write_injection_marker
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout, ResolutionGradePoint
 from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, RecoveryTrigger, TokenCounts
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
@@ -404,8 +404,14 @@ class SdoPersistentAgent:
                 self._continuity_before = self._controller_identity()
             # Incidents the controller already names are not this injection's; any other is SDO's own since.
             known = state_incident_ids(self._ops.runtime_state(settings.runtime_config.control_namespace))
-            windows.append(inject())
-            write_injection_marker(settings.results_dir, windows[0].started_at, known)
+            # Before the call, not after: the injector returns only when its rollouts settle, long after users are hit,
+            # and a watcher (the eval runner's page) times from this start.
+            write_injection_marker(settings.results_dir, datetime.now(timezone.utc), known)
+            try:
+                windows.append(inject())
+            except Exception:
+                clear_injection_marker(settings.results_dir)
+                raise
 
         def measure_verified(incident_id: str, detected_at: datetime | None, verified_at: datetime | None) -> None:
             if not windows:

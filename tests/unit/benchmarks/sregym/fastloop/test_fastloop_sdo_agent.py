@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,10 +24,13 @@ from benchmarks.sregym.adapter.persistent import (
     control_namespace_for,
     drain_pending_incident,
 )
+from benchmarks.sregym.eval.page import ImpactPageHook
+from benchmarks.sregym.fastloop.injection_marker import read_injection_marker
 from benchmarks.sregym.fastloop.loop import InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict, load_records
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
 from tests.unit.benchmarks.sregym.adapter.test_persistent import _with_controller_busy_until
+from tests.unit.benchmarks.sregym.eval.test_eval_page import FakeCluster, make_lane, sdo_cell
 
 
 def test_program_metrics_exports_match_evidence_and_skip_reason() -> None:
@@ -607,6 +611,50 @@ def test_an_injection_failure_propagates_to_the_loop(tmp_path: Path) -> None:
 
     with pytest.raises(ControllerInstallError, match="could not inject"):
         agent.resolve(0, "p", failing_inject)
+
+
+def test_a_slow_injector_is_paged_from_the_injection_start(tmp_path: Path) -> None:
+    """The injector call returns long after the fault is live (it waits for rollouts). The impact page times from the
+    start recorded before the call: within 6 s of impact, and the deadline page at start + 120 s."""
+    agent = _agent(tmp_path, FakeOps(), [])
+    results = tmp_path / "incidents"
+    pages: dict[str, tuple[float, dict[str, Any] | None]] = {}
+
+    def slow_inject() -> InjectionWindow:
+        marker = read_injection_marker(results)
+        assert marker is not None, "no start marker while the injector call is running"
+        start = marker.started_at
+        for name, probes_unhealthy_at, polled_at in (("impact", start + 3, start + 4), ("deadline", None, start + 120)):
+            probes = tmp_path / f"{name}.jsonl"
+            if probes_unhealthy_at is not None:
+                probes.write_text(json.dumps({"at": probes_unhealthy_at, "healthy": False}) + "\n")
+            hook = ImpactPageHook(120.0, FakeCluster(), lambda at=polled_at: at, probes=lambda cell, p=probes: p)
+            assert hook.page(make_lane(), sdo_cell(), start) == polled_at
+            pages[name] = (start, hook.record(sdo_cell()))
+        return _inject()
+
+    before = time.time()
+    agent.resolve(0, "p", slow_inject)
+
+    start, impact = pages["impact"]
+    assert before <= start <= time.time()
+    assert impact is not None
+    assert impact["source"] == "impact"
+    assert impact["impact_at"] <= impact["paged_at"] <= impact["impact_at"] + 6
+    start, deadline = pages["deadline"]
+    assert deadline is not None
+    assert (deadline["source"], deadline["paged_at"]) == ("deadline", start + 120)
+
+
+def test_a_failed_injection_leaves_no_start_marker(tmp_path: Path) -> None:
+    agent = _agent(tmp_path, FakeOps(), [])
+
+    def failing_inject() -> InjectionWindow:
+        raise ControllerInstallError("worker could not inject")
+
+    with pytest.raises(ControllerInstallError, match="could not inject"):
+        agent.resolve(0, "p", failing_inject)
+    assert read_injection_marker(tmp_path / "incidents") is None
 
 
 def test_a_closure_missed_between_polls_takes_its_times_from_the_receipt(tmp_path: Path) -> None:
