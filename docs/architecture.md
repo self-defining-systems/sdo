@@ -362,7 +362,8 @@ Readiness is not recovery. One predicate, Recovered (`runtime/recovery_verificat
 clears the automatic stage and ends the responder session: the incident's alert set cleared
 and stayed clear for the stability window after SDO's last change settled. `since` is the later of detection and the
 completion time of SDO's last write. A pending workload write must be observed by its controller and show
-progress on the written revision. A later Pod Ready transition does not move the write epoch. An opening user test recovers when its fresh samples since `since` meet its SLO,
+progress on the written revision. A write with no rollout (a data repair, an exec) settles when it completes; a record
+whose completion was lost settles from its start, its plan's workloads still gating. A later Pod Ready transition does not move the write epoch. An opening user test recovers when its fresh samples since `since` meet its SLO,
 so do those in the trailing stability window, and its latest sample is good; its detector clearing is not enough,
 because its SLO window can still hold samples from before the fix. An opening Kubernetes condition recovers when its
 finding is inactive with a clear streak of the stability window. A complete proof is still held while a user test of the

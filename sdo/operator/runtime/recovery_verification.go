@@ -241,7 +241,18 @@ func sdoWrites(in verificationInput) (writes []sdoWrite, since time.Time, settle
 		if id == "" {
 			id = fmt.Sprintf("plan-application-%d", i)
 		}
-		w := sdoWrite{id: id, settledAt: application.CompletedAt, settled: !pendingAtCompletion || len(refs) > 0}
+		// A write settles when nothing it touched still rolls out. One with no
+		// rollout to wait for (a data repair, an exec) settles when it
+		// completes, whatever its pending-recovery flag. A record with no
+		// completion time is not running: snapshots are taken under the
+		// loop's lock, so it is a checkpoint whose completing save was lost.
+		// It settles from its start; the objects it may have written still
+		// gate below. Only a rollout naming no object stays unsettled.
+		settledAt := application.CompletedAt
+		if settledAt.IsZero() {
+			settledAt = application.StartedAt
+		}
+		w := sdoWrite{id: id, settledAt: settledAt, settled: application.Result.RolloutPending == nil || len(refs) > 0}
 		for _, effect := range application.Result.ObjectEffects {
 			if effect.State == "not_applied" || effect.Operation != "delete" || effect.Ref.Kind != "Pod" || effect.UID == "" {
 				continue
@@ -388,7 +399,8 @@ func (r componentResolver) selecting(podLabels map[string]string) string {
 }
 
 // recoveryApplicationRefs are the resources written by the application. A
-// pending receipt may predate the executor's readback of an action.
+// pending record without a readback (one in flight when it was saved) names
+// its plan's targets: any of them may have been written.
 func recoveryApplicationRefs(application RecordedPlanApplication) []sdk.ObjectRef {
 	var refs []sdk.ObjectRef
 	for _, effect := range application.Result.ObjectEffects {
@@ -397,8 +409,7 @@ func recoveryApplicationRefs(application RecordedPlanApplication) []sdk.ObjectRe
 		}
 	}
 	actions := application.Result.ActionsApplied
-	if len(actions) == 0 && (application.Pending || application.Result.RolloutPending != nil) &&
-		(application.Result.Applied || application.Result.RolledBack) {
+	if len(actions) == 0 && (application.Pending || application.Result.RolloutPending != nil) {
 		actions = application.Result.Plan.Actions
 	}
 	for _, action := range actions {
