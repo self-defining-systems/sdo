@@ -20,7 +20,7 @@ func onboardProposal(t *testing.T, w *advanceWorld, id string) (Proposal, Source
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, p.Path, map[string]string{".sdo/deployment/values/" + id + ".yaml": "replicas: 2\n"})
+	commitDeploymentFile(t, p.Path, id)
 	evidence := advanceEvidence(t, p.Path, id)
 	return p, evidence, deploymentReportFor(t, evidence, p.BaseCommit)
 }
@@ -38,7 +38,6 @@ func TestPublishVerifiedSourceRefusesAReportThatDoesNotBindOrDecide(t *testing.T
 	w := newAdvanceWorld(t)
 	for name, mutate := range map[string]func(*operability.Report){
 		"another effective tree": func(r *operability.Report) { r.Subject.EffectiveTree = strings.Repeat("9", 40) },
-		"another patch series":   func(r *operability.Report) { r.Subject.PatchesDigest = other },
 		"another source tree":    func(r *operability.Report) { r.Subject.BaseTree = strings.Repeat("8", 40) },
 		"another render":         func(r *operability.Report) { r.Subject.RenderDigest = other },
 		"another environment":    func(r *operability.Report) { r.Subject.EnvDigest = other },
@@ -203,14 +202,13 @@ func TestCandidateOperabilityIsRecomputedFromTheStageAndTheDeployment(t *testing
 	candidate := Candidate{IncidentID: "judge", Actor: HealthJudge, Phase: InitialPhase, Path: w.accepted, Commit: head, Tree: tree}
 	good := func() CandidateEvidence {
 		subject := operability.Subject{
-			AcceptedCommit: head, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest,
-			RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest, SettingsDigest: testSettingsDigest, DiagnosticsTree: diagnostics,
+			AcceptedCommit: head, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest, SettingsDigest: testSettingsDigest, DiagnosticsTree: diagnostics,
 		}
 		complete, err := operability.New(operability.StageComplete, subject).With(passingChecks("O1.deploy", "O2.stamps", "O3.ready", "O4.detectors", "O5.memory", "O6.budget")...)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return CandidateEvidence{Commit: head, Tree: tree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest, Operability: &complete}
+		return CandidateEvidence{Commit: head, Tree: tree, EffectiveTree: evidence.EffectiveTree, Operability: &complete}
 	}
 	other := strings.Repeat("9", 64)
 	failed := operability.Check{ID: "O4.detectors", Phase: operability.PhaseLive, Status: operability.StatusFail, Cause: operability.CauseDetectorFault}
@@ -220,7 +218,6 @@ func TestCandidateOperabilityIsRecomputedFromTheStageAndTheDeployment(t *testing
 		"another diagnostics tree": func(e *CandidateEvidence) { e.Operability.Subject.DiagnosticsTree = strings.Repeat("6", 40) },
 		"another source tree":      func(e *CandidateEvidence) { e.Operability.Subject.BaseTree = strings.Repeat("8", 40) },
 		"another effective tree":   func(e *CandidateEvidence) { e.Operability.Subject.EffectiveTree = strings.Repeat("9", 40) },
-		"another patch series":     func(e *CandidateEvidence) { e.Operability.Subject.PatchesDigest = other },
 		"another render":           func(e *CandidateEvidence) { e.Operability.Subject.RenderDigest = other },
 		"another environment":      func(e *CandidateEvidence) { e.Operability.Subject.EnvDigest = other },
 		"the deployment stage":     func(e *CandidateEvidence) { e.Operability.Stage = operability.StageDeployment },

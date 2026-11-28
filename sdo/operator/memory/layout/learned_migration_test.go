@@ -72,8 +72,8 @@ func TestMigrateToSchema13RenamesIncidentClassToLearned(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(DetectorDir(ClassHealth, "health")+"/detector.go"))); string(got) != healthSource {
 		t.Fatalf("health detector changed: %q", got)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
-		t.Fatalf("schema-version = %q, want 14", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "15\n" {
+		t.Fatalf("schema-version = %q, want 15", got)
 	}
 	if changed, err := Migrate(root); err != nil || changed {
 		t.Fatalf("second Migrate = %v, %v; want unchanged", changed, err)
@@ -107,7 +107,7 @@ func TestMigrateSchema13PreservesLegacyCorpusLabels(t *testing.T) {
 	if changed, err := Migrate(root); err != nil || !changed {
 		t.Fatalf("migration = %v, %v", changed, err)
 	}
-	if version, err := readSchemaVersion(root); err != nil || version != 14 {
+	if version, err := readSchemaVersion(root); err != nil || version != 15 {
 		t.Fatalf("version = %d, %v", version, err)
 	}
 	if data, err := os.ReadFile(filepath.Join(root, label)); err != nil || string(data) != content {

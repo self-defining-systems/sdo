@@ -89,7 +89,7 @@ func (w *repairWorld) run() (lifecycle.RepairResult, error) {
 	return w.deployer().Repair(context.Background(), repairConfig, "inc-1")
 }
 
-const repairPatch = ".sdo/deployment/patches/0001-fix.patch"
+const repairPatch = "k8s/app.yaml"
 
 // An accepted change to deployment inputs is deployed by the trusted Deployer
 // before the broker accepts it: stage, apply the staged tree, verify its
@@ -110,19 +110,17 @@ func TestRepairDeploysTheStagedTreeThenAccepts(t *testing.T) {
 	}
 }
 
-// Every deployment input class (values, manifests, build, overlays, patches)
-// takes the deployed path; a source repair that changes none is published as
-// before, and a proposal without a repair does nothing.
+// Every committed app file takes the deployed path; a repair that changes
+// only memory is published as before, and a proposal without a repair does
+// nothing.
 func TestRepairDeploysEveryDeploymentInputKind(t *testing.T) {
 	for _, tc := range []struct {
 		path    string
 		outcome lifecycle.RepairOutcome
 	}{
-		{".sdo/deployment/patches/0002-x.patch", lifecycle.RepairDeployed},
-		{".sdo/deployment/values/values.yaml", lifecycle.RepairDeployed},
-		{".sdo/deployment/manifests/app.yaml", lifecycle.RepairDeployed},
-		{".sdo/deployment/build/Dockerfile", lifecycle.RepairDeployed},
-		{".sdo/deployment/overlays/telemetry/kustomization.yaml", lifecycle.RepairDeployed},
+		{"chart/values.yaml", lifecycle.RepairDeployed},
+		{"k8s/app.yaml", lifecycle.RepairDeployed},
+		{"Dockerfile", lifecycle.RepairDeployed},
 		{".sdo/deployment/plan.yaml", lifecycle.RepairPublished},
 		{".sdo/playbooks/p/program.go", lifecycle.RepairNone},
 	} {

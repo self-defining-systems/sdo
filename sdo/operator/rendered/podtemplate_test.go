@@ -60,13 +60,6 @@ func TestEveryPodKindIsAWorkloadWithImageSites(t *testing.T) {
 			if got, want := strings.Join(rendered.ImageSites(set), " "), "r/"+lower+"-init:1 r/"+lower+":1"; got != want {
 				t.Fatalf("image sites = %q, want %q", got, want)
 			}
-			id := kind + "/app/x"
-			if err := rendered.CheckExpectedWorkloads(set, []string{id}); err != nil {
-				t.Fatal(err)
-			}
-			if err := rendered.CheckExpectedWorkloads(set, nil); err == nil {
-				t.Fatalf("a plan without %s was accepted", id)
-			}
 			obj := set.Objects()[0]
 			if !obj.Workload {
 				t.Fatalf("%s is not marked a workload", kind)

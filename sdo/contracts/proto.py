@@ -229,7 +229,6 @@ RawRenderConfig = deployment_source_pb2.RawRenderConfig
 KustomizeRenderConfig = deployment_source_pb2.KustomizeRenderConfig
 BuildKitImageConfig = deployment_source_pb2.BuildKitImageConfig
 PrebuiltImageConfig = deployment_source_pb2.PrebuiltImageConfig
-RawManifestStrategy = lifecycle_pb2.RawManifestStrategy
 ImageBuild = lifecycle_pb2.ImageBuild
 HealthJudgeRequest = lifecycle_pb2.HealthJudgeRequest
 HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
@@ -364,7 +363,6 @@ __all__ = [
     "SourceDeploymentRequest",
     "SourceDeploymentResult",
     "DeploymentPlan",
-    "RawManifestStrategy",
     "DeploymentSource",
     "ImageSource",
     "RawRenderConfig",

@@ -19,9 +19,8 @@ type GitPlanSource = rendered.Source
 var ErrAcceptedManifestAbsent = rendered.ErrAcceptedManifestAbsent
 
 // acceptedDeploymentSource is the deployment source the accepted checkout at
-// root declares in .sdo/deployment/plan.yaml. A checkout without a plan has no
-// source (reads fail with SourceUnconfigured); the operator-CLI controller,
-// which launches this process, refuses to start without one. The structural
+// root names in its optional override .sdo/deployment/plan.yaml. Without one
+// it is nil and every read derives the source from the files. The structural
 // decode runs here; renderer configs are decoded again when the source renders.
 func acceptedDeploymentSource(root string) (*contracts.DeploymentSource, error) {
 	plan, err := planfile.Read(root, planfile.Catalogs{})

@@ -36,7 +36,6 @@ func (interruptedReadiness) ApplyAndVerify(ctx context.Context, checkout string,
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	defer effective.Close()
 	write := rendered.TargetWrite{Phase: "default", Pins: rendered.ReceiptPins{EffectiveTree: effective.ID, BaseTree: tree}}
 	if err := lifecycle.RecordTarget(ctx, write); err != nil {
 		return lifecycle.DeploymentReceipt{}, err

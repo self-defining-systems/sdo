@@ -18,7 +18,8 @@ import re
 import subprocess
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from benchmarks.sregym.adapter.deployment_source import (
     DeploymentPolicyConfig,
@@ -42,9 +43,6 @@ from benchmarks.sregym.adapter.native_operator import (
     sync_existing,
 )
 from tests.unit.benchmarks.sregym.adapter.launch_capture import config_files, overlay, stub_resolution
-
-if TYPE_CHECKING:
-    import pytest
 
 ADAPTER = Path(__file__).resolve().parents[5] / "benchmarks" / "sregym" / "adapter" / "native_operator.py"
 ADAPTER_COMMANDS = {
@@ -160,9 +158,7 @@ def _emitted(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
             max_attempts=2,
             agent_registrations=Path("/fixture/registrations.json"),
             deployment_plan=deployment_plan(
-                helm_source("chart"),
-                images=(buildkit_image("app:v1", ".", "Dockerfile"),),
-                expected_workload_ids=["Deployment/hotel/web"],
+                helm_source("chart"), images=(buildkit_image("app:v1", ".", "Dockerfile"),)
             ),
         )
     )
@@ -203,3 +199,22 @@ def test_every_go_operator_command_the_adapter_runs_is_covered() -> None:
     # in the fixture and parsed by the Go test.
     called = set(re.findall(r'(?:execute_operator|_run)\(\s*"([a-z-]+)"', ADAPTER.read_text(encoding="utf-8")))
     assert called == ADAPTER_COMMANDS
+
+
+_COMMITTED_OVERRIDES: list[tuple[Path, dict]] = []
+
+
+@pytest.fixture(autouse=True)
+def _record_committed_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The adapter commits the override into the lane repository as a human; record it instead of running git."""
+    from benchmarks.sregym.adapter import native_operator
+
+    _COMMITTED_OVERRIDES.clear()
+    monkeypatch.setattr(
+        native_operator, "commit_override", lambda repository, plan: _COMMITTED_OVERRIDES.append((repository, plan))
+    )
+
+
+def _committed_override_source(_root: Path) -> object:
+    """The source of the override the adapter committed (no launcher flag carries it)."""
+    return _COMMITTED_OVERRIDES[-1][1]["source"]

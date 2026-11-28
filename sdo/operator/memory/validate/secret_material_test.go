@@ -8,14 +8,14 @@ func TestSecretMaterialInAuthoredFiles(t *testing.T) {
 		name, path, body string
 		want             bool
 	}{
-		{"plain password in values", ".sdo/deployment/values/app.yaml", "db:\n  password: hunter2hunter2\n", true},
-		{"quoted token key", ".sdo/deployment/values/app.yaml", "api:\n  \"apiToken\": \"abc123\"\n", true},
-		{"pem in patch", ".sdo/deployment/patches/0001-x.patch", "+" + pem, true},
-		{"token prefix in manifest", ".sdo/deployment/manifests/a.yaml", "data: ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789\n", true},
+		{"plain password in the override", ".sdo/deployment/plan.yaml", "db:\n  password: hunter2hunter2\n", true},
+		{"quoted token key", ".sdo/deployment/plan.yaml", "api:\n  \"apiToken\": \"abc123\"\n", true},
+		{"pem in a playbook", ".sdo/playbooks/p/README.md", pem, true},
+		{"token prefix in the override", ".sdo/deployment/plan.yaml", "data: ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789\n", true},
 		{"aws key id in playbook", ".sdo/playbooks/p/README.md", "use AKIA" + "ABCDEFGHIJKLMNOP\n", true},
-		{"empty password", ".sdo/deployment/values/app.yaml", "db:\n  password: \"\"\n", false},
-		{"templated password", ".sdo/deployment/values/app.yaml", "db:\n  password: {{ .Values.pw }}\n", false},
-		{"secret reference", ".sdo/deployment/values/app.yaml", "db:\n  existingSecret: db-creds\n  secretKeyRef: pw\n", false},
+		{"empty password", ".sdo/deployment/plan.yaml", "db:\n  password: \"\"\n", false},
+		{"templated password", ".sdo/deployment/plan.yaml", "db:\n  password: {{ .Values.pw }}\n", false},
+		{"secret reference", ".sdo/deployment/plan.yaml", "db:\n  existingSecret: db-creds\n  secretKeyRef: pw\n", false},
 		{"imported chart is not scanned by key", ".sdo/deployment/chart/values.yaml", "password: changeme\n", false},
 	}
 	for _, c := range cases {

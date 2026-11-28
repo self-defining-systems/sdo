@@ -81,10 +81,6 @@ type Config struct {
 	// branch. MemoryUpstreamSSHSecret names an existing Secret holding the
 	// ssh "identity" and "known_hosts", mounted read-only.
 	MemoryUpstreamURL, MemoryUpstreamBranch, MemoryUpstreamSSHSecret string
-	// DeploymentPlan is a provided deployment (compact ProtoJSON
-	// DeploymentPlan): the operate Job deploys it instead of asking the
-	// deployer agent for a plan.
-	DeploymentPlan string
 	// EvidenceSink is the runner's evidence sink as compact JSON (EvidenceSink.Format); empty keeps evidence only on
 	// the repository volume. The controller and operate Pods then run the evidence sidecar.
 	EvidenceSink string

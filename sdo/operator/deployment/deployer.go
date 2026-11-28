@@ -100,7 +100,6 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	defer effective.Close()
 	fsys, err := rendered.GitTreeFS(ctx, effective)
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
@@ -468,8 +467,7 @@ func (r *applyRun) receipt(ctx context.Context) (lifecycle.DeploymentReceipt, er
 	}
 	sort.Strings(ids)
 	receipt := lifecycle.DeploymentReceipt{
-		BaseTree: r.base, EffectiveTree: r.effective.ID, PatchesDigest: r.effective.PatchesDigest,
-		ObservedRevision: r.effective.ID, ResourceIDs: ids, Ready: true, Recreated: r.recreations(),
+		BaseTree: r.base, EffectiveTree: r.effective.ID, ObservedRevision: r.effective.ID, ResourceIDs: ids, Ready: true, Recreated: r.recreations(),
 	}
 	for _, id := range ids {
 		record := r.workloads[id]

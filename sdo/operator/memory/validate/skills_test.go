@@ -32,8 +32,7 @@ var internalRules = map[string]string{
 	RuleUnknownActor:            "the controller supplies the actor; an agent cannot choose it",
 	RuleUnknownPhase:            "the controller supplies the phase; an agent cannot choose it",
 	RuleUnsafePath:              "a path-traversal guard against malformed diffs, not an authoring decision",
-	RulePatchUpstreamBase:       "Go fills Upstream-Base; agents never choose it",
-	RuleDeploymentInvalid:       "Go writes the canonical plan.yaml during deployment admission; no skill flow edits it",
+	RuleDeploymentInvalid:       "the optional override is decoded at deployment; the serving skill documents its fields",
 
 	RuleTrafficDefaultLatency: "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches latency bounds",
 }
@@ -169,8 +168,7 @@ func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 		"sdo-operations-map/SKILL.md", "sdo-detectors/references/cause-catalog.md",
 		"sdo-detectors/references/methods.md", "sdo-operations-map/references/map.md",
 		"sdo-operations-map/references/rules.md", "sdo-detectors/references/probes.md",
-		"sdo-serving/SKILL.md", "sdo-serving/references/patch-rules.md",
-		"sdo-serving/SKILL.md", "sdo-serving/references/catalog.md", "sdo-source-advance/SKILL.md",
+		"sdo-serving/SKILL.md", "sdo-serving/references/catalog.md", "sdo-serving/references/rules.md",
 	} {
 		if _, err := os.Stat(filepath.Join(skillsRoot, filepath.FromSlash(rel))); err != nil {
 			missing = append(missing, rel)

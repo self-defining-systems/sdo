@@ -2,8 +2,6 @@ package deployment
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,7 +10,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/operability"
-	"sdo.dev/operator/patchset"
 )
 
 func checksByID(t *testing.T, checks []operability.Check) map[string]operability.Check {
@@ -36,13 +33,13 @@ func failed(checks []operability.Check) []string {
 
 // The offline checks are computed from the same tree, environment and shared
 // functions as apply: for a passing plan every digest equals the one the
-// receipt records, with and without a patch series.
+// receipt records, with and without a committed source change.
 func TestCheckOfflineAgreesWithApplyAndVerify(t *testing.T) {
-	for name, patch := range map[string]bool{"no patches": false, "with a patch": true} {
+	for name, change := range map[string]bool{"base": false, "with a commit": true} {
 		t.Run(name, func(t *testing.T) {
 			root, source := depRawFixture(t)
-			if patch {
-				patchWeb(t, root)
+			if change {
+				commitWeb2(t, root)
 			}
 			plan := depPlan(t, source, depRawWeb)
 			deployer, _ := depDeployer(t, root, &clusterFake{})
@@ -58,11 +55,11 @@ func TestCheckOfflineAgreesWithApplyAndVerify(t *testing.T) {
 				t.Fatal(err)
 			}
 			if offlineChecks.BaseTree != receipt.BaseTree || offlineChecks.EffectiveTree != receipt.EffectiveTree ||
-				offlineChecks.PatchesDigest != receipt.PatchesDigest || offlineChecks.RenderDigest != receipt.RenderDigest || offlineChecks.EnvDigest != receipt.EnvDigest {
+				offlineChecks.RenderDigest != receipt.RenderDigest || offlineChecks.EnvDigest != receipt.EnvDigest {
 				t.Fatalf("offline identities %+v differ from the receipt %+v", offlineChecks, receipt)
 			}
-			if patch && offlineChecks.EffectiveTree == offlineChecks.BaseTree {
-				t.Fatal("a patched tree must have its own effective tree")
+			if offlineChecks.EffectiveTree == "" {
+				t.Fatal("the offline checks name the effective tree")
 			}
 		})
 	}
@@ -74,7 +71,7 @@ func TestCheckOfflineReportsUnusedRepositoryDeclarations(t *testing.T) {
 	root, source := depRawFixture(t)
 	deployer, _ := depDeployer(t, root, &clusterFake{})
 	plan := func(image string) *contracts.DeploymentPlan {
-		return &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: []string{depRawWeb}, Images: []*contracts.ImageSource{{Image: image, SourceId: depImages, Config: depAny(t, &emptypb.Empty{})}}}
+		return &contracts.DeploymentPlan{Source: source, Images: []*contracts.ImageSource{{Image: image, SourceId: depImages, Config: depAny(t, &emptypb.Empty{})}}}
 	}
 	got, err := deployer.CheckOffline(context.Background(), root, plan("registry.example/never"))
 	if err != nil || len(got.UnusedImages) != 1 || got.UnusedImages[0] != "registry.example/never" {
@@ -95,8 +92,8 @@ func TestCheckOfflineFailsWhereApplyRejectsBeforeTheCluster(t *testing.T) {
 		plan *contracts.DeploymentPlan
 		want string
 	}{
-		"image declared but unused": {&contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: []string{depRawWeb}, Images: []*contracts.ImageSource{{Image: "never:1", SourceId: depImages, Config: depAny(t, &emptypb.Empty{})}}}, "O2.images"},
-		"unknown renderer":          {&contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "nope"}, ExpectedWorkloadIds: []string{depRawWeb}}, "O1.render"},
+		"image declared but unused": {&contracts.DeploymentPlan{Source: source, Images: []*contracts.ImageSource{{Image: "never:1", SourceId: depImages, Config: depAny(t, &emptypb.Empty{})}}}, "O2.images"},
+		"unknown renderer":          {&contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "nope"}}, "O1.render"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			deployer, _ := depDeployer(t, root, &clusterFake{})
@@ -114,34 +111,24 @@ func TestCheckOfflineFailsWhereApplyRejectsBeforeTheCluster(t *testing.T) {
 	}
 }
 
-func TestCheckOfflineReportsAPatchSeriesThatDoesNotApply(t *testing.T) {
-	root, source := depRawFixture(t)
-	patchWeb(t, root)
-	// A later change moves the patched line, so the committed patch conflicts.
-	file := filepath.Join(root, "k8s", "web.yaml")
-	data, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(file, []byte(strings.ReplaceAll(string(data), "web:1", "web:3")), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	testutil.Git(t, root, "commit", "-aqm", "move the line")
-	deployer, _ := depDeployer(t, root, &clusterFake{})
-	got, err := deployer.CheckOffline(context.Background(), root, depPlan(t, source, depRawWeb))
+// A tree with no deployment files fails O1.render offline, owned by the
+// deployer: case A's first failure costs no cluster or build time.
+func TestCheckOfflineReportsATreeWithNoDeploymentFiles(t *testing.T) {
+	root, _ := depRawFixture(t)
+	testutil.Git(t, root, "rm", "-rq", "k8s")
+	testutil.Git(t, root, "commit", "-qm", "no deployment files")
+	deployer, fake := depDeployer(t, root, &clusterFake{})
+	got, err := deployer.CheckOffline(context.Background(), root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	checks := checksByID(t, got.Checks)
-	c := checks["O1.patches"]
-	if c.Status != operability.StatusFail || c.Cause != operability.CausePatch || len(c.Paths) == 0 || !strings.HasPrefix(c.Paths[0], patchset.Directory) {
-		t.Fatalf("O1.patches = %+v", c)
+	c := checks["O1.render"]
+	if c.Status != operability.StatusFail || operability.Route(c.Cause) != operability.OwnerDeployer || !strings.Contains(c.Detail, "no deployment files") {
+		t.Fatalf("O1.render = %+v", c)
 	}
-	if got.EffectiveTree != "" || got.RenderDigest != "" || got.BaseTree == "" {
-		t.Fatalf("identities that could not be computed must stay empty: %+v", got)
-	}
-	if checks["O1.render"].Status != operability.StatusSkipped {
-		t.Fatalf("render ran after a patch failure: %+v", checks["O1.render"])
+	if len(fake.Calls()) != 0 {
+		t.Fatalf("an offline check built images: %v", fake.Calls())
 	}
 }
 

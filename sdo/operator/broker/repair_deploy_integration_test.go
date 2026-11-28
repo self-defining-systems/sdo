@@ -10,12 +10,11 @@ import (
 	"testing"
 
 	"sdo.dev/operator/internal/testutil"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/rendered"
 )
 
-// stageResponderPatch captures a one-line edit of the vendored file as the
-// responder's patch and stages the proposal as a candidate.
+// stageResponderPatch commits a one-line edit of the vendored file as the
+// responder's source repair and stages the proposal as a candidate.
 func stageResponderPatch(t *testing.T, w *patchWorld, id string) Candidate {
 	t.Helper()
 	ctx := context.Background()
@@ -25,12 +24,10 @@ func stageResponderPatch(t *testing.T, w *patchWorld, id string) Candidate {
 		t.Fatal(err)
 	}
 	writeFiles(t, p.Path, map[string]string{"lib/vendor.txt": vendorText + "extra\n"})
-	if _, err := patchset.Create(ctx, p.Path, patchset.CreateRequest{Owner: patchset.OwnerResponder, Incident: id, Reason: patchReason}); err != nil {
-		t.Fatal(err)
-	}
+	commitInCheckout(t, p.Path, "extend the vendored file", "lib/vendor.txt")
 	candidate, err := w.broker.StageCandidate(ctx, id, Responder, ProposalPhase)
 	if err != nil {
-		t.Fatalf("stage the responder patch: %v", err)
+		t.Fatalf("stage the responder source repair: %v", err)
 	}
 	return candidate
 }
@@ -85,7 +82,6 @@ func effectiveID(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer effective.Close()
 	return effective.ID
 }
 
@@ -150,7 +146,6 @@ func TestAcceptDeployedRefusesEvidenceThatDoesNotBindToTheStage(t *testing.T) {
 		{"another effective tree", func(e *SourceEvidence) {
 			e.EffectiveTree, e.ObservedRevision = strings.Repeat("2", 40), strings.Repeat("2", 40)
 		}, ErrCandidateUnbound},
-		{"another patch series", func(e *SourceEvidence) { e.PatchesDigest = strings.Repeat("3", 64) }, ErrCandidateUnbound},
 		{"not ready", func(e *SourceEvidence) { e.Ready = false }, nil},
 		{"claims an accepted commit", func(e *SourceEvidence) { e.AcceptedCommit = candidate.Commit }, nil},
 	} {
@@ -164,13 +159,6 @@ func TestAcceptDeployedRefusesEvidenceThatDoesNotBindToTheStage(t *testing.T) {
 			requireHead(t, w.advanceWorld, head, "a refused deployment")
 		})
 	}
-	// A deployment of another source than the plan the tree declares.
-	other := good
-	other.DeploymentSource = syntheticPlan(t, "elsewhere").GetSource()
-	if _, err := w.broker.AcceptDeployed(ctx, candidate, other); err == nil {
-		t.Fatal("evidence of another deployment source was accepted")
-	}
-	requireHead(t, w.advanceWorld, head, "a deployment of another source")
 }
 
 // A head that moved after staging means the deployment verified a stale tree:

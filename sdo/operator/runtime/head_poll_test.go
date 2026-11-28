@@ -17,7 +17,7 @@ func TestHeadHoldIsKeyedByEffectiveSource(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	holds := ConfigMapHeadHolds{Client: client, Namespace: "sdo-system", Now: func() time.Time { return time.Unix(1, 0) }}
-	refused := broker.HeadChange{Commit: "a1", EffectiveTree: "t1", PatchesDigest: "d1"}
+	refused := broker.HeadChange{Commit: "a1", EffectiveTree: "t1"}
 	if _, held, err := holds.Held(ctx, refused); err != nil || held {
 		t.Fatalf("nothing is held yet: held=%v err=%v", held, err)
 	}
@@ -25,11 +25,11 @@ func TestHeadHoldIsKeyedByEffectiveSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarted := ConfigMapHeadHolds{Client: client, Namespace: "sdo-system"}
-	later := broker.HeadChange{Commit: "b2", EffectiveTree: "t1", PatchesDigest: "d1"}
+	later := broker.HeadChange{Commit: "b2", EffectiveTree: "t1"}
 	if detail, held, err := restarted.Held(ctx, later); err != nil || !held || detail == "" {
 		t.Fatalf("the same source on a later commit must stay held: %q %v %v", detail, held, err)
 	}
-	fixed := broker.HeadChange{Commit: "c3", EffectiveTree: "t2", PatchesDigest: "d1"}
+	fixed := broker.HeadChange{Commit: "c3", EffectiveTree: "t2"}
 	if _, held, err := restarted.Held(ctx, fixed); err != nil || held {
 		t.Fatalf("a changed source supersedes the hold: held=%v err=%v", held, err)
 	}
@@ -72,7 +72,7 @@ func TestADeployedHeadLeavesANoticeAndEndsItsHold(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	holds := ConfigMapHeadHolds{Client: client, Namespace: "sdo-system", Now: func() time.Time { return time.Unix(1, 0) }}
-	change := broker.HeadChange{Commit: "a1", EffectiveTree: "t1", PatchesDigest: "d1"}
+	change := broker.HeadChange{Commit: "a1", EffectiveTree: "t1"}
 	if err := holds.Hold(ctx, change, lifecycle.HoldHealth, "pending"); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestADeployedHeadLeavesANoticeAndEndsItsHold(t *testing.T) {
 	if _, held, _ := holds.Held(ctx, change); held {
 		t.Fatal("the deployment ended the hold on the same source")
 	}
-	next := broker.HeadChange{Commit: "b2", EffectiveTree: "t2", PatchesDigest: "d1"}
+	next := broker.HeadChange{Commit: "b2", EffectiveTree: "t2"}
 	if err := holds.Hold(ctx, next, lifecycle.HoldRollout, "stuck"); err != nil {
 		t.Fatal(err)
 	}

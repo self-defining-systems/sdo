@@ -13,7 +13,6 @@ import (
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/operability"
 	"sdo.dev/operator/operability/offline"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/render/raw"
 	"sdo.dev/operator/render/rendertest"
@@ -77,7 +76,7 @@ func TestCleanDeploymentPassesAndFitsTheReport(t *testing.T) {
 	d.Policy = offline.Policy{AllowedRegistries: []string{"registry.example"}}
 	res := offline.CheckDeployment(context.Background(), d)
 	got := byID(t, res.Checks)
-	for _, id := range []string{"O1.patches", "O1.render", "O6.scope", "O6.allowlist"} {
+	for _, id := range []string{"O1.render", "O6.scope", "O6.allowlist"} {
 		want(t, got, id, operability.StatusPass, "")
 	}
 	want(t, got, "O2.images", operability.StatusNote, "") // undeclared tag: default source
@@ -86,8 +85,7 @@ func TestCleanDeploymentPassesAndFitsTheReport(t *testing.T) {
 	}
 	// The checks are well-formed report content for items O1, O2 and O6.
 	r, err := operability.New(operability.StageDeployment, operability.Subject{
-		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p",
-		RenderDigest: res.Set.RenderDigest, EnvDigest: res.Set.EnvDigest, SettingsDigest: "s",
+		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", RenderDigest: res.Set.RenderDigest, EnvDigest: res.Set.EnvDigest, SettingsDigest: "s",
 	}).With(res.Checks...)
 	if err != nil {
 		t.Fatal(err)
@@ -100,38 +98,30 @@ func TestCleanDeploymentPassesAndFitsTheReport(t *testing.T) {
 	}
 }
 
-func TestPatchFailuresAreTheDeployersAndStopTheSequence(t *testing.T) {
+func TestTreeFailuresStopTheSequence(t *testing.T) {
 	cases := map[string]struct {
 		err   error
 		cause operability.Cause
-		path  string
 	}{
-		"conflict": {
-			&rendered.SourceError{Kind: rendered.SourceInvalid, Err: &patchset.PatchError{Kind: patchset.KindConflict, Patch: "0001-x.patch", Paths: []string{"k8s/web.yaml"}, Detail: "context does not match"}},
-			operability.CausePatch, ".sdo/deployment/patches/0001-x.patch",
-		},
-		"unavailable": {&rendered.SourceError{Kind: rendered.SourceUnavailable, Err: errors.New("git died")}, operability.CauseInfrastructure, ""},
-		"cancelled":   {context.Canceled, operability.CauseInfrastructure, ""},
-		"unknown":     {errors.New("bad tree"), operability.CauseInternal, ""},
+		"unavailable": {&rendered.SourceError{Kind: rendered.SourceUnavailable, Err: errors.New("git died")}, operability.CauseInfrastructure},
+		"cancelled":   {context.Canceled, operability.CauseInfrastructure},
+		"unknown":     {errors.New("bad tree"), operability.CauseInternal},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			d := deployment(t, rendertest.MapFS{"k8s/web.yaml": web})
-			d.PatchesErr = tc.err
+			d.TreeErr = tc.err
 			res := offline.CheckDeployment(context.Background(), d)
 			got := byID(t, res.Checks)
-			if len(got) != 6 {
-				t.Fatalf("checks after a patch failure: %+v", res.Checks)
+			if len(got) != 5 {
+				t.Fatalf("checks after a tree failure: %+v", res.Checks)
 			}
 			for id, c := range got {
-				if id != "O1.patches" && c.Status != operability.StatusSkipped {
-					t.Fatalf("%s ran after a patch failure: %+v", id, c)
+				if id != "O1.render" && c.Status != operability.StatusSkipped {
+					t.Fatalf("%s ran after a tree failure: %+v", id, c)
 				}
 			}
-			c := want(t, got, "O1.patches", operability.StatusFail, tc.cause)
-			if tc.path != "" && (len(c.Paths) == 0 || c.Paths[0] != tc.path) {
-				t.Fatalf("paths = %v", c.Paths)
-			}
+			want(t, got, "O1.render", operability.StatusFail, tc.cause)
 		})
 	}
 }
@@ -142,7 +132,7 @@ func TestRenderFailureClassification(t *testing.T) {
 	want(t, got, "O1.render", operability.StatusFail, operability.CauseRender)
 	want(t, got, "O1.apis", operability.StatusSkipped, "")
 	want(t, got, "O6.allowlist", operability.StatusSkipped, "")
-	if len(got) != 6 {
+	if len(got) != 5 {
 		t.Fatalf("render failure must skip later checks: %v", got)
 	}
 	d.Render = func(context.Context) (rendered.DesiredSet, error) {
@@ -260,7 +250,7 @@ func TestRegistryHost(t *testing.T) {
 
 func TestDetailsStayWithinTheReportLimit(t *testing.T) {
 	d := deployment(t, rendertest.MapFS{"k8s/web.yaml": web})
-	d.PatchesErr = &patchset.PatchError{Kind: patchset.KindForbidden, Patch: "0001-x.patch", Detail: strings.Repeat("long ", 400)}
+	d.TreeErr = errors.New(strings.Repeat("long ", 400))
 	for _, c := range offline.CheckDeployment(context.Background(), d).Checks {
 		if len(c.Detail) > operability.MaxDetailBytes || strings.ContainsAny(c.Detail, "\n") {
 			t.Fatalf("%s detail is %d bytes", c.ID, len(c.Detail))
@@ -280,17 +270,16 @@ func TestDetailsStayWithinTheReportLimit(t *testing.T) {
 // A failure that stops the sequence must still leave every deployment item with
 // checks, so the failure decides the report instead of the silence rule.
 func TestEarlyFailureDecidesTheReportNotSilence(t *testing.T) {
-	d := deployment(t, rendertest.MapFS{"k8s/web.yaml": web})
-	d.PatchesErr = &rendered.SourceError{Kind: rendered.SourceInvalid, Err: &patchset.PatchError{Kind: patchset.KindConflict, Patch: "0001-x.patch", Detail: "x"}}
+	d := deployment(t, rendertest.MapFS{"k8s/bad.yaml": "kind: [unterminated\n"})
 	res := offline.CheckDeployment(context.Background(), d)
 	r, err := operability.New(operability.StageDeployment, operability.Subject{
-		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v", SettingsDigest: "s",
+		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", RenderDigest: "r", EnvDigest: "v", SettingsDigest: "s",
 	}).With(res.Checks...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dec := r.Decide(operability.StageItems(operability.StageDeployment)...)
-	if dec.Kind != operability.Correct || dec.Owner != operability.OwnerDeployer || len(dec.Checks) != 1 || dec.Checks[0].ID != "O1.patches" {
+	if dec.Kind != operability.Correct || dec.Owner != operability.OwnerDeployer || len(dec.Checks) != 1 || dec.Checks[0].ID != "O1.render" {
 		t.Fatalf("decision = %+v", dec)
 	}
 }

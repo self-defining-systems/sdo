@@ -18,14 +18,11 @@ import (
 // from `git archive`, reading objects through env (an effective tree's private
 // object directory). Entries that would leave dest, write through a symlink
 // or are not regular files, directories or symlinks are rejected.
-func Extract(ctx context.Context, root string, env []string, tree, dest string) error {
+func Extract(ctx context.Context, root, tree, dest string) error {
 	if err := os.Mkdir(dest, 0o755); err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "archive", "--format=tar", tree)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()

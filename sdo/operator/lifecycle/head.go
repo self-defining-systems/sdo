@@ -192,7 +192,7 @@ func (h HeadDeployer) deploy(ctx context.Context, cfg RepairConfig, commit strin
 		}
 		return held(HoldRollout, err.Error()), nil
 	}
-	if !completeDeploymentReceipt(receipt) || !rendered.SameDeploymentSource(receipt.Source, accepted.Plan.GetSource()) {
+	if !completeDeploymentReceipt(receipt) {
 		return held(HoldRollout, "deployment returned incomplete evidence or another source"), nil
 	}
 	var readyAt time.Time

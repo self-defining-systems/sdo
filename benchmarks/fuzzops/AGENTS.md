@@ -17,7 +17,7 @@ takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound i
   the `DeploymentPlan` (raw renderer, every workload expected) and the attached pack (same entry, journeys and
   app-specific faults; `up` only waits for the app, `down` refuses).
 - `install.py` (`--journeys-file FILE` passes the free-text user journeys to `host`; without it the onboarding agent discovers them): provisions the namespaces and Secrets (credentials copied by `kubectl --from-file`, never read) and
-  runs `sdo-operator host --deployment-plan --config sdo-bench.yaml [--config F]...` with the agent provider, model
+  commits the deployment override naming the pack's manifests and runs `sdo-operator host --config sdo-bench.yaml [--config F]...` with the agent provider, model
   and effort as `SDO_AGENT_*` variables. No deployer agent runs; the detection designer and the controller do.
   `--deployer` drops the provided plan so SDO's deployer agent deploys from the repository; it requires
   `--registry-host H[:P]` (the registry its image builds push to and the nodes pull from; `--registry-insecure` for a

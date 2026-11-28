@@ -1,8 +1,6 @@
 package rendered
 
 import (
-	"errors"
-	"fmt"
 	"regexp"
 	"slices"
 	"sort"
@@ -128,75 +126,6 @@ func cutLast(s, sep string) (before, after string, ok bool) {
 		return s, "", false
 	}
 	return s[:i], s[i+len(sep):], true
-}
-
-// MatchWorkloadID reports whether the rendered workload ID matches a plan
-// entry: equal, or the entry is `Kind/Namespace/<prefix>-*` and the ID's name
-// is <prefix>- followed by one generated token.
-func MatchWorkloadID(entry, id string) bool {
-	if entry == id {
-		return true
-	}
-	prefix, ok := strings.CutSuffix(entry, "-*")
-	if !ok || strings.Contains(prefix, "*") {
-		return false
-	}
-	token, ok := strings.CutPrefix(id, prefix+"-")
-	return ok && generatedToken.MatchString(token)
-}
-
-// checkWorkloadPattern rejects a `*` anywhere but the final `-*` of the name.
-func checkWorkloadPattern(entry string) error {
-	if !strings.Contains(entry, "*") {
-		return nil
-	}
-	parts := strings.Split(entry, "/")
-	name := parts[len(parts)-1]
-	if len(parts) != 3 || strings.Contains(parts[0]+parts[1], "*") || !strings.HasSuffix(name, "-*") || len(name) == 2 || strings.Contains(strings.TrimSuffix(name, "*"), "*") {
-		return fmt.Errorf("expected workload %q: `*` is allowed only as the final -* of the name, standing for one generated suffix (Kind/Namespace/name-*)", entry)
-	}
-	return nil
-}
-
-// CheckExpectedWorkloads checks that the plan's expected workload entries are
-// unique and nonempty and match exactly the workloads of the desired set: each
-// workload is named by an entry and each entry names a workload. An entry is a
-// workload ID (Kind/Namespace/Name) or, for a generated name, Kind/Namespace/
-// prefix-* (StableWorkloadID), which matches that name in every release. Apply
-// and the offline operability report share it.
-func CheckExpectedWorkloads(set DesiredSet, expected []string) error {
-	wanted := map[string]bool{}
-	for _, id := range expected {
-		if id == "" || wanted[id] {
-			return errors.New("expected workload IDs must be unique and nonempty")
-		}
-		if err := checkWorkloadPattern(id); err != nil {
-			return err
-		}
-		wanted[id] = true
-	}
-	used := map[string]bool{}
-	for _, object := range set.Objects() {
-		if !object.Workload {
-			continue
-		}
-		id := object.Ref.Kind + "/" + object.Ref.Namespace + "/" + object.Ref.Name
-		matched := false
-		for _, entry := range expected {
-			if MatchWorkloadID(entry, id) {
-				used[entry], matched = true, true
-			}
-		}
-		if !matched {
-			return fmt.Errorf("workload %s is missing from deployment plan", id)
-		}
-	}
-	for _, entry := range expected {
-		if !used[entry] {
-			return fmt.Errorf("expected workload %s differs from rendered manifests: no rendered workload matches it", entry)
-		}
-	}
-	return nil
 }
 
 // ImageSites lists every container image of every workload in apply order,

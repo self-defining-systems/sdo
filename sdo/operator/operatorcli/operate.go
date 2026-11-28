@@ -14,7 +14,6 @@ import (
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
-	"sdo.dev/operator/rendered"
 )
 
 // OperateConfig is the typed, in-cluster bootstrap launch contract. The
@@ -43,7 +42,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	controlNamespace := flags.String("control-namespace", "", "controller namespace")
 	application := flags.String("application", "", "application identity")
 	objective := flags.String("health-objective", "", "human health objective")
-	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON; the deployer agent is skipped and the plan is deployed as given")
 	deploymentPolicyFlag := flags.String("deployment-policy", "", "the installer's resolved DeploymentPolicy as ProtoJSON; empty is no policy")
 	evidenceSink := flags.String("evidence-sink", "", "the installer's resolved evidence sink as compact JSON (run_id, volume); empty keeps evidence on the repository volume")
 	sourceBranchURL := flags.String("source-branch-url", "", "Git remote of the one branch SDO commits to and deploys from (source.branch); engineers and the benchmark replayer push to it")
@@ -141,13 +139,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if _, err := install.ParseEvidenceSink(*evidenceSink); err != nil {
 		return OperateConfig{}, err
 	}
-	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
-	if err != nil {
-		return OperateConfig{}, err
-	}
 	config := OperateConfig{
 		Lifecycle: lifecycle.Config{
-			ProvidedPlan:   providedPlan,
 			SettingsDigest: policy.DetectionDigest(),
 			OperationID:    *operationID, Application: *application, Namespace: *namespace,
 			HealthObjective: *objective, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
@@ -159,7 +152,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: profile,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
-			DeploymentPlan: *deploymentPlan, DeploymentPolicy: *deploymentPolicyFlag, EvidenceSink: *evidenceSink,
+			DeploymentPolicy: *deploymentPolicyFlag, EvidenceSink: *evidenceSink,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret,

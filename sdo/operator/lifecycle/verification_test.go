@@ -34,10 +34,8 @@ type fakeBroker struct {
 	// hideReports makes OperabilityReport find nothing.
 	hideReports bool
 	head        int
-	// root holds the proposal checkouts: the lifecycle writes plan.yaml there.
+	// root holds the proposal checkouts.
 	root string
-	// scratch holds the patch.uncaptured feedback returned once per entry.
-	scratch []string
 	// rejections is the durable rejection log of each proposal.
 	rejections map[string]*contracts.ProposalRejectionLog
 	// stages, accepts and discards record the candidate protocol; staleAccepts
@@ -156,16 +154,6 @@ func (b *fakeBroker) AcceptedCommit(_ context.Context, id string, _ broker.Phase
 func (b *fakeBroker) ChangedPaths(context.Context, string, broker.Phase) ([]string, error) {
 	return []string{"changed"}, nil
 }
-func (b *fakeBroker) ScratchFeedback(context.Context, string, broker.Phase) (string, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.scratch) == 0 {
-		return "", nil
-	}
-	feedback := b.scratch[0]
-	b.scratch = b.scratch[1:]
-	return feedback, nil
-}
 func (b *fakeBroker) ReleaseProposal(string, broker.Phase) error { return nil }
 func (b *fakeBroker) Rejections(id string) (*contracts.ProposalRejectionLog, error) {
 	b.mu.Lock()
@@ -253,7 +241,6 @@ type fakeWorkers struct {
 	mu            sync.Mutex
 	deployer      []*contracts.SourceDeploymentRequest
 	judgeRuns     int
-	plan          *contracts.DeploymentPlan // proposed instead of the default raw plan when set
 	judgeRequests []*contracts.HealthJudgeRequest
 	// judgeFailures is how many judge dispatches report no authored detectors
 	// before one succeeds.
@@ -267,12 +254,7 @@ func (w *fakeWorkers) Execute(_ context.Context, task *contracts.AgentTask) (*co
 	deployerRequest := &contracts.SourceDeploymentRequest{}
 	if err := task.GetRequest().UnmarshalTo(deployerRequest); err == nil {
 		w.deployer = append(w.deployer, deployerRequest)
-		config, _ := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
-		plan := &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: config}, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}
-		if w.plan != nil {
-			plan = w.plan
-		}
-		response = &contracts.SourceDeploymentResult{Proposed: true, AgentSessionId: "session", Plan: plan}
+		response = &contracts.SourceDeploymentResult{Proposed: true, AgentSessionId: "session"}
 	} else {
 		w.judgeRuns++
 		judgeRequest := &contracts.HealthJudgeRequest{}
@@ -326,7 +308,8 @@ func (r *fakeReadiness) CheckLive(_ context.Context, checkout string, _ *contrac
 	return []operability.Check{pass("O1.deploy"), pass("O1.ready"), pass("O2.stamps"), pass("O6.budget")}, nil
 }
 
-// ApplyAndVerify binds the plan's source to the receipt, as the deployer does.
+// ApplyAndVerify records a receipt of the derived raw source, as the deployer
+// does for a tree without an override.
 func (r *fakeReadiness) ApplyAndVerify(_ context.Context, _ string, plan *contracts.DeploymentPlan) (lifecycle.DeploymentReceipt, error) {
 	r.calls++
 	r.plans = append(r.plans, plan)
@@ -337,7 +320,12 @@ func (r *fakeReadiness) ApplyAndVerify(_ context.Context, _ string, plan *contra
 			return lifecycle.DeploymentReceipt{}, err
 		}
 	}
-	receipt := lifecycle.DeploymentReceipt{Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: "tree", EffectiveTree: "effective", PatchesDigest: "patches", ObservedRevision: "effective", RenderDigest: "render", EnvDigest: "env", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}
+	source := plan.GetSource()
+	if source == nil {
+		config, _ := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
+		source = &contracts.DeploymentSource{RendererId: "raw", Config: config}
+	}
+	receipt := lifecycle.DeploymentReceipt{Source: proto.Clone(source).(*contracts.DeploymentSource), BaseTree: "tree", EffectiveTree: "effective", ObservedRevision: "effective", RenderDigest: "render", EnvDigest: "env", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}
 	if r.receipt != nil {
 		r.receipt(&receipt)
 	}
@@ -435,7 +423,7 @@ func TestPendingThenClearSucceedsWithoutAnotherDeployerAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.workers.deployerAttempts() != 1 || result.Attempts != 1 || h.installer.installs != 1 {
+	if h.workers.deployerAttempts() != 0 || result.Attempts != 1 || h.installer.installs != 1 {
 		t.Fatalf("deployer attempts=%d result attempts=%d installs=%d", h.workers.deployerAttempts(), result.Attempts, h.installer.installs)
 	}
 	if h.verifier.calls != 3 || len(h.waits) != 2 {
@@ -456,7 +444,7 @@ func TestPersistentFloorPendingFailsNamingTheDetectorWithoutSpendingAttempts(t *
 	if !strings.Contains(err.Error(), "workload-health") || !strings.Contains(err.Error(), "observation window incomplete") {
 		t.Fatalf("terminal error does not name the pending detector and reason: %v", err)
 	}
-	if h.workers.deployerAttempts() != 1 || h.verifier.calls != 4 || h.installer.installs != 0 {
+	if h.workers.deployerAttempts() != 0 || h.verifier.calls != 4 || h.installer.installs != 0 {
 		t.Fatalf("deployer attempts=%d verify calls=%d installs=%d", h.workers.deployerAttempts(), h.verifier.calls, h.installer.installs)
 	}
 }
@@ -466,28 +454,12 @@ func TestFiringVerdictReachesTheDeployerWithDetectorDetail(t *testing.T) {
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
-	if h.workers.deployerAttempts() != 2 {
-		t.Fatalf("deployer attempts = %d, want 2", h.workers.deployerAttempts())
+	if h.workers.deployerAttempts() != 1 {
+		t.Fatalf("deployer attempts = %d, want 1", h.workers.deployerAttempts())
 	}
-	feedback := h.workers.deployer[1].GetCorrectionFeedback()
+	feedback := h.workers.deployer[0].GetCorrectionFeedback()
 	if !strings.Contains(feedback, "workload-health") || !strings.Contains(feedback, "frontend has 0 ready replicas") {
 		t.Fatalf("correction feedback lacks detector detail: %q", feedback)
-	}
-}
-
-// App-file edits no patch reproduces never reach a deployment: the agent gets
-// the patch.uncaptured text as a correction before anything is applied.
-func TestUncapturedScratchCorrectsTheDeployerBeforeDeploying(t *testing.T) {
-	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-	h.coordinator.Broker.(*fakeBroker).scratch = []string{"patch.uncaptured: 1 app file(s) differ: app.go"}
-	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
-		t.Fatal(err)
-	}
-	if h.workers.deployerAttempts() != 2 || !strings.Contains(h.workers.deployer[1].GetCorrectionFeedback(), "patch.uncaptured") {
-		t.Fatalf("deployer requests = %v", h.workers.deployer)
-	}
-	if h.readiness.calls != 1 {
-		t.Fatalf("apply calls = %d, want the deployment to happen only after the correction", h.readiness.calls)
 	}
 }
 
@@ -498,7 +470,7 @@ func TestTransientDeployFailureRetriesWithoutConsumingAnAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.readiness.calls != 2 || h.workers.deployerAttempts() != 1 || result.Attempts != 1 {
+	if h.readiness.calls != 2 || h.workers.deployerAttempts() != 0 || result.Attempts != 1 {
 		t.Fatalf("apply calls=%d deployer attempts=%d result attempts=%d", h.readiness.calls, h.workers.deployerAttempts(), result.Attempts)
 	}
 }
@@ -512,7 +484,7 @@ func TestPersistentTransientDeployFailureIsADistinctTerminalError(t *testing.T) 
 	if !errors.As(err, &terminal) || !strings.Contains(err.Error(), "buildkitd unavailable") {
 		t.Fatalf("error = %v, want InfrastructureError", err)
 	}
-	if h.workers.deployerAttempts() != 1 || h.readiness.calls != 3 {
+	if h.workers.deployerAttempts() != 0 || h.readiness.calls != 3 {
 		t.Fatalf("deployer attempts=%d apply calls=%d", h.workers.deployerAttempts(), h.readiness.calls)
 	}
 }
@@ -523,7 +495,7 @@ func TestPlanFailureStillCorrectsTheDeployer(t *testing.T) {
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
-	if h.workers.deployerAttempts() != 2 || !strings.Contains(h.workers.deployer[1].GetCorrectionFeedback(), "no such namespace") {
+	if h.workers.deployerAttempts() != 1 || !strings.Contains(h.workers.deployer[0].GetCorrectionFeedback(), "no such namespace") {
 		t.Fatalf("deployer requests = %v", h.workers.deployer)
 	}
 }
@@ -533,69 +505,8 @@ func TestTransientVerificationErrorRetriesTheEvaluation(t *testing.T) {
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
-	if h.verifier.calls != 2 || h.workers.deployerAttempts() != 1 {
+	if h.verifier.calls != 2 || h.workers.deployerAttempts() != 0 {
 		t.Fatalf("verify calls=%d deployer attempts=%d", h.verifier.calls, h.workers.deployerAttempts())
-	}
-}
-
-func TestPlanReachesTheDeployerAsProposed(t *testing.T) {
-	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-	kustomize, _ := anypb.New(&contracts.KustomizeRenderConfig{Path: "k"})
-	h.workers.plan = &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "kustomize", Config: kustomize}, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}
-	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
-		t.Fatal(err)
-	}
-	if len(h.readiness.plans) != 1 || !proto.Equal(h.readiness.plans[0], h.workers.plan) {
-		t.Fatalf("deployer saw %v, want the proposed plan unchanged", h.readiness.plans)
-	}
-}
-
-func TestPlanWithoutSourceFeedsBackToTheDeployer(t *testing.T) {
-	legacyConfig, _ := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
-	for name, plan := range map[string]*contracts.DeploymentPlan{
-		"strategy only": {StrategyId: "raw-manifests-v1", StrategyConfig: legacyConfig, ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
-		"empty":         {ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
-		"source and strategy": {
-			Source:     &contracts.DeploymentSource{RendererId: "raw", Config: legacyConfig},
-			StrategyId: "raw-manifests-v1", ExpectedWorkloadIds: []string{"Deployment/ns/app"},
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-			h.workers.plan = plan
-			if _, err := h.coordinator.Run(context.Background(), config()); err == nil {
-				t.Fatal("run succeeded with a plan that names no deployment source")
-			}
-			if h.readiness.calls != 0 {
-				t.Fatalf("deployer called %d times for a rejected plan", h.readiness.calls)
-			}
-			if h.workers.deployerAttempts() < 2 {
-				t.Fatalf("deployer attempts=%d, want a correction round", h.workers.deployerAttempts())
-			}
-			if feedback := h.workers.deployer[1].GetCorrectionFeedback(); !strings.Contains(feedback, "source") {
-				t.Fatalf("feedback %q does not ask for a deployment source", feedback)
-			}
-		})
-	}
-}
-
-// An advance's deployment correction is one deployer task over the advance
-// checkout, with the hold as the request, through the same registry and workers
-// as onboarding; it does not release the checkout and it names the task by the
-// advance and the attempt so a restart re-attaches to it.
-func TestCorrectDeploymentDispatchesOneDeployerTaskForTheHold(t *testing.T) {
-	h := newHarness(t, &fakeVerifier{})
-	proposal := broker.Proposal{IncidentID: "advance-abc", Path: "/synthetic/advance/checkout", BaseCommit: strings.Repeat("3", 40)}
-	plan, err := h.coordinator.CorrectDeployment(context.Background(), config(), lifecycle.DeploymentCorrection{AdvanceID: "advance-abc", Proposal: proposal, Feedback: "cause=render owner=deployer items=O1 render: bad value", Attempt: 2})
-	if err != nil || plan.GetSource() == nil {
-		t.Fatalf("CorrectDeployment = %v, %v", plan, err)
-	}
-	if len(h.workers.deployer) != 1 {
-		t.Fatalf("deployer tasks = %d, want 1", len(h.workers.deployer))
-	}
-	request := h.workers.deployer[0]
-	if request.GetAttempt() != 2 || request.GetApplication() != "app" || !strings.Contains(request.GetCorrectionFeedback(), "bad value") || !strings.Contains(request.GetCorrectionFeedback(), "upstream advance") {
-		t.Fatalf("request = %v", request)
 	}
 }
 

@@ -3,7 +3,6 @@ package memory
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,20 +12,22 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/safefs"
 	"sdo.dev/operator/sdk/program"
 )
 
 // CaptureSourceProposals turns the source changes playbook programs proposed
-// during an independently verified incident into responder-owned patches in a
-// reflection checkout, one patch per proposal. The object's source file is
-// the one the accepted manifest inventory names; the field is set in its YAML
-// document and the edit captured with patchset.Create, so the broker validates
-// it like any responder patch. A proposal whose object has no single YAML
-// source file (a rendered chart) or whose path does not resolve is skipped
-// with its reason; the reflection agent still sees it in the outcome.
+// during an independently verified incident into responder source commits in a
+// reflection checkout, one commit per proposal: the object's source file is the
+// one the accepted manifest inventory names, the field is set in its YAML
+// document, and Go commits the file itself (a deterministic-stage repeat has no
+// responder session to commit it). The broker then publishes the commit like a
+// responder's own committed source. A proposal whose object has no single YAML
+// source file (a rendered chart), whose path does not resolve, or that changes
+// nothing is skipped with its reason; the reflection agent still sees it in the
+// outcome. created lists the committed files.
 func CaptureSourceProposals(ctx context.Context, checkout, incidentID string, proposals []program.SourceChangeProposal) (created []string, skipped []string, err error) {
 	if len(proposals) == 0 {
 		return nil, nil, nil
@@ -34,9 +35,6 @@ func CaptureSourceProposals(ctx context.Context, checkout, incidentID string, pr
 	architecture, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(layout.ArchitectureFile)))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read manifest inventory: %w", err)
-	}
-	if _, err := patchset.Materialize(ctx, checkout); err != nil {
-		return nil, nil, fmt.Errorf("materialize patch series: %w", err)
 	}
 	for _, proposal := range proposals {
 		file, why := proposalFile(string(architecture), proposal)
@@ -48,18 +46,33 @@ func CaptureSourceProposals(ctx context.Context, checkout, incidentID string, pr
 			skipped = append(skipped, why)
 			continue
 		}
-		patch, err := patchset.Create(ctx, checkout, patchset.CreateRequest{Owner: patchset.OwnerResponder, Incident: incidentID, Reason: proposal.Reason, Paths: []string{file}})
-		if err != nil {
-			var perr *patchset.PatchError
-			if errors.As(err, &perr) || strings.Contains(err.Error(), "no scratch edits") {
-				skipped = append(skipped, fmt.Sprintf("%s %s %s: %v", proposal.Ref.Kind, proposal.Ref.Name, proposal.Path, err))
-				continue
-			}
+		if dirty, err := proposalGit(ctx, checkout, "status", "--porcelain", "--", file); err != nil {
+			return created, skipped, err
+		} else if dirty == "" {
+			skipped = append(skipped, fmt.Sprintf("%s %s %s: the source already holds the proposed value", proposal.Ref.Kind, proposal.Ref.Name, proposal.Path))
+			continue
+		}
+		subject := fmt.Sprintf("keep %s %s %s from incident %s", proposal.Ref.Kind, proposal.Ref.Name, proposal.Path, incidentID)
+		if _, err := proposalGit(ctx, checkout, "add", "--", file); err != nil {
 			return created, skipped, err
 		}
-		created = append(created, patch.Name)
+		if _, err := proposalGit(ctx, checkout, "commit", "--quiet", "--no-verify", "-m", subject, "-m", proposal.Reason, "--", file); err != nil {
+			return created, skipped, err
+		}
+		created = append(created, file)
 	}
 	return created, skipped, nil
+}
+
+// proposalCommitter is the identity of Go's own source-proposal commits.
+var proposalCommitter = []string{"GIT_AUTHOR_NAME=sdo-controller", "GIT_AUTHOR_EMAIL=sdo-controller@invalid", "GIT_COMMITTER_NAME=sdo-controller", "GIT_COMMITTER_EMAIL=sdo-controller@invalid"}
+
+func proposalGit(ctx context.Context, checkout string, args ...string) (string, error) {
+	raw, err := memoryio.Git(ctx, checkout, true, proposalCommitter, args...)
+	if err != nil {
+		return "", fmt.Errorf("source proposal git %s: %w: %s", args[0], err, raw)
+	}
+	return string(bytes.TrimSpace(raw)), nil
 }
 
 func proposalFile(architecture string, proposal program.SourceChangeProposal) (string, string) {

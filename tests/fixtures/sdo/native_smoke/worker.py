@@ -5,17 +5,15 @@ from __future__ import annotations
 import json
 import os
 import ssl
+import subprocess
 import urllib.request
 from pathlib import Path
 
 from sdo.contracts import (
     AgentResult,
     AgentTask,
-    DeploymentPlan,
-    DeploymentSource,
     HealthJudgeRequest,
     HealthJudgeResult,
-    RawRenderConfig,
     SourceDeploymentRequest,
     SourceDeploymentResult,
     parse_json,
@@ -108,13 +106,12 @@ spec:
       - name: pause
         image: {IMAGE}
 """)
-        plan = DeploymentPlan(
-            source=DeploymentSource(renderer_id="raw"),
-            expected_workload_ids=[f"Deployment/{request.namespace}/demo"],
-        )
-        plan.source.config.Pack(RawRenderConfig(paths=["deploy/demo.yaml"]))
+        # The deployer commits its files like an engineer; Go derives the raw source from them.
+        git = ["git", "-C", str(checkout), "-c", "user.name=fixture", "-c", "user.email=fixture@invalid"]
+        subprocess.run([*git, "add", "deploy/demo.yaml", "source-smoke.txt"], check=True)
+        subprocess.run([*git, "commit", "-q", "-m", "deploy the demo"], check=True)
         typed = SourceDeploymentResult(
-            proposed=True, summary="deterministic source fixture", agent_session_id="fixture-source", plan=plan
+            proposed=True, summary="deterministic source fixture", agent_session_id="fixture-source"
         )
     elif task.task_type == "health-judgment-direct-v1":
         request = HealthJudgeRequest()

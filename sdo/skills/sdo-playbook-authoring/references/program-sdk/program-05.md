@@ -25,13 +25,13 @@ type ProposeSourceChange struct {
     ProposeSourceChange proposes a durable change to accepted source. The field
     at Path of the source-owned object Ref should become Value (an observation,
     such as the replicas a ScaleWorkload just set, or a declared parameter).
-    It writes nothing to the cluster or the repository. The controller
-    records the resolved value; only after the incident's recovery is
-    independently verified does Go capture it as a responder-owned patch under
-    .sdo/deployment/patches/, through the same patch validation as any responder
-    patch, so the change survives the next deploy. Path uses SetField's dotted
-    vocabulary. Reason (40 to 2000 characters) says what fails without the
-    change; it becomes the patch's reason.
+    It writes nothing to the cluster or the repository. The controller records
+    the resolved value; only after the incident's recovery is independently
+    verified does Go edit the object's source file and commit it as a responder
+    source commit, published like any responder's committed source, so the
+    change survives the next deploy. Path uses SetField's dotted vocabulary.
+    Reason (40 to 2000 characters) says what fails without the change;
+    it becomes the commit message.
 
 func SourceChangeAction(action Action) (ProposeSourceChange, bool)
     SourceChangeAction returns a ProposeSourceChange given by value or pointer.

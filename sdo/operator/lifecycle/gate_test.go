@@ -58,7 +58,7 @@ func TestCleanCandidateIsVerifiedStagedThenAccepted(t *testing.T) {
 		t.Fatalf("live checks ran on %v, want the deployment, then the staged checkout", h.readiness.liveCalls)
 	}
 	evidence := fake.evidence2[0]
-	if evidence.Commit != candidate.Commit || evidence.EffectiveTree != "effective" || evidence.PatchesDigest != "patches" {
+	if evidence.Commit != candidate.Commit || evidence.EffectiveTree != "effective" {
 		t.Fatalf("accept evidence %+v does not bind the candidate to the deployed effective tree", evidence)
 	}
 	if h.verifier.calls != 1 {
@@ -77,8 +77,8 @@ func TestDesignerOwnedFiringCorrectsTheDesignerNotTheDeployer(t *testing.T) {
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
-	if h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 2 {
-		t.Fatalf("deployer attempts=%d judge runs=%d, want 1 and 2", h.workers.deployerAttempts(), h.workers.judgeRuns)
+	if h.workers.deployerAttempts() != 0 || h.workers.judgeRuns != 2 {
+		t.Fatalf("deployer attempts=%d judge runs=%d, want 0 and 2", h.workers.deployerAttempts(), h.workers.judgeRuns)
 	}
 	if fake.stages != 2 || fake.discards != 1 || fake.accepts != 1 {
 		t.Fatalf("stages=%d discards=%d accepts=%d", fake.stages, fake.discards, fake.accepts)
@@ -118,10 +118,10 @@ func TestUnchangedDesignerFiringAfterTheCapGoesToTheDeployer(t *testing.T) {
 	if _, err := h.coordinator.Run(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	if h.workers.judgeRuns != 4 || h.workers.deployerAttempts() != 2 {
-		t.Fatalf("judge runs=%d deployer attempts=%d, want 4 and 2", h.workers.judgeRuns, h.workers.deployerAttempts())
+	if h.workers.judgeRuns != 4 || h.workers.deployerAttempts() != 1 {
+		t.Fatalf("judge runs=%d deployer attempts=%d, want 4 and 1", h.workers.judgeRuns, h.workers.deployerAttempts())
 	}
-	feedback := h.workers.deployer[1].GetCorrectionFeedback()
+	feedback := h.workers.deployer[0].GetCorrectionFeedback()
 	if !strings.Contains(feedback, "source_fault") || !strings.Contains(feedback, "still firing after 2 designer corrections") {
 		t.Fatalf("deployer feedback %q does not carry the re-attributed firing", feedback)
 	}
@@ -140,7 +140,7 @@ func TestChangedDesignerFiringStaysWithTheDesigner(t *testing.T) {
 	if _, err := h.coordinator.Run(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	if h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 4 {
+	if h.workers.deployerAttempts() != 0 || h.workers.judgeRuns != 4 {
 		t.Fatalf("deployer attempts=%d judge runs=%d", h.workers.deployerAttempts(), h.workers.judgeRuns)
 	}
 }
@@ -153,7 +153,7 @@ func TestFloorFiringGoesToTheDeployerFirst(t *testing.T) {
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
-	if h.workers.deployerAttempts() != 2 || !strings.Contains(h.workers.deployer[1].GetCorrectionFeedback(), "workload-health") {
+	if h.workers.deployerAttempts() != 1 || !strings.Contains(h.workers.deployer[0].GetCorrectionFeedback(), "workload-health") {
 		t.Fatalf("deployer requests = %v", h.workers.deployer)
 	}
 	if h.workers.judgeRuns != 2 || len(h.workers.judgeRequests[0].GetPreviousDiagnostics()) != 0 || len(h.workers.judgeRequests[1].GetPreviousDiagnostics()) != 0 {
@@ -173,7 +173,7 @@ func TestLiveDeploymentFailureRoutesByCauseWithoutEvaluatingDetectors(t *testing
 		if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 			t.Fatal(err)
 		}
-		if h.workers.deployerAttempts() != 2 || !strings.Contains(h.workers.deployer[1].GetCorrectionFeedback(), "O1.ready [rollout]") {
+		if h.workers.deployerAttempts() != 1 || !strings.Contains(h.workers.deployer[0].GetCorrectionFeedback(), "O1.ready [rollout]") {
 			t.Fatalf("deployer requests = %v", h.workers.deployer)
 		}
 		if len(h.verifier.candidateRoots) != 1 {
@@ -188,7 +188,7 @@ func TestLiveDeploymentFailureRoutesByCauseWithoutEvaluatingDetectors(t *testing
 		if !errors.As(err, &terminal) || terminal.Decision.Owner != operability.OwnerOperator {
 			t.Fatalf("error = %v, want an operator-owned OperabilityError", err)
 		}
-		if len(h.verifier.candidateRoots) != 0 || fake.accepts != 0 || h.installer.installs != 0 || h.workers.deployerAttempts() != 1 {
+		if len(h.verifier.candidateRoots) != 0 || fake.accepts != 0 || h.installer.installs != 0 || h.workers.deployerAttempts() != 0 {
 			t.Fatalf("evaluations=%d accepts=%d installs=%d deployer attempts=%d", len(h.verifier.candidateRoots), fake.accepts, h.installer.installs, h.workers.deployerAttempts())
 		}
 	})
@@ -198,7 +198,7 @@ func TestLiveDeploymentFailureRoutesByCauseWithoutEvaluatingDetectors(t *testing
 		if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 			t.Fatal(err)
 		}
-		if len(h.readiness.liveCalls) != 3 || h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 1 || fake.accepts != 1 {
+		if len(h.readiness.liveCalls) != 3 || h.workers.deployerAttempts() != 0 || h.workers.judgeRuns != 1 || fake.accepts != 1 {
 			t.Fatalf("live calls=%d deployer attempts=%d judge runs=%d accepts=%d", len(h.readiness.liveCalls), h.workers.deployerAttempts(), h.workers.judgeRuns, fake.accepts)
 		}
 	})
@@ -243,16 +243,16 @@ func TestStagingRejectionIsTheDesignersTypedRetry(t *testing.T) {
 	}
 }
 
-// A provided plan's application fault is terminal and typed with the report; the
-// designer's own probe still gets its corrections first.
-func TestProvidedPlanRoutesDetectorFaultToTheDesignerAndAppFaultToTheHuman(t *testing.T) {
-	plan := providedPlans(t)["raw"]
+// With no deployer registered, an application fault is terminal and typed with
+// the report; the designer's own probe still gets its corrections first.
+func TestNoDeployerRoutesDetectorFaultToTheDesignerAndAppFaultToTheHuman(t *testing.T) {
 	t.Run("application fault is terminal with the report", func(t *testing.T) {
 		h, fake := gateHarness(t, firing)
-		_, err := h.coordinator.Run(context.Background(), providedConfig(plan))
-		var terminal *lifecycle.ProvidedPlanError
+		h.coordinator.Registry = registryWithout(t, "source-deployment.json")
+		_, err := h.coordinator.Run(context.Background(), config())
+		var terminal *lifecycle.DeploymentHoldError
 		if !errors.As(err, &terminal) || terminal.Stage != "verify" || terminal.Report == nil || terminal.Report.Stage != operability.StageComplete {
-			t.Fatalf("error = %v, want a verify ProvidedPlanError with the complete-stage report", err)
+			t.Fatalf("error = %v, want a verify DeploymentHoldError with the complete-stage report", err)
 		}
 		if fake.accepts != 0 || h.installer.installs != 0 || h.workers.judgeRuns != 1 {
 			t.Fatalf("accepts=%d installs=%d judge runs=%d", fake.accepts, h.installer.installs, h.workers.judgeRuns)
@@ -260,8 +260,9 @@ func TestProvidedPlanRoutesDetectorFaultToTheDesignerAndAppFaultToTheHuman(t *te
 	})
 	t.Run("designer fault is corrected, then the capped firing is terminal", func(t *testing.T) {
 		h, _ := gateHarness(t, judgeFiring)
-		_, err := h.coordinator.Run(context.Background(), providedConfig(plan))
-		var terminal *lifecycle.ProvidedPlanError
+		h.coordinator.Registry = registryWithout(t, "source-deployment.json")
+		_, err := h.coordinator.Run(context.Background(), config())
+		var terminal *lifecycle.DeploymentHoldError
 		if !errors.As(err, &terminal) || terminal.Stage != "verify" || h.workers.judgeRuns != 3 || h.workers.deployerAttempts() != 0 {
 			t.Fatalf("error=%v judge runs=%d deployer attempts=%d, want 2 corrections then a terminal plan error", err, h.workers.judgeRuns, h.workers.deployerAttempts())
 		}
@@ -332,8 +333,8 @@ func TestProbeThatNeverPassesCorrectsTheDesignerWithTheObservedResponse(t *testi
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
-	if h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 2 {
-		t.Fatalf("deployer attempts=%d judge runs=%d, want 1 and 2", h.workers.deployerAttempts(), h.workers.judgeRuns)
+	if h.workers.deployerAttempts() != 0 || h.workers.judgeRuns != 2 {
+		t.Fatalf("deployer attempts=%d judge runs=%d, want 0 and 2", h.workers.deployerAttempts(), h.workers.judgeRuns)
 	}
 	previous := h.workers.judgeRequests[1].GetPreviousDiagnostics()
 	if len(previous) == 0 || previous[0].GetRule() != "operability.O4.detectors" ||
@@ -359,7 +360,7 @@ func TestProbeThatNeverPassesEndsAfterTheDesignerBound(t *testing.T) {
 	if !errors.As(err, &pending) {
 		t.Fatalf("error = %v, want PendingVerificationError", err)
 	}
-	if h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 3 || h.installer.installs != 0 {
+	if h.workers.deployerAttempts() != 0 || h.workers.judgeRuns != 3 || h.installer.installs != 0 {
 		t.Fatalf("deployer attempts=%d judge runs=%d installs=%d", h.workers.deployerAttempts(), h.workers.judgeRuns, h.installer.installs)
 	}
 }

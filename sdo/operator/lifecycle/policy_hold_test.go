@@ -37,7 +37,6 @@ func requirePolicyHold(t *testing.T, err error) {
 // loop (the operate Job) and the health refresh (controller start).
 func TestRestartUnderATightenedPolicyIsATypedHold(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{firing, clear}})
-	h.workers.plan = rawSourcePlan(t, "k8s")
 	cfg := config()
 	cfg.MaxAttempts = 1
 	if _, err := h.coordinator.Run(context.Background(), cfg); err == nil {

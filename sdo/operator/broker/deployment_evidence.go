@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/planfile"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -46,9 +48,10 @@ func (b *Broker) AcceptedSourceEvidence(ctx context.Context) (AcceptedSource, bo
 			return err
 		}
 		plan, err = planAtTree(ctx, b.target, "HEAD^{tree}", b.PlanCatalogs)
-		if !found && err != nil {
-			// A seeded install has no evidence, but the head deployer still
-			// needs the plan the accepted tree carries; none is not an error.
+		if errors.Is(err, planfile.ErrAbsent) || !found && err != nil {
+			// The override is optional (the deployer derives the source from
+			// the files), and a seeded install has no evidence; neither is an
+			// error.
 			plan, err = nil, nil
 		}
 		return err
@@ -173,4 +176,18 @@ func (b *Broker) deployedBy(ctx context.Context, incidentID, commit string) (boo
 		return false, err
 	}
 	return record.BaseTree == tree, nil
+}
+
+// planAtTree reads and decodes .sdo/deployment/plan.yaml of a tree object; an
+// absent override is planfile.ErrAbsent.
+func planAtTree(ctx context.Context, repository, tree string, catalogs planfile.Catalogs) (*contracts.DeploymentPlan, error) {
+	data, err := runGit(ctx, repository, "cat-file", "blob", tree+":"+layout.DeploymentPlanFile)
+	if err != nil {
+		return nil, fmt.Errorf("the tree has no %s (%w): %w", layout.DeploymentPlanFile, err, planfile.ErrAbsent)
+	}
+	plan, err := planfile.Parse(data, catalogs)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", layout.DeploymentPlanFile, err)
+	}
+	return plan, nil
 }

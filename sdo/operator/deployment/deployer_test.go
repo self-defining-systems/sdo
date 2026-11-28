@@ -416,7 +416,7 @@ func TestDeployPathObjectsEqualReadObjects(t *testing.T) {
 				cluster := &clusterFake{}
 				deployer, _ := depDeployer(t, root, cluster)
 				deployer.Environment = environment
-				receipt, err := deployer.ApplyAndVerify(ctx, root, &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: expected})
+				receipt, err := deployer.ApplyAndVerify(ctx, root, &contracts.DeploymentPlan{Source: source})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -466,7 +466,7 @@ func sortedKeys(m map[string]string) []string {
 }
 
 func depPlan(t *testing.T, source *contracts.DeploymentSource, workloads ...string) *contracts.DeploymentPlan {
-	return &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: workloads}
+	return &contracts.DeploymentPlan{Source: source}
 }
 
 const depRawWeb = "Deployment/demo/web"
@@ -487,7 +487,7 @@ func TestReceiptRecordsResolvedImagesAndEvidence(t *testing.T) {
 	tree := depHead(t, root)
 	// No memory and no patches: the effective tree is the base tree, and the
 	// workloads carry its ID as their source stamp.
-	if tree = testutil.Git(t, root, "rev-parse", "HEAD^{tree}"); receipt.BaseTree != tree || receipt.EffectiveTree != tree || receipt.ObservedRevision != tree || receipt.PatchesDigest == "" {
+	if tree = testutil.Git(t, root, "rev-parse", "HEAD^{tree}"); receipt.BaseTree != tree || receipt.EffectiveTree != tree || receipt.ObservedRevision != tree {
 		t.Fatalf("receipt tree %q / effective %q / %q, want %q", receipt.BaseTree, receipt.EffectiveTree, receipt.ObservedRevision, tree)
 	}
 	if !receipt.Ready || len(receipt.ResourceIDs) != 1 || receipt.ResourceIDs[0] != depRawWeb {
@@ -512,9 +512,9 @@ func TestReceiptRecordsResolvedImagesAndEvidence(t *testing.T) {
 func TestDeployerRejectsPlansBeforeApplying(t *testing.T) {
 	root, source := depRawFixture(t)
 	for name, plan := range map[string]*contracts.DeploymentPlan{
-		"image declared but unused": {Source: source, ExpectedWorkloadIds: []string{depRawWeb}, Images: []*contracts.ImageSource{
+		"image declared but unused": {Source: source, Images: []*contracts.ImageSource{
 			{Image: "never:1", SourceId: depImages, Config: depAny(t, &emptypb.Empty{})}}},
-		"unknown renderer": {Source: &contracts.DeploymentSource{RendererId: "nope"}, ExpectedWorkloadIds: []string{depRawWeb}},
+		"unknown renderer": {Source: &contracts.DeploymentSource{RendererId: "nope"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cluster := &clusterFake{}

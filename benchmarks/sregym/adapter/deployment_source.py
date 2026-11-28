@@ -1,17 +1,21 @@
-"""Benchmark-side builders for the production ``DeploymentSource`` (ProtoJSON), the one launcher edge format.
+"""Benchmark-side builders for the production deployment override (ProtoJSON ``DeploymentPlan``).
 
-``sdo-operator install-existing`` takes ``--deployment-source <json>`` and records it as the accepted tree's
-``.sdo/deployment/plan.yaml`` (the controller reads the source from there and takes no source flag); launchers
-never pass manifest path lists. Raw is the default
-renderer; SREGym ``hotelReservation`` is a kustomize root (``kubernetes/kustomization.yaml``).
+SDO derives the deployment from the repository's files. Where the files cannot say it (several roots, values
+files, image builds the Dockerfile rule does not find), the harness commits the optional override
+``.sdo/deployment/plan.yaml`` into the repository as a human, like an engineer (``commit_override``); no launcher
+passes a source or plan flag. SREGym ``hotelReservation`` is a kustomize root (``kubernetes/kustomization.yaml``).
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.repository_git import host_git_command
 
 _CONFIG_TYPE = "type.googleapis.com/sdodev.contracts.v1alpha1."
 RAW = "raw"
@@ -102,25 +106,60 @@ def prebuilt_image(image: str, source_id: str = "prebuilt") -> dict[str, Any]:
 
 
 def deployment_plan(
-    source: dict[str, Any],
+    source: dict[str, Any] | None = None,
     *,
     images: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
-    expected_workload_ids: tuple[str, ...] | list[str],
 ) -> dict[str, Any]:
-    """ProtoJSON ``DeploymentPlan`` the human or harness provides: SDO deploys it as given, no deployer agent."""
-    if not expected_workload_ids:
-        raise ValueError("a deployment plan needs the workload IDs that must roll out")
-    return {"source": source, "images": list(images), "expected_workload_ids": list(expected_workload_ids)}
+    """ProtoJSON ``DeploymentPlan`` override: the source (and image declarations) the files cannot say."""
+    plan: dict[str, Any] = {}
+    if source is not None:
+        plan["source"] = source
+    if images:
+        plan["images"] = list(images)
+    return plan
 
 
-def plan_flag_value(plan: dict[str, Any]) -> str:
-    """The compact JSON the host's ``--deployment-plan`` flag takes."""
-    return json.dumps(plan, separators=(",", ":"), sort_keys=True)
+OVERRIDE_PATH = ".sdo/deployment/plan.yaml"
+_OVERRIDE_MESSAGE = (
+    "sdo: record the deployment override\n\nSDO-Actor: human\nSDO-Phase: initial\nSDO-Origin: install-existing"
+)
 
 
-def source_flag_value(source: dict[str, Any]) -> str:
-    """The compact JSON ``install-existing --deployment-source`` takes (written to ``plan.yaml``)."""
-    return json.dumps(source, separators=(",", ":"), sort_keys=True)
+def override_text(plan: dict[str, Any]) -> str:
+    """The stored form of the override: compact JSON (also YAML) with a trailing newline."""
+    return json.dumps(plan, separators=(",", ":"), sort_keys=True) + "\n"
+
+
+def commit_override(repository: Path, plan: dict[str, Any]) -> bool:
+    """Commit ``plan`` as the repository's override in a human commit; return whether a commit was made.
+
+    A repository whose override already says exactly this is left alone, so a repeated install commits nothing.
+    """
+    path = repository / OVERRIDE_PATH
+    text = override_text(plan)
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        status = subprocess.run(
+            host_git_command(repository, "status", "--porcelain", "--", OVERRIDE_PATH),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=wait_for(WaitKind.COMMAND),
+        ).stdout
+        if not status.strip():
+            return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    subprocess.run(
+        host_git_command(repository, "add", "--force", "--", OVERRIDE_PATH),
+        check=True,
+        timeout=wait_for(WaitKind.COMMAND),
+    )
+    subprocess.run(
+        host_git_command(repository, "commit", "-q", "-m", _OVERRIDE_MESSAGE, "--", OVERRIDE_PATH),
+        check=True,
+        timeout=wait_for(WaitKind.COMMAND),
+    )
+    return True
 
 
 @dataclass(frozen=True)

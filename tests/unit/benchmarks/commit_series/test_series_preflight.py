@@ -30,24 +30,6 @@ def job(name: str) -> dict[str, Any]:
     }
 
 
-PLAN = ["Deployment/fg1/web", "Job/fg1/gitlab-migrations-*", "Job/fg1/buckets"]
-
-
-def test_a_release_whose_generated_job_the_plan_does_not_name_is_found_offline() -> None:
-    """Finding 12: the plan had no entry for the release's migration Job; SDO held the push on a live lane."""
-    docs = [deployment("web", "w:1"), job("gitlab-migrations-147f0eb"), job("buckets")]
-    assert preflight.plan_problems(docs, ["Deployment/fg1/web"], "fg1") == [
-        "workload Job/fg1/gitlab-migrations-147f0eb is missing from the deployment plan",
-        "workload Job/fg1/buckets is missing from the deployment plan",
-    ]
-    assert preflight.plan_problems(docs, PLAN, "fg1") == []
-
-
-def test_a_plan_entry_no_release_renders_is_a_problem() -> None:
-    problems = preflight.plan_problems([deployment("web", "w:1")], ["Deployment/fg1/web", "Job/fg1/gone"], "fg1")
-    assert problems == ["plan entry Job/fg1/gone matches no rendered workload"]
-
-
 def test_a_release_without_its_migration_job_is_found() -> None:
     assert preflight.migration_problems([deployment("web", "w:1")]) == ["the render has no migration Job"]
     assert preflight.migration_problems([job("gitlab-migrations-1a2b3c4")]) == []
@@ -112,7 +94,7 @@ def test_the_replayer_pushes_every_commit_onto_the_baselines_memory(tmp_path: Pa
         "upstream": {"repo": str(repo), "base": base, "commits": [one]},
     }
     (tmp_path / "series.json").write_text(__import__("json").dumps(spec))
-    source = _bundle_baseline(tmp_path, "---\n".join([web, tail]), '{"expectedWorkloadIds": ["Deployment/fg1/web"]}')
+    source = _bundle_baseline(tmp_path, "---\n".join([web, tail]), '{"images": []}')
     derive_baseline(source, tmp_path / "derived", tmp_path / "series.json")
     series = preflight.Series.load(tmp_path / "series.json")
     scratch = tmp_path / "scratch"

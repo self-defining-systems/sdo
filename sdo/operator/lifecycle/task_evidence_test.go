@@ -2,6 +2,7 @@ package lifecycle_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -122,6 +123,8 @@ func (m inMount) Execute(ctx context.Context, task *contracts.AgentTask) (*contr
 // task ID, so a failing judge that is retried leaves each attempt's rollout behind after its pod is gone.
 func TestEveryJudgeTaskOfAFailingLifecycleKeepsItsRolloutRequestAndResult(t *testing.T) {
 	h, _ := gateHarness(t, clear)
+	// One failed deploy, so the deployer runs a task too.
+	h.readiness.errors = []error{errors.New("rollout stuck")}
 	mount := t.TempDir()
 	client := fake.NewSimpleClientset()
 	h.coordinator.Workers = inMount{mount: mount, kube: worker_registry.KubernetesExecutor{

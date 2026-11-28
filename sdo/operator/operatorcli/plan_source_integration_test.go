@@ -3,8 +3,8 @@
 package operatorcli
 
 import (
-	"context"
 	"errors"
+	"google.golang.org/protobuf/types/known/anypb"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +15,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/planfile"
+	"sdo.dev/operator/planfile/planfiletest"
 )
 
 func planRepo(t *testing.T) string {
@@ -34,70 +35,32 @@ func headOf(t *testing.T, dir string) string {
 	return strings.TrimSpace(testutil.Git(t, dir, "rev-parse", "HEAD"))
 }
 
-// The flag's source becomes plan.yaml in a human commit; installing again is
-// idempotent, and a repository that already carries a plan needs no flag.
-func TestInstallExistingRecordsTheSourceAsThePlan(t *testing.T) {
-	ctx := context.Background()
+// install-existing reads the override the accepted tree carries; without one
+// the source is derived from the files (nil), never refused.
+func TestInstallExistingReadsTheOptionalOverride(t *testing.T) {
 	repo := planRepo(t)
-	source, err := parseDeploymentSourceFlag(kustomizeSourceJSON)
+	if got, err := installDeploymentSource(InstallExistingConfig{Repository: repo}); err != nil || got != nil {
+		t.Fatalf("no override = %v, %v", got, err)
+	}
+	config, err := anypb.New(&contracts.KustomizeRenderConfig{Path: "kubernetes"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := recordInstallDeploymentSource(ctx, InstallExistingConfig{Repository: repo, DeploymentSource: source})
-	if err != nil {
-		t.Fatal(err)
+	source := &contracts.DeploymentSource{RendererId: "kustomize", Config: config}
+	planfiletest.Write(t, repo, &contracts.DeploymentPlan{Source: source})
+	got, err := installDeploymentSource(InstallExistingConfig{Repository: repo})
+	if err != nil || !proto.Equal(got, source) {
+		t.Fatalf("override source = %v, %v", got, err)
 	}
-	wantKustomizeSource(t, got)
-	plan, err := planfile.Read(repo, planCatalogs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantKustomizeSource(t, plan.GetSource())
-	message := testutil.Git(t, repo, "log", "-1", "--format=%B")
-	if !strings.Contains(message, "SDO-Actor: human") || testutil.Git(t, repo, "status", "--porcelain") != "" {
-		t.Fatalf("plan commit %q or dirty tree", message)
-	}
-	head := headOf(t, repo)
-	if _, err := recordInstallDeploymentSource(ctx, InstallExistingConfig{Repository: repo, DeploymentSource: source}); err != nil || headOf(t, repo) != head {
-		t.Fatalf("second install committed again (%v)", err)
-	}
-	fromTree, err := recordInstallDeploymentSource(ctx, InstallExistingConfig{Repository: repo})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantKustomizeSource(t, fromTree)
-}
-
-func TestInstallExistingWithoutAPlanOrFlagFailsBeforeAnyClusterCall(t *testing.T) {
-	_, err := recordInstallDeploymentSource(context.Background(), InstallExistingConfig{Repository: planRepo(t)})
-	if !errors.Is(err, planfile.ErrAbsent) {
-		t.Fatalf("err = %v", err)
+	writeOverrideText(t, repo, "colour: red\n")
+	if _, err := installDeploymentSource(InstallExistingConfig{Repository: repo}); err == nil || errors.Is(err, planfile.ErrAbsent) {
+		t.Fatalf("a bad override must be refused: %v", err)
 	}
 }
 
-// Recording a source replaces only the source: image declarations and the
-// expected workloads of the plan in the tree stay.
-func TestRecordingASourceKeepsTheRestOfThePlan(t *testing.T) {
-	ctx := context.Background()
-	repo := planRepo(t)
-	source, err := parseDeploymentSourceFlag(kustomizeSourceJSON)
-	if err != nil {
+func writeOverrideText(t *testing.T, repo, text string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, ".sdo", "deployment", "plan.yaml"), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
-	}
-	if err := planfile.Write(repo, &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: []string{"Deployment/shop/web"}}); err != nil {
-		t.Fatal(err)
-	}
-	testutil.Git(t, repo, "add", ".")
-	testutil.Git(t, repo, "commit", "-qm", "plan")
-	other, err := parseDeploymentSourceFlag(strings.Replace(kustomizeSourceJSON, `"kubernetes"`, `"overlays/prod"`, 1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := recordInstallDeploymentSource(ctx, InstallExistingConfig{Repository: repo, DeploymentSource: other}); err != nil {
-		t.Fatal(err)
-	}
-	plan, err := planfile.Read(repo, planCatalogs())
-	if err != nil || !proto.Equal(plan.GetSource(), other) || len(plan.GetExpectedWorkloadIds()) != 1 {
-		t.Fatalf("plan = %v, %v", plan, err)
 	}
 }

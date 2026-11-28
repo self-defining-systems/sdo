@@ -2,20 +2,12 @@ package imagesrc
 
 import "strings"
 
-// AuthoredDockerfileDir is where a deployer's authored Dockerfiles (and .dockerignore files) live in the tree: the
-// "build" deployment files of operational memory (memory/layout pins the two together).
-const AuthoredDockerfileDir = ".sdo/deployment/build"
-
-// memoryDir is operational memory, which a build never reads except AuthoredDockerfileDir.
+// memoryDir is operational memory, which a build never reads.
 const memoryDir = ".sdo"
 
 // BuildInputAllowed is the one rule for where an image build may read, used by build admission and by the
-// recorded-inputs check alike. p is a clean, tree-relative path. A build context is application source and never
-// lies in operational memory; a Dockerfile is application source or a deployer-authored file under
-// AuthoredDockerfileDir.
+// recorded-inputs check alike. p is a clean, tree-relative path. A build context and its Dockerfile are application
+// source (committed files of the repository) and never lie in operational memory.
 func BuildInputAllowed(p string, dockerfile bool) bool {
-	if p != memoryDir && !strings.HasPrefix(p, memoryDir+"/") {
-		return true
-	}
-	return dockerfile && strings.HasPrefix(p, AuthoredDockerfileDir+"/")
+	return p != memoryDir && !strings.HasPrefix(p, memoryDir+"/")
 }

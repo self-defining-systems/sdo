@@ -236,15 +236,14 @@ func TestRealBrokerRefusesAJudgeCandidateWithoutABoundReport(t *testing.T) {
 			checks = append(checks, operability.Check{ID: id, Phase: operability.PhaseLive, Status: operability.StatusPass})
 		}
 		subject := operability.Subject{
-			AcceptedCommit: candidate.Commit, BaseTree: deployment.BaseTree, EffectiveTree: deployment.EffectiveTree, PatchesDigest: deployment.PatchesDigest,
-			RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest, SettingsDigest: "settings-digest", DiagnosticsTree: candidate.DiagnosticsTree,
+			AcceptedCommit: candidate.Commit, BaseTree: deployment.BaseTree, EffectiveTree: deployment.EffectiveTree, RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest, SettingsDigest: "settings-digest", DiagnosticsTree: candidate.DiagnosticsTree,
 		}
 		report, err := operability.New(operability.StageComplete, subject).With(checks...)
 		if err != nil {
 			t.Fatal(err)
 		}
 		mutate(&report)
-		return broker.CandidateEvidence{Commit: candidate.Commit, Tree: candidate.Tree, EffectiveTree: deployment.EffectiveTree, PatchesDigest: deployment.PatchesDigest, Operability: &report}
+		return broker.CandidateEvidence{Commit: candidate.Commit, Tree: candidate.Tree, EffectiveTree: deployment.EffectiveTree, Operability: &report}
 	}
 	for name, mutate := range map[string]func(*operability.Report){
 		"another diagnostics tree": func(r *operability.Report) { r.Subject.DiagnosticsTree = strings.Repeat("5", 40) },

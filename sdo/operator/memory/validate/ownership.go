@@ -1,7 +1,6 @@
 package validate
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -15,7 +14,6 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/telemetry"
 )
 
@@ -40,12 +38,6 @@ func healthObjectiveOnly(kind layout.Kind, id string) bool {
 	return kind != layout.KindPlaybook || id == layout.HealthObjectivePlaybook
 }
 
-var deploymentKinds = []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploymentFile, layout.KindDeploymentOverlay, layout.KindDeploymentPatch}
-
-// deployerKinds are the deployment kinds the deployer owns: everything but the
-// detection designer's overlay slot.
-var deployerKinds = []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploymentFile, layout.KindDeploymentPatch}
-
 // telemetryKinds are the binding files under .sdo/diagnostics/telemetry.
 var telemetryKinds = []layout.Kind{layout.KindTelemetrySources, layout.KindTelemetryBackends}
 
@@ -55,18 +47,16 @@ var telemetryKinds = []layout.Kind{layout.KindTelemetrySources, layout.KindTelem
 // and health-judge bootstrap stages are InitialPhase. An upstream advance
 // (AdvancePhase) changes source only. Responders change
 // operational memory only in ReflectionPhase, after an independently verified
-// outcome. Only the upstream actor
-// owns source, except that a responder's committed app source is published
-// by the broker after the incident closes (the deployer's source change is
-// still a deployment patch). No actor edits memory in ProposalPhase except
-// responders adding deployment patches (add-only, patchOwnership), and nobody
-// but the controller writes outcomes or lifecycle provenance.
+// outcome. App source changes by commit: the deployer commits it in its
+// initial proposal (published only through PublishVerifiedSource, bound to the
+// deployed tree), a responder commits it in its proposal (published by the
+// broker after the incident closes), and Go commits program source proposals
+// in the reflection checkout as the responder. No actor edits memory in
+// ProposalPhase, and nobody but the controller writes outcomes or lifecycle
+// provenance.
 //
-// Deployment class (.sdo/deployment): the human seeds all of it, the deployer
-// owns the plan, files and patches (in the initial and advance phases, and may
-// change or delete only patches whose header names it), the health judge owns
-// the telemetry overlay slot, and responders only add patches. Kinds not granted here (an overlay for
-// the deployer or a responder) are denied.
+// Deployment class (.sdo/deployment): only the optional override plan.yaml,
+// written by the human or the deployer in the initial phase.
 //
 // Incident traffic: responders own the incident generator and incident-*
 // workloads, and the health judge owns all other traffic. This is the broker's
@@ -86,15 +76,16 @@ var grants = []grant{
 		}
 		return true
 	}},
-	{actor: Human, phase: InitialPhase, kinds: deploymentKinds},
-	{actor: Deployer, phase: InitialPhase, kinds: deployerKinds},
-	// The deployment agent's advance route (plan, files, refreshed patches);
-	// patchOwnership still limits it to patches it owns.
-	{actor: Deployer, phase: AdvancePhase, kinds: deployerKinds},
-	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindDeploymentOverlay}},
-	// A responder adds deployment patches and commits application source;
-	// the broker publishes the committed source after the incident closes.
-	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{layout.KindDeploymentPatch, kindSource}},
+	{actor: Human, phase: InitialPhase, kinds: []layout.Kind{layout.KindDeploymentPlan}},
+	// The deployer commits app files like an engineer and may name the
+	// deployment in the override.
+	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{layout.KindDeploymentPlan, kindSource}},
+	// A responder commits application source; the broker publishes the
+	// committed source after the incident closes.
+	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{kindSource}},
+	// Go commits the source changes programs proposed in the reflection
+	// checkout, as the responder.
+	{actor: Responder, phase: ReflectionPhase, kinds: []layout.Kind{kindSource}},
 	// An upstream advance changes only source: an upstream revision that
 	// touches .sdo/ is held before any proposal exists.
 	{actor: Upstream, phase: AdvancePhase, kinds: []layout.Kind{kindSource}},
@@ -169,16 +160,12 @@ func owners(kind layout.Kind, id string) string {
 	return "changeable by " + strings.Join(found, " or ")
 }
 
-// sourceHint explains a denied app-file change. A responder commits source in
-// its checkout; the deployer still keeps an edit as a deployment patch.
+// sourceHint explains a denied app-file change.
 func sourceHint(actor Actor, phase Phase) string {
 	if actor == Upstream {
 		return owners(kindSource, "")
 	}
-	if actor == Deployer {
-		return "app files are not published as edited; make the change a patch (`sdo-operator patch create --reason \"<why>\"`), or revert the file"
-	}
-	return "only a responder's committed source and the upstream advance change app files; the detection designer and other actors never do"
+	return "only the deployer's and a responder's committed source and the upstream advance change app files; the detection designer and other actors never do"
 }
 
 func (s *run) ownership(ctx context.Context) error {
@@ -229,9 +216,6 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := s.patchOwnership(ctx); err != nil {
-		return err
-	}
 	manifests := changesManifests(s.changed)
 	if phase == InitialPhase && actor == HealthJudge && len(s.changed) > 0 && !healthRevalidation(s.req, s.changed) {
 		// An empty diff is reported once, by diff.empty; this rule covers a
@@ -257,49 +241,6 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 		return s.upkeepMigration(base)
 	}
 	return s.detectorOwnership(base)
-}
-
-// patchOwnership applies the owner rule to patches the base already holds.
-// Responders are add-only: a patch is repair history bound to an incident, so a
-// later pass may supersede one with a later-numbered patch but not rewrite or
-// delete it. The deployer may change or delete only patches whose header in the
-// base names it; a base patch whose owner cannot be read is not provably its
-// own. The human seed is unrestricted.
-func (s *run) patchOwnership(ctx context.Context) error {
-	actor, phase := s.req.Actor, s.req.Phase
-	responder := actor == Responder && phase == ProposalPhase
-	deployer := actor == Deployer && (phase == InitialPhase || phase == AdvancePhase)
-	if !responder && !deployer {
-		return nil
-	}
-	for _, p := range s.changed {
-		if kind, _, ok := layout.Classify(p); !ok || kind != layout.KindDeploymentPatch {
-			continue
-		}
-		listing, err := git(ctx, s.req.Root, "ls-tree", "--name-only", "-z", s.req.Base, "--", p)
-		if err != nil {
-			return err
-		}
-		if len(bytes.TrimSpace(listing)) == 0 {
-			continue
-		}
-		if responder {
-			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: "responders may add deployment patches but not modify or delete an accepted one", Hint: "add a new, later-numbered patch that supersedes it"})
-			continue
-		}
-		data, err := git(ctx, s.req.Root, "show", s.req.Base+":"+p)
-		if err != nil {
-			return err
-		}
-		parsed, perr := patchset.Parse(path.Base(p), data)
-		switch {
-		case perr != nil:
-			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: "the accepted patch has no readable owner header, so the deployer cannot show it owns it: " + perr.Error(), Hint: "add a new, later-numbered patch instead of changing this one"})
-		case parsed.Header.Owner != patchset.OwnerDeployer:
-			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("the deployer may change or delete only its own patches; this one is owned by %s", parsed.Header.Owner), Hint: "add a new, later-numbered patch that supersedes it"})
-		}
-	}
-	return nil
 }
 
 func changesManifests(paths []string) bool {

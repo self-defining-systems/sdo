@@ -54,7 +54,7 @@ func (p *recordedPause) Resume(context.Context) error {
 
 func (w *headWorld) HeadToDeploy(context.Context) (broker.HeadChange, bool, error) {
 	w.log("head")
-	return broker.HeadChange{Commit: advCandidate, EffectiveTree: advEffective, PatchesDigest: advDigest}, w.needed, nil
+	return broker.HeadChange{Commit: advCandidate, EffectiveTree: advEffective}, w.needed, nil
 }
 
 func (w *headWorld) HeadCheckout(_ context.Context, commit string) (string, func(), error) {

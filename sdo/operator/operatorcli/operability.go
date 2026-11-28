@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sdo.dev/operator/broker"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -18,7 +19,6 @@ import (
 	"sdo.dev/operator/operatorcli/catalog/images"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/internal/processio"
-	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
@@ -154,8 +154,8 @@ func operabilityCheck(ctx context.Context, args []string, getenv func(string) st
 	return exitClean, nil
 }
 
-// offlineDeploymentChecks reads the checkout the way "deployment render" does
-// (working .sdo/deployment over the recorded base tree) and runs the offline
+// offlineDeploymentChecks reads the checkout the way the deployer does (the
+// committed tree with the working .sdo/ in place) and runs the offline
 // deployment checks. The plan is optional (the source is then derived from the
 // files); one that does not parse is an O1.plan failure; only infrastructure
 // problems are errors.
@@ -170,24 +170,15 @@ func offlineDeploymentChecks(ctx context.Context, root, namespace string, policy
 			Cause: operability.CauseRender, Detail: operability.Clip(err.Error()), Paths: []string{".sdo/deployment/plan.yaml"},
 		}}, nil
 	}
-	_, patchErr := patchset.Check(ctx, root)
-	var perr *patchset.PatchError
-	if patchErr != nil && !errors.As(patchErr, &perr) {
-		return nil, patchErr
-	}
-	tree, err := patchset.PublishedTree(ctx, root)
+	tree, err := broker.ProposalTreeDigest(ctx, root)
 	if err != nil {
 		return nil, err
 	}
 	subject.BaseTree = tree
 	store := rendered.ObjectStore{Dir: root}
-	var effective rendered.EffectiveTree
-	if patchErr == nil {
-		if effective, err = rendered.Effective(ctx, store, rendered.BaseTree(tree)); err != nil {
-			return nil, err
-		}
-		defer effective.Close()
-		subject.EffectiveTree, subject.PatchesDigest = effective.ID, effective.PatchesDigest
+	effective, treeErr := rendered.Effective(ctx, store, rendered.BaseTree(tree))
+	if treeErr == nil {
+		subject.EffectiveTree = effective.ID
 	}
 	env := renderenv.For(nil, namespace, render.SecretsOmit)
 	var declared []imagesrc.Declared
@@ -195,7 +186,7 @@ func offlineDeploymentChecks(ctx context.Context, root, namespace string, policy
 		declared = append(declared, imagesrc.Declared{Image: image.GetImage(), SourceID: image.GetSourceId(), Config: image.GetConfig()})
 	}
 	result := offline.CheckDeployment(ctx, offline.Deployment{
-		PatchesErr: patchErr,
+		TreeErr: treeErr,
 		Render: func(ctx context.Context) (rendered.DesiredSet, error) {
 			fsys, err := rendered.GitTreeFS(ctx, effective)
 			if err != nil {

@@ -64,7 +64,6 @@ type CandidateEvidence struct {
 	Commit        string
 	Tree          string
 	EffectiveTree string
-	PatchesDigest string
 	// Operability is the complete-stage report of the verification. It is
 	// required for the health judge's initial candidate and refused for any
 	// other (their evidence is not an operability subject). Accept recomputes
@@ -138,11 +137,8 @@ func (b *Broker) AcceptDeployed(ctx context.Context, candidate Candidate, eviden
 		if evidence.BaseTree != stored.Tree {
 			return fmt.Errorf("%w: deployment evidence is of tree %s, the candidate is tree %s", ErrCandidateUnbound, evidence.BaseTree, stored.Tree)
 		}
-		if err := requireBoundEvidence(ctx, stored, CandidateEvidence{Commit: stored.Commit, Tree: stored.Tree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest}); err != nil {
+		if err := requireBoundEvidence(ctx, stored, CandidateEvidence{Commit: stored.Commit, Tree: stored.Tree, EffectiveTree: evidence.EffectiveTree}); err != nil {
 			return err
-		}
-		if err := requirePlanEvidence(ctx, stored.Path, evidence, b.PlanCatalogs); err != nil {
-			return fmt.Errorf("%w: %w", ErrCandidateUnbound, err)
 		}
 		return nil
 	}, &evidence, nil)
@@ -403,9 +399,8 @@ func requireBoundEvidence(ctx context.Context, c Candidate, evidence CandidateEv
 	if err != nil {
 		return fmt.Errorf("compute effective tree of the staged candidate: %w", err)
 	}
-	defer effective.Close()
-	if effective.ID != evidence.EffectiveTree || effective.PatchesDigest != evidence.PatchesDigest {
-		return fmt.Errorf("%w: candidate effective tree %s (patches %s), evidence observed %s (patches %s)", ErrCandidateUnbound, effective.ID, effective.PatchesDigest, evidence.EffectiveTree, evidence.PatchesDigest)
+	if effective.ID != evidence.EffectiveTree {
+		return fmt.Errorf("%w: candidate effective tree %s, evidence observed %s", ErrCandidateUnbound, effective.ID, evidence.EffectiveTree)
 	}
 	return nil
 }
@@ -444,7 +439,7 @@ func (b *Broker) requireCandidateOperability(ctx context.Context, c Candidate, e
 	}
 	want := operability.Subject{
 		AcceptedCommit: c.Commit, BaseTree: deployed.BaseTree, EffectiveTree: evidence.EffectiveTree,
-		PatchesDigest: evidence.PatchesDigest, RenderDigest: deployed.RenderDigest, EnvDigest: deployed.EnvDigest,
+		RenderDigest: deployed.RenderDigest, EnvDigest: deployed.EnvDigest,
 		SettingsDigest:  b.settingsDigest,
 		DiagnosticsTree: tree,
 	}

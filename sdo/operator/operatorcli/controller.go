@@ -49,9 +49,9 @@ func RunController(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	// The accepted tree is the only home of the deployment source; a lane
-	// without .sdo/deployment/plan.yaml has nothing to read desired state from.
-	if _, err := planfile.Read(run.Controller.GetAppRoot(), planCatalogs()); err != nil {
+	// The optional override must parse when it exists; without one the
+	// source is derived from the accepted tree's files.
+	if _, err := planfile.Read(run.Controller.GetAppRoot(), planCatalogs()); err != nil && !errors.Is(err, planfile.ErrAbsent) {
 		return fmt.Errorf("controller cannot start: %w", err)
 	}
 	// The child and every wiring read below see the values the parent started with.

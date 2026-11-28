@@ -157,7 +157,7 @@ def test_a_series_baseline_carries_the_base_jobs_and_names_every_job_of_the_seri
     source = _bundle_baseline(
         tmp_path,
         "---\n".join([web, tail + "  annotations:\n    note: instrumented\n"]),
-        json.dumps({"expectedWorkloadIds": ["Deployment/fg1/web"]}),
+        json.dumps({"images": []}),
     )
 
     head = gitlab.derive_baseline(source, tmp_path / "derived", series)
@@ -170,8 +170,7 @@ def test_a_series_baseline_carries_the_base_jobs_and_names_every_job_of_the_seri
     kinds = [d["kind"] for d in yaml.safe_load_all((clone / "k8s" / "render.yaml").read_text())]
     assert kinds == ["Deployment", "Job", "Service"]  # the Job sits where it does in the release's render
     assert "note: instrumented" in (clone / "k8s" / "render.yaml").read_text()  # what the memory had is kept
-    plan = json.loads((clone / ".sdo" / "deployment" / "plan.yaml").read_text())
-    assert plan["expectedWorkloadIds"] == ["Deployment/fg1/web", "Job/fg1/db-migrations-*"]
+    assert json.loads((clone / ".sdo" / "deployment" / "plan.yaml").read_text()) == {"images": []}  # untouched
     # the release applies onto the derived memory as an engineer's diff does
     vcs(clone, "checkout", "-q", "-b", "replay")
     vcs(clone, "fetch", "-q", str(repo), release)
@@ -207,7 +206,7 @@ def _derived_message(tmp_path: Path, *, source_changed_after_judgment: bool) -> 
     (memory / "k8s").mkdir(parents=True)
     (memory / ".sdo" / "deployment").mkdir(parents=True)
     (memory / "k8s" / "render.yaml").write_text(web)
-    (memory / ".sdo" / "deployment" / "plan.yaml").write_text(json.dumps({"expectedWorkloadIds": []}))
+    (memory / ".sdo" / "deployment" / "plan.yaml").write_text(json.dumps({"images": []}))
     vcs(memory, "init", "-q", "-b", "mem")
     vcs(memory, "add", "-A")
     vcs(memory, "commit", "-q", "-m", "judged" + JUDGED)

@@ -662,7 +662,7 @@ def test_helm_onboarding_assertions_accept_the_expected_evidence_and_name_each_v
         "accepted deployment plan declares no images"
     ]
     bare = toy.OnboardingEvidence("helm", good.image_builders, None)
-    assert toy.onboarding_violations(bare, "helm") == ["accepted tree has no .sdo/deployment/plan.yaml"]
+    assert toy.onboarding_violations(bare, "helm") == []  # the override is optional: Go derives the source
     drifted = toy.OnboardingEvidence("helm", good.image_builders, "raw")
     assert toy.onboarding_violations(drifted, "helm") == [
         "accepted tree plan.yaml renderer_id is 'raw', deployment evidence says 'helm'"

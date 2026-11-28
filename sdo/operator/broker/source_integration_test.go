@@ -4,7 +4,6 @@ package broker
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -29,32 +28,11 @@ func responderCheckout(t *testing.T, w *patchWorld, id string) Proposal {
 	return p
 }
 
-// Committing only the files the checkout materialized (the deployment patches
-// applied) keeps nothing: the kept change is measured from the view, not from
-// the base commit.
-func TestCommittingTheMaterializedViewKeepsNothing(t *testing.T) {
-	ctx := context.Background()
-	w := newPatchWorld(t, false)
-	seedIfNeeded(t, w)
-	w.addPatch(t, "deployer", replaceLine("v05", "v05 patched"))
-	p, err := w.broker.CreateProposalForPhase(ctx, "inc-view", ProposalPhase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	commitInCheckout(t, p.Path, "commit the checkout as it is", "-A", "--", ".", ":(exclude).sdo")
-	change, err := SourceChangeOf(ctx, p.Path, p.BaseCommit)
-	if err != nil || len(change.Kept) != 0 || len(change.Scratch) != 0 {
-		t.Fatalf("change = %+v, %v; the patched files must be neither kept nor scratch", change, err)
-	}
-}
-
-// A partial commit keeps what the agent changed and leaves the patch-produced
-// working files alone: they are not scratch.
+// A partial commit keeps what the agent changed; the rest is scratch.
 func TestAPartialCommitKeepsOnlyTheAgentsFiles(t *testing.T) {
 	ctx := context.Background()
 	w := newPatchWorld(t, false)
 	seedIfNeeded(t, w)
-	w.addPatch(t, "deployer", replaceLine("v05", "v05 patched"))
 	p, err := w.broker.CreateProposalForPhase(ctx, "inc-partial", ProposalPhase)
 	if err != nil {
 		t.Fatal(err)
@@ -70,29 +48,6 @@ func TestAPartialCommitKeepsOnlyTheAgentsFiles(t *testing.T) {
 	}
 	if strings.Join(change.Subjects, ",") != "edit app.txt" {
 		t.Fatalf("subjects = %v", change.Subjects)
-	}
-}
-
-// A commit to a file that a deployment patch also changes would apply the
-// series a second time: it is refused.
-func TestACommitToAPatchedFileIsRefused(t *testing.T) {
-	ctx := context.Background()
-	w := newPatchWorld(t, false)
-	seedIfNeeded(t, w)
-	w.addPatch(t, "deployer", replaceLine("v05", "v05 patched"))
-	p, err := w.broker.CreateProposalForPhase(ctx, "inc-overlap", ProposalPhase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	vendor, err := os.ReadFile(p.Path + "/lib/vendor.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeFiles(t, p.Path, map[string]string{"lib/vendor.txt": string(vendor) + "more\n"})
-	commitInCheckout(t, p.Path, "extend the vendored file", "lib/vendor.txt")
-	_, err = w.broker.Publish(ctx, "inc-overlap", Responder, ProposalPhase)
-	if got := rulesOf(t, err); len(got) != 1 || got[0] != validate.RuleSourcePolicy {
-		t.Fatalf("rules = %v (%v), want source.policy", got, err)
 	}
 }
 

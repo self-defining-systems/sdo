@@ -76,5 +76,5 @@ manifests, RBAC and cluster-scoped objects are not accepted.
 
 Instrumentation is a source repair the onboarding agent or a responder commits in its repository.
 Use the source's `publish` block: annotate pod templates for scraping when `scrape.annotations` is set, or send
-OTLP HTTP to its full metrics URL. A deployment overlay under `overlays/telemetry/` may carry the annotations. Do not
-infer publishing support from a query endpoint.
+OTLP HTTP to its full metrics URL. Scrape annotations go through the designer's telemetry backends, or are a
+deployment change the deployer commits. Do not infer publishing support from a query endpoint.

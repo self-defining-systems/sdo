@@ -3,7 +3,6 @@ syntax = "proto3";
 package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
-import "google/protobuf/any.proto";
 import "sdodev/contracts/v1alpha1/deployment_source.proto";
 import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
@@ -25,28 +24,24 @@ message SourceDeploymentRequest {
   repeated PluginDescriptor image_sources = 8;
 }
 
+// The deployer's reply: it committed its work in the proposal checkout; Go
+// deploys the checkout's last commit and sends back any failing step.
 message SourceDeploymentResult {
+  reserved 4;
+  reserved "plan";
   bool proposed = 1;
   string summary = 2;
   string agent_session_id = 3;
-  DeploymentPlan plan = 4;
 }
 
+// DeploymentPlan is the optional deployment override
+// (.sdo/deployment/plan.yaml): what the repository's files cannot say. Without
+// it Go derives the source and the image builds from the files.
 message DeploymentPlan {
-  string strategy_id = 1;
-  google.protobuf.Any strategy_config = 2;
-  // Transitional: fields 1-2 are removed when consumers switch to source.
+  reserved 1, 2, 5;
+  reserved "strategy_id", "strategy_config", "expected_workload_ids";
   DeploymentSource source = 3;
   repeated ImageSource images = 4;
-  repeated string expected_workload_ids = 5;
-}
-
-// The first built-in strategy. Later strategies can use their own typed
-// protobuf config without changing the worker envelope or coordinator.
-message RawManifestStrategy {
-  repeated ImageBuild image_builds = 1;
-  repeated string manifest_paths = 2;
-  repeated string expected_workload_ids = 3;
 }
 
 message ImageBuild {

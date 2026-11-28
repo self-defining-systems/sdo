@@ -20,10 +20,6 @@ from benchmarks.sregym.adapter import (
     DeploymentPolicyConfig,
     WaitKind,
     benchmark_registry_host,
-    buildkit_image,
-    deployment_plan,
-    helm_source,
-    kustomize_source,
     raw_source,
     wait_for,
 )
@@ -182,27 +178,19 @@ def point_kustomization_at_registry(workspace: Path, namespace: str) -> None:
         )
 
 
-#: Variants whose deployment the harness provides (SDO deploys it as given, no deployer agent).
+#: Variants that ship their own deployment files (case B): SDO deploys the commit as it is, and the deployer
+#: agent runs only if that deploy fails.
 PROVIDED_VARIANTS = ("helm", "kustomize")
 
 
 def provided_deployment_plan(variant: str, namespace: str, workspace: Path) -> dict[str, Any] | None:
-    """The deployment the harness provides for a variant that ships one; SDO deploys it, no agent authors it.
+    """The override a variant needs; ``None`` when Go derives the whole deployment from the files.
 
-    The expected workloads come from SDO's own render of the committed ``workspace`` (Go decides which kinds are
-    workloads), never from a list here. The raw lane is seeded and the remaining variants are still authored by
-    the deployer agent.
+    The helm variant has one chart and the kustomize variant one overlay root (its base is referenced), and the
+    tree's only Dockerfile builds the lane-registry image, so neither needs an override.
     """
-    if variant not in PROVIDED_VARIANTS:
-        return None
-    source = helm_source("chart") if variant == "helm" else kustomize_source("deploy/overlays/default")
-    path = "chart" if variant == "helm" else "deploy"
-    workloads = AcceptedSource(workspace, namespace, (path,), renderer_source=source).workloads
-    return deployment_plan(
-        source,
-        images=(buildkit_image(registry_image(namespace), ".", "Dockerfile"),),
-        expected_workload_ids=list(workloads.workload_ids),
-    )
+    del variant, namespace, workspace
+    return None
 
 
 def prepare_workspace(workspace: Path, image: str, *, fresh: bool, variant: str = "raw") -> str:
@@ -580,9 +568,9 @@ def install_controller(
 def adopt_installed_seed(environment: FastloopEnvironment, accepted_commit: str) -> None:
     """Make the commit the install accepted the lane's seed.
 
-    ``install-existing`` records the deployment plan (``.sdo/deployment/plan.yaml``) in a human commit on top of
-    the prepared workspace. A seed captured before that commit lacks the plan, so a reset to it leaves a
-    repository the controller refuses to start from.
+    The harness commits the deployment override (``.sdo/deployment/plan.yaml``) as a human on top of the
+    prepared workspace, and install-existing may commit the standard goal and Go's detectors. A seed captured
+    before those commits lacks them, so the lane's seed is the commit the install accepted.
     """
     if environment.seed_commit != accepted_commit:
         environment.seed_commit = accepted_commit
@@ -775,9 +763,7 @@ def onboarding_violations(evidence: OnboardingEvidence, variant: str) -> list[st
         violations.append("accepted deployment plan declares no images")
     elif other := sorted({builder for builder in evidence.image_builders if builder != "buildkit"}):
         violations.append(f"images not built by buildkit: {', '.join(other)}")
-    if evidence.plan_renderer_id is None:
-        violations.append("accepted tree has no .sdo/deployment/plan.yaml")
-    elif evidence.plan_renderer_id != evidence.renderer_id:
+    if evidence.plan_renderer_id is not None and evidence.plan_renderer_id != evidence.renderer_id:
         violations.append(
             f"accepted tree plan.yaml renderer_id is {evidence.plan_renderer_id!r}, "
             f"deployment evidence says {evidence.renderer_id!r}"

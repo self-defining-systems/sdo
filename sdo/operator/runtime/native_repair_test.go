@@ -47,7 +47,7 @@ func TestDeploymentRepairerMapsEveryRepairOutcome(t *testing.T) {
 	}{
 		{"no repair", nil, SourceRepair{}},
 		{"no deployment input", []string{".sdo/deployment/plan.yaml"}, SourceRepair{Commit: "accepted"}},
-		{"no recorded deployment", []string{".sdo/deployment/patches/0001-x.patch"}, SourceRepair{Commit: "accepted", Undeployed: true}},
+		{"no recorded deployment", []string{"k8s/app.yaml"}, SourceRepair{Commit: "accepted", Undeployed: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repairer := DeploymentRepairer{
@@ -73,7 +73,7 @@ func TestPlainPublicationNeedsADeclaredReason(t *testing.T) {
 	if _, err := (PlainPublication{Repository: repairFakePublisher{}}).Repair(context.Background(), "incident-1"); err == nil {
 		t.Fatal("a plain publication without a reason was accepted")
 	}
-	got, err := PlainPublication{Repository: repairFakePublisher{paths: []string{".sdo/deployment/values/values.yaml"}}, Reason: PublishesUndeployedFrozenMemory}.Repair(context.Background(), "incident-1")
+	got, err := PlainPublication{Repository: repairFakePublisher{paths: []string{"chart/values.yaml"}}, Reason: PublishesUndeployedFrozenMemory}.Repair(context.Background(), "incident-1")
 	if err != nil || got != (SourceRepair{Commit: "accepted", Undeployed: true}) {
 		t.Fatalf("Repair = %+v, %v", got, err)
 	}

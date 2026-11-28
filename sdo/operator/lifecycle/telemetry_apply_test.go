@@ -105,7 +105,7 @@ func TestTelemetryApplyFailureIsTheDesignersTypedCorrection(t *testing.T) {
 		if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 			t.Fatal(err)
 		}
-		if h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 2 || fake.discards != 1 || fake.accepts != 1 {
+		if h.workers.deployerAttempts() != 0 || h.workers.judgeRuns != 2 || fake.discards != 1 || fake.accepts != 1 {
 			t.Fatalf("%s: deployer attempts=%d judge runs=%d discards=%d accepts=%d", reason, h.workers.deployerAttempts(), h.workers.judgeRuns, fake.discards, fake.accepts)
 		}
 		if len(h.verifier.candidateRoots) != 1 {

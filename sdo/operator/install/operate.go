@@ -127,9 +127,6 @@ func OperateJob(cfg Config, healthObjective, operationID string) (*batchv1.Job, 
 	if cfg.MemoryUpstreamURL != "" {
 		args = append(args, "--source-branch-url", cfg.MemoryUpstreamURL, "--source-branch", cfg.MemoryUpstreamBranch)
 	}
-	if cfg.DeploymentPlan != "" {
-		args = append(args, "--deployment-plan", cfg.DeploymentPlan)
-	}
 	if cfg.DeploymentPolicy != "" {
 		args = append(args, "--deployment-policy", cfg.DeploymentPolicy)
 	}

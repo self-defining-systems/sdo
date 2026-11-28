@@ -14,7 +14,7 @@ def _packed(message: object) -> any_pb2.Any:
     return packed
 
 
-def test_deployment_plan_carries_source_images_and_workloads() -> None:
+def test_deployment_plan_carries_source_and_images() -> None:
     plan = contracts.DeploymentPlan(
         source=contracts.DeploymentSource(
             renderer_id="raw", config=_packed(contracts.RawRenderConfig(paths=["deploy", "extra.yaml"]))
@@ -29,7 +29,6 @@ def test_deployment_plan_carries_source_images_and_workloads() -> None:
                 image="redis:7", source_id="prebuilt", config=_packed(contracts.PrebuiltImageConfig())
             ),
         ],
-        expected_workload_ids=["Deployment/app/web"],
     )
     parsed = json_format.Parse(json_format.MessageToJson(plan), contracts.DeploymentPlan())
     assert parsed == plan
@@ -55,3 +54,13 @@ def test_renderer_id_pattern_is_declared(renderer_id: str) -> None:
     import re
 
     assert re.fullmatch(pattern, renderer_id) is None
+
+
+def test_deployment_plan_has_only_the_override_fields() -> None:
+    """The override carries source and images; the retired plan fields are reserved, never reused."""
+    assert set(contracts.DeploymentPlan.DESCRIPTOR.fields_by_name) == {"source", "images"}
+    assert set(contracts.SourceDeploymentResult.DESCRIPTOR.fields_by_name) == {
+        "proposed",
+        "summary",
+        "agent_session_id",
+    }

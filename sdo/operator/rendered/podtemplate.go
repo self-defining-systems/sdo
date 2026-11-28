@@ -9,7 +9,7 @@ import (
 // podKinds is the one table of built-in kinds that carry a pod spec and where
 // the pod spec lives. Every consumer that reads, stamps, pins, resolves,
 // attributes or gates container images (Normalize, ImageSites,
-// CheckExpectedWorkloads, deployment.Stamp, receipt pins, the shape digest,
+// deployment.Stamp, receipt pins, the shape digest,
 // observed-workload parsing) goes through it; a kind missing here runs images
 // that no check covers. TestPodTemplateTableIsTheOnlyLocator enforces that no
 // other source file spells out a pod-spec location.

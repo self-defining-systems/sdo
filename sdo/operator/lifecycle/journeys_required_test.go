@@ -12,7 +12,7 @@ import (
 
 func TestMissingJourneysStopRunBeforeAnyAgentOrCommit(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-	cfg := providedConfig(providedPlans(t)["raw"])
+	cfg := config()
 	cfg.JourneysRequired = true
 	_, err := h.coordinator.Run(context.Background(), cfg)
 	var missing *memory.JourneysRequiredError
@@ -35,7 +35,7 @@ func TestJourneysRequiredProceedsWhenGivenAndWhenTheOptionIsOff(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-			cfg := providedConfig(providedPlans(t)["raw"])
+			cfg := config()
 			cfg.StopAfterArchitecture = true
 			mutate(&cfg)
 			result, err := h.coordinator.Run(context.Background(), cfg)
@@ -52,7 +52,7 @@ func TestTheDesignerGetsTheJourneysAsGivenWithoutFrontMatter(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-	cfg := providedConfig(providedPlans(t)["raw"])
+	cfg := config()
 	cfg.JourneysRequired, cfg.HealthObjective = true, objective
 	if _, err := h.coordinator.Run(context.Background(), cfg); err != nil {
 		t.Fatal(err)

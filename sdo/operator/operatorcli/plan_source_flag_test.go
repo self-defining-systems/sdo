@@ -3,12 +3,11 @@ package operatorcli
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"google.golang.org/protobuf/proto"
-
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/planfile"
 )
 
@@ -31,35 +30,23 @@ func controllerLaunchArgs(extra ...string) []string {
 	}, extra...)
 }
 
-func wantKustomizeSource(t *testing.T, got *contracts.DeploymentSource) {
-	t.Helper()
-	want, err := parseDeploymentSourceFlag(kustomizeSourceJSON)
+// install-existing takes no deployment source: the repository's files and its
+// optional override say how to deploy, and the controller is given no source
+// or path flag.
+func TestInstallExistingTakesNoSourceFlag(t *testing.T) {
+	config, err := ParseInstallExistingLaunch(existingLaunchArgs())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !proto.Equal(got, want) {
-		t.Fatalf("deployment source = %v, want %v", got, want)
-	}
-}
-
-// install-existing takes the source as input to plan.yaml; the controller it
-// installs is never given a source or path flag.
-func TestInstallExistingParsesTheSourceAndForwardsNoFlag(t *testing.T) {
-	config, err := ParseInstallExistingLaunch(existingLaunchArgs("--deployment-source", kustomizeSourceJSON))
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantKustomizeSource(t, config.DeploymentSource)
 	for _, arg := range config.Install.ExtraControllerArgs {
 		if strings.HasPrefix(arg, "--deployment-source") || strings.HasPrefix(arg, "--deployed-manifest-path") {
-			t.Fatalf("controller argument %q: the controller reads plan.yaml", arg)
+			t.Fatalf("controller argument %q: the controller reads the accepted tree", arg)
 		}
 	}
-	if _, err := ParseInstallExistingLaunch(existingLaunchArgs("--deployment-source", "not json")); err == nil || !strings.Contains(err.Error(), "invalid deployment source") {
-		t.Fatalf("malformed source: err = %v", err)
-	}
-	if _, err := ParseInstallExistingLaunch(existingLaunchArgs("--deployed-manifest-path", "k8s")); err == nil {
-		t.Fatal("the retired path flag is accepted")
+	for _, flag := range []string{"--deployment-source", "--deployed-manifest-path"} {
+		if _, err := ParseInstallExistingLaunch(existingLaunchArgs(flag, kustomizeSourceJSON)); err == nil {
+			t.Fatalf("the retired %s flag is accepted", flag)
+		}
 	}
 }
 
@@ -90,13 +77,22 @@ func TestControllerLaunchRejectsTheRetiredSourceFlags(t *testing.T) {
 	}
 }
 
-// A controller on a repository without .sdo/deployment/plan.yaml does not
-// start: it names how to write one.
-func TestRunControllerRequiresAPlanInTheAcceptedTree(t *testing.T) {
+// A controller on a repository whose override does not parse does not start;
+// one without an override is not refused for it (the source is derived).
+func TestRunControllerRefusesAnOverrideThatDoesNotParse(t *testing.T) {
 	args := controllerLaunchArgs()
 	args[2] = t.TempDir()
 	err := RunController(context.Background(), args)
-	if !errors.Is(err, planfile.ErrAbsent) || !strings.Contains(err.Error(), "install-existing --deployment-source") {
-		t.Fatalf("RunController without a plan = %v", err)
+	if errors.Is(err, planfile.ErrAbsent) || (err != nil && strings.Contains(err.Error(), "plan.yaml")) {
+		t.Fatalf("RunController without an override = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(args[2], ".sdo", "deployment"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(args[2], ".sdo", "deployment", "plan.yaml"), []byte("colour: red\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunController(context.Background(), args); err == nil || !strings.Contains(err.Error(), "controller cannot start") {
+		t.Fatalf("RunController with a bad override = %v", err)
 	}
 }

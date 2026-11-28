@@ -27,7 +27,7 @@ func syntheticEvidence(t *testing.T) broker.SourceEvidence {
 	tree, effective := strings.Repeat("a", 40), strings.Repeat("f", 40)
 	return broker.SourceEvidence{
 		DeploymentSource: source,
-		BaseTree:         tree, EffectiveTree: effective, PatchesDigest: strings.Repeat("e", 64), ObservedRevision: effective,
+		BaseTree:         tree, EffectiveTree: effective, ObservedRevision: effective,
 		RenderDigest: strings.Repeat("b", 64), EnvDigest: strings.Repeat("c", 64),
 		RenderEnvironment: &contracts.RenderEnvironment{KubeVersion: "v1.31.2", ApiVersions: []string{"apps/v1", "v1"}},
 		Images:            []string{"app@sha256:" + strings.Repeat("d", 64)}, ResourceIDs: []string{"Deployment/ns/app"}, Ready: true,
@@ -41,7 +41,7 @@ func TestSourceEvidenceRecordRoundTripsTheSourceAndDigests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{`"deployment_source"`, `"base_tree"`, `"effective_tree"`, `"patches_digest"`, `"render_digest"`, `"env_digest"`, `"render_environment"`} {
+	for _, field := range []string{`"deployment_source"`, `"base_tree"`, `"effective_tree"`, `"render_digest"`, `"env_digest"`, `"render_environment"`} {
 		if !strings.Contains(string(encoded), field) {
 			t.Fatalf("record %s lacks %s", encoded, field)
 		}
@@ -50,7 +50,7 @@ func TestSourceEvidenceRecordRoundTripsTheSourceAndDigests(t *testing.T) {
 	if err := json.Unmarshal(encoded, &got); err != nil {
 		t.Fatal(err)
 	}
-	if !proto.Equal(got.DeploymentSource, want.DeploymentSource) || got.BaseTree != want.BaseTree || got.EffectiveTree != want.EffectiveTree || got.PatchesDigest != want.PatchesDigest || got.RenderDigest != want.RenderDigest || got.EnvDigest != want.EnvDigest || !proto.Equal(got.RenderEnvironment, want.RenderEnvironment) || !reflect.DeepEqual(got.Recreated, want.Recreated) {
+	if !proto.Equal(got.DeploymentSource, want.DeploymentSource) || got.BaseTree != want.BaseTree || got.EffectiveTree != want.EffectiveTree || got.RenderDigest != want.RenderDigest || got.EnvDigest != want.EnvDigest || !proto.Equal(got.RenderEnvironment, want.RenderEnvironment) || !reflect.DeepEqual(got.Recreated, want.Recreated) {
 		t.Fatalf("round trip = %+v, want %+v", got, want)
 	}
 }
@@ -86,7 +86,6 @@ func TestSourceEvidenceWithoutAnEffectiveTreeIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	delete(fields, "effective_tree")
-	delete(fields, "patches_digest")
 	old, _ := json.Marshal(fields)
 	var got broker.SourceEvidence
 	err = json.Unmarshal(old, &got)
@@ -125,7 +124,6 @@ func TestPublishVerifiedSourceRequiresSourceAndDigests(t *testing.T) {
 		"no render digest":           {func(e *broker.SourceEvidence) { e.RenderDigest = "" }, "digests"},
 		"no env digest":              {func(e *broker.SourceEvidence) { e.EnvDigest = "" }, "digests"},
 		"no effective tree":          {func(e *broker.SourceEvidence) { e.EffectiveTree = "" }, "does not match the deployed tree"},
-		"no patches digest":          {func(e *broker.SourceEvidence) { e.PatchesDigest = "" }, "does not match the deployed tree"},
 		"revision differs from tree": {func(e *broker.SourceEvidence) { e.ObservedRevision = strings.Repeat("e", 40) }, "does not match the deployed tree"},
 	} {
 		t.Run(name, func(t *testing.T) {

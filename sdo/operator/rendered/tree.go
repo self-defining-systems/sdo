@@ -24,33 +24,23 @@ type ObjectStore struct {
 	Dir string
 	// Git replaces the git process edge when set.
 	Git GitFunc
-	// Env is added to the git process environment: an effective tree's
-	// private object directory and alternates. Empty for accepted stores.
-	Env []string
-	// Compose replaces patch application plus projection (the real one runs
-	// git). A simulation or unit test supplies results without a process.
-	Compose ComposeFunc
-}
-
-type gitEnvKey struct{}
-
-// GitEnvFrom returns the extra environment a GitFunc must give its git process
-// when it wraps a real one: an effective tree's private object directory. It
-// is empty for accepted stores, so a GitFunc that ignores it is only correct
-// where no patch or projection wrote objects.
-func GitEnvFrom(ctx context.Context) []string {
-	env, _ := ctx.Value(gitEnvKey{}).([]string)
-	return env
+	// MkTree replaces the tree-object write Effective makes (`git mktree` of
+	// one ls-tree level); a simulation supplies the ID without a process.
+	MkTree func(ctx context.Context, dir string, records []string) (string, error)
 }
 
 func (o ObjectStore) git(ctx context.Context, args ...string) ([]byte, error) {
 	if o.Git != nil {
-		if len(o.Env) > 0 {
-			ctx = context.WithValue(ctx, gitEnvKey{}, o.Env)
-		}
 		return o.Git(ctx, o.Dir, args...)
 	}
-	return renderio.GitEnv(ctx, o.Dir, o.Env, args...)
+	return renderio.Git(ctx, o.Dir, args...)
+}
+
+func (o ObjectStore) mktree(ctx context.Context, records []string) (string, error) {
+	if o.MkTree != nil {
+		return o.MkTree(ctx, o.Dir, records)
+	}
+	return renderio.MkTree(ctx, o.Dir, records)
 }
 
 var treeID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)

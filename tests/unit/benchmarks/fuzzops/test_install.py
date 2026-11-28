@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import pytest
@@ -28,7 +27,7 @@ def _config(**overrides: object) -> InstallConfig:
 def test_watch_only_installs_a_watch_only_controller_through_the_mode_variable() -> None:
     config = _config(watch_only=True)
     assert config.host_env()["SDO_MODE"] == "watch-only"
-    assert not any(arg in ("--watch-only", "--frozen-memory") for arg in config.host_args(Path("/w/app"), {}))
+    assert not any(arg in ("--watch-only", "--frozen-memory") for arg in config.host_args(Path("/w/app")))
 
 
 def test_default_install_responds() -> None:
@@ -36,7 +35,7 @@ def test_default_install_responds() -> None:
 
 
 def test_host_passes_the_benchmark_profile_then_the_overlays() -> None:
-    args = _config(config_files=(Path("/synthetic/lane.yaml"),)).host_args(Path("/synthetic/work/app"), {})
+    args = _config(config_files=(Path("/synthetic/lane.yaml"),)).host_args(Path("/synthetic/work/app"))
     files = [args[i + 1] for i, arg in enumerate(args) if arg == "--config"]
     assert files == [str(BENCH_PROFILE), "/synthetic/lane.yaml"]
 
@@ -74,8 +73,8 @@ def test_the_command_line_requires_a_model(capsys: pytest.CaptureFixture[str]) -
 
 
 def test_journeys_file_is_passed_to_host_only_when_given() -> None:
-    assert "--journeys-file" not in _config().host_args(Path("/w/app"), {})
-    args = _config(journeys_file=Path("/synthetic/journeys.txt")).host_args(Path("/w/app"), {})
+    assert "--journeys-file" not in _config().host_args(Path("/w/app"))
+    args = _config(journeys_file=Path("/synthetic/journeys.txt")).host_args(Path("/w/app"))
     assert args[args.index("--journeys-file") + 1] == "/synthetic/journeys.txt"
     assert args.index("--journeys-file") < args.index("--config")
 
@@ -85,25 +84,25 @@ def test_journeys_file_must_be_absolute() -> None:
         _config(journeys_file=Path("journeys.txt"))
 
 
-def test_the_plan_is_provided_unless_the_deployer_agent_is_asked_for() -> None:
-    plan = {"source": {"renderer_id": "raw"}}
-    provided = _config().host_args(Path("/w/app"), plan)
-    assert json.loads(provided[provided.index("--deployment-plan") + 1]) == plan
-    deployer = _config(provided_plan=False, registry_host="registry.local:5000").host_args(Path("/w/app"), plan)
-    assert "--deployment-plan" not in deployer
+def test_no_launch_passes_a_plan_flag() -> None:
+    """The override is the repository's committed file; host takes no plan flag in either mode."""
+    assert "--deployment-plan" not in _config().host_args(Path("/w/app"))
+    assert "--deployment-plan" not in _config(provided_plan=False, registry_host="registry.local:5000").host_args(
+        Path("/w/app")
+    )
 
 
 def test_the_deployer_launch_names_the_registry_its_builds_push_to() -> None:
     # the deployer task was once refused before any model call: the launch named no registry host
     args = _config(provided_plan=False, registry_host="registry.local:5000", registry_insecure=True).host_args(
-        Path("/w/app"), {}
+        Path("/w/app")
     )
     assert args[args.index("--registry-host") + 1] == "registry.local:5000"
     assert "--registry-insecure" in args
     assert args.index("--registry-insecure") < args.index("--config")
     with pytest.raises(ValueError, match="registry_host"):
         _config(provided_plan=False)
-    assert "--registry-host" not in _config().host_args(Path("/w/app"), {})
+    assert "--registry-host" not in _config().host_args(Path("/w/app"))
 
 
 def test_the_command_line_passes_the_deployer_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

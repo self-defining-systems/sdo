@@ -14,9 +14,5 @@
   "sdo/operator/worker_registry/provider_capacity.go": {
     "count": 4,
     "reason": "opt-in per-host model-account pool (env SDO_OPUS_POOL_*) mounts a node directory; unset in a normal install; express as a claim when a platform needs it"
-  },
-  "sdo/skills/sdo-serving/SKILL.md": {
-    "count": 1,
-    "reason": "advice to reproduce a build locally where docker exists; reword to the build tool the agent has"
   }
 }

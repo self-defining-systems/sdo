@@ -22,17 +22,15 @@ type OfflineChecker interface {
 // OfflineChecks are the checks plus the tree and digest identities they were
 // computed from (empty when a failure kept them from being computed).
 type OfflineChecks struct {
-	Checks                                                          []operability.Check
-	BaseTree, EffectiveTree, PatchesDigest, RenderDigest, EnvDigest string
-	// UnusedImages are the plan's repository-form image declarations (the form
-	// Go proposes from a render) that no rendered container uses. An advance
-	// drops them from the plan itself.
+	Checks                                           []operability.Check
+	BaseTree, EffectiveTree, RenderDigest, EnvDigest string
+	// UnusedImages are the override's repository-form image declarations that
+	// no rendered container uses.
 	UnusedImages []string
 }
 
 // OperabilityError is a terminal outcome of the offline gate or the candidate gate: no agent can correct it
-// (the cause belongs to a person, to SDO itself, or the plan was supplied by a
-// person). It carries the report and the decision recomputed from it.
+// (the cause belongs to a person or to SDO itself). It carries the report and the decision recomputed from it.
 type OperabilityError struct {
 	Report   operability.Report
 	Decision operability.Decision
@@ -56,14 +54,10 @@ func (e *retryOffline) InfrastructureOutcome() bool { return true }
 // effect. ok is false when the Readiness verifier cannot check offline. The
 // returned decision is Accepted, or says who must act; infrastructure causes are
 // retried within the bounded window and end as an *InfrastructureError.
-func (c Coordinator) offlineGate(ctx context.Context, cfg Config, proposal broker.Proposal, plan *contracts.DeploymentPlan) (report operability.Report, decision operability.Decision, ok bool, err error) {
+func (c Coordinator) offlineGate(ctx context.Context, cfg Config, mode operability.Mode, proposal broker.Proposal, plan *contracts.DeploymentPlan) (report operability.Report, decision operability.Decision, ok bool, err error) {
 	checker, ok := c.Readiness.(OfflineChecker)
 	if !ok {
 		return operability.Report{}, operability.Decision{}, false, nil
-	}
-	mode := operability.ModeFresh
-	if cfg.ProvidedPlan != nil {
-		mode = operability.ModeProvided
 	}
 	err = c.retryInfrastructure(ctx, cfg, "offline operability checks", func() error {
 		checks, err := checker.CheckOffline(ctx, proposal.Path, plan)
@@ -72,7 +66,7 @@ func (c Coordinator) offlineGate(ctx context.Context, cfg Config, proposal broke
 		}
 		subject := operability.Subject{
 			AcceptedCommit: proposal.BaseCommit, BaseTree: checks.BaseTree, EffectiveTree: checks.EffectiveTree,
-			PatchesDigest: checks.PatchesDigest, RenderDigest: checks.RenderDigest, EnvDigest: checks.EnvDigest,
+			RenderDigest: checks.RenderDigest, EnvDigest: checks.EnvDigest,
 			SettingsDigest: cfg.SettingsDigest,
 		}
 		report, err = operability.New(operability.StageDeployment, subject.WithUnavailable()).With(checks.Checks...)
@@ -109,8 +103,7 @@ func asOperabilityError(err error) (*OperabilityError, bool) {
 // and the live checks of the receipt, bound to the receipt's identity and to
 // the commit the proposal was based on. The broker recomputes the binding and
 // the decision from it at PublishVerifiedSource.
-func (c Coordinator) deploymentReport(ctx context.Context, cfg Config, proposal broker.Proposal, plan *contracts.DeploymentPlan, offline operability.Report, receipt DeploymentReceipt) (report operability.Report, decision operability.Decision, err error) {
-	mode := c.mode(cfg)
+func (c Coordinator) deploymentReport(ctx context.Context, cfg Config, mode operability.Mode, proposal broker.Proposal, plan *contracts.DeploymentPlan, offline operability.Report, receipt DeploymentReceipt) (report operability.Report, decision operability.Decision, err error) {
 	err = c.retryInfrastructure(ctx, cfg, "live operability checks", func() error {
 		live, err := c.Readiness.CheckLive(ctx, proposal.Path, plan, receipt, nil)
 		if err != nil {
@@ -122,7 +115,7 @@ func (c Coordinator) deploymentReport(ctx context.Context, cfg Config, proposal 
 		}
 		subject := operability.Subject{
 			AcceptedCommit: proposal.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree,
-			PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
+			RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
 			SettingsDigest: cfg.SettingsDigest,
 		}
 		if report, err = operability.New(operability.StageDeployment, subject).With(operability.Combine(checks, live)...); err != nil {

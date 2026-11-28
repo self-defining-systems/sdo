@@ -122,11 +122,10 @@ func TestAcceptedHealthRevisionOfASeedWithoutJudgeCommitNeedsRefresh(t *testing.
 	}
 }
 
-// The deployment inputs under .sdo/deployment (values, manifests, build files,
-// overlays, patches) are source for the deployed system even though they live
-// in memory. A commit that changes only them must change SourceInputs, so it is
-// evaluated for a refresh; plan.yaml and other memory do not.
-func TestHealthSourceInputsCoverEffectiveDeploymentInputs(t *testing.T) {
+// Deployment files are ordinary repository files: a commit that changes only
+// them must change SourceInputs, so it is evaluated for a refresh; plan.yaml
+// and other memory do not.
+func TestHealthSourceInputsCoverDeploymentFiles(t *testing.T) {
 	ctx := context.Background()
 	inputs := func(dir string) string {
 		t.Helper()
@@ -137,11 +136,9 @@ func TestHealthSourceInputsCoverEffectiveDeploymentInputs(t *testing.T) {
 		return rev.SourceInputs
 	}
 	for _, path := range []string{
-		".sdo/deployment/values/prod.yaml",
-		".sdo/deployment/manifests/app/deploy.yaml",
-		".sdo/deployment/build/Dockerfile",
-		".sdo/deployment/overlays/telemetry/patch.yaml",
-		".sdo/deployment/patches/0001-fix.patch",
+		"deploy/sdo/values/prod.yaml",
+		"deploy/sdo/manifests/app/deploy.yaml",
+		"Dockerfile.api",
 	} {
 		dir := judgedRepo(t)
 		before := inputs(dir)
@@ -186,7 +183,7 @@ func headOf(t *testing.T, dir string) string { return gitIn(t, dir, "rev-parse",
 func TestInstallSurvivesUpkeepSchemaMigration(t *testing.T) {
 	dir := installedRepo(t)
 	installed := headOf(t, dir)
-	writeFile(t, dir, ".sdo/schema-version", "14\n")
+	writeFile(t, dir, ".sdo/schema-version", "15\n")
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-q", "-m", "sdo(memory-migration): validated initial"+upkeepTrailers)
 	ok, err := memory.HealthRefreshPreservesInstall(context.Background(), dir, installed, headOf(t, dir))
@@ -209,7 +206,7 @@ func TestInstallWindowRejectsUpkeepCommitThatIsNotAMigration(t *testing.T) {
 func TestInstallWindowRejectsUpkeepMigrationThatChangesSource(t *testing.T) {
 	dir := installedRepo(t)
 	installed := headOf(t, dir)
-	writeFile(t, dir, ".sdo/schema-version", "14\n")
+	writeFile(t, dir, ".sdo/schema-version", "15\n")
 	writeFile(t, dir, "main.go", "package main // v3\n")
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-q", "-m", "migration plus source"+upkeepTrailers)
@@ -221,7 +218,7 @@ func TestInstallWindowRejectsUpkeepMigrationThatChangesSource(t *testing.T) {
 func TestInstallWindowRejectsUnrelatedCommitAfterMigration(t *testing.T) {
 	dir := installedRepo(t)
 	installed := headOf(t, dir)
-	writeFile(t, dir, ".sdo/schema-version", "14\n")
+	writeFile(t, dir, ".sdo/schema-version", "15\n")
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-q", "-m", "migration"+upkeepTrailers)
 	writeFile(t, dir, ".sdo/playbooks/p/README.md", "x\n")
@@ -243,7 +240,7 @@ func TestInstallWithoutJudgeSurvivesUpkeepSchemaMigration(t *testing.T) {
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-qm", "baseline without a judge")
 	installed := headOf(t, dir)
-	writeFile(t, dir, ".sdo/schema-version", "14\n")
+	writeFile(t, dir, ".sdo/schema-version", "15\n")
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-q", "-m", "sdo(memory-migration): validated initial"+upkeepTrailers)
 	ok, err := memory.HealthRefreshPreservesInstall(context.Background(), dir, installed, headOf(t, dir))

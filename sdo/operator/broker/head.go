@@ -25,7 +25,6 @@ type HeadChange struct {
 	// EffectiveTree and PatchesDigest identify the source a deployment (or a
 	// hold) is about; a hold is superseded only when they change.
 	EffectiveTree string
-	PatchesDigest string
 }
 
 // HeadToDeploy reports the accepted head when its effective source differs
@@ -96,11 +95,10 @@ func (b *Broker) headToDeployLocked(ctx context.Context) (change HeadChange, nee
 	if err != nil {
 		return change, false, fmt.Errorf("compute the effective tree of head %s: %w", head, err)
 	}
-	defer effective.Close()
-	if target == nil && effective.ID == recorded.EffectiveTree && effective.PatchesDigest == recorded.PatchesDigest {
+	if target == nil && effective.ID == recorded.EffectiveTree {
 		return change, false, nil
 	}
-	return HeadChange{Commit: head, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}, true, nil
+	return HeadChange{Commit: head, EffectiveTree: effective.ID}, true, nil
 }
 
 // HeadCheckout is a clean checkout of an accepted commit, for the deployer and
@@ -152,9 +150,6 @@ func (b *Broker) RecordHeadDeployment(ctx context.Context, commit string, eviden
 			return fmt.Errorf("%w: deployment evidence is of tree %s, the commit has tree %s", ErrCandidateUnbound, evidence.BaseTree, tree)
 		}
 		if err := requireEffectiveEvidence(ctx, b.target, tree, evidence); err != nil {
-			return fmt.Errorf("%w: %w", ErrCandidateUnbound, err)
-		}
-		if err := requirePlanEvidence(ctx, b.target, evidence, b.PlanCatalogs); err != nil {
 			return fmt.Errorf("%w: %w", ErrCandidateUnbound, err)
 		}
 		evidence.AcceptedCommit = commit
@@ -212,8 +207,7 @@ func (b *Broker) seedBaselineLocked(ctx context.Context) (SourceEvidence, bool, 
 	if err != nil {
 		return SourceEvidence{}, false, fmt.Errorf("compute the effective tree of %s: %w", reference, err)
 	}
-	defer effective.Close()
-	return SourceEvidence{AcceptedCommit: reference, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}, true, nil
+	return SourceEvidence{AcceptedCommit: reference, EffectiveTree: effective.ID}, true, nil
 }
 
 // seedAnchorLocked is the commit a seeded install adopted: the recorded one

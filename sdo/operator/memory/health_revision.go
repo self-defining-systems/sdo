@@ -78,7 +78,7 @@ func treeInputs(ctx context.Context, repository, revision string) (commit, sourc
 			return "", "", "", errors.New("invalid health provenance tree")
 		}
 		name := string(path)
-		if !layout.IsMemoryPath(name) || layout.IsEffectiveDeploymentInput(name) {
+		if !layout.IsMemoryPath(name) {
 			sourceDigest.Write(entry)
 			sourceDigest.Write([]byte{0})
 		}

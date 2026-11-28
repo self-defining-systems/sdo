@@ -441,8 +441,8 @@ var gateRows = []gateRow{
 		write(t, r, ".sdo/diagnostics/detectors/learned/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
 		write(t, r, ".sdo/diagnostics/detectors/learned/dns/detector.go", "package dns\n")
 	}},
-	gateAppFileDenied(Responder, ReflectionPhase), gateAppFileDenied(Responder, InitialPhase),
-	gateAppFileDenied(Deployer, InitialPhase), gateAppFileDenied(Deployer, AdvancePhase), gateAppFileDenied(Deployer, ProposalPhase),
+	gateAppFileDenied(Responder, InitialPhase),
+	gateAppFileDenied(Deployer, AdvancePhase), gateAppFileDenied(Deployer, ProposalPhase),
 	gateAppFileDenied(Upkeep, InitialPhase), gateAppFileDenied(Human, InitialPhase),
 	gateAppFileDenied(Human, ImportPhase), gateAppFileDenied(HealthJudge, ProposalPhase),
 	{name: "responder commits source in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase, edit: gateWrite("app.txt", "repair\n")},
@@ -455,37 +455,17 @@ var gateRows = []gateRow{
 	{name: "human publishes followed sources in initial", kind: gateOwnership, actor: Human, phase: InitialPhase, edit: gateWrite(layout.SourcesFile, "sources:\n- path: .\n  kind: git\n  config: {repository: \"git://synthetic.invalid/app.git\", ref: main}\n")},
 	{name: "responder cannot edit followed sources", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.SourcesFile,
 		edit: gateWrite(layout.SourcesFile, "sources:\n- path: .\n  kind: git\n  config: {repository: \"git://synthetic.invalid/app.git\", ref: main}\n")},
-	{name: "deployer edits source in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite("app.txt", "deployed\n")},
-	{name: "deployer writes the deployment plan, files and patches in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, layout.DeploymentPlanFile, "renderer: raw\n")
-		write(t, r, ".sdo/deployment/values/prod.yaml", "replicas: 2\n")
-		write(t, r, ".sdo/deployment/manifests/app/deploy.yaml", "kind: Deployment\n")
-		write(t, r, ".sdo/deployment/build/Dockerfile", "FROM scratch\n")
-		write(t, r, ".sdo/deployment/patches/0001-fix.patch", "SDO-Patch: 1\nSDO-Owner: deployer\n")
-	}},
-	{name: "human seeds every deployment kind in initial", kind: gateOwnership, actor: Human, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, layout.DeploymentPlanFile, "renderer: raw\n")
-		write(t, r, ".sdo/deployment/overlays/telemetry/o.yaml", "a: b\n")
-		write(t, r, ".sdo/deployment/patches/0001-fix.patch", "x\n")
-	}},
-	{name: "health judge writes the telemetry overlay slot", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, gateHealth, "package objective\n\n// edit\n")
-		edit(t, r, gateHealthManifest, "interval: 30s", "interval: 20s")
-		write(t, r, ".sdo/deployment/overlays/telemetry/o.yaml", "a: b\n")
-	}},
+	{name: "deployer commits source in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: gateWrite("app.txt", "deployed\n")},
+	{name: "deployer writes the deployment override in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: gateWrite(layout.DeploymentPlanFile, "renderer: raw\n")},
+	{name: "human seeds the deployment override in initial", kind: gateOwnership, actor: Human, phase: InitialPhase, edit: gateWrite(layout.DeploymentPlanFile, "renderer: raw\n")},
+	{name: "health judge cannot write a telemetry overlay", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/overlays/telemetry/o.yaml",
+		edit: gateWrite(".sdo/deployment/overlays/telemetry/o.yaml", "a: b\n")},
 	{name: "deployer cannot write the telemetry overlay", kind: gateOwnership, actor: Deployer, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/overlays/telemetry/o.yaml",
 		edit: gateWrite(".sdo/deployment/overlays/telemetry/o.yaml", "a: b\n")},
 	{name: "health judge cannot write the deployment plan", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: layout.DeploymentPlanFile,
 		edit: gateWrite(layout.DeploymentPlanFile, "renderer: raw\n")},
-	{name: "responder adds a deployment patch in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase,
-		prepare: gateWrite(".sdo/deployment/patches/0001-old.patch", "SDO-Owner: deployer\n"),
-		edit:    gateWrite(".sdo/deployment/patches/0002-repair.patch", "SDO-Owner: responder\n")},
-	{name: "responder cannot modify an accepted deployment patch", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/patches/0001-old.patch",
-		prepare: gateWrite(".sdo/deployment/patches/0001-old.patch", "SDO-Owner: responder\n"),
-		edit:    gateWrite(".sdo/deployment/patches/0001-old.patch", "SDO-Owner: responder\nchanged\n")},
-	{name: "responder cannot delete an accepted deployment patch", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/patches/0001-old.patch",
-		prepare: gateWrite(".sdo/deployment/patches/0001-old.patch", "SDO-Owner: responder\n"),
-		edit:    func(t *testing.T, r string) { remove(t, r, ".sdo/deployment/patches/0001-old.patch") }},
+	{name: "responder cannot add a deployment patch", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/patches/0002-repair.patch",
+		edit: gateWrite(".sdo/deployment/patches/0002-repair.patch", "SDO-Owner: responder\n")},
 	{name: "responder cannot write deployment values", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/values/prod.yaml",
 		edit: gateWrite(".sdo/deployment/values/prod.yaml", "replicas: 9\n")},
 	{name: "responder cannot write deployment patches in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/patches/0001-x.patch",
@@ -498,7 +478,7 @@ var gateRows = []gateRow{
 	{name: "upstream advance cannot change memory", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
 		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, layout.SchemaVersionFile, "14\n")
+		write(t, r, layout.SchemaVersionFile, "15\n")
 		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
 	}},
 	{name: "upkeep migration drops a retired Go-installed generic detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
@@ -507,7 +487,7 @@ var gateRows = []gateRow{
 			gateStrandedDetector(t, r, "synthetic-retired", "lifecycle-bootstrap")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "14\n")
+			write(t, r, layout.SchemaVersionFile, "15\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-retired"))
 		}},
 	{name: "upkeep migration moves incident-era detectors to the learned directory", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
@@ -526,13 +506,13 @@ var gateRows = []gateRow{
 			gateStrandedDetector(t, r, "synthetic-authored", "initial")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "14\n")
+			write(t, r, layout.SchemaVersionFile, "15\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-authored"))
 		}},
 	{name: "responder cannot edit the goal", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
 		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "responder cannot edit outcomes", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite(layout.OutcomePath("inc"), "{}\n")},
-	{name: "responder cannot edit source in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: "app.txt", edit: gateWrite("app.txt", "changed\n")},
+	{name: "reflection commits source (Go's program source proposals)", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, edit: gateWrite("app.txt", "changed\n")},
 	{name: "responder cannot edit memory in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite(gateCache, "package cache\n\n// early\n")},
 	{name: "responder cannot edit health detector source", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: gateHealth, edit: gateWrite(gateHealth, "package objective\n\n// edit\n")},
 	{name: "responder cannot edit an unclassified memory path", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite(".sdo/notes.txt", "x\n")},
@@ -580,9 +560,9 @@ var gateRows = []gateRow{
 	{name: "reflection without an accepted outcome", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{RuleAcceptedOutcome}, edit: gatePlaybookEdit,
 		request: func(r *Request) { r.Decision = gateUpdated("base") }},
 	{name: "initial phase closed after detectors are accepted", kind: gateCheck, actor: Responder, phase: InitialPhase, rules: []string{RuleBootstrapClosed, RuleOwnershipDenied}, edit: gatePlaybookEdit},
-	{name: "initial deployment inputs need a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
+	{name: "the deployer's app files need a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
-		edit:    gateWrite(".sdo/deployment/manifests/app.yaml", "kind: Deployment\n")},
+		edit:    gateWrite("deploy/app.yaml", "kind: Deployment\n")},
 	{name: "the deployer's plan alone needs a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
 		edit:    gateWrite(layout.DeploymentPlanFile, gateDeploymentPlan)},
@@ -594,13 +574,13 @@ var gateRows = []gateRow{
 		}},
 	{name: "verified deployment publish passes", kind: gateCheck, actor: Deployer, phase: InitialPhase,
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
-		edit:    gateWrite(".sdo/deployment/manifests/app.yaml", "kind: Deployment\n"),
+		edit:    gateWrite("deploy/app.yaml", "kind: Deployment\n"),
 		request: func(r *Request) {
 			r.Publication = &PublicationContext{BaseCommit: "HEAD", VerifiedSourceTree: strings.Repeat("a", 40)}
 		}},
-	{name: "verified deployment publish rejects an app file", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleOwnershipDenied, RuleVerifiedSource},
+	{name: "verified deployment publish rejects other memory", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleOwnershipDenied, RuleVerifiedSource},
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
-		edit:    gateWrite("app.txt", "deployed\n"),
+		edit:    gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nDeployed goal\n"),
 		request: func(r *Request) {
 			r.Publication = &PublicationContext{BaseCommit: "HEAD", VerifiedSourceTree: strings.Repeat("a", 40)}
 		}},
@@ -973,7 +953,6 @@ var gateRuleCoverage = map[string]string{
 	RuleProgramPlanInvalid:    "covered by repair_statement_test.go (TestRepairStatementLiteralsAreCheckedAsTheEngineWillApplyThem)",
 	RuleDataCheckInvalid:      "covered by data_checks_test.go (TestDataChecksAreValidatedAsReadOnlyAndBounded) and the datacheck package's validation table",
 	RuleDataCheckComponent:    "covered by data_checks_test.go (TestDataChecksResolveToMapComponentsWithDataRoles): it needs an application map with data roles",
-	RulePatchUncaptured:       "covered by the broker publish tests (broker/enforcement_integration_test.go): it needs the agent checkout's working tree, which the shared check never sees",
 	RuleSourcePolicy:          "covered by the broker source tests (broker/source_integration_test.go): they need the agent checkout's committed history",
 	RuleSourceSize:            "covered by the broker source tests (broker/source_integration_test.go): they need the agent checkout's committed history",
 	RuleSourceHistory:         "covered by the broker source tests (broker/source_integration_test.go): they need the agent checkout's committed history",

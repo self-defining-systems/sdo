@@ -17,11 +17,11 @@ var _ lifecycle.OfflineChecker = Deployer{}
 
 // CheckOffline runs the offline operability checks for the checkout and plan
 // with exactly what ApplyAndVerify would use: the checkout's proposal tree, the
-// effective tree (base plus patches), the install render environment and the
+// effective tree (the committed tree minus .sdo/), the install render environment and the
 // shared render and image-declaration functions. A nil plan, or one without a
 // source, derives the source and builds from the tree's files. It touches
-// no cluster. Errors are infrastructure or wiring problems; a bad patch,
-// render or plan is a failing check.
+// no cluster. Errors are infrastructure or wiring problems; a bad render or
+// plan is a failing check.
 func (d Deployer) CheckOffline(ctx context.Context, checkout string, plan *contracts.DeploymentPlan) (lifecycle.OfflineChecks, error) {
 	if err := d.validate(); err != nil {
 		return lifecycle.OfflineChecks{}, err
@@ -31,16 +31,15 @@ func (d Deployer) CheckOffline(ctx context.Context, checkout string, plan *contr
 		return lifecycle.OfflineChecks{}, err
 	}
 	out := lifecycle.OfflineChecks{BaseTree: base}
-	effective, patchesErr := rendered.Effective(ctx, rendered.ObjectStore{Dir: checkout, Git: d.Git}, rendered.BaseTree(base))
-	if patchesErr == nil {
-		defer effective.Close()
-		out.EffectiveTree, out.PatchesDigest = effective.ID, effective.PatchesDigest
+	effective, treeErr := rendered.Effective(ctx, rendered.ObjectStore{Dir: checkout, Git: d.Git}, rendered.BaseTree(base))
+	if treeErr == nil {
+		out.EffectiveTree = effective.ID
 	}
 	// SecretsOmit renders the same RenderDigest and EnvDigest as the
 	// SecretsInclude render apply records (both reduce Secrets to identity).
 	env := renderenv.For(d.Environment, d.Namespace, render.SecretsOmit)
 	result := offline.CheckDeployment(ctx, offline.Deployment{
-		PatchesErr: patchesErr,
+		TreeErr: treeErr,
 		Render: func(ctx context.Context) (rendered.DesiredSet, error) {
 			fsys, err := rendered.GitTreeFS(ctx, effective)
 			if err != nil {

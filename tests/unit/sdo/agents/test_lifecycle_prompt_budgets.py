@@ -19,10 +19,7 @@ if TYPE_CHECKING:
 
     from sdo.agents.prompt_templates import RenderedPrompt
 
-PLAN = (
-    '{"proposed":true,"summary":"ready","image_builds":[],"manifest_paths":["deploy/app.yaml"],'
-    '"expected_workload_ids":["Deployment/demo/api"]}'
-)
+PLAN = '{"proposed":true,"summary":"ready"}'
 FEEDBACK_317 = "verifier rejected: " + "x" * 298
 OBJECTIVE_1399 = "keep the social network healthy; " + "y" * 1366
 

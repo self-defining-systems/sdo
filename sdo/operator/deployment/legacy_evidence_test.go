@@ -42,7 +42,7 @@ func TestDeployerWithTheProductionEnvAcceptsLegacyRegistryEvidence(t *testing.T)
 	}
 	// The registry recorded the raw source of its manifest paths.
 	legacy := lifecycle.DeploymentReceipt{
-		Source: depSource(t, raw.ID, &contracts.RawRenderConfig{Paths: []string{"k8s"}}), BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest, ObservedRevision: receipt.EffectiveTree,
+		Source: depSource(t, raw.ID, &contracts.RawRenderConfig{Paths: []string{"k8s"}}), BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, ObservedRevision: receipt.EffectiveTree,
 		RenderDigest: legacyRegistryRenderDigest, EnvDigest: legacyRegistryEnvDigest,
 		Images: receipt.Images, ResourceIDs: receipt.ResourceIDs, Ready: true,
 	}

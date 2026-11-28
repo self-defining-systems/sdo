@@ -2,14 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from sdo.agents.source_deployment.worker import _workload_id, propose_source, run_deployment_task
+from sdo.agents.source_deployment.worker import propose_source, run_deployment_task
 from sdo.contracts.proto import (
     AgentTask,
-    BuildKitImageConfig,
-    DeploymentPlan,
-    DeploymentSource,
     ProposalWorkspace,
-    RawRenderConfig,
     SourceDeploymentRequest,
     SourceDeploymentResult,
     parse_json,
@@ -50,16 +46,7 @@ def test_deployment_worker_preserves_typed_workspace_and_result(tmp_path: Path) 
     def execute(received: SourceDeploymentRequest, checkout: Path) -> SourceDeploymentResult:
         assert received == request
         assert checkout == tmp_path
-        plan = DeploymentPlan(
-            source=DeploymentSource(renderer_id="raw"), expected_workload_ids=["Deployment/demo/demo"]
-        )
-        plan.source.config.Pack(RawRenderConfig(paths=["deploy/app.yaml"]))
-        return SourceDeploymentResult(
-            proposed=True,
-            summary="source prepared",
-            agent_session_id="session-1",
-            plan=plan,
-        )
+        return SourceDeploymentResult(proposed=True, summary="source prepared", agent_session_id="session-1")
 
     result = run_deployment_task(path, "result", publisher, execute=execute)
     assert result.task_id == task.task_id
@@ -68,162 +55,20 @@ def test_deployment_worker_preserves_typed_workspace_and_result(tmp_path: Path) 
     wire = parse_json(publisher.payload, type(result)())
     typed = SourceDeploymentResult()
     assert wire.response.Unpack(typed)
-    raw = RawRenderConfig()
-    assert typed.plan.source.config.Unpack(raw)
-    assert raw.paths == ["deploy/app.yaml"]
+    assert (typed.proposed, typed.summary, typed.agent_session_id) == (True, "source prepared", "session-1")
 
 
-def test_deployment_worker_rejects_unscoped_workload_identity() -> None:
-    with pytest.raises(ValueError, match="Kind/namespace/name"):
-        _workload_id("Deployment/demo")
-
-
-def test_deployer_receives_trusted_registry_and_rejects_other_image_host(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_deployer_reply_carries_no_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The deployer's work is its last commit: the reply is proposed, a summary and the session."""
     from types import SimpleNamespace
 
     prompts: list[str] = []
 
-    def turn(_provider: str, prompt: str, **_kwargs: object) -> SimpleNamespace:
-        assert _kwargs["access"] == "danger-full-access"
+    def turn(_provider: str, prompt: str, **kwargs: object) -> SimpleNamespace:
+        assert kwargs["access"] == "danger-full-access"
+        assert set(kwargs["output_schema"]["properties"]) == {"proposed", "summary"}
         prompts.append(prompt)
-        return SimpleNamespace(
-            output_json='{"proposed":true,"summary":"ready","image_builds":[{"image":"foreign.example/app:v1","context_path":".","dockerfile_path":"Dockerfile"}],"manifest_paths":["deploy/app.yaml"],"expected_workload_ids":["Deployment/demo/api"]}',
-            session_id="session-1",
-        )
-
-    monkeypatch.setattr("sdo.agents.source_deployment.worker.run_structured_turn", turn)
-    request = SourceDeploymentRequest(
-        application="demo",
-        namespace="demo",
-        health_objective="healthy",
-        attempt=1,
-        registry_host="sdo-benchmark-registry.demo-sdo.svc.cluster.local:5000",
-    )
-    with pytest.raises(ValueError, match="trusted registry"):
-        propose_source(request, tmp_path)
-    assert request.registry_host in prompts[0]
-
-
-def _proposal_with_image(image: str):
-    from types import SimpleNamespace
-
-    def turn(_provider: str, _prompt: str, **_kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            output_json=(
-                '{"proposed":true,"summary":"ready","image_builds":[{"image":"' + image + '",'
-                '"context_path":".","dockerfile_path":"Dockerfile"}],"manifest_paths":["deploy/app.yaml"],'
-                '"expected_workload_ids":["Deployment/demo/api"]}'
-            ),
-            session_id="session-1",
-        )
-
-    return turn
-
-
-# The Go host validates --registry-host as host[:port][/path] (buildkit.ValidateRegistryHost): the port is optional, so
-# a registry served on the default HTTPS port (a cloud registry) is a valid trusted host, and a path prefix serves
-# registries that need a repository path (ECR).
-@pytest.mark.parametrize(
-    "registry",
-    [
-        "registry.example.com",
-        "registry.example.com:5000",
-        "10.0.0.5:5000",
-        "123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo/q2-deploy",
-    ],
-)
-def test_deployer_accepts_every_registry_host_the_go_host_accepts(
-    registry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        "sdo.agents.source_deployment.worker.run_structured_turn", _proposal_with_image(f"{registry}/team/app:v1")
-    )
-    request = SourceDeploymentRequest(
-        application="demo", namespace="demo", health_objective="healthy", attempt=1, registry_host=registry
-    )
-    result = propose_source(request, tmp_path)
-    assert [image.image for image in result.plan.images] == [f"{registry}/team/app:v1"]
-
-
-@pytest.mark.parametrize(
-    "registry",
-    [
-        "registry.example.com/Team",
-        "registry.example.com/",
-        "https://registry.example.com",
-        "Registry.example.com",
-        "registry.example.com:0",
-        "registry.example.com:70000",
-        "-registry.example.com",
-    ],
-)
-def test_deployer_rejects_registry_hosts_the_go_host_rejects(
-    registry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        "sdo.agents.source_deployment.worker.run_structured_turn", _proposal_with_image(f"{registry}/app:v1")
-    )
-    request = SourceDeploymentRequest(
-        application="demo", namespace="demo", health_objective="healthy", attempt=1, registry_host=registry
-    )
-    with pytest.raises(ValueError, match="trusted registry host"):
-        propose_source(request, tmp_path)
-
-
-def test_propose_source_emits_new_form_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from types import SimpleNamespace
-
-    registry = "registry.synthetic:5000"
-
-    def turn(_provider: str, _prompt: str, **_kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            output_json=(
-                '{"proposed":true,"summary":"ready","image_builds":[{"image":"registry.synthetic:5000/app:v1",'
-                '"context_path":"app","dockerfile_path":"app/Dockerfile"}],"manifest_paths":["deploy/app.yaml"],'
-                '"expected_workload_ids":["Deployment/demo/api"]}'
-            ),
-            session_id="session-1",
-        )
-
-    monkeypatch.setattr("sdo.agents.source_deployment.worker.run_structured_turn", turn)
-    request = SourceDeploymentRequest(
-        application="demo", namespace="demo", health_objective="healthy", attempt=1, registry_host=registry
-    )
-    plan = propose_source(request, tmp_path).plan
-    assert not plan.strategy_id
-    assert not plan.HasField("strategy_config")
-    assert plan.source.renderer_id == "raw"
-    raw = RawRenderConfig()
-    assert plan.source.config.Unpack(raw)
-    assert list(raw.paths) == ["deploy/app.yaml"]
-    assert list(plan.expected_workload_ids) == ["Deployment/demo/api"]
-    [image] = plan.images
-    assert (image.image, image.source_id) == ("registry.synthetic:5000/app:v1", "buildkit")
-    build = BuildKitImageConfig()
-    assert image.config.Unpack(build)
-    assert (build.context_path, build.dockerfile_path) == ("app", "app/Dockerfile")
-
-
-def _plan_with_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest: str, dockerfile: str, context: str = "app"
-):
-    import json
-    from types import SimpleNamespace
-
-    def turn(_provider: str, _prompt: str, **_kwargs: object) -> SimpleNamespace:
-        draft = {
-            "proposed": True,
-            "summary": "ready",
-            "image_builds": [
-                {"image": "registry.synthetic:5000/app:v1", "context_path": context, "dockerfile_path": dockerfile}
-            ],
-            "manifest_paths": [manifest],
-            "expected_workload_ids": ["Deployment/demo/api"],
-        }
-        return SimpleNamespace(output_json=json.dumps(draft), session_id="session-1")
+        return SimpleNamespace(output_json='{"proposed":true,"summary":"committed a kustomization"}', session_id="s-1")
 
     monkeypatch.setattr("sdo.agents.source_deployment.worker.run_structured_turn", turn)
     request = SourceDeploymentRequest(
@@ -232,47 +77,28 @@ def _plan_with_manifest(
         health_objective="healthy",
         attempt=1,
         registry_host="registry.synthetic:5000",
+        correction_feedback="O1.render [render]: the tree has no deployment files",
     )
-    return propose_source(request, tmp_path).plan
+    result = propose_source(request, tmp_path)
+    assert (result.proposed, result.summary, result.agent_session_id) == (True, "committed a kustomization", "s-1")
+    assert not hasattr(result, "plan") or "plan" not in [field.name for field in result.DESCRIPTOR.fields]
+    assert request.registry_host in prompts[0]
+    assert "no deployment files" in prompts[0]
+    assert "git commit" in prompts[0]
 
 
-def test_plan_paths_may_name_authored_deployment_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    plan = _plan_with_manifest(
-        tmp_path, monkeypatch, ".sdo/deployment/manifests/app.yaml", ".sdo/deployment/build/app/Dockerfile"
-    )
-    raw = RawRenderConfig()
-    assert plan.source.config.Unpack(raw)
-    assert list(raw.paths) == [".sdo/deployment/manifests/app.yaml"]
-    build = BuildKitImageConfig()
-    assert plan.images[0].config.Unpack(build)
-    assert build.dockerfile_path == ".sdo/deployment/build/app/Dockerfile"
+def test_deployer_reply_with_plan_fields_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
 
+    def turn(_provider: str, _prompt: str, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            output_json='{"proposed":true,"summary":"ready","manifest_paths":["k8s"]}', session_id="s"
+        )
 
-def test_plan_build_context_may_be_the_repository_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    plan = _plan_with_manifest(tmp_path, monkeypatch, "kubernetes/app.yaml", "Dockerfile", context=".")
-    build = BuildKitImageConfig()
-    assert plan.images[0].config.Unpack(build)
-    assert build.context_path == "."
-
-
-@pytest.mark.parametrize(
-    "manifest",
-    [
-        ".sdo/deployment/plan.yaml",
-        ".sdo/deployment/patches/0001-x.patch",
-        ".sdo/playbooks/x/README.md",
-        ".sdo/deployment/manifests",
-        ".sdo/deployment/other/app.yaml",
-        "../app.yaml",
-        "/app.yaml",
-        " deploy/app.yaml",
-    ],
-)
-def test_plan_paths_reject_non_effective_locations(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest: str
-) -> None:
-    with pytest.raises(ValueError, match="effective tree|must be .sdo/deployment"):
-        _plan_with_manifest(tmp_path, monkeypatch, manifest, "app/Dockerfile")
+    monkeypatch.setattr("sdo.agents.source_deployment.worker.run_structured_turn", turn)
+    request = SourceDeploymentRequest(application="demo", namespace="demo", attempt=1, registry_host="r.synthetic:5000")
+    with pytest.raises(ValueError, match="manifest_paths"):
+        propose_source(request, tmp_path)
 
 
 def test_deployment_worker_rejects_wrong_payload_type(tmp_path: Path) -> None:

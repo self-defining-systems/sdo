@@ -600,3 +600,53 @@ def test_a_chart_only_release_that_rolls_pods_with_identical_images_lists_them_a
         snap=replace(BASE, templates={"web": "rev-a", "gitaly": "rev-a"}), script={"10.5.0": {10.0: label_only}}
     )
     assert replay(lane, 1).results[0].changed_workloads == ["web"]
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    import subprocess
+
+    repo = tmp_path / "followed"
+    (repo / "chart" / "charts" / "gitlab").mkdir(parents=True)
+    (repo / "chart" / "charts" / "gitlab" / "values.yaml").write_text("a: 1\n")
+    (repo / "chart" / "values-kind.yaml").write_text("b: 1\n")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    _commit_all(repo, "lane", "seed")
+    return repo
+
+
+def _commit_all(repo: Path, author: str, message: str) -> None:
+    import subprocess
+
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            f"user.name={author}",
+            "-c",
+            f"user.email={author}@invalid",
+            "commit",
+            "-qm",
+            message,
+        ],
+        check=True,
+    )
+
+
+def test_release_push_refuses_sdo_edits_of_the_vendored_chart(tmp_path: Path) -> None:
+    """Vendored subcharts are layered through values only: a release push refuses when SDO edited one."""
+    from benchmarks.sregym.fastloop.gitlab_replay import sdo_edits_of_vendored_chart
+
+    repo = _git_repo(tmp_path)
+    (repo / "chart" / "values-kind.yaml").write_text("b: 2\n")
+    _commit_all(repo, "sdo", "layer a value\n\nSDO-Actor: deployer")
+    assert sdo_edits_of_vendored_chart(repo) == []
+    (repo / "chart" / "charts" / "gitlab" / "values.yaml").write_text("a: 2\n")
+    _commit_all(repo, "sdo", "edit the vendored chart\n\nSDO-Actor: responder")
+    assert len(sdo_edits_of_vendored_chart(repo)) == 1
+    # A replayed release replaces the chart; edits before it are not this release's concern.
+    (repo / "chart" / "charts" / "gitlab" / "values.yaml").write_text("a: 3\n")
+    _commit_all(repo, "gitlab-replay", "chore(deps): bump the gitlab chart")
+    assert sdo_edits_of_vendored_chart(repo) == []

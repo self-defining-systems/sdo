@@ -10,7 +10,6 @@ import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	anypb "google.golang.org/protobuf/types/known/anypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -127,12 +126,13 @@ func (x *SourceDeploymentRequest) GetImageSources() []*PluginDescriptor {
 	return nil
 }
 
+// The deployer's reply: it committed its work in the proposal checkout; Go
+// deploys the checkout's last commit and sends back any failing step.
 type SourceDeploymentResult struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Proposed       bool                   `protobuf:"varint,1,opt,name=proposed,proto3" json:"proposed,omitempty"`
 	Summary        string                 `protobuf:"bytes,2,opt,name=summary,proto3" json:"summary,omitempty"`
 	AgentSessionId string                 `protobuf:"bytes,3,opt,name=agent_session_id,json=agentSessionId,proto3" json:"agent_session_id,omitempty"`
-	Plan           *DeploymentPlan        `protobuf:"bytes,4,opt,name=plan,proto3" json:"plan,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -188,23 +188,15 @@ func (x *SourceDeploymentResult) GetAgentSessionId() string {
 	return ""
 }
 
-func (x *SourceDeploymentResult) GetPlan() *DeploymentPlan {
-	if x != nil {
-		return x.Plan
-	}
-	return nil
-}
-
+// DeploymentPlan is the optional deployment override
+// (.sdo/deployment/plan.yaml): what the repository's files cannot say. Without
+// it Go derives the source and the image builds from the files.
 type DeploymentPlan struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	StrategyId     string                 `protobuf:"bytes,1,opt,name=strategy_id,json=strategyId,proto3" json:"strategy_id,omitempty"`
-	StrategyConfig *anypb.Any             `protobuf:"bytes,2,opt,name=strategy_config,json=strategyConfig,proto3" json:"strategy_config,omitempty"`
-	// Transitional: fields 1-2 are removed when consumers switch to source.
-	Source              *DeploymentSource `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
-	Images              []*ImageSource    `protobuf:"bytes,4,rep,name=images,proto3" json:"images,omitempty"`
-	ExpectedWorkloadIds []string          `protobuf:"bytes,5,rep,name=expected_workload_ids,json=expectedWorkloadIds,proto3" json:"expected_workload_ids,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Source        *DeploymentSource      `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	Images        []*ImageSource         `protobuf:"bytes,4,rep,name=images,proto3" json:"images,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeploymentPlan) Reset() {
@@ -237,20 +229,6 @@ func (*DeploymentPlan) Descriptor() ([]byte, []int) {
 	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *DeploymentPlan) GetStrategyId() string {
-	if x != nil {
-		return x.StrategyId
-	}
-	return ""
-}
-
-func (x *DeploymentPlan) GetStrategyConfig() *anypb.Any {
-	if x != nil {
-		return x.StrategyConfig
-	}
-	return nil
-}
-
 func (x *DeploymentPlan) GetSource() *DeploymentSource {
 	if x != nil {
 		return x.Source
@@ -261,75 +239,6 @@ func (x *DeploymentPlan) GetSource() *DeploymentSource {
 func (x *DeploymentPlan) GetImages() []*ImageSource {
 	if x != nil {
 		return x.Images
-	}
-	return nil
-}
-
-func (x *DeploymentPlan) GetExpectedWorkloadIds() []string {
-	if x != nil {
-		return x.ExpectedWorkloadIds
-	}
-	return nil
-}
-
-// The first built-in strategy. Later strategies can use their own typed
-// protobuf config without changing the worker envelope or coordinator.
-type RawManifestStrategy struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	ImageBuilds         []*ImageBuild          `protobuf:"bytes,1,rep,name=image_builds,json=imageBuilds,proto3" json:"image_builds,omitempty"`
-	ManifestPaths       []string               `protobuf:"bytes,2,rep,name=manifest_paths,json=manifestPaths,proto3" json:"manifest_paths,omitempty"`
-	ExpectedWorkloadIds []string               `protobuf:"bytes,3,rep,name=expected_workload_ids,json=expectedWorkloadIds,proto3" json:"expected_workload_ids,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
-}
-
-func (x *RawManifestStrategy) Reset() {
-	*x = RawManifestStrategy{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *RawManifestStrategy) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RawManifestStrategy) ProtoMessage() {}
-
-func (x *RawManifestStrategy) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RawManifestStrategy.ProtoReflect.Descriptor instead.
-func (*RawManifestStrategy) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *RawManifestStrategy) GetImageBuilds() []*ImageBuild {
-	if x != nil {
-		return x.ImageBuilds
-	}
-	return nil
-}
-
-func (x *RawManifestStrategy) GetManifestPaths() []string {
-	if x != nil {
-		return x.ManifestPaths
-	}
-	return nil
-}
-
-func (x *RawManifestStrategy) GetExpectedWorkloadIds() []string {
-	if x != nil {
-		return x.ExpectedWorkloadIds
 	}
 	return nil
 }
@@ -345,7 +254,7 @@ type ImageBuild struct {
 
 func (x *ImageBuild) Reset() {
 	*x = ImageBuild{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[4]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -357,7 +266,7 @@ func (x *ImageBuild) String() string {
 func (*ImageBuild) ProtoMessage() {}
 
 func (x *ImageBuild) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[4]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -370,7 +279,7 @@ func (x *ImageBuild) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImageBuild.ProtoReflect.Descriptor instead.
 func (*ImageBuild) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{4}
+	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ImageBuild) GetImage() string {
@@ -417,7 +326,7 @@ type HealthJudgeRequest struct {
 
 func (x *HealthJudgeRequest) Reset() {
 	*x = HealthJudgeRequest{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[5]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -429,7 +338,7 @@ func (x *HealthJudgeRequest) String() string {
 func (*HealthJudgeRequest) ProtoMessage() {}
 
 func (x *HealthJudgeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[5]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -442,7 +351,7 @@ func (x *HealthJudgeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthJudgeRequest.ProtoReflect.Descriptor instead.
 func (*HealthJudgeRequest) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{5}
+	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *HealthJudgeRequest) GetTelemetry() *TelemetryContext {
@@ -536,7 +445,7 @@ type SourceResource struct {
 
 func (x *SourceResource) Reset() {
 	*x = SourceResource{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[6]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -548,7 +457,7 @@ func (x *SourceResource) String() string {
 func (*SourceResource) ProtoMessage() {}
 
 func (x *SourceResource) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[6]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -561,7 +470,7 @@ func (x *SourceResource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourceResource.ProtoReflect.Descriptor instead.
 func (*SourceResource) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{6}
+	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SourceResource) GetKind() string {
@@ -615,7 +524,7 @@ type HealthJudgeResult struct {
 
 func (x *HealthJudgeResult) Reset() {
 	*x = HealthJudgeResult{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -627,7 +536,7 @@ func (x *HealthJudgeResult) String() string {
 func (*HealthJudgeResult) ProtoMessage() {}
 
 func (x *HealthJudgeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -640,7 +549,7 @@ func (x *HealthJudgeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthJudgeResult.ProtoReflect.Descriptor instead.
 func (*HealthJudgeResult) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{7}
+	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *HealthJudgeResult) GetAuthored() bool {
@@ -683,7 +592,7 @@ var File_sdodev_contracts_v1alpha1_lifecycle_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\n" +
-	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\x91\x03\n" +
+	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\x91\x03\n" +
 	"\x17SourceDeploymentRequest\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
@@ -692,23 +601,14 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\aattempt\x18\x05 \x01(\rR\aattempt\x12#\n" +
 	"\rregistry_host\x18\x06 \x01(\tR\fregistryHost\x12I\n" +
 	"\trenderers\x18\a \x03(\v2+.sdodev.contracts.v1alpha1.PluginDescriptorR\trenderers\x12P\n" +
-	"\rimage_sources\x18\b \x03(\v2+.sdodev.contracts.v1alpha1.PluginDescriptorR\fimageSources\"\xb7\x01\n" +
+	"\rimage_sources\x18\b \x03(\v2+.sdodev.contracts.v1alpha1.PluginDescriptorR\fimageSources\"\x84\x01\n" +
 	"\x16SourceDeploymentResult\x12\x1a\n" +
 	"\bproposed\x18\x01 \x01(\bR\bproposed\x12\x18\n" +
 	"\asummary\x18\x02 \x01(\tR\asummary\x12(\n" +
-	"\x10agent_session_id\x18\x03 \x01(\tR\x0eagentSessionId\x12=\n" +
-	"\x04plan\x18\x04 \x01(\v2).sdodev.contracts.v1alpha1.DeploymentPlanR\x04plan\"\xa9\x02\n" +
-	"\x0eDeploymentPlan\x12\x1f\n" +
-	"\vstrategy_id\x18\x01 \x01(\tR\n" +
-	"strategyId\x12=\n" +
-	"\x0fstrategy_config\x18\x02 \x01(\v2\x14.google.protobuf.AnyR\x0estrategyConfig\x12C\n" +
+	"\x10agent_session_id\x18\x03 \x01(\tR\x0eagentSessionIdJ\x04\b\x04\x10\x05R\x04plan\"\xdc\x01\n" +
+	"\x0eDeploymentPlan\x12C\n" +
 	"\x06source\x18\x03 \x01(\v2+.sdodev.contracts.v1alpha1.DeploymentSourceR\x06source\x12>\n" +
-	"\x06images\x18\x04 \x03(\v2&.sdodev.contracts.v1alpha1.ImageSourceR\x06images\x122\n" +
-	"\x15expected_workload_ids\x18\x05 \x03(\tR\x13expectedWorkloadIds\"\xba\x01\n" +
-	"\x13RawManifestStrategy\x12H\n" +
-	"\fimage_builds\x18\x01 \x03(\v2%.sdodev.contracts.v1alpha1.ImageBuildR\vimageBuilds\x12%\n" +
-	"\x0emanifest_paths\x18\x02 \x03(\tR\rmanifestPaths\x122\n" +
-	"\x15expected_workload_ids\x18\x03 \x03(\tR\x13expectedWorkloadIds\"n\n" +
+	"\x06images\x18\x04 \x03(\v2&.sdodev.contracts.v1alpha1.ImageSourceR\x06imagesJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03J\x04\b\x05\x10\x06R\vstrategy_idR\x0fstrategy_configR\x15expected_workload_ids\"n\n" +
 	"\n" +
 	"ImageBuild\x12\x14\n" +
 	"\x05image\x18\x01 \x01(\tR\x05image\x12!\n" +
@@ -755,41 +655,36 @@ func file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP() []byte {
 	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_sdodev_contracts_v1alpha1_lifecycle_proto_goTypes = []any{
 	(*SourceDeploymentRequest)(nil),     // 0: sdodev.contracts.v1alpha1.SourceDeploymentRequest
 	(*SourceDeploymentResult)(nil),      // 1: sdodev.contracts.v1alpha1.SourceDeploymentResult
 	(*DeploymentPlan)(nil),              // 2: sdodev.contracts.v1alpha1.DeploymentPlan
-	(*RawManifestStrategy)(nil),         // 3: sdodev.contracts.v1alpha1.RawManifestStrategy
-	(*ImageBuild)(nil),                  // 4: sdodev.contracts.v1alpha1.ImageBuild
-	(*HealthJudgeRequest)(nil),          // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest
-	(*SourceResource)(nil),              // 6: sdodev.contracts.v1alpha1.SourceResource
-	(*HealthJudgeResult)(nil),           // 7: sdodev.contracts.v1alpha1.HealthJudgeResult
-	(*PluginDescriptor)(nil),            // 8: sdodev.contracts.v1alpha1.PluginDescriptor
-	(*anypb.Any)(nil),                   // 9: google.protobuf.Any
-	(*DeploymentSource)(nil),            // 10: sdodev.contracts.v1alpha1.DeploymentSource
-	(*ImageSource)(nil),                 // 11: sdodev.contracts.v1alpha1.ImageSource
-	(*TelemetryContext)(nil),            // 12: sdodev.contracts.v1alpha1.TelemetryContext
-	(*MemoryDiagnostic)(nil),            // 13: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*OperationalArtifactProposal)(nil), // 14: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*ImageBuild)(nil),                  // 3: sdodev.contracts.v1alpha1.ImageBuild
+	(*HealthJudgeRequest)(nil),          // 4: sdodev.contracts.v1alpha1.HealthJudgeRequest
+	(*SourceResource)(nil),              // 5: sdodev.contracts.v1alpha1.SourceResource
+	(*HealthJudgeResult)(nil),           // 6: sdodev.contracts.v1alpha1.HealthJudgeResult
+	(*PluginDescriptor)(nil),            // 7: sdodev.contracts.v1alpha1.PluginDescriptor
+	(*DeploymentSource)(nil),            // 8: sdodev.contracts.v1alpha1.DeploymentSource
+	(*ImageSource)(nil),                 // 9: sdodev.contracts.v1alpha1.ImageSource
+	(*TelemetryContext)(nil),            // 10: sdodev.contracts.v1alpha1.TelemetryContext
+	(*MemoryDiagnostic)(nil),            // 11: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*OperationalArtifactProposal)(nil), // 12: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_lifecycle_proto_depIdxs = []int32{
-	8,  // 0: sdodev.contracts.v1alpha1.SourceDeploymentRequest.renderers:type_name -> sdodev.contracts.v1alpha1.PluginDescriptor
-	8,  // 1: sdodev.contracts.v1alpha1.SourceDeploymentRequest.image_sources:type_name -> sdodev.contracts.v1alpha1.PluginDescriptor
-	2,  // 2: sdodev.contracts.v1alpha1.SourceDeploymentResult.plan:type_name -> sdodev.contracts.v1alpha1.DeploymentPlan
-	9,  // 3: sdodev.contracts.v1alpha1.DeploymentPlan.strategy_config:type_name -> google.protobuf.Any
-	10, // 4: sdodev.contracts.v1alpha1.DeploymentPlan.source:type_name -> sdodev.contracts.v1alpha1.DeploymentSource
-	11, // 5: sdodev.contracts.v1alpha1.DeploymentPlan.images:type_name -> sdodev.contracts.v1alpha1.ImageSource
-	4,  // 6: sdodev.contracts.v1alpha1.RawManifestStrategy.image_builds:type_name -> sdodev.contracts.v1alpha1.ImageBuild
-	12, // 7: sdodev.contracts.v1alpha1.HealthJudgeRequest.telemetry:type_name -> sdodev.contracts.v1alpha1.TelemetryContext
-	6,  // 8: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
-	13, // 9: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	14, // 10: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	7,  // 0: sdodev.contracts.v1alpha1.SourceDeploymentRequest.renderers:type_name -> sdodev.contracts.v1alpha1.PluginDescriptor
+	7,  // 1: sdodev.contracts.v1alpha1.SourceDeploymentRequest.image_sources:type_name -> sdodev.contracts.v1alpha1.PluginDescriptor
+	8,  // 2: sdodev.contracts.v1alpha1.DeploymentPlan.source:type_name -> sdodev.contracts.v1alpha1.DeploymentSource
+	9,  // 3: sdodev.contracts.v1alpha1.DeploymentPlan.images:type_name -> sdodev.contracts.v1alpha1.ImageSource
+	10, // 4: sdodev.contracts.v1alpha1.HealthJudgeRequest.telemetry:type_name -> sdodev.contracts.v1alpha1.TelemetryContext
+	5,  // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
+	11, // 6: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	12, // 7: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	8,  // [8:8] is the sub-list for method output_type
+	8,  // [8:8] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_lifecycle_proto_init() }
@@ -806,7 +701,7 @@ func file_sdodev_contracts_v1alpha1_lifecycle_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

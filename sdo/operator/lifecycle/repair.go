@@ -11,7 +11,6 @@ import (
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/planfile"
-	"sdo.dev/operator/rendered"
 )
 
 // RepairBroker is the part of the broker a responder's source repair needs:
@@ -208,12 +207,11 @@ func (r RepairDeployer) paused(ctx context.Context, deploy func() (RepairResult,
 	return deploy()
 }
 
-// changesDeploymentInputs reports a repair that shapes what is deployed: a
-// deployment file, overlay or patch, or any application source the responder
-// committed.
+// changesDeploymentInputs reports a repair that shapes what is deployed: any
+// application source the responder committed.
 func changesDeploymentInputs(paths []string) bool {
 	for _, path := range paths {
-		if layout.IsEffectiveDeploymentInput(path) || !layout.IsMemoryPath(path) {
+		if !layout.IsMemoryPath(path) {
 			return true
 		}
 	}
@@ -270,8 +268,8 @@ func (r RepairDeployer) deploy(ctx context.Context, cfg RepairConfig, incidentID
 		}
 		return repairHeld(HoldRollout, err.Error()), nil
 	}
-	if !completeDeploymentReceipt(receipt) || !rendered.SameDeploymentSource(receipt.Source, plan.GetSource()) {
-		return repairHeld(HoldRollout, "deployment returned incomplete evidence or another source"), nil
+	if !completeDeploymentReceipt(receipt) {
+		return repairHeld(HoldRollout, "deployment returned incomplete evidence"), nil
 	}
 	verdict, err := steps.awaitVerdict(ctx, bounds, func() (HealthVerdict, error) {
 		return r.Verifier.VerifyCandidate(ctx, candidate.Path, candidate.Commit, cfg.Namespace, cfg.HealthObjective, receipt)

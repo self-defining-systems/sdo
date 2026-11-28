@@ -4,12 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
-
-	"sdo.dev/operator/broker"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/operability"
 )
 
 // CandidateVerifier judges a commit that is the clean HEAD of root (the
@@ -18,36 +13,6 @@ import (
 // implements it.
 type CandidateVerifier interface {
 	VerifyCandidate(ctx context.Context, root, commit, namespace, objective string, source DeploymentReceipt) (HealthVerdict, error)
-}
-
-// DeploymentCorrection is one request to the deployment agent in an advance:
-// the advance checkout (the accepted tree merged with upstream, where the agent
-// edits deployment files and patches), the accepted plan, and the hold that the
-// operability report named, as the correction feedback.
-type DeploymentCorrection struct {
-	AdvanceID string
-	Proposal  broker.Proposal
-	Plan      *contracts.DeploymentPlan
-	Feedback  string
-	// Attempt counts the corrections of this advance, from 1.
-	Attempt int
-}
-
-// DeploymentCorrector dispatches the deployment agent for an advance held by a
-// cause the deployer owns (operability.RouteIn ModeAdvance: patch, render,
-// build). It returns the plan the agent proposes for the advance checkout.
-type DeploymentCorrector interface {
-	CorrectDeployment(ctx context.Context, correction DeploymentCorrection) (*contracts.DeploymentPlan, error)
-}
-
-// DefaultMaxCorrections bounds the deployment agent's corrections of one
-// advance revision (a Go-side budget, like the onboarding attempts).
-const DefaultMaxCorrections = 2
-
-// OperabilityExposer makes a report the application's current operability
-// report (the control namespace's sdo-operability ConfigMap).
-type OperabilityExposer interface {
-	PublishOperability(ctx context.Context, report operability.Report) error
 }
 
 // MaintenanceWindow pauses and resumes the controller's evaluation (the
@@ -67,66 +32,19 @@ type MaintenanceWindow interface {
 	Resume(ctx context.Context) error
 }
 
-// ControllerActivity reports whether the controller is in the middle of work
-// an advance must not overlap (an open incident, closure in flight).
-type ControllerActivity interface {
-	Busy(ctx context.Context) (reason string, busy bool, err error)
-}
-
 // ErrNoAcceptedPlan means no deployment of this installation is recorded, or
 // the accepted tree has no .sdo/deployment/plan.yaml (for example a seeded
 
 // install), so nothing can redeploy an upstream revision. The host stops following the source.
 var ErrNoAcceptedPlan = errors.New("accepted deployment evidence has no deployment plan; upstream advance is unavailable for this installation")
 
-// HoldReason classifies a held revision (operational-contract plan §5 edge
-// cases in parentheses).
+// HoldReason classifies a held head or repair deployment.
 type HoldReason string
 
 const (
-	HoldRefRewritten  HoldReason = "ref_rewritten"  // E10: base is not an ancestor
-	HoldMemoryTouched HoldReason = "memory_touched" // E10: upstream changes .sdo/
-	HoldUnavailable   HoldReason = "materialize"    // the revision cannot be fetched (not transient)
-	HoldMergeConflict HoldReason = "merge_conflict" // E1
-	HoldRender        HoldReason = "render"         // E2, before any cluster effect
-	// The deployment patch series does not apply to the candidate (E1), found
-	// before any cluster effect. The kinds are patchset.PatchError kinds.
-	HoldPatchConflict   HoldReason = "patch_conflict"   // context no longer matches, or the file is gone
-	HoldPatchUpstreamed HoldReason = "patch_upstreamed" // the change is already upstream; retire the patch
-	HoldPatchInvalid    HoldReason = "patch_invalid"    // malformed or forbidden; cannot happen to accepted patches
-	// HoldShapeChange: the shape changed and no detection designer is wired to
-	// refresh the detectors for it, so nothing is deployed (E4-E6).
-	HoldShapeChange HoldReason = "shape_change"
-	// HoldDesigner: the advance was deployed, verified and ACCEPTED, but the
-	// detection designer's refresh for the changed shape failed. The accepted
-	// detectors are those of the previous shape until a refresh succeeds;
-	// AdvanceResult.Receipt names the accepted commit and AdvanceResult.Owed
-	// carries the obligation the host retries (the hold itself is superseded
-	// by the follower's next poll, the obligation is not).
-	HoldDesigner HoldReason = "designer_refresh"
-	HoldBuild    HoldReason = "build"   // E3, images resolve before any apply
-	HoldRollout  HoldReason = "rollout" // E7, cluster left as is
-	HoldHealth   HoldReason = "health"  // E8, cluster left as is
-	// HoldDeployer: the deployment agent was dispatched for a deployer-owned
-	// hold and did not converge: it was given the same correction twice, or its
-	// corrections spent the budget. Terminal for this revision; a person looks.
-	HoldDeployer HoldReason = "deployer_not_converging"
-	// HoldScope: the offline operability checks found the candidate outside
-	// the install's scope or registry allowlist, before any cluster effect.
-	HoldScope HoldReason = "scope"
-	// HoldValidation: the broker's publication validation (the one PublishAdvance
-	// applies) rejects the candidate. Found before any cluster effect: an advance
-	// never rolls out a candidate the broker would refuse to accept.
-	HoldValidation HoldReason = "validation"
-	// HoldImmutable: the API server refuses an immutable change the deployer's
-	// recreate policy does not replace (immutable_change, deployer: a deployment
-	// correction; data_bearing_change, human). Found by the apply; nothing of
-	// the refused phase was changed.
-	HoldImmutable HoldReason = "immutable"
-	// HoldOperability: an operability check failed for a cause none of the
-	// reasons above names (an SDO defect or an unknown cause), so a person
-	// must look.
-	HoldOperability HoldReason = "operability"
+	HoldBuild   HoldReason = "build"   // images resolve before any apply
+	HoldRollout HoldReason = "rollout" // cluster left as is
+	HoldHealth  HoldReason = "health"  // cluster left as is
 )
 
 // evaluation pass the controller can be draining.
@@ -144,32 +62,6 @@ const (
 // does not set one. A firing that persists past it is a regression of the
 // candidate.
 const DefaultSettleWindow = 5 * time.Minute
-
-// MissingCollaboratorError reports required collaborators a component was
-// built without. Nil is never a mode: it would disable the behavior silently.
-type MissingCollaboratorError struct {
-	Component string
-	Missing   []string
-}
-
-func (e *MissingCollaboratorError) Error() string {
-	return e.Component + " needs " + strings.Join(e.Missing, ", ")
-}
-
-// RequireCollaborators returns a *MissingCollaboratorError naming the entries
-// whose value is nil or false, or nil when every one is present.
-func RequireCollaborators(component string, present map[string]bool, order ...string) error {
-	var missing []string
-	for _, name := range order {
-		if !present[name] {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	return &MissingCollaboratorError{Component: component, Missing: missing}
-}
 
 // pauseControl lifts and waits on a MaintenanceWindow for a deploy that runs
 // under a controller pause.

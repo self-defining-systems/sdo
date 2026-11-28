@@ -42,10 +42,7 @@ func renderLayoutReference(t *testing.T) string {
 		layout.CorpusDir + "/case-id/healthy.json", layout.CorpusDir + "/case-id/recordings.json",
 		layout.CorpusDir + "/case-id/labels.json", layout.CorpusDir + "/case-id/operator.json",
 		layout.CorpusDir + "/case-id/accepted.json",
-		layout.DeploymentPlanFile, layout.DeploymentDir + "/values/values-file.yaml",
-		layout.DeploymentDir + "/manifests/manifest-file.yaml", layout.DeploymentDir + "/build/Dockerfile",
-		layout.DeploymentDir + "/overlays/telemetry/overlay-file.yaml",
-		layout.DeploymentPatchesDir + "/0001-patch-name.patch",
+		layout.DeploymentPlanFile,
 		layout.TelemetrySourcesFile, layout.TelemetryBackendsFile,
 		layout.DataCheckPath("check-id"),
 		layout.OutcomePath("incident-id"),
@@ -53,7 +50,7 @@ func renderLayoutReference(t *testing.T) string {
 	var out strings.Builder
 	out.WriteString("# Operational-memory layout\n\nGENERATED from `memory/layout/paths.go` and `memory/validate/ownership.go`. Do not edit.\nRegenerate from `sdo/operator` with `SDO_UPDATE_LAYOUT_REFERENCE=1 go test ./memory/validate -run '^TestMemoryLayoutReference$'`.\n\n")
 	fmt.Fprintf(&out, "Schema version: %d. Paths are repository-relative and used only while editing a proposal checkout; worker results and memory prose use logical IDs.\n\n", layout.CurrentSchemaVersion)
-	fmt.Fprintf(&out, "- Playbook, library and corpus IDs: `%s`.\n- Detector IDs: `%s`.\n- Script IDs: `<playbook-id>/<filename>.sh`.\n- Outcomes: SHA-256 of incident ID; patches: `NNNN-<slug>.patch` with `<slug>` matching `[a-z0-9][a-z0-9-]{0,48}`.\n\n", layout.PlaybookIDPattern, layout.DetectorIDPattern)
+	fmt.Fprintf(&out, "- Playbook, library and corpus IDs: `%s`.\n- Detector IDs: `%s`.\n- Script IDs: `<playbook-id>/<filename>.sh`.\n- Outcomes: SHA-256 of incident ID.\n\n", layout.PlaybookIDPattern, layout.DetectorIDPattern)
 	out.WriteString("## Paths, kinds and write authority\n\n| Path | Kind | Logical ID | Writer and phase |\n| --- | --- | --- | --- |\n")
 	seen := map[string]bool{}
 	for _, p := range paths {
@@ -64,15 +61,12 @@ func renderLayoutReference(t *testing.T) string {
 		seen[string(kind)] = true
 		authority := owners(kind, id)
 		display := p
-		for from, to := range map[string]string{"playbook-id": "<playbook-id>", "detector-id": "<detector-id>", "library-id": "<library-id>", "case-id": "<case-id>", "values-file": "<file>", "manifest-file": "<file>", "overlay-file": "<file>", "0001-patch-name": "<NNNN-slug>", "check-id": "<check-id>"} {
+		for from, to := range map[string]string{"playbook-id": "<playbook-id>", "detector-id": "<detector-id>", "library-id": "<library-id>", "case-id": "<case-id>", "check-id": "<check-id>"} {
 			display = strings.ReplaceAll(display, from, to)
 		}
 		if kind == layout.KindOutcome {
 			display = layout.OutcomesDir + "/<sha256(incident-id)>.json"
 			id = "<sha256(incident-id)>"
-		}
-		if kind == layout.KindDeploymentPatch {
-			id = "<NNNN-slug>"
 		}
 		if id == "" {
 			id = "—"
