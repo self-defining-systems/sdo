@@ -12,6 +12,7 @@ Start from `examples/template-drift/` or `examples/stuck-pods/`. Write `diagnose
 - Signatures, `program.EnsureExec` (SQL/CLI): [sdk-card.md](../sdo-playbook-authoring/references/sdk-card.md).
 - Use the fastest equivalent action. Verify serving processes use the new state.
 - Scope absence claims to where you looked. Before recreating or overwriting lost data, require a live check for the authoritative copy; restore it if found, else leave the write to the responder.
+- State the app manages (schema, migrations, caches): encode the app's own maintenance path, not the hand edit.
 - Set the known-good value directly, not from controller history a repeat may lack.
 - Carry a whole source restore as `program.ReconcileFromSource`. Omit changes that didn't help.
 - Memory may name this application's commands and fields; generalize over what varies, not away from the application: bind components and stores by relation or parameter. Automate mechanical steps; leave judgement to the README. No passwords.

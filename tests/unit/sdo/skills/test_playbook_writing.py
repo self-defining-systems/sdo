@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 SKILL = ROOT / "sdo/skills/playbook-writing"
 PROGRAM = ROOT / "sdo/operator/sdk/program"
-BUDGET_BYTES = 2700
+BUDGET_BYTES = 2816
 
 
 def _declared() -> set[str]:
@@ -85,3 +85,9 @@ def test_the_detector_guidance_offers_the_store_state_readers_with_real_identifi
         if not re.search(rf"^(?:func|type|const|var)\s+{name}\b|^\t{name}\b", declared, re.MULTILINE)
     )
     assert not missing, f"detector.md names storestate identifiers that do not exist: {missing}"
+
+
+def test_a_playbook_for_app_managed_state_encodes_the_apps_own_path() -> None:
+    """A learned playbook must not turn a hand schema edit into the default repair for state the app maintains."""
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    assert "encode the app's own maintenance path, not the hand edit" in text

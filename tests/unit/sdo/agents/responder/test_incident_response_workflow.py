@@ -198,3 +198,13 @@ def test_the_responder_is_told_to_work_signals_in_parallel_and_wait_on_condition
 
     assert "every failing signal in parallel" in text
     assert "wait on its effect (`sdo detect --wait`), not a sleep" in text
+
+
+def test_app_managed_state_is_brought_current_through_the_apps_own_path() -> None:
+    """A schema behind its code is a migration to run, not a diff to restore by hand; hand edits stay possible."""
+
+    text = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8").lower()
+
+    assert "app-managed state" in text
+    assert "the app's own maintenance path" in text
+    assert "hand edits are a last resort" in text
