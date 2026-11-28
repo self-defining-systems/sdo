@@ -786,6 +786,12 @@ var gateCompileRows = []gateCompileRow{
 	{name: "fires on the healthy baseline", rule: RuleDetectorHealthyBaseline, path: layout.DetectorDir(layout.ClassLearned, "missing-configmap"), baseline: true,
 		fake: testutil.GoRule{Verb: "test", ArgContains: gateHealthyBaselineStage, Output: "    healthy_baseline_test.go:15: detector.healthy-baseline[missing-configmap]: detector \"missing-configmap\" reported an active finding on healthy baseline snapshot empty-namespace.json"},
 		real: gateFiresOnHealthyBaseline},
+	// A learned detector whose finding on the incident's capture the controller
+	// refuses (no resource kind) is rejected at publication, not every cycle.
+	{name: "a finding the controller refuses on the incident capture", rule: RuleDetectorFindingAdmission, path: layout.DetectorDir(layout.ClassLearned, "missing-configmap"),
+		request: func(r *Request) { r.OwnIncidentDirectory = gateIncidentCapture() },
+		fake:    testutil.GoRule{Verb: "test", ArgContains: "./generated", ArgAbsent: gateHealthyBaselineStage, Output: "--- FAIL: TestLearnedDetectorFindingsAreAdmitted\n    finding_admission_test.go:22: detector.finding-admission[missing-configmap]: on capture open@detect.json the controller refuses its finding (rule \"missing-configmap\"): primary resource: kind is required"},
+		real:    gateFiresOnHealthyBaseline},
 	// A healthy-baseline fault never hides another failure of the generated
 	// tests: here a copied detector keeps the accepted Spec ID, so the
 	// controller would refuse to start. The fault is reported, not the replay.
@@ -857,6 +863,27 @@ const gateHealthyBaselineStage = "-run ^TestLearnedDetectorsStayQuietOnHealthyBa
 // gateFiresOnHealthyBaseline makes the fixture detector fire on an empty namespace.
 func gateFiresOnHealthyBaseline(t *testing.T, root string) {
 	edit(t, root, gateFixtureDetector, "findings := make([]sdk.Finding, 0)", "findings := make([]sdk.Finding, 0)\n\tif len(snapshot.Deployments()) == 0 {\n\t\treturn []sdk.Finding{{RuleID: \"missing-configmap\", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: \"always\", Evidence: \"always\", Fingerprint: \"always\"}}, nil\n\t}")
+}
+
+// gateIncidentCapture is an incident capture whose open state is an empty
+// namespace, in a directory that outlives the parallel rows.
+func gateIncidentCapture() string {
+	dir, err := os.MkdirTemp("", "gate-incident-")
+	if err != nil {
+		panic(err)
+	}
+	snapshot, err := sdktest.CaptureSnapshot(sdktest.Snapshot{NamespaceName: "demo"}, "demo")
+	if err != nil {
+		panic(err)
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "open@detect.json"), raw, 0o600); err != nil {
+		panic(err)
+	}
+	return dir
 }
 
 // gateBaseline writes the controller's healthy capture: an empty namespace.

@@ -1193,7 +1193,7 @@ func (l *ResponderLoop) refresh(ctx context.Context, diagnose bool) ([]sdk.Findi
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	endDetectors := l.phase("detectors")
-	results := evaluateDetectors(ctx, l.Detectors, view)
+	results := evaluateAdmittedDetectors(ctx, l.Detectors, view)
 	endDetectors()
 	for _, detector := range l.Detectors {
 		result := results[detector.Spec().ID]
@@ -1201,6 +1201,14 @@ func (l *ResponderLoop) refresh(ctx context.Context, diagnose bool) ([]sdk.Findi
 		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending
+		}
+		// A finding the controller refuses fails only its detector, as in the
+		// controller; the other detectors' findings are still the read.
+		var refused findingAdmissionError
+		if errors.As(err, &refused) {
+			state.Status, state.Error = DetectorEvaluationError, err.Error()
+			states = append(states, state)
+			continue
 		}
 		if err != nil {
 			state.Status, state.Error = DetectorEvaluationError, err.Error()
@@ -1551,7 +1559,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	endDetectors := l.phase("detectors")
-	results := evaluateDetectors(ctx, l.Detectors, view)
+	results := evaluateAdmittedDetectors(ctx, l.Detectors, view)
 	endDetectors()
 	for _, detector := range l.Detectors {
 		result := results[detector.Spec().ID]
@@ -1560,9 +1568,13 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending
 		}
+		var refused findingAdmissionError
 		if err != nil {
 			state.Status, state.Error = DetectorEvaluationError, err.Error()
-			response.Error = err.Error()
+			// A refused finding fails its detector, not the write.
+			if !errors.As(err, &refused) {
+				response.Error = err.Error()
+			}
 		}
 		for _, finding := range observed {
 			if finding.Status == sdk.FindingActive {
