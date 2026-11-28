@@ -39,6 +39,7 @@ from benchmarks.fuzzops.page import (
     inbox_manifest,
     kubectl_apply,
 )
+from benchmarks.fuzzops.repage import traffic_first_bad
 from benchmarks.fuzzops.sink import incident_id_time
 from benchmarks.fuzzops.window import concerns, fault_targets
 
@@ -549,7 +550,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--operator-binary", type=Path, help="seal an evidence snapshot when the incident closes")
     p.add_argument("--controller-image", default="", help="with --operator-binary: the controller image")
     p.add_argument("--page", default="", help="the harness-paged arm: PageConfig as JSON (see page.py)")
-    p.add_argument("--fallback-page-after", type=float, help="seconds from inject before sending a generic page")
+    p.add_argument(
+        "--fallback-page-after",
+        type=float,
+        help="seconds from the first harmed user request (FuzzOps' first bad second) before sending a generic page; "
+        "none is sent while users are unharmed",
+    )
     p.add_argument("--page-pack", type=Path, help="with --page: the fuzzops pack (journeys.yaml)")
     p.add_argument("--page-namespace", default="", help="with --page: the application namespace")
     p.add_argument("--page-fuzzops", type=Path, help="with --page: the fuzzops binary (default: FUZZOPS_BIN or PATH)")
@@ -586,8 +592,13 @@ def main(argv: list[str] | None = None) -> int:
             inject = datetime.fromisoformat(injected)
             watcher.started = inject
             atomic_write_json(receipt, asdict(paging))
-            if a.fallback_page_after is not None:
-                deadline = inject.timestamp() + a.fallback_page_after
+        if (
+            a.fallback_page_after is not None
+            and deadline is None
+            and paging.inject_at is not None
+            and (harmed := traffic_first_bad(Path(traffic))) is not None
+        ):
+            deadline = harmed.timestamp() + a.fallback_page_after
         read_started = time.time()
         try:
             state = read_state(context, a.control_namespace, a.kubeconfig)
