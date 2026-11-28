@@ -1060,7 +1060,7 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	}
 	if !c.opens(finding) {
 		if !c.attachBeforeLaunch([]sdk.Finding{finding}, false) {
-			c.attachLearnedActivation(finding)
+			c.attachStageActivation(finding)
 		}
 		return
 	}
@@ -1070,7 +1070,7 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	if c.joinAlertSet(finding, now) {
 		// The automatic stage can evaluate a learned playbook for the joined
 		// symptom while it owns the repair.
-		c.attachLearnedActivation(finding)
+		c.attachStageActivation(finding)
 		return
 	}
 	c.pageLate(finding, now)
