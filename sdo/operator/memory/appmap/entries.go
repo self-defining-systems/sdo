@@ -23,9 +23,12 @@ const (
 	// ItemBackgroundCovered accepts a reason per job class (the subject) that
 	// no operation triggers, such as periodic maintenance.
 	ItemBackgroundCovered = "background-covered"
+	// ItemMapPointers accepts a reason per operation whose path lists a
+	// component without metrics or logs pointers (one that exports none).
+	ItemMapPointers = "map-pointers"
 )
 
-var reasonItems = map[string]bool{ItemErrorsSeparable: true, ItemJourneysMoveOwnMetrics: true, ItemRoutesMatchOperations: true, ItemTestsFailBroken: true, ItemBackgroundCovered: true}
+var reasonItems = map[string]bool{ItemErrorsSeparable: true, ItemJourneysMoveOwnMetrics: true, ItemRoutesMatchOperations: true, ItemTestsFailBroken: true, ItemBackgroundCovered: true, ItemMapPointers: true}
 
 // EntryLabels name the labels of the entry metric that carry the operation's
 // route, HTTP method and status. Method and Status are optional: a metric
@@ -257,12 +260,19 @@ func (c *checker) entries() {
 	for service := range seen {
 		subjects[service] = true
 	}
+	// An exposed Service that counts no requests has no entries record; its
+	// routes-match-operations red is excused by a reason on the Service.
+	for _, comp := range c.m.Components {
+		for _, service := range comp.Services {
+			subjects[service] = true
+		}
+	}
 	for _, r := range c.m.Reasons {
 		switch {
 		case !reasonItems[r.Item]:
-			c.add(RuleReasons, "a reason explains journeys-move-own-metrics, routes-match-operations or tests-fail-broken; deployed-healthy and quiet-when-healthy accept none", "reason item %q takes no reason", r.Item)
+			c.add(RuleReasons, "a reason explains journeys-move-own-metrics, errors-separable-per-operation, routes-match-operations, tests-fail-broken, background-covered or map-pointers; deployed-healthy and quiet-when-healthy accept none", "reason item %q takes no reason", r.Item)
 		case r.Item != ItemBackgroundCovered && !subjects[r.Subject]:
-			c.add(RuleReasons, "subject is an operation ID or an entry service", "reason for %s: subject %q is neither", r.Item, r.Subject)
+			c.add(RuleReasons, "subject is an operation ID or a Service of a mapped component", "reason for %s: subject %q is neither", r.Item, r.Subject)
 		case strings.TrimSpace(r.Reason) == "":
 			c.add(RuleReasons, "say why the item cannot be fixed", "reason for %s on %s is empty", r.Item, r.Subject)
 		}

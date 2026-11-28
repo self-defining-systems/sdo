@@ -19,7 +19,7 @@ func TestReasonsApplyToEveryRedItemAndRedsNameTheFix(t *testing.T) {
 	if r.Results[0].Status != Note || !strings.Contains(r.Results[0].Detail, "static files only") || r.Results[1].Status != Red {
 		t.Fatalf("%+v", r.Results)
 	}
-	for _, detail := range []string{pointersDetail([]string{"frontend"}), noEntriesDetail("frontend"), routesListDetail} {
+	for _, detail := range []string{pointersDetail([]string{"frontend"}), noEntriesDetail("frontend", "view-page"), routesListDetail} {
 		if !strings.Contains(detail, "reasons:") && !strings.Contains(detail, "routes:") || !strings.Contains(detail, "{") {
 			t.Errorf("no map lines to add: %s", detail)
 		}

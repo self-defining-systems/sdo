@@ -92,6 +92,9 @@ Rules the memory check enforces:
   in the application as deployed is covered by a probe whose workload scenario is declared `knownBroken`
   (`knownBroken: {reason: <one line>, failsWith: ["404"]}`); at most half of the operations may be.
 
+Entries, observe pointers and reasons for a component that counts no requests:
+[worked example](request-metrics.md).
+
 ## Seeded map
 
 When the architecture has no map, Go seeds one from the rendered manifests, all with evidence `manifest`: one
