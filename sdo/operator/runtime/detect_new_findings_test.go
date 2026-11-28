@@ -22,7 +22,7 @@ type lateDrift struct{ on atomic.Bool }
 func (d *lateDrift) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{ID: "drift.unexplained", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
 		Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1},
-		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityWarning}, OriginatingCommit: "synthetic"}
+		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityWarning}, OriginatingCommit: "synthetic", Playbooks: []string{"source-restore"}}
 }
 
 func (d *lateDrift) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
@@ -109,7 +109,7 @@ func TestLateDriftLeadsDetectAndEndsAWaitOnceWithoutAStageWrite(t *testing.T) {
 
 	wait := loop.Handle(ctx, ToolRequest{Command: "detect", WaitSeconds: 60})
 	if line := waitLine(wait.Text); line != "wait: after 0s, new since the handoff: drift.unexplained Service/api" {
-		t.Fatalf("the wait did not return on the new finding: %q", line)
+		t.Fatalf("the wait did not return on the new finding: %q (error %q)", line, wait.Error)
 	}
 	block := wait.Text[strings.Index(wait.Text, "NEW SINCE THE HANDOFF"):]
 	if strings.Count(wait.Text, "Service/api differs from accepted source") != 1 ||
