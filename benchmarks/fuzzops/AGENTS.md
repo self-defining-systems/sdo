@@ -187,6 +187,14 @@ Agent Space and EKS cluster per lane. `prepare` refuses a vcluster lane (the ser
 Space with directed actions on. The hooks never create or configure AWS resources; they start and cancel investigations,
 which are billed. A task the service linked or skipped, or that failed, is a problem (no row).
 
+Optional `devops_agent.paging: {"mode": "alarm", "fallback_seconds": 120, "event_channel_association_id": "<uuid>",
+"relay_ledger": "<abs path>"}` (mode `harness` or no block: today's behaviour). In alarm mode the hook creates no task at
+onset; it polls `list-backlog-tasks` for the earliest task of that event-channel association created at or after the
+inject time and follows it. With none by `first_bad + fallback_seconds` it pages as the harness does (`page.json`, only
+written then) and follows that task; alarm tasks arriving later are recorded, not followed. `paging.json` records
+`paged_by` (`alarm`, `fallback`, `harness`), the alarm name and transition from the relay ledger (JSON lines keyed by
+`incident_id` = the task's `reference.referenceId`), and `late_alarm_tasks`; `done.json` carries `paged_by`.
+
 ## Cell evidence manifest and validator
 
 `collect` writes `operator/build.json`, `host-load.json`, `observability.json` (receipt: `prometheus`, `jaeger`, `applogs`

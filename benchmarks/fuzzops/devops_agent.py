@@ -42,6 +42,7 @@ EVIDENCE_FILES = (
     "onset.json",
     vanilla.ONSET_EVIDENCE,
     "page.json",
+    "paging.json",
     "task.json",
     "executions.json",
     "journal.jsonl",
@@ -63,6 +64,8 @@ class Service(Protocol):
     def create(self, title: str, description: str, token: str) -> dict[str, Any]: ...
 
     def task(self, task_id: str) -> dict[str, Any]: ...
+
+    def tasks(self, created_after: str) -> list[dict[str, Any]]: ...
 
     def cancel(self, task_id: str) -> None: ...
 
@@ -92,11 +95,44 @@ class Lane:
 
 
 @dataclass(frozen=True)
+class Paging:
+    """Who pages the service: the harness at onset (default), or the account's alarm with the harness as fallback."""
+
+    mode: str = "harness"
+    fallback_seconds: float = 120.0
+    event_channel_association_id: str = ""
+    relay_ledger: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("harness", "alarm"):
+            raise ValueError("paging.mode must be 'harness' or 'alarm'")
+        if self.mode == "harness":
+            return
+        seconds = self.fallback_seconds
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            raise TypeError("paging.fallback_seconds must be a number")
+        if not seconds > 0:
+            raise ValueError("paging.fallback_seconds must be positive")
+        if not isinstance(self.event_channel_association_id, str):
+            raise TypeError("paging.event_channel_association_id must be a string")
+        if not self.event_channel_association_id:
+            raise ValueError("paging.event_channel_association_id must not be empty")
+        if self.relay_ledger is not None:
+            if not isinstance(self.relay_ledger, str):
+                raise TypeError("paging.relay_ledger must be a string")
+            if not os.path.isabs(self.relay_ledger):
+                raise ValueError("paging.relay_ledger must be an absolute path")
+
+
+@dataclass(frozen=True)
 class Settings:
     region: str
     lanes: dict[str, Lane]
+    paging: Paging = field(default_factory=Paging)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.paging, Paging):
+            raise TypeError("paging must be a Paging")
         if not isinstance(self.region, str):
             raise TypeError("region must be a string")
         if not self.region or not self.lanes:
@@ -114,7 +150,10 @@ def settings(env: Mapping[str, str]) -> Settings:
         if not isinstance(block, dict):
             raise TypeError("missing block")
         lanes = {name: Lane(**lane) for name, lane in block["lanes"].items()}
-        return Settings(block["region"], lanes)
+        paging = block.get("paging")
+        if paging is not None and not isinstance(paging, dict):
+            raise TypeError("paging must be an object")
+        return Settings(block["region"], lanes, Paging(**paging) if paging else Paging())
     except (TypeError, ValueError, KeyError, AttributeError) as exc:
         raise HookError(f"invalid settings.devops_agent: {exc}") from exc
 
@@ -155,6 +194,19 @@ class AwsCli:
 
     def task(self, task_id: str) -> dict[str, Any]:
         return self.call("get-backlog-task", "--task-id", task_id)["task"]
+
+    def tasks(self, created_after: str) -> list[dict[str, Any]]:
+        found: list[dict[str, Any]] = []
+        token = ""
+        while True:
+            args = ["--filter", json.dumps({"createdAfter": created_after})]
+            if token:
+                args += ["--next-token", token]
+            page = self.call("list-backlog-tasks", *args)
+            found += page.get("tasks") or []
+            token = page.get("nextToken") or ""
+            if not token:
+                return found
 
     def cancel(self, task_id: str) -> None:
         self.call("update-backlog-task", "--task-id", task_id, "--task-status", "CANCELED")
@@ -364,21 +416,110 @@ def space_state(service: Service) -> dict[str, Any]:
     return clean({"assets": optional(service.assets), "account_usage": optional(service.usage)})
 
 
+def parse_time(value: Any) -> float | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def first_bad_time(target: Path, default: float) -> float:
+    """The first harmed user request, from the onset sample vanilla wrote; the supervisor's start when it has none."""
+    try:
+        found = parse_time(json.loads((target / "onset.json").read_text()).get("first_bad"))
+    except (OSError, ValueError, AttributeError):
+        found = None
+    return default if found is None else found
+
+
+def alarm_tasks(service: Service, paging: Paging, injected: float) -> list[dict[str, Any]]:
+    """Tasks the account's own alarm raised since the inject time, earliest first."""
+    since = vanilla.timestamp(injected)
+    found = []
+    for task in service.tasks(since):
+        reference = task.get("reference") or {}
+        created = parse_time(task.get("createdAt"))
+        if reference.get("associationId") != paging.event_channel_association_id:
+            continue
+        if created is None or created < injected:
+            continue
+        found.append((created, task))
+    return [task for _, task in sorted(found, key=lambda pair: pair[0])]
+
+
+def ledger_entry(paging: Paging, reference_id: Any) -> dict[str, Any]:
+    """The relay's record of the alarm that became this task (empty: no ledger or no match)."""
+    if not paging.relay_ledger or reference_id is None:
+        return {}
+    try:
+        lines = Path(paging.relay_ledger).read_text().splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and entry.get("incident_id") == reference_id:
+            return entry
+    return {}
+
+
+def page_by_alarm(service: Service, paging: Paging, injected: float, due: float, poll: float) -> dict[str, Any] | None:
+    """Wait for the alarm's task until the fallback is due; None means the harness must page."""
+    while True:
+        try:
+            found = alarm_tasks(service, paging, injected)
+        except HookError:
+            found = []
+        if found:
+            return found[0]
+        remaining = due - time.time()
+        if remaining <= 0:
+            return None
+        time.sleep(min(poll, remaining))
+
+
 def respond(env: Mapping[str, str], service: Service, injected: float, poll: float = POLL_SECONDS) -> None:
     target, ns = vanilla.run_dir(env), env["FUZZOPS_NAMESPACE"]
     deadline = injected + vanilla.AGENT_SECONDS
     secrets = [kube_token(env)]
-    page = vanilla.page_text(ns)
-    # Only where to look is added: the service is not handed a kubeconfig as the other agents are.
-    description = f"{page}\n\nAmazon EKS cluster: {lane(env).cluster} ({settings(env).region})."
-    title = page.split(";")[0]
-    token = hashlib.sha256(f"{env['BENCH_RUN']}|{injected}".encode()).hexdigest()
+    paging = settings(env).paging
     started = time.time()
-    atomic_write_json(
-        target / "page.json", {"at": vanilla.timestamp(started), "title": title, "description": description}
-    )
-    task = service.create(title, description, token)
+    first_bad = first_bad_time(target, started)
+    due = first_bad + paging.fallback_seconds
+    alarm = page_by_alarm(service, paging, injected, due, poll) if paging.mode == "alarm" else None
+    if alarm is not None:
+        task = alarm
+    else:
+        page = vanilla.page_text(ns)
+        # Only where to look is added: the service is not handed a kubeconfig as the other agents are.
+        description = f"{page}\n\nAmazon EKS cluster: {lane(env).cluster} ({settings(env).region})."
+        title = page.split(";")[0]
+        token = hashlib.sha256(f"{env['BENCH_RUN']}|{injected}".encode()).hexdigest()
+        atomic_write_json(
+            target / "page.json", {"at": vanilla.timestamp(time.time()), "title": title, "description": description}
+        )
+        task = service.create(title, description, token)
     task_id = task["taskId"]
+    paged_by = "harness" if paging.mode == "harness" else "alarm" if alarm is not None else "fallback"
+    reference_id = (task.get("reference") or {}).get("referenceId")
+    entry = ledger_entry(paging, reference_id) if alarm is not None else {}
+    paging_evidence: dict[str, Any] = {"mode": paging.mode, "paged_by": paged_by}
+    paging_evidence["page_at"] = task.get("createdAt") or vanilla.timestamp(time.time())
+    paging_evidence["task_id"] = task_id
+    if paging.mode == "alarm":
+        paging_evidence.update(
+            {
+                "first_bad": vanilla.timestamp(first_bad),
+                "fallback_due": vanilla.timestamp(due),
+                "reference_id": reference_id,
+                "alarm_name": entry.get("alarm_name"),
+                "alarm_transition": entry.get("transition"),
+                "late_alarm_tasks": [],
+            }
+        )
+    atomic_write_json(target / "paging.json", clean(paging_evidence, secrets))
     atomic_write_json(target / "task.json", clean(task, secrets))
     capped, poll_errors = False, 0
     while task["status"] not in TERMINAL:
@@ -393,6 +534,8 @@ def respond(env: Mapping[str, str], service: Service, injected: float, poll: flo
     investigated = time.time()
     if capped:
         optional(lambda: service.cancel(task_id))
+    if paging.mode == "alarm":
+        record_late_alarms(service, paging, injected, task_id, target, paging_evidence, secrets)
     plan = gather(service, target, task, secrets)
     summary = diagnosis_text(json.loads((target / "diagnosis.json").read_text()))
     if summary and env.get("FUZZOPS_REPORT"):
@@ -412,10 +555,36 @@ def respond(env: Mapping[str, str], service: Service, injected: float, poll: flo
             "capped": capped or applied["status"] == "capped",
             "poll_errors": poll_errors,
             "apply_status": applied["status"],
+            "paged_by": paged_by,
             "model": "AWS DevOps Agent",
             "result_event": True,
         },
     )
+
+
+def record_late_alarms(
+    service: Service,
+    paging: Paging,
+    injected: float,
+    followed: str,
+    target: Path,
+    evidence: dict[str, Any],
+    secrets: Sequence[str],
+) -> None:
+    """Alarm tasks that arrived after the followed task was chosen are recorded, never followed."""
+    found = optional(lambda: alarm_tasks(service, paging, injected))
+    if not isinstance(found, list):
+        return
+    evidence["late_alarm_tasks"] = [
+        {
+            "task_id": t.get("taskId"),
+            "created_at": t.get("createdAt"),
+            "reference_id": (t.get("reference") or {}).get("referenceId"),
+        }
+        for t in found
+        if t.get("taskId") != followed
+    ]
+    atomic_write_json(target / "paging.json", clean(evidence, secrets))
 
 
 def supervise(env: Mapping[str, str], injected: float, lock_fd: int) -> None:
