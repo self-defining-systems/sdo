@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"sdo.dev/operator/contracts/settings"
@@ -20,6 +21,9 @@ import (
 
 // lateWorld steps a controller whose first incident opened on a Kubernetes
 // condition and whose responder returned; late is a user test outside its set.
+// It lives in a synctest bubble: each step ends only when every background
+// goroutine has finished or is parked (on a held publication, say), so what a
+// step observes never depends on the scheduler. A step outside a bubble panics.
 type lateWorld struct {
 	t      *testing.T
 	c      *Controller
@@ -27,8 +31,6 @@ type lateWorld struct {
 	closed []IncidentClosure
 	late   *switchedProbe
 	cond   *switchedProbe
-	// noWait leaves background effects running between steps.
-	noWait bool
 }
 
 func newLateWorld(t *testing.T, conditionFailing bool) *lateWorld {
@@ -60,9 +62,7 @@ func (w *lateWorld) step() {
 	if err := w.c.Step(context.Background(), w.now, nil); err != nil {
 		w.t.Fatal(err)
 	}
-	if !w.noWait {
-		w.c.Wait()
-	}
+	synctest.Wait()
 	w.now = w.now.Add(time.Second)
 }
 
@@ -80,11 +80,6 @@ func (w *lateWorld) runUntil(limit int, done func() bool) {
 // drive is runUntil that also runs the broker effects a step leaves pending.
 func (w *lateWorld) drive(limit int, done func() bool) {
 	w.t.Helper()
-	settle := func() {
-		if !w.noWait {
-			w.c.Wait()
-		}
-	}
 	for range limit {
 		if done() {
 			return
@@ -94,13 +89,13 @@ func (w *lateWorld) drive(limit int, done func() bool) {
 			if err := w.c.ExecuteClosureEffect(context.Background(), effect); err != nil {
 				w.t.Fatal(err)
 			}
-			settle()
+			synctest.Wait()
 		}
 		if effect, ok := w.c.PendingClosureAcknowledgmentEffect(); ok {
 			if err := w.c.ExecuteClosureAcknowledgmentEffect(context.Background(), effect); err != nil {
 				w.t.Fatal(err)
 			}
-			settle()
+			synctest.Wait()
 		}
 	}
 }
@@ -130,32 +125,34 @@ func (w *lateWorld) openingKeys() []string {
 func TestAnEscalatedIncidentHandsItsFailingAlertsToTheNextIncident(t *testing.T) {
 	for _, withBroker := range []bool{false, true} {
 		t.Run(map[bool]string{false: "direct", true: "broker"}[withBroker], func(t *testing.T) {
-			w := newLateWorld(t, true)
-			w.c.config.VerificationTimeout = 3 * time.Second
-			if withBroker {
-				queue := &publishingQueue{release: make(chan struct{})}
-				close(queue.release)
-				w.c.broker = queue
-			}
-			first := w.incidentID()
-			w.late.failing.Store(true)
-			w.drive(30, func() bool { return len(w.closed) > 0 })
-			if len(w.closed) != 1 {
-				t.Fatal("the escalated incident never closed while a new opener waited")
-			}
-			closed := w.closed[0]
-			if closed.Request.IncidentID != first || closed.EscalatedAt.IsZero() || len(closed.FinalDetectorStates) != 0 || closed.HealthClearedAt != nil ||
-				len(closed.Request.JoinedKeys) != 0 {
-				t.Fatalf("want an escalated, unverified close of the first incident on its own set: %+v", closed)
-			}
-			if closed.Result == nil || !slices.ContainsFunc(closed.Result.UnresolvedFindings, func(f sdk.Finding) bool { return f.DetectorID == w.cond.id }) {
-				t.Fatalf("the escalated close must name its unresolved alert: %+v", closed.Result)
-			}
-			w.drive(30, func() bool { return w.incidentID() != "" && w.incidentID() != first })
-			want := findingKeys([]sdk.Finding{w.cond.finding(), w.late.finding()})
-			if got := w.openingKeys(); w.incidentID() == first || !slices.Equal(got, want) {
-				t.Fatalf("next incident opening keys = %v, want %v (every alert still failing)", got, want)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				w := newLateWorld(t, true)
+				w.c.config.VerificationTimeout = 3 * time.Second
+				if withBroker {
+					queue := &publishingQueue{release: make(chan struct{})}
+					close(queue.release)
+					w.c.broker = queue
+				}
+				first := w.incidentID()
+				w.late.failing.Store(true)
+				w.drive(30, func() bool { return len(w.closed) > 0 })
+				if len(w.closed) != 1 {
+					t.Fatal("the escalated incident never closed while a new opener waited")
+				}
+				closed := w.closed[0]
+				if closed.Request.IncidentID != first || closed.EscalatedAt.IsZero() || len(closed.FinalDetectorStates) != 0 || closed.HealthClearedAt != nil ||
+					len(closed.Request.JoinedKeys) != 0 {
+					t.Fatalf("want an escalated, unverified close of the first incident on its own set: %+v", closed)
+				}
+				if closed.Result == nil || !slices.ContainsFunc(closed.Result.UnresolvedFindings, func(f sdk.Finding) bool { return f.DetectorID == w.cond.id }) {
+					t.Fatalf("the escalated close must name its unresolved alert: %+v", closed.Result)
+				}
+				w.drive(30, func() bool { return w.incidentID() != "" && w.incidentID() != first })
+				want := findingKeys([]sdk.Finding{w.cond.finding(), w.late.finding()})
+				if got := w.openingKeys(); w.incidentID() == first || !slices.Equal(got, want) {
+					t.Fatalf("next incident opening keys = %v, want %v (every alert still failing)", got, want)
+				}
+			})
 		})
 	}
 }
@@ -163,70 +160,76 @@ func TestAnEscalatedIncidentHandsItsFailingAlertsToTheNextIncident(t *testing.T)
 // An escalated incident with no waiting opener stays open until its alerts
 // clear.
 func TestAnEscalatedIncidentWithNothingWaitingStaysOpen(t *testing.T) {
-	w := newLateWorld(t, true)
-	w.c.config.VerificationTimeout = 3 * time.Second
-	w.runUntil(30, func() bool { return len(w.closed) > 0 })
-	if len(w.closed) != 0 || !w.c.IncidentOpen() || w.c.escalatedAt.IsZero() {
-		t.Fatalf("closed=%d open=%v escalated=%s", len(w.closed), w.c.IncidentOpen(), w.c.escalatedAt)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		w := newLateWorld(t, true)
+		w.c.config.VerificationTimeout = 3 * time.Second
+		w.runUntil(30, func() bool { return len(w.closed) > 0 })
+		if len(w.closed) != 0 || !w.c.IncidentOpen() || w.c.escalatedAt.IsZero() {
+			t.Fatalf("closed=%d open=%v escalated=%s", len(w.closed), w.c.IncidentOpen(), w.c.escalatedAt)
+		}
+	})
 }
 
 // The waiting opener survives a restart: the batch is persisted, and the
 // restarted controller opens the next incident on it once the first closes.
 func TestAWaitingOpenerSurvivesARestart(t *testing.T) {
-	w := newLateWorld(t, false)
-	first := w.incidentID()
-	w.late.failing.Store(true)
-	w.step()
-	if len(w.c.batcher.Snapshot().Findings) != 1 {
-		t.Fatalf("the late user test did not wait in the batcher: %v", w.c.batcher.Snapshot().Findings)
-	}
-	state, err := w.c.ExportState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	restarted, err := NewController(w.c.config, []sdk.Detector{w.cond, w.late}, staticProvider{}, &recordingDispatcher{}, w.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restarted.now = func() time.Time { return w.now }
-	if err := restarted.RestoreState(state); err != nil {
-		t.Fatal(err)
-	}
-	if got := restarted.batcher.Snapshot().Findings; len(got) != 1 || findingKey(got[0]) != findingKey(w.late.finding()) {
-		t.Fatalf("restored batch = %v", got)
-	}
-	restarted.OnIncidentClosed = func(closure IncidentClosure) { w.closed = append(w.closed, closure) }
-	w.c = restarted
-	w.runUntil(30, func() bool { return w.incidentID() != "" && w.incidentID() != first })
-	if len(w.closed) != 1 || !w.closed[0].EscalatedAt.IsZero() || len(w.closed[0].FinalDetectorStates) == 0 {
-		t.Fatalf("the first incident did not close verified: %+v", w.closed)
-	}
-	if got := w.openingKeys(); !slices.Equal(got, findingKeys([]sdk.Finding{w.late.finding()})) {
-		t.Fatalf("next incident opening keys = %v", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		w := newLateWorld(t, false)
+		first := w.incidentID()
+		w.late.failing.Store(true)
+		w.step()
+		if len(w.c.batcher.Snapshot().Findings) != 1 {
+			t.Fatalf("the late user test did not wait in the batcher: %v", w.c.batcher.Snapshot().Findings)
+		}
+		state, err := w.c.ExportState()
+		if err != nil {
+			t.Fatal(err)
+		}
+		restarted, err := NewController(w.c.config, []sdk.Detector{w.cond, w.late}, staticProvider{}, &recordingDispatcher{}, w.now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		restarted.now = func() time.Time { return w.now }
+		if err := restarted.RestoreState(state); err != nil {
+			t.Fatal(err)
+		}
+		if got := restarted.batcher.Snapshot().Findings; len(got) != 1 || findingKey(got[0]) != findingKey(w.late.finding()) {
+			t.Fatalf("restored batch = %v", got)
+		}
+		restarted.OnIncidentClosed = func(closure IncidentClosure) { w.closed = append(w.closed, closure) }
+		w.c = restarted
+		w.runUntil(30, func() bool { return w.incidentID() != "" && w.incidentID() != first })
+		if len(w.closed) != 1 || !w.closed[0].EscalatedAt.IsZero() || len(w.closed[0].FinalDetectorStates) == 0 {
+			t.Fatalf("the first incident did not close verified: %+v", w.closed)
+		}
+		if got := w.openingKeys(); !slices.Equal(got, findingKeys([]sdk.Finding{w.late.finding()})) {
+			t.Fatalf("next incident opening keys = %v", got)
+		}
+	})
 }
 
 // A user test that fails, clears and fails again around the first incident's
 // close opens at most one more incident and never changes the first outcome.
 func TestAFlappingUserTestOpensAtMostOneMoreIncident(t *testing.T) {
-	w := newLateWorld(t, false)
-	first := w.incidentID()
-	seen := map[string]bool{first: true}
-	for i := range 40 {
-		w.late.failing.Store(i == 0 || i == 1 || i >= 4)
-		w.step()
-		if id := w.incidentID(); id != "" {
-			seen[id] = true
+	synctest.Test(t, func(t *testing.T) {
+		w := newLateWorld(t, false)
+		first := w.incidentID()
+		seen := map[string]bool{first: true}
+		for i := range 40 {
+			w.late.failing.Store(i == 0 || i == 1 || i >= 4)
+			w.step()
+			if id := w.incidentID(); id != "" {
+				seen[id] = true
+			}
 		}
-	}
-	if len(seen) > 2 {
-		t.Fatalf("a flapping user test opened %d incidents: %v", len(seen)-1, seen)
-	}
-	if len(w.closed) == 0 || w.closed[0].Request.IncidentID != first || !w.closed[0].EscalatedAt.IsZero() ||
-		len(w.closed[0].Request.JoinedKeys) != 0 || len(w.closed[0].FinalDetectorStates) == 0 {
-		t.Fatalf("the first incident's outcome changed: %+v", w.closed)
-	}
+		if len(seen) > 2 {
+			t.Fatalf("a flapping user test opened %d incidents: %v", len(seen)-1, seen)
+		}
+		if len(w.closed) == 0 || w.closed[0].Request.IncidentID != first || !w.closed[0].EscalatedAt.IsZero() ||
+			len(w.closed[0].Request.JoinedKeys) != 0 || len(w.closed[0].FinalDetectorStates) == 0 {
+			t.Fatalf("the first incident's outcome changed: %+v", w.closed)
+		}
+	})
 }
 
 // After an applied playbook, under after_playbook=escalate or =wait, a user
@@ -323,29 +326,30 @@ func (q *publishingQueue) QueuedReflectionServingCommit(context.Context, string)
 // One writer at a time: the next incident opens only after the previous one's
 // queued reflection, with its closing turn and source publication, finished.
 func TestTheNextIncidentWaitsForThePreviousSourcePublication(t *testing.T) {
-	w := newLateWorld(t, false)
-	queue := &publishingQueue{release: make(chan struct{})}
-	w.c.broker = queue
-	// Waiting for background work would wait for the held publication.
-	w.noWait = true
-	first := w.incidentID()
-	w.late.failing.Store(true)
-	w.drive(60, queue.running.Load)
-	if !queue.running.Load() || len(queue.closures()) != 1 || queue.closures()[0].Request.IncidentID != first {
-		t.Fatalf("the first closure's publication never started: closures=%d", len(queue.closures()))
-	}
-	for range 10 {
-		w.step()
-		if id := w.incidentID(); id != "" && id != first {
-			t.Fatal("the next incident opened while the previous source publication ran")
+	synctest.Test(t, func(t *testing.T) {
+		w := newLateWorld(t, false)
+		queue := &publishingQueue{release: make(chan struct{})}
+		w.c.broker = queue
+		first := w.incidentID()
+		w.late.failing.Store(true)
+		w.drive(60, queue.running.Load)
+		if !queue.running.Load() || len(queue.closures()) != 1 || queue.closures()[0].Request.IncidentID != first {
+			t.Fatalf("the first closure's publication never started: closures=%d", len(queue.closures()))
 		}
-	}
-	if !w.c.batcher.Ready(w.now) {
-		t.Fatal("the late user test is no longer waiting")
-	}
-	close(queue.release)
-	w.drive(30, func() bool { id := w.incidentID(); return id != "" && id != first })
-	if !queue.finished.Load() || w.incidentID() == first || w.incidentID() == "" {
-		t.Fatalf("the next incident did not open after the publication: finished=%v incident=%q", queue.finished.Load(), w.incidentID())
-	}
+		for range 10 {
+			w.step()
+			if id := w.incidentID(); id != "" && id != first {
+				t.Fatal("the next incident opened while the previous source publication ran")
+			}
+		}
+		if !w.c.batcher.Ready(w.now) {
+			t.Fatal("the late user test is no longer waiting")
+		}
+		close(queue.release)
+		synctest.Wait()
+		w.drive(30, func() bool { id := w.incidentID(); return id != "" && id != first })
+		if !queue.finished.Load() || w.incidentID() == first || w.incidentID() == "" {
+			t.Fatalf("the next incident did not open after the publication: finished=%v incident=%q", queue.finished.Load(), w.incidentID())
+		}
+	})
 }
