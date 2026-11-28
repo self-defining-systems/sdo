@@ -49,7 +49,8 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
     cleanup          its cleanup succeeds; from the steps alone (also --plan): a cleanup reads its
                      data back gone, and an idempotent write names no new object (Unique)
     concurrent       a second prober running it at once does not make it fail
-    latency-bound    its maxLatency leaves room over the slowest healthy run
+    latency-bound    an authored maxLatency leaves room over the slowest healthy run; left out,
+                     SDO calibrates it from the installed soak (3x the slowest, at least 1s)
     altered-answers  (--alter) it fails when a read answers empty, short, changed or as in an
                      earlier run; the answers are altered on their way back, nothing is broken
     healthy-run      (--soak, for people re-checking an installed fix) each selected scenario that

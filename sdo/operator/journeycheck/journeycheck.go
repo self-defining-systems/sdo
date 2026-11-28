@@ -450,9 +450,11 @@ func (j *judge) run(ctx context.Context) []Result {
 		out = append(out, one(ItemCleanup, Red, "cleanup failed, so the probe leaves data behind: "+cleanup))
 	}
 	out = append(out, j.concurrent(ctx))
+	// An unset bound is SDO's to calibrate after install; only an authored one is judged.
 	bound := j.workload.ScenarioSLO(id).MaxLatency.Duration()
-	if want := max(3*slowest, time.Second); bound < 2*slowest {
-		out = append(out, one(ItemLatency, Red, fmt.Sprintf("maxLatency %s is under twice the slowest healthy run %s and would page on an ordinary slow moment: set it to about %s", bound, slowest.Round(time.Millisecond), want.Round(100*time.Millisecond))))
+	if j.workload.LatencyBoundAuthored(id) && bound < 2*slowest {
+		want := traffic.CalibratedMaxLatency(slowest, j.workload.IterationTimeout.Duration())
+		out = append(out, one(ItemLatency, Red, fmt.Sprintf("maxLatency %s is under twice the slowest healthy run %s and would page on an ordinary slow moment: set it to about %s, or remove it and SDO calibrates it after install", bound, slowest.Round(time.Millisecond), want)))
 	}
 	if s, ok := schedule(j.c.Workloads, j.scenario, slowest); ok {
 		out = append(out, one(ItemScheduled, Green, fmt.Sprintf("sampled every %s by %s; a full failure is noticed in about %s, at worst %s", seconds(s.Every), strings.Join(s.Workloads, ", "), seconds(s.Typical), seconds(s.Worst))))

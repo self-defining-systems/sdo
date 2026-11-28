@@ -60,7 +60,11 @@ func Soaked(windows map[string]traffic.Window) []Result {
 		for _, o := range window.Scenarios {
 			id := o.Scenario.ID
 			failed, worst := 0, ""
-			budget := window.Workload.ScenarioSLO(id).MaxLatency.Duration()
+			// An unset bound is calibrated from the soak, not judged by the default.
+			budget := time.Duration(0)
+			if window.Workload.LatencyBoundAuthored(id) {
+				budget = window.Workload.ScenarioSLO(id).MaxLatency.Duration()
+			}
 			samples := slices.Concat(o.Samples, o.Confirming)
 			for _, s := range samples {
 				switch {

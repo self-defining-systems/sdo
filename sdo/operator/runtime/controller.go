@@ -310,6 +310,9 @@ type Controller struct {
 	startup *startupPeriod
 	// soak is the install's onboarding soak; nil when it is off.
 	soak *onboardingSoak
+	// soakBounds is the latency bounds the install's soak calibrated, by
+	// "workload/scenario"; read without c.mu by the traffic observer.
+	soakBounds atomic.Pointer[map[string]time.Duration]
 
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.

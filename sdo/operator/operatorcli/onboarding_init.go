@@ -42,7 +42,7 @@ name: probe-call
 purpose: health-probe
 timeout: 5s
 iterationTimeout: 20s
-slo: {window: 4, minSamples: 1, maxAge: 10m, maxErrorRate: 1, maxTimeoutRate: 1, maxLatency: 2s}
+slo: {window: 4, minSamples: 1, maxAge: 10m, maxErrorRate: 1, maxTimeoutRate: 1}
 `
 
 type initEntry struct {
