@@ -11,9 +11,11 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
+	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operability"
 	"sdo.dev/operator/operability/offline"
+	"sdo.dev/operator/operatorcli/catalog/images"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/patchset"
@@ -25,14 +27,17 @@ import (
 
 // OperabilityUsage documents "sdo-operator operability".
 const OperabilityUsage = `usage: sdo-operator operability check --offline [--root .] [--namespace NS] [--stage deployment|complete]
-                                      [--allow-registry HOSTS] [--scope-blocking] [--grant-foreign]
-                                      [--grant-cluster-scoped] [--json]
+                                      [--allow-registry HOSTS] [--registry-host TARGET] [--scope-blocking]
+                                      [--grant-foreign] [--grant-cluster-scoped] [--json]
 
   check --offline
         Compute, with no cluster, the operability checks Go can decide from the
-        checkout: patches apply, the effective tree renders deterministically,
-        expected workloads match, image declarations are consistent, scope and
-        registry limits hold (O1, O2, O6). With --stage complete it also runs the
+        checkout: patches apply, the effective tree renders (with the source the
+        files imply when plan.yaml names none), image declarations are
+        consistent, scope and registry limits hold (O1, O2, O6). With
+        --registry-host (the trusted push target), each image under it must
+        match a Dockerfile of the tree by deploy's rule (Dockerfile.N,
+        N.Dockerfile, N/Dockerfile, or the only Dockerfile). With --stage complete it also runs the
         shared memory validator over the checkout and reports application-map
         coverage (O3), memory consistency (O5) and, when SDO_BASE_COMMIT,
         SDO_ACTOR and SDO_PHASE are set, diff ownership (O6). Live checks (apply,
@@ -90,6 +95,7 @@ func operabilityCheck(ctx context.Context, args []string, getenv func(string) st
 	grantForeign := flags.Bool("grant-foreign", false, "permit foreign-namespace objects")
 	grantCluster := flags.Bool("grant-cluster-scoped", false, "permit cluster-scoped objects")
 	asJSON := flags.Bool("json", false, "print the report as JSON")
+	pushTarget := flags.String("registry-host", "", "trusted push target (host[:port][/path]): images under it are matched to the tree's Dockerfiles as the deploy does")
 	rest, err := parseFlags(flags, args)
 	if err != nil {
 		return exitInfra, err
@@ -117,7 +123,13 @@ func operabilityCheck(ctx context.Context, args []string, getenv func(string) st
 
 	var subject operability.Subject
 	subject.AcceptedCommit = processio.HeadCommit(ctx, absolute)
-	checks, err := offlineDeploymentChecks(ctx, absolute, *namespace, policy, &subject)
+	var builds *imagesrc.Catalog
+	if *pushTarget != "" {
+		if builds, err = images.Catalog(images.Config{Builder: buildkit.Builder{AllowedRegistryHost: *pushTarget}}); err != nil {
+			return exitInfra, err
+		}
+	}
+	checks, err := offlineDeploymentChecks(ctx, absolute, *namespace, policy, builds, &subject)
 	if err != nil {
 		return exitInfra, err
 	}
@@ -147,7 +159,7 @@ func operabilityCheck(ctx context.Context, args []string, getenv func(string) st
 // deployment checks. The plan is optional (the source is then derived from the
 // files); one that does not parse is an O1.plan failure; only infrastructure
 // problems are errors.
-func offlineDeploymentChecks(ctx context.Context, root, namespace string, policy offline.Policy, subject *operability.Subject) ([]operability.Check, error) {
+func offlineDeploymentChecks(ctx context.Context, root, namespace string, policy offline.Policy, builds *imagesrc.Catalog, subject *operability.Subject) ([]operability.Check, error) {
 	plan, err := planfile.Read(root, planCatalogs())
 	if errors.Is(err, planfile.ErrAbsent) {
 		plan, err = &contracts.DeploymentPlan{}, nil
@@ -191,8 +203,19 @@ func offlineDeploymentChecks(ctx context.Context, root, namespace string, policy
 			}
 			return rendered.Desired(ctx, fsys, env, renderers.Catalog(), plan.GetSource())
 		},
-		Declare: func(rendered.DesiredSet) ([]imagesrc.Declared, error) { return declared, nil },
-		Policy:  policy,
+		// With a push target, images under it get the builds deploy derives
+		// from the tree's Dockerfiles (an image with none fails O2.images).
+		Declare: func(set rendered.DesiredSet) ([]imagesrc.Declared, error) {
+			if builds == nil {
+				return declared, nil
+			}
+			fsys, err := rendered.GitTreeFS(ctx, effective)
+			if err != nil {
+				return nil, err
+			}
+			return builds.Derive(rendered.ImageSites(set), declared, fsys)
+		},
+		Policy: policy,
 	})
 	if result.Set.RenderDigest != "" {
 		subject.RenderDigest, subject.EnvDigest = result.Set.RenderDigest, result.Set.EnvDigest
