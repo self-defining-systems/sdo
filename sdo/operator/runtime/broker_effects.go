@@ -350,8 +350,12 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			notes = append(notes, dataEffects...)
 		}
 		// The same Recovered predicate closure used: the opening user tests
-		// still pass after SDO's last write settled.
-		if recovery.verdict == recoveryPending {
+		// still pass after SDO's last write settled. Only a closure that
+		// claims health waits on it. One that makes no claim (an escalated
+		// handover, a terminal dispatch failure, an unverified page) closed
+		// because Recovered did not hold, so waiting for it would hold the
+		// closure, and admission of the next incident, until the alerts clear.
+		if claimsHealth(effect.Closure) && recovery.verdict == recoveryPending {
 			if !c.recoveredWaitExpired(effect.Identity, recovery.horizon+effect.Closure.ClosureStabilityWindow) {
 				c.scheduleClosureRecheck()
 				cancel()
@@ -580,7 +584,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		result.Observations, result.States = observations, states
 	}()
 	confirmed := closureRecheck{Verdict: closureRecheckConfirmed}
-	if (len(closure.FinalDetectorStates) == 0 && closure.HealthClearedAt == nil) || closure.DispatchError != "" {
+	if !claimsHealth(closure) || closure.DispatchError != "" {
 		// Already unverified; the outcome
 		// still records what differs from the accepted source.
 		driftNotes, _, _ := c.closureDriftNotes(ctx, snapshot, closure)
@@ -1073,7 +1077,14 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 // re-prompt the agent at once.
 func handedOverClose(closure *IncidentClosure) bool {
 	return !closure.EscalatedAt.IsZero() && !pageOpened(&closure.Request) && closure.Request.ExternalMessage == "" &&
-		closure.HealthClearedAt == nil && len(closure.FinalDetectorStates) == 0
+		!claimsHealth(*closure)
+}
+
+// claimsHealth reports whether a closure claims its incident recovered: it
+// carries final detector states or a health-cleared time. Every other closure
+// records an incident that ended without Recovered.
+func claimsHealth(closure IncidentClosure) bool {
+	return len(closure.FinalDetectorStates) > 0 || closure.HealthClearedAt != nil
 }
 
 func (c *Controller) reportBrokerError(operation string, err error) {

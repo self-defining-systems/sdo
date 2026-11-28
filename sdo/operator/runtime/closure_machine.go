@@ -48,6 +48,16 @@ func (c *Controller) stepClosureLocked(event lifecyclecore.Event) ([]lifecycleco
 	}
 	event.Policy = lifecyclecore.RetryPolicy{MaxAttempts: int32(c.config.ClosureRetry.MaxAttempts), InitialBackoff: c.config.ClosureRetry.InitialBackoff, MaxBackoff: c.config.ClosureRetry.MaxBackoff}
 	next, effects := lifecyclecore.Step(state, event)
+	if event.Kind == lifecyclecore.Unconfirmed && proto.Equal(state, next) {
+		// The caller decided the closure is unconfirmed and will report it
+		// so. A reducer that ignored that decision would leave the closure
+		// pending, to be rechecked and decided again on every pass.
+		incident := ""
+		if c.pendingClosure != nil {
+			incident = c.pendingClosure.Request.IncidentID
+		}
+		return nil, fmt.Errorf("closure of incident %q ignored its unconfirmed decision (%s): the pending closure makes no health claim to withdraw; it must commit as recorded", incident, event.Error)
+	}
 	c.applyClosureCoreLocked(next)
 	c.publishHeldLocked()
 	return effects, nil
