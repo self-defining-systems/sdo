@@ -35,9 +35,9 @@ func TestExternalIncidentWithCluesAndNoWriteStartsInvestigatorsAndWithoutCluesNo
 			if loop.hasCandidateView(IncidentRequest{ExternalMessage: "page"}) {
 				registry.begin(context.Background(), investigatorPlan{
 					IncidentID: "page-1", Board: &InvestigationBoard{},
-					HasWrite: func() bool { return false },
-					Briefs:   func(_ context.Context, max int) []investigatorBrief { return briefFixture(t)[:max] },
-					Launch:   record.launch,
+					Progressed: func() bool { return false },
+					Briefs:     func(_ context.Context, max int) []investigatorBrief { return briefFixture(t)[:max] },
+					Launch:     record.launch,
 				})
 				registry.mu.Lock()
 				run := registry.runs["page-1"]

@@ -12,7 +12,8 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 )
 
-// SDO-started investigators. When the responder has made no write for the investigator delay, Go starts up to
+// SDO-started investigators. When the responder has made no progress Go can see by the investigator delay after its
+// first tool call (no known write, no alert of the set cleared, recovery not verified), Go starts up to
 // response.investigators read-only sessions, one per top candidate node with non-routine evidence, each testing
 // one hypothesis. Their reports are display evidence for the responder (`sdo investigations`): they never reach
 // IncidentResult, closure, escalation or learning, and the responder is never prompted about them. Their token
@@ -299,7 +300,7 @@ func (b *InvestigationBoard) Text() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.entries) == 0 {
-		return "no investigators started yet (SDO starts them when no write has been made for response.investigator_delay)\n"
+		return "no investigators started yet (SDO starts them when the responder shows no progress by response.investigator_delay)\n"
 	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "investigators: %d started\n", len(b.entries))
@@ -328,9 +329,11 @@ type investigatorPlan struct {
 	Count      int
 	Delay      time.Duration
 	Wait       func(context.Context, time.Duration) error
-	// HasWrite reports a write of the responder known to Go.
-	HasWrite func() bool
-	Briefs   func(ctx context.Context, max int) []investigatorBrief
+	// FirstToolCall closes on the responder's first tool call; the delay counts from it. Nil counts from the start.
+	FirstToolCall <-chan struct{}
+	// Progressed reports progress of the responder Go can see (ResponderLoop.responderProgressed).
+	Progressed func() bool
+	Briefs     func(ctx context.Context, max int) []investigatorBrief
 	// Launch runs one investigator to its report. Its error never reaches the incident.
 	Launch func(ctx context.Context, id string, brief investigatorBrief) (string, error)
 	Board  *InvestigationBoard
@@ -341,21 +344,30 @@ func investigatorID(incidentID string, index int) string {
 	return fmt.Sprintf("%s-inv-%d", incidentID, index)
 }
 
-// run waits out the delay, starts the investigators only if no write was made, and returns when all ended.
+// run waits for the responder's first tool call, then the delay, and starts the investigators only if the responder
+// made no progress (checked again after the briefs are rendered, so none starts after verification). It returns
+// when all ended.
 // Cancelling ctx ends them; the caller deletes their Jobs.
 func (p investigatorPlan) run(ctx context.Context) {
 	wait := p.Wait
 	if wait == nil {
 		wait = lifecycleio.Wait
 	}
+	if p.FirstToolCall != nil {
+		select {
+		case <-p.FirstToolCall:
+		case <-ctx.Done():
+			return
+		}
+	}
 	if err := wait(ctx, p.Delay); err != nil {
 		return
 	}
-	if p.HasWrite != nil && p.HasWrite() {
+	if p.Progressed != nil && p.Progressed() {
 		return
 	}
 	briefs := p.Briefs(ctx, p.Count)
-	if ctx.Err() != nil || len(briefs) == 0 {
+	if ctx.Err() != nil || len(briefs) == 0 || p.Progressed != nil && p.Progressed() {
 		return
 	}
 	started := make([]string, len(briefs))

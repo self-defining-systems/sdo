@@ -64,3 +64,20 @@ func TestEveryWorkerCarriesTheConfiguredAgentSettings(t *testing.T) {
 		t.Fatalf("a sub-second remainder rounds up: %q", got)
 	}
 }
+
+// learning.closing_effort and learning.closing_model reach only the closing turn's worker (role reflection); unset,
+// the closing turn runs at the responder's model and effort.
+func TestTheClosingTurnTakesItsOwnEffortAndModelWhenSet(t *testing.T) {
+	base := map[string]string{EffortEnvironment: "high", ReflectionModelEnvironment: "m", "SDO_RESPONDER_MODEL": "m"}
+	unchanged := ClosingTurnEnvironment(base, settings.Learning{})
+	if unchanged[EffortEnvironment] != "high" || unchanged[ReflectionModelEnvironment] != "m" {
+		t.Fatalf("unset must keep the agent settings: %v", unchanged)
+	}
+	closing := ClosingTurnEnvironment(base, settings.Learning{ClosingEffort: "low", ClosingModel: "small"})
+	if closing[EffortEnvironment] != "low" || closing[ReflectionModelEnvironment] != "small" || closing["SDO_RESPONDER_MODEL"] != "m" {
+		t.Fatalf("closing environment %v", closing)
+	}
+	if base[EffortEnvironment] != "high" {
+		t.Fatal("the base environment must not change")
+	}
+}

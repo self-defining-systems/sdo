@@ -13,7 +13,10 @@ const ProviderEnvironment = "SDO_AGENT_PROVIDER"
 
 // ModelEnvironments are the per-role model variables workers read. sdo/contracts/agent_env.json
 // names the same set for the Python workers; a test keeps the two equal.
-var ModelEnvironments = []string{"SDO_RESPONDER_MODEL", "SDO_REFLECTION_MODEL", "SDO_LIFECYCLE_MODEL", "SDO_DEPLOYMENT_MODEL"}
+var ModelEnvironments = []string{"SDO_RESPONDER_MODEL", ReflectionModelEnvironment, "SDO_LIFECYCLE_MODEL", "SDO_DEPLOYMENT_MODEL"}
+
+// ReflectionModelEnvironment is the model variable of the closing and cleanup turns (role reflection).
+const ReflectionModelEnvironment = "SDO_REFLECTION_MODEL"
 
 // ReasoningSummaryEnvironment names the variable carrying the Codex reasoning summary mode.
 const ReasoningSummaryEnvironment = "SDO_AGENT_REASONING_SUMMARY"
@@ -67,6 +70,22 @@ func AgentEnvironment(agent settings.Agent) map[string]string {
 	environment[ReasoningSummaryEnvironment] = agent.ReasoningSummary
 	environment[LifecycleTimeoutEnvironment] = wholeSeconds(time.Duration(agent.LifecycleTimeout))
 	environment[MemoryCheckTimeoutEnvironment] = wholeSeconds(time.Duration(agent.MemoryCheckTimeout))
+	return environment
+}
+
+// ClosingTurnEnvironment is the closing and cleanup turns' worker environment: base (AgentEnvironment's) with
+// learning.closing_effort and learning.closing_model applied when set. base is not changed.
+func ClosingTurnEnvironment(base map[string]string, learning settings.Learning) map[string]string {
+	environment := make(map[string]string, len(base))
+	for name, value := range base {
+		environment[name] = value
+	}
+	if learning.ClosingEffort != "" {
+		environment[EffortEnvironment] = learning.ClosingEffort
+	}
+	if learning.ClosingModel != "" {
+		environment[ReflectionModelEnvironment] = learning.ClosingModel
+	}
 	return environment
 }
 

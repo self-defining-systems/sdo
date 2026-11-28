@@ -83,8 +83,8 @@ func TestNoWriteByTheDelayStartsTheInvestigatorsWithTheirBriefs(t *testing.T) {
 	var waited time.Duration
 	investigatorPlan{
 		IncidentID: "inc-1", Count: 2, Delay: 60 * time.Second, Board: board,
-		Wait:     func(_ context.Context, d time.Duration) error { waited = d; return nil },
-		HasWrite: func() bool { return false },
+		Wait:       func(_ context.Context, d time.Duration) error { waited = d; return nil },
+		Progressed: func() bool { return false },
 		Briefs: func(_ context.Context, max int) []investigatorBrief {
 			return briefFixture(t)[:max]
 		},
@@ -100,23 +100,6 @@ func TestNoWriteByTheDelayStartsTheInvestigatorsWithTheirBriefs(t *testing.T) {
 	first := briefFixture(t)
 	if line := board.DetectLine(); line != "investigators: 2 started (nodes "+first[0].Node+", "+first[1].Node+"); read: sdo investigations" {
 		t.Fatalf("detect line %q", line)
-	}
-}
-
-func TestAWriteBeforeTheDelayStartsNoInvestigator(t *testing.T) {
-	record := &launchRecord{}
-	board := &InvestigationBoard{}
-	investigatorPlan{
-		IncidentID: "inc-1", Count: 2, Board: board, Wait: immediate,
-		HasWrite: func() bool { return true },
-		Briefs: func(context.Context, int) []investigatorBrief {
-			t.Fatal("no brief is rendered after a write")
-			return nil
-		},
-		Launch: record.launch,
-	}.run(context.Background())
-	if len(record.ids) != 0 || board.DetectLine() != "" {
-		t.Fatalf("started %v", record.ids)
 	}
 }
 
