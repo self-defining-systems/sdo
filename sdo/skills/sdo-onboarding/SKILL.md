@@ -37,28 +37,29 @@ const (SideEffectRead SideEffect = "read"; SideEffectIdempotentWrite SideEffect 
 type Step struct{Name string; Endpoint Endpoint; Target *Target}
 type Target struct{Service string; Port int; Scheme string; User string}
 // HTTP
-type HTTPEndpoint struct{Method string; Path string; Query Params; Form Params; JSON string; JSONParams Params; Headers map[string]string; ExpectStatus []int; ExpectBody []string; Saves map[string]string}
-func DELETE(path string, query Params) *HTTPEndpoint
-func GET(path string, query Params) *HTTPEndpoint
-func POST(path string, query Params) *HTTPEndpoint
-func PUT(path string, query Params) *HTTPEndpoint
-func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Request, error)
-func (e *HTTPEndpoint) Check(response Response, state State) Verdict
-func (e *HTTPEndpoint) ChecksContent() bool
-func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint
-func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndpoint
-func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTPEndpoint
-func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint
-func (e *HTTPEndpoint) MarksExistingRecords() bool
-func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint
-func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern string) *HTTPEndpoint
-func (e *HTTPEndpoint) SaveCookie(name string, key string) *HTTPEndpoint
-func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint
-func (e *HTTPEndpoint) Status(codes ...int) *HTTPEndpoint
-func (e *HTTPEndpoint) WithBasicAuth(user string, password string) *HTTPEndpoint
-func (e *HTTPEndpoint) WithForm(form Params) *HTTPEndpoint
-func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint
-func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint
+type HTTPEndpoint struct{Method string; Path string; Query Params; Form Params; JSON string; JSONParams Params; Headers map[string]string; ExpectStatus []int; ExpectBody []string; Saves map[string]string} // SDK's declarative Endpoint
+func DELETE(path string, query Params) *HTTPEndpoint // sends generated query parameters
+func GET(path string, query Params) *HTTPEndpoint // read endpoint with generated query parameters
+func POST(path string, query Params) *HTTPEndpoint // sends generated query parameters
+func PUT(path string, query Params) *HTTPEndpoint // sends generated query parameters
+func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Request, error) // implements Endpoint
+func (e *HTTPEndpoint) Check(response Response, state State) Verdict // implements Endpoint
+func (e *HTTPEndpoint) ChecksContent() bool // reports whether the endpoint checks anything beyond the status
+func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint // requires the response body to contain text
+func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndpoint // requires the JSON array at dotted path ("" for the whole body) to be non-empty and every member's value at field ("" for the element itself) to match the RE2 pattern, so one malformed or dangling member fails the step
+func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTPEndpoint // requires the JSON array at dotted path ("" for the whole body) to hold exactly the members want, in any order
+func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint // requires the JSON value at dotted path (object keys and array indexes, for example "data.items.0.id") to equal want exactly
+func (e *HTTPEndpoint) MarksExistingRecords() bool // reports whether the step was built with ReadsExistingRecords
+func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint // makes the step an ensure step
+func (e *HTTPEndpoint) Reads() *HTTPEndpoint // marks a POST, PUT or PATCH that changes nothing (a search, a sign-in)
+func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern string) *HTTPEndpoint // marks the step as one that reads records users made or the deployment seeded, which the probe never wrote
+func (e *HTTPEndpoint) SaveCookie(name string, key string) *HTTPEndpoint // stores the value of the response's Set-Cookie named name in State under key
+func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint // stores the JSON field at dotted path (for example "id" or "data.id") of the response in State under key
+func (e *HTTPEndpoint) Status(codes ...int) *HTTPEndpoint // replaces the accepted statuses
+func (e *HTTPEndpoint) WithBasicAuth(user string, password string) *HTTPEndpoint // sends HTTP basic authentication
+func (e *HTTPEndpoint) WithForm(form Params) *HTTPEndpoint // adds a URL-encoded form body
+func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint // sets a request header
+func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint // adds a JSON body, for the many write APIs that take one
 // Values
 const DateLayout = "2006-01-02" // layout DateRange and DaysAfter read and write
 const StateNow = "sdo.now" // State key holding the start time of the iteration, RFC 3339 in UTC
@@ -87,7 +88,7 @@ func Fail(format string, args ...any) Verdict
 func NotYet(format string, args ...any) Verdict
 func Pass() Verdict
 ```
-Generator imports (+ the local generator package): `archive/zip`, `bufio`, `bytes`, `compress/gzip`, `compress/zlib`, `context`, `crypto/md5`, `crypto/sha1`, `crypto/sha256`, `encoding/base64`, `encoding/binary`, `encoding/hex`, `encoding/json`, `encoding/xml`, `errors`, `fmt`, `hash/crc32`, `io`, `maps`, `math`, `math/rand/v2`, `net/url`, `regexp`, `sdo.dev/operator/sdk/traffic`, `slices`, `sort`, `strconv`, `strings`, `time`, `unicode`, `unicode/utf8`.
+Generator imports: the standard library and the SDK, except what reaches the network, files or processes or draws its own randomness: `net`, `crypto/tls`, `crypto/rand`, `math/rand`, `hash/maphash`, `mime/multipart`, `os`, `syscall`, `log`, `flag`, `io/ioutil`, `path/filepath`, `plugin`, `runtime`, `unsafe`, `embed`, `debug`, `go`, `testing`, `expvar`, `C` and below (`net/url`, `net/textproto`, `math/rand/v2` are fine; Build's rng is a math/rand/v2 `*rand.Rand`). Read the iteration's time from `state[traffic.StateNow]`, not `time.Now`.
 Map evidence: `config`, `manifest`, `observed`. Use `config` for application source.
 <!-- probe-sdk:end -->
 

@@ -73,6 +73,7 @@ func StartsFailing(observed ScenarioObservations, slo SLO, now time.Time) bool
 type Arrival string
     const ArrivalUniform Arrival = "uniform" ...
 type Catalog []Scenario
+    func CompleteCatalog(catalog Catalog, dependsOn map[string][]string) Catalog
 type Clock interface{ ... }
     var RealClock Clock = realClock{}
 type Consumer interface{ ... }
@@ -155,6 +156,7 @@ type ScenarioObservations struct{ ... }
 type SetupLocker interface{ ... }
 type SideEffect string
     const SideEffectRead SideEffect = "read" ...
+    func InferSideEffect(s Scenario) (SideEffect, error)
 type Source interface{ ... }
 type State map[string]string
 type Step struct{ ... }

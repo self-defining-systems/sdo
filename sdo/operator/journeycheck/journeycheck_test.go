@@ -182,9 +182,13 @@ func TestEveryScheduledScenarioHasItsScheduleAndAPlanSendsNothing(t *testing.T) 
 // before anything is sent, so the author fixes them in a plan run.
 func TestACleanupThatCannotSeeItsDataStayIsRedInAPlan(t *testing.T) {
 	cases := map[string]func(*traffic.Scenario){
-		"no read-back": func(sc *traffic.Scenario) { sc.Cleanup = sc.Cleanup[:1] },
+		// A DELETE of a path no step reads may have no GET route, so SDO
+		// does not read it back itself.
+		"no read-back": func(sc *traffic.Scenario) {
+			sc.Cleanup = []traffic.Step{{Name: "delete", Endpoint: traffic.DELETE("/trash/{id}", traffic.Params{"probe": traffic.Const("sdoprobe")}).Status(202, 204)}}
+		},
 		"accepts a refusal": func(sc *traffic.Scenario) {
-			sc.Cleanup = []traffic.Step{{Name: "delete", Endpoint: traffic.DELETE("/items/{id}", traffic.Params{"probe": traffic.Const("sdoprobe")}).Status(202, 400, 404)}}
+			sc.Cleanup = []traffic.Step{{Name: "delete", Endpoint: traffic.DELETE("/trash/{id}", traffic.Params{"probe": traffic.Const("sdoprobe")}).Status(202, 400, 404)}}
 		},
 	}
 	wants := map[string]string{"no read-back": "reads the data back gone", "accepts a refusal": "accepts 400"}
@@ -202,7 +206,10 @@ func TestACleanupThatCannotSeeItsDataStayIsRedInAPlan(t *testing.T) {
 	// A refusal the read-back then checks is fine: "already gone" may be a 400.
 	verified := scenario(true)
 	verified.Cleanup[0].Endpoint = traffic.DELETE("/items/{id}", traffic.Params{"probe": traffic.Const("sdoprobe")}).Status(202, 204, 400)
-	for _, sc := range []traffic.Scenario{scenario(true), verified} {
+	// A DELETE of a path a step read is read back by SDO itself.
+	automatic := scenario(true)
+	automatic.Cleanup = automatic.Cleanup[:1]
+	for _, sc := range []traffic.Scenario{scenario(true), verified, automatic} {
 		c := config(&store{items: map[string]string{}}, sc)
 		c.Plan = true
 		if r := Run(context.Background(), c); find(r, ItemCleanup).Status == Red {

@@ -6,11 +6,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,20 +18,49 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 )
 
-var allowedGeneratorImports = map[string]bool{
-	"archive/zip": true, "bufio": true, "bytes": true, "compress/gzip": true, "compress/zlib": true, "context": true,
-	"crypto/md5": true, "crypto/sha1": true, "crypto/sha256": true, "encoding/base64": true, "encoding/binary": true,
-	"encoding/hex": true, "encoding/json": true, "encoding/xml": true, "hash/crc32": true, "io": true, "maps": true, "slices": true,
-	"errors": true, "fmt": true, "math": true, "math/rand/v2": true,
-	"net/url": true, "regexp": true, "sort": true, "strconv": true,
-	"strings": true, "time": true, "unicode": true, "unicode/utf8": true,
-	"sdo.dev/operator/sdk/traffic": true,
+// refusedGeneratorImports are the standard-library packages that break a
+// probe: they reach the network, files or processes outside the engine (which
+// alone sends a probe's requests, applies the safety rules and counts them),
+// can end the prober, or draw randomness the engine does not hand it (the
+// same iteration must build the same requests). A refused prefix covers its
+// subpackages, except allowedUnder. Everything else in the standard library
+// is allowed.
+var refusedGeneratorImports = []string{"net", "crypto/tls", "crypto/rand", "math/rand", "hash/maphash", "mime/multipart", "os", "syscall", "log", "flag", "io/ioutil", "path/filepath", "plugin", "runtime", "unsafe", "embed", "debug", "go", "testing", "expvar", "C"}
+
+// allowedUnder are subpackages of a refused prefix that only parse or format.
+var allowedUnder = map[string]bool{"net/url": true, "net/mail": true, "net/netip": true, "net/textproto": true, "math/rand/v2": true}
+
+// generatorImportProblem is why a generator may not import name, or "".
+func generatorImportProblem(name, module string) string {
+	if name == "sdo.dev/operator/sdk/traffic" || name == module+"/traffic/generators" || allowedUnder[name] {
+		return ""
+	}
+	first, _, _ := strings.Cut(name, "/")
+	if strings.Contains(first, ".") {
+		return "only the standard library and the SDK (sdo.dev/operator/sdk/traffic) are available"
+	}
+	switch name {
+	case "math/rand":
+		return "import math/rand/v2: Build receives the iteration's *rand.Rand from math/rand/v2; draw every varying value from it"
+	case "crypto/rand", "hash/maphash", "mime/multipart":
+		return "it draws randomness the engine does not hand the probe; draw from the *rand.Rand Build receives, so the same iteration builds the same requests"
+	}
+	for _, prefix := range refusedGeneratorImports {
+		if name == prefix || strings.HasPrefix(name, prefix+"/") {
+			return "a probe sends requests only through the engine and touches no files or processes; build the request with the SDK and let the engine send it"
+		}
+	}
+	return ""
 }
 
 var forbiddenTimeCalls = map[string]bool{
 	"Now": true, "Since": true, "Until": true, "Sleep": true, "After": true,
 	"AfterFunc": true, "Tick": true, "NewTimer": true, "NewTicker": true,
 }
+
+// goBuildInput are the non-Go files the Go tool compiles into a package.
+var goBuildInput = map[string]bool{".s": true, ".S": true, ".sx": true, ".syso": true, ".c": true, ".cc": true, ".cpp": true, ".cxx": true,
+	".h": true, ".hh": true, ".hpp": true, ".hxx": true, ".m": true, ".f": true, ".F": true, ".for": true, ".f90": true, ".swig": true, ".swigcxx": true}
 
 var serviceNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
@@ -83,7 +110,7 @@ func generateTraffic(root, module string, target time.Duration) (bool, error) {
 		items += "\t" + strconv.Quote(name) + ": []byte(" + strconv.Quote(string(workloads[name])) + "),\n"
 	}
 	source := "package generated\n\nimport (\n" + imports + ")\n\n" +
-		"func TrafficCatalog() traffic.Catalog {\n" + catalog + "\treturn catalog\n}\n\n" +
+		"func TrafficCatalog() traffic.Catalog {\n" + catalog + "\treturn traffic.CompleteCatalog(catalog, nil)\n}\n\n" +
 		"var TrafficWorkloads = map[string][]byte{\n" + items + "}\n"
 	if err := os.WriteFile(filepath.Join(root, "generated", "traffic.go"), []byte(source), 0o644); err != nil {
 		return false, err
@@ -161,14 +188,12 @@ func loadTrafficWorkloads(dir string, target time.Duration) (map[string]json.Raw
 }
 
 func validateGeneratorSources(base, module string) error {
-	allowed := map[string]bool{}
-	for path := range allowedGeneratorImports {
-		allowed[path] = true
-	}
-	allowed[module+"/traffic/generators"] = true
 	return filepath.WalkDir(filepath.Join(base, "generators"), func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if !entry.IsDir() && goBuildInput[filepath.Ext(path)] {
+			return fmt.Errorf("%s: generators are Go source only; the Go tool would also build this file", path)
 		}
 		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
@@ -183,8 +208,11 @@ func validateGeneratorSources(base, module string) error {
 		}
 		for _, imported := range file.Imports {
 			name, err := strconv.Unquote(imported.Path.Value)
-			if err != nil || !allowed[name] {
-				return fmt.Errorf("%s: generators may not import %q; allowed imports: %s", path, name, strings.Join(slices.Sorted(maps.Keys(allowed)), ", "))
+			if err != nil {
+				return fmt.Errorf("%s: invalid import %s", path, imported.Path.Value)
+			}
+			if problem := generatorImportProblem(name, module); problem != "" {
+				return fmt.Errorf("%s: generators may not import %q: %s", path, name, problem)
 			}
 		}
 		file, err = parser.ParseFile(token.NewFileSet(), path, nil, 0)
@@ -210,8 +238,13 @@ func validateGeneratorSources(base, module string) error {
 			}
 			return true
 		})
-		if forbidden != "" {
-			return fmt.Errorf("%s: generators may not call %s; use the engine's rng and clock", path, forbidden)
+		switch {
+		case forbidden == "time.Now" || forbidden == "time.Since" || forbidden == "time.Until":
+			return fmt.Errorf("%s: generators may not call %s: read the iteration's start time from state[traffic.StateNow] (RFC 3339, UTC), so a replay builds the same requests", path, forbidden)
+		case strings.HasPrefix(forbidden, "time."):
+			return fmt.Errorf("%s: generators may not call %s: it blocks past the iteration deadline; return traffic.NotYet or wrap the read in traffic.Eventually and the engine sends it again", path, forbidden)
+		case forbidden != "":
+			return fmt.Errorf("%s: generators may not call %s: draw from the rng Build receives (for example rng.IntN), so the same iteration builds the same requests", path, forbidden)
 		}
 		return nil
 	})

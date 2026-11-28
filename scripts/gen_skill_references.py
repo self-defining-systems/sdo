@@ -285,7 +285,7 @@ def card_coverage_failures() -> list[str]:
 
 # SKILL.md is capped at 8000 characters, so only the group whose signatures hide
 # the most (how parameters and State values are generated) carries doc comments.
-DOC_GROUPS = ("Values",)
+DOC_GROUPS = ("Values", "HTTP")
 
 
 def _with_doc(line: str, head: str, doc: str) -> str:
@@ -333,17 +333,20 @@ def render_onboarding_card() -> str:
     lines += ["```", ""]
 
     builder = (SDK.parent / "builder/native_traffic.go").read_text()
-    allowlist = re.search(r"var allowedGeneratorImports = map\[string\]bool\{(.*?)\n}", builder, re.DOTALL)
-    if not allowlist:
-        raise ValueError("traffic generator import allowlist not found")
-    imports = sorted(re.findall(r'"([^"]+)": true', allowlist[1]))
+    refused = re.search(r"var refusedGeneratorImports = \[\]string\{(.*?)\}", builder)
+    if not refused:
+        raise ValueError("traffic generator refused import prefixes not found")
+    imports = re.findall(r'"([^"]+)"', refused[1])
     appmap = (SDK.parent / "memory/appmap/map.go").read_text()
     evidence = re.findall(r'^\s+Evidence\w+\s+= "([^"]+)"', appmap, re.MULTILINE)
     if not evidence or not imports:
         raise ValueError("empty traffic generator import or map evidence list")
     return "\n".join(lines) + "\n".join(
         [
-            f"Generator imports (+ the local generator package): {', '.join(f'`{path}`' for path in imports)}.",
+            "Generator imports: the standard library and the SDK, except what reaches the network, files or processes"
+            f" or draws its own randomness: {', '.join(f'`{path}`' for path in imports)} and below"
+            " (`net/url`, `net/textproto`, `math/rand/v2` are fine; Build's rng is a math/rand/v2 `*rand.Rand`)."
+            " Read the iteration's time from `state[traffic.StateNow]`, not `time.Now`.",
             f"Map evidence: {', '.join(f'`{value}`' for value in evidence)}. Use `config` for application source.",
         ]
     )

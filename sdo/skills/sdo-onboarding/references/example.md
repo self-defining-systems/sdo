@@ -113,7 +113,7 @@ func Scenarios() traffic.Catalog {
 	return traffic.Catalog{
 		{
 			ID: "write-order", Description: "place an order, read it back, its receipt appears", Target: web,
-			DependsOn: path, SideEffect: traffic.SideEffectWriteWithCleanup, Marker: marker,
+			DependsOn: path, Marker: marker, // SideEffect is inferred: a write with Cleanup
 			Users: []traffic.ProbeUser{buyer},
 			Steps: []traffic.Step{
 				step("create", auth(traffic.POST("/api/orders", nil).WithJSON(`{"ref":"{ref}","item":"pen"}`,
@@ -121,17 +121,13 @@ func Scenarios() traffic.Catalog {
 				step("read-back", receipt{auth(traffic.GET("/api/orders/{id}", nil)).JSONEquals("ref", "{ref}").JSONEquals("item", "pen")}),
 				step("find", auth(traffic.GET("/api/orders", byRef)).ExactSet("items", "id", "{id}")),
 			},
-			// cleanup requests carry the marker too (here in the query); the last step reads the order gone,
-			// because a delete answered 2xx may only schedule the removal
-			Cleanup: []traffic.Step{
-				step("delete", auth(traffic.DELETE("/api/orders/{id}", traffic.Params{"probe": traffic.Const(marker)}))),
-				step("gone", auth(traffic.GET("/api/orders/{id}", traffic.Params{"probe": traffic.Const(marker)})).Status(404)),
-			},
+			// the id the marked create saved marks the delete; SDO then reads /api/orders/{id} back and expects 404
+			Cleanup: []traffic.Step{step("delete", auth(traffic.DELETE("/api/orders/{id}", nil)))},
 			Detects: []traffic.FaultClass{traffic.FaultWrongBody, traffic.FaultSlow},
 		},
 		{
 			ID: "call-orders", Description: "list orders, the fixture among them, and records users already have", Target: web,
-			DependsOn: path, SideEffect: traffic.SideEffectRead, Marker: marker,
+			DependsOn: path, Marker: marker, // a read: GET steps only
 			Users: []traffic.ProbeUser{reader}, Setup: fixture(reader),
 			Steps: []traffic.Step{
 				// the list as a user first sees it (default order, first page); members by name, so probe records show
@@ -143,7 +139,7 @@ func Scenarios() traffic.Catalog {
 		},
 		{
 			ID: "later-order", Description: "an order written once is still exactly there", Target: web,
-			DependsOn: path, SideEffect: traffic.SideEffectRead, Marker: marker,
+			DependsOn: path, Marker: marker,
 			Users: []traffic.ProbeUser{keeper}, Setup: fixture(keeper),
 			Steps: []traffic.Step{step("read", auth(traffic.GET("/api/orders", traffic.Params{"ref": traffic.Const("sdoprobe-fixture-" + keeper.Name)})).
 				ExactSet("items", "ref", "sdoprobe-fixture-"+keeper.Name).JSONEquals("items.0.item", "pen"))},
@@ -157,8 +153,11 @@ func Scenarios() traffic.Catalog {
 In a query or form, use `traffic.FromPrevious("key")` as the `Param`. To choose among several seeded fixtures,
 use `FromSeed` to select an index, or `FromSeedPair` to keep two fields paired. The engine supplies the random
 source (`math/rand/v2`) and an RFC3339 iteration time in `state[traffic.StateNow]`.
-A plain read without Setup or Users leaves Marker empty. Cleanup reads carry the marker too. In this example
-the final GET checks that the order is absent. A 2xx delete response alone can mean deletion is still pending.
+Go infers `SideEffect` from the methods: GET/HEAD only is a read, a write with Cleanup is write-with-cleanup.
+Declare `traffic.SideEffectIdempotentWrite` for a write without Cleanup, and a side effect for a custom Endpoint.
+Mark a POST that changes nothing (a search, a sign-in) with `.Reads()`. A request that names an id a marked write
+saved needs no marker of its own. After a DELETE of a path a step reads, SDO GETs it and expects 404 or 410: a 2xx
+delete can mean the removal is only scheduled. Where deleted records stay readable, end Cleanup with your own read.
 
 ## `.sdo/diagnostics/traffic/workloads/`
 

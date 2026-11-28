@@ -191,7 +191,6 @@ func TestSetupSafetyRules(t *testing.T) {
 	}
 	for name, edit := range map[string]func(*Scenario){
 		"setup without a marker":         func(s *Scenario) { s.Marker = "" },
-		"marker on a read without setup": func(s *Scenario) { s.Setup = nil },
 		"too many setup steps":           func(s *Scenario) { s.Setup = make([]Step, MaxSteps+1) },
 		"setup step without an endpoint": func(s *Scenario) { s.Setup = []Step{{Name: "ensure"}} },
 	} {
