@@ -126,7 +126,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry,
 		// The deployer builds in its own turn through this deployer's
 		// build path (`sdo-operator deployment build`).
-		Workers: deployerBuildWorkers{KubernetesExecutor: workers, RepositoryMount: config.RepositoryMount, Build: deployerBuild(readiness)}, Readiness: readiness,
+		Workers: deployerBuildWorkers{KubernetesExecutor: workers, RepositoryMount: config.RepositoryMount, Build: deployerBuild(readiness, deployment.BuildRecordFile{Root: config.RepositoryMount, Rel: imageBuildRecord})}, Readiness: readiness,
 		// The designer's telemetry backends are applied under the same
 		// policy the broker validated them against.
 		TelemetryApply: telemetryapply.NewApplier(client, repository.TelemetryPolicy(), config.Install.BackendRecipes),

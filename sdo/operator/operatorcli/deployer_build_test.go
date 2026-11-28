@@ -40,7 +40,7 @@ func TestDeployerTaskIsServedGosBuildOfItsCheckout(t *testing.T) {
 	workers := deployerBuildWorkers{
 		KubernetesExecutor: worker_registry.KubernetesExecutor{Environment: map[string]string{"KEEP": "1"}},
 		RepositoryMount:    mount,
-		Build: func(_ context.Context, checkout string, images []string) (string, bool, error) {
+		Build: func(_ context.Context, checkout string, images []string, _ func(string)) (string, bool, error) {
 			checkouts = append(checkouts, checkout)
 			built = append(built, images...)
 			return "  failed  registry.test/app/currency:1\nCMake Error\n", true, nil
@@ -54,7 +54,7 @@ func TestDeployerTaskIsServedGosBuildOfItsCheckout(t *testing.T) {
 		}
 		session := filepath.Join(mount, worker_registry.TaskEvidenceRoot, worker_registry.TaskEvidenceKey(task.GetTaskId()))
 		var err error
-		response, err = buildtools.Call(ctx, filepath.Join(session, "tools"), buildtools.Request{Images: []string{"currency"}}, func() string { return "1" }, yieldPoll)
+		response, err = buildtools.Call(ctx, filepath.Join(session, "tools"), buildtools.Request{Images: []string{"currency"}}, func() string { return "1" }, yieldPoll, nil)
 		return &contracts.AgentResult{}, err
 	}
 	if _, err := workers.Execute(context.Background(), deployerTask(t, &contracts.SourceDeploymentRequest{})); err != nil {
@@ -71,7 +71,7 @@ func TestDeployerTaskIsServedGosBuildOfItsCheckout(t *testing.T) {
 // Other lifecycle agents run without the build service.
 func TestOtherLifecycleTasksGetNoBuildService(t *testing.T) {
 	called := false
-	workers := deployerBuildWorkers{RepositoryMount: t.TempDir(), Build: func(context.Context, string, []string) (string, bool, error) { return "", false, nil }}
+	workers := deployerBuildWorkers{RepositoryMount: t.TempDir(), Build: func(context.Context, string, []string, func(string)) (string, bool, error) { return "", false, nil }}
 	workers.execute = func(context.Context, worker_registry.KubernetesExecutor, *contracts.AgentTask) (*contracts.AgentResult, error) {
 		called = true
 		return nil, nil
@@ -86,14 +86,18 @@ func TestOtherLifecycleTasksGetNoBuildService(t *testing.T) {
 
 func TestDeploymentBuildPrintsTheReportAndExitsByOutcome(t *testing.T) {
 	for name, tc := range map[string]struct {
-		build    func(context.Context, []string) (string, bool, error)
+		build    func(context.Context, []string, func(string)) (string, bool, error)
 		wantCode int
 		wantOut  string
 		wantErr  string
 	}{
-		"built":  {func(context.Context, []string) (string, bool, error) { return "  ok      a\n", false, nil }, exitClean, "ok      a", ""},
-		"failed": {func(context.Context, []string) (string, bool, error) { return "  failed  a\nstep\n", true, nil }, exitDiagnostics, "failed  a", ""},
-		"refused": {func(context.Context, []string) (string, bool, error) {
+		"built": {func(context.Context, []string, func(string)) (string, bool, error) {
+			return "  ok      a\n", false, nil
+		}, exitClean, "ok      a", ""},
+		"failed": {func(context.Context, []string, func(string)) (string, bool, error) {
+			return "  failed  a\nstep\n", true, nil
+		}, exitDiagnostics, "failed  a", ""},
+		"refused": {func(context.Context, []string, func(string)) (string, bool, error) {
 			return "", false, errors.New(`"x" is not an image this commit builds`)
 		}, exitInfra, "", "not an image"},
 	} {

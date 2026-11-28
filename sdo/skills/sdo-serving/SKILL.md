@@ -67,8 +67,11 @@ Try your last commit the way Go will before you reply:
 - `sdo-operator operability check --offline --registry-host <trusted registry>`: render, image rule and scope,
   with no cluster, in seconds. Preview the render itself with `sdo-operator deployment render`.
 - `sdo-operator deployment build [IMAGE...]`: build images now through Go's own build path (same BuildKit,
-  registry and layer cache): one image (named by its repository's last path segment, its repository or the
-  rendered reference) or all of them. It prints one line per image and each failing step with its log tail;
-  nothing is applied. A build that passes here is a cache hit when Go deploys the same commit, so fix build
-  errors in your turn instead of in a deploy round. Builds can take minutes; independent images build in
-  parallel.
+  registry and layer cache); nothing is applied. With no arguments it rebuilds every image whose Dockerfile or
+  COPY sources changed since that image's last good build (a shared file such as a proto directory rebuilds
+  every image that copies it) and says why per image; prefer it after a fix. Naming images (by repository's
+  last path segment, repository or rendered reference) builds just those. It blocks until the build ends,
+  printing a line as each image finishes, then each failing step with its log tail: a cold build of many images
+  takes several minutes, so give it a long timeout, or wait for a backgrounded run to exit; never sleep a fixed
+  time. A build that passes here is a cache hit when Go deploys the same commit, so fix build errors in your
+  turn instead of in a deploy round.
