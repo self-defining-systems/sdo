@@ -91,43 +91,13 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err := d.validate(); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	base, err := d.TreeDigest(ctx, checkout)
+	in, err := d.prepare(ctx, checkout, plan)
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	store := rendered.ObjectStore{Dir: checkout, Git: d.Git}
-	effective, err := rendered.Effective(ctx, store, rendered.BaseTree(base))
-	if err != nil {
-		return lifecycle.DeploymentReceipt{}, err
-	}
-	fsys, err := rendered.GitTreeFS(ctx, effective)
-	if err != nil {
-		return lifecycle.DeploymentReceipt{}, err
-	}
-	set, err := rendered.Desired(ctx, fsys, renderenv.For(d.Environment, d.Namespace, render.SecretsInclude), d.Renderers, plan.GetSource())
-	if err != nil {
-		return lifecycle.DeploymentReceipt{}, fmt.Errorf("render deployment source: %w", err)
-	}
-	if err := d.enforcePolicy(set); err != nil {
-		return lifecycle.DeploymentReceipt{}, err
-	}
-	if err := rendered.CheckServedAPIs(set, d.Environment.GetApiVersions()); err != nil {
-		return lifecycle.DeploymentReceipt{}, err
-	}
-	declared, err := d.declare(set, plan, fsys)
-	if err != nil {
-		return lifecycle.DeploymentReceipt{}, fmt.Errorf("resolve images: %w", err)
-	}
-	request := imagesrc.Request{Tree: effective.ID, FS: fsys}
-	if d.Materializer != nil {
-		dir, release, err := d.Materializer.Materialize(ctx, effective)
-		if err != nil {
-			return lifecycle.DeploymentReceipt{}, err
-		}
-		defer release()
-		request.Checkout = dir
-	}
-	resolved, err := d.Images.ResolveAll(ctx, rendered.ImageSites(set), declared, request)
+	defer in.release()
+	base, effective, set := in.base, in.effective, in.set
+	resolved, err := d.Images.ResolveAll(ctx, rendered.ImageSites(set), in.declared, in.request)
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, fmt.Errorf("resolve images: %w", err)
 	}
@@ -158,6 +128,61 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 		receipt.Policy = proto.Clone(d.Policy).(*contracts.DeploymentPolicy)
 	}
 	return receipt, nil
+}
+
+// prepared is a checkout's committed tree made ready to build: its render
+// under the install policy, its image declarations and the build request.
+// release frees the materialized build directory.
+type prepared struct {
+	base      string
+	effective rendered.EffectiveTree
+	set       rendered.DesiredSet
+	declared  []imagesrc.Declared
+	request   imagesrc.Request
+	release   func()
+}
+
+// prepare renders the checkout's committed tree, checks it against the policy
+// and the served APIs, declares its images and materializes the tree builds
+// read. ApplyAndVerify and BuildImages share it, so a build in the deployer's
+// turn sees exactly what Go's deploy builds.
+func (d Deployer) prepare(ctx context.Context, checkout string, plan *contracts.DeploymentPlan) (prepared, error) {
+	base, err := d.TreeDigest(ctx, checkout)
+	if err != nil {
+		return prepared{}, err
+	}
+	store := rendered.ObjectStore{Dir: checkout, Git: d.Git}
+	effective, err := rendered.Effective(ctx, store, rendered.BaseTree(base))
+	if err != nil {
+		return prepared{}, err
+	}
+	fsys, err := rendered.GitTreeFS(ctx, effective)
+	if err != nil {
+		return prepared{}, err
+	}
+	set, err := rendered.Desired(ctx, fsys, renderenv.For(d.Environment, d.Namespace, render.SecretsInclude), d.Renderers, plan.GetSource())
+	if err != nil {
+		return prepared{}, fmt.Errorf("render deployment source: %w", err)
+	}
+	if err := d.enforcePolicy(set); err != nil {
+		return prepared{}, err
+	}
+	if err := rendered.CheckServedAPIs(set, d.Environment.GetApiVersions()); err != nil {
+		return prepared{}, err
+	}
+	declared, err := d.declare(set, plan, fsys)
+	if err != nil {
+		return prepared{}, fmt.Errorf("resolve images: %w", err)
+	}
+	out := prepared{base: base, effective: effective, set: set, declared: declared, request: imagesrc.Request{Tree: effective.ID, FS: fsys}, release: func() {}}
+	if d.Materializer != nil {
+		dir, release, err := d.Materializer.Materialize(ctx, effective)
+		if err != nil {
+			return prepared{}, err
+		}
+		out.request.Checkout, out.release = dir, release
+	}
+	return out, nil
 }
 
 // declare is the image declarations of a rendered set: the plan's, plus a

@@ -1,6 +1,7 @@
 package processio
 
 import (
+	"crypto/rand"
 	"os"
 	"time"
 )
@@ -10,3 +11,6 @@ func Environment(key string) string { return os.Getenv(key) }
 
 // Now reads the wall clock for staged onboarding timestamps.
 func Now() time.Time { return time.Now() }
+
+// RequestID is a fresh random, filename-safe token for a tool request.
+func RequestID() string { return rand.Text() }

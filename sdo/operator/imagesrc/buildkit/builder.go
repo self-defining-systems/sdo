@@ -36,7 +36,7 @@ const ID = "buildkit"
 
 // Doc tells an agent what the buildkit source does and when to choose it.
 const Doc = `Builds the image from a Dockerfile in the source tree and pushes it to the operator's registry. Choose it for each image whose code lives in this repository, and declare it for the exact image name the manifests use; an undeclared image under the operator's registry host is rejected.
-Config: context_path, the tree-relative build context directory; dockerfile_path, the tree-relative Dockerfile. Paths are checked before any build starts, so a wrong path costs no build time. Builds run in a bounded rootless job that sees only the effective source tree: the repository's tracked files with the deployment patches applied, not your working directory.`
+Config: context_path, the tree-relative build context directory; dockerfile_path, the tree-relative Dockerfile. Paths are checked before any build starts, so a wrong path costs no build time. Builds run in a bounded rootless job that sees only the committed tree (the repository's tracked files of your last commit), not your working directory.`
 
 // Builder builds candidate source in a bounded rootless BuildKit Job. The Job
 // sees only a materialized effective tree (rendered.Materializer, below
