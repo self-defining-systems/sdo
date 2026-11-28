@@ -5,22 +5,18 @@ description: Turn a deployed application's goal journeys into probes, an applica
 
 # Onboarding an application
 
-Work alone. Preserve `.sdo/goal.md`. Edit the application-map region of `.sdo/arch.md`, traffic probes and the
-health-objective playbook. Go owns the inventory, generic detectors, outcomes and lifecycle provenance.
+Work alone. Preserve `.sdo/goal.md`. Edit the map region of `.sdo/arch.md`, the traffic probes and the
+health-objective playbook; Go owns the rest. This page and the card below are enough for the first probe; open
+the [worked example](references/example.md), [probe design](references/probe-design.md) or
+[map reference](../sdo-operations-map/references/map.md) only to look something up.
 
-1. Read the manifests, README and API. Find how users enter, get credentials and tell a result is correct.
-2. Run `sdo-operator onboarding init --repo DIR --namespace NS` in a fresh checkout. Check the selected entry,
-   then fill in routes, dependencies and exact assertions. Use the [worked example](references/example.md) for
-   fixture Setup, token identity and cleanup. Open the [map reference](../sdo-operations-map/references/map.md)
-   for fields you need.
-3. Schedule one scenario and check it with `onboarding journeys --only ID`, then work in batches.
-   Once memory validates, add `--quick` for the edit loop. Follow the
-   [probe design and cadence](references/probe-design.md) for coverage and request budget.
-4. If the app already has request counters by route, method and status, map them and confirm with
-   `onboarding check --metrics` (it supplies Prometheus by default). Record why unavailable metrics are absent.
+1. Read the manifests, README and API: how users enter, sign in and tell a result is correct. Try requests with curl.
+2. Run `sdo-operator onboarding init --repo DIR --namespace NS`; fill in routes, paths and exact assertions.
+3. Write one scenario and run `onboarding journeys --only ID --quick`; then the rest; then the full run.
+4. If the app counts requests by route, method and status, map that metric (`onboarding check --metrics`).
 
 `onboarding journeys --plan` sends nothing. Fix `missing-map`, `missing-probe`, then `failing` and `unchecked`.
-Keep every journey ID. Use the budget line and estimated detection times to prioritize earlier, more used journeys.
+Keep every journey ID. Dotted JSON paths name keys and array indexes (`data.items.0.id`); `""` is the whole body.
 
 <!-- probe-sdk:begin -->
 ## Probe SDK
@@ -37,29 +33,25 @@ const (SideEffectRead SideEffect = "read"; SideEffectIdempotentWrite SideEffect 
 type Step struct{Name string; Endpoint Endpoint; Target *Target}
 type Target struct{Service string; Port int; Scheme string; User string}
 // HTTP
-type HTTPEndpoint struct{Method string; Path string; Query Params; Form Params; JSON string; JSONParams Params; Headers map[string]string; ExpectStatus []int; ExpectBody []string; Saves map[string]string} // SDK's declarative Endpoint
+type HTTPEndpoint struct{...} // SDK's declarative Endpoint
 func DELETE(path string, query Params) *HTTPEndpoint // sends generated query parameters
 func GET(path string, query Params) *HTTPEndpoint // read endpoint with generated query parameters
 func POST(path string, query Params) *HTTPEndpoint // sends generated query parameters
 func PUT(path string, query Params) *HTTPEndpoint // sends generated query parameters
-func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Request, error) // implements Endpoint
-func (e *HTTPEndpoint) Check(response Response, state State) Verdict // implements Endpoint
-func (e *HTTPEndpoint) ChecksContent() bool // reports whether the endpoint checks anything beyond the status
 func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint // requires the response body to contain text
-func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndpoint // requires the JSON array at dotted path ("" for the whole body) to be non-empty and every member's value at field ("" for the element itself) to match the RE2 pattern, so one malformed or dangling member fails the step
-func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTPEndpoint // requires the JSON array at dotted path ("" for the whole body) to hold exactly the members want, in any order
-func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint // requires the JSON value at dotted path (object keys and array indexes, for example "data.items.0.id") to equal want exactly
-func (e *HTTPEndpoint) MarksExistingRecords() bool // reports whether the step was built with ReadsExistingRecords
+func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndpoint // requires the JSON array at dotted path
+func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTPEndpoint // requires the JSON array at dotted path
+func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint // requires the JSON value at dotted path
 func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint // makes the step an ensure step
-func (e *HTTPEndpoint) Reads() *HTTPEndpoint // marks a POST, PUT or PATCH that changes nothing (a search, a sign-in)
-func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern string) *HTTPEndpoint // marks the step as one that reads records users made or the deployment seeded, which the probe never wrote
+func (e *HTTPEndpoint) Reads() *HTTPEndpoint // marks a POST, PUT or PATCH that changes nothing
+func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern string) *HTTPEndpoint // marks the step as one that reads records users made or the deployment seeded
 func (e *HTTPEndpoint) SaveCookie(name string, key string) *HTTPEndpoint // stores the value of the response's Set-Cookie named name in State under key
-func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint // stores the JSON field at dotted path (for example "id" or "data.id") of the response in State under key
+func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint // stores the JSON field at dotted path
 func (e *HTTPEndpoint) Status(codes ...int) *HTTPEndpoint // replaces the accepted statuses
 func (e *HTTPEndpoint) WithBasicAuth(user string, password string) *HTTPEndpoint // sends HTTP basic authentication
 func (e *HTTPEndpoint) WithForm(form Params) *HTTPEndpoint // adds a URL-encoded form body
 func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint // sets a request header
-func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint // adds a JSON body, for the many write APIs that take one
+func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint // adds a JSON body
 // Values
 const DateLayout = "2006-01-02" // layout DateRange and DaysAfter read and write
 const StateNow = "sdo.now" // State key holding the start time of the iteration, RFC 3339 in UTC
@@ -94,7 +86,6 @@ Map evidence: `config`, `manifest`, `observed`. Use `config` for application sou
 
 ## Finish line
 
-Run the [checks](references/probe-design.md#checks). Do not soak: after you finish, SDO installs the
-export and runs its probes on schedule for 5 minutes; if one fails, this session gets one short follow-up. As an ordinary user,
-check that default lists show no probe records. With ten minutes left, remove edits still red and report any
-uncovered journey. Commit the export and run `onboarding journeys --plan`. Fix rejections and commit again.
+Do not soak: SDO runs the installed probes for 5 minutes after you finish and sends one follow-up if one fails.
+As an ordinary user, check default lists show no probe records. With ten minutes left, remove edits still red and
+report uncovered journeys. Commit, run `onboarding journeys --plan`, fix rejections and commit again.
