@@ -294,7 +294,11 @@ def _with_doc(line: str, head: str, doc: str, short: bool = False) -> str:
     match = re.match(r"(?:type|const|func(?: \([^)]*\))?) (\w+)", head)
     if match:
         doc = doc.removeprefix(match[1] + " ")
-    doc = re.split(r"[;:]|, (?:so|for|and|which) | \(" if short else r"[;:]", doc)[0].removesuffix(".")
+    doc = re.split(r"[;:]|, (?:so|for|and|which) | \(" if short else r"[;:]|, (?:such as|for example) ", doc)[
+        0
+    ].removesuffix(".")
+    if head.startswith("type Param interface"):
+        doc = ""
     doc = re.sub(r"^(?:is|are) (?:an? |the )?", "", doc)
     return f"{line} // {doc}" if doc else line
 
@@ -312,7 +316,7 @@ def render_onboarding_card() -> str:
             r"(?:type HTTPEndpoint|func .*\*HTTPEndpoint(?=$|\)))"
         ),
         "Values": (
-            r"(?:type (?:Params?|State)\b|func (?:\(p Params\)|\w+\(.*\) (?:Param|\(Param, Param\))$)"
+            r"(?:type (?:Params?|State)\b|func (?:\w+\(.*\) (?:Param|\(Param, Param\))$)"
             r"|const (?:StateNow|DateLayout|UniqueWidth)\b)"
         ),
         "Custom checks and SSH": (
@@ -353,10 +357,9 @@ def render_onboarding_card() -> str:
         raise ValueError("empty traffic generator import or map evidence list")
     return "\n".join(lines) + "\n".join(
         [
-            "Generator imports: the standard library and the SDK, except what reaches the network, files or processes"
-            f" or draws its own randomness: {', '.join(f'`{path}`' for path in imports)} and below"
-            " (`net/url`, `net/textproto`, `math/rand/v2` are fine; Build's rng is a math/rand/v2 `*rand.Rand`)."
-            " Read the iteration's time from `state[traffic.StateNow]`, not `time.Now`.",
+            "Imports: the standard library and the SDK, except network, files, processes and own randomness:"
+            f" {' '.join(imports)} and below (but net/url, net/textproto and math/rand/v2, whose `*rand.Rand` Build gets)."
+            " Time: `state[traffic.StateNow]`, not `time.Now`.",
             f"Map evidence: {', '.join(f'`{value}`' for value in evidence)}. Use `config` for application source.",
         ]
     )

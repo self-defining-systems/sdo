@@ -160,6 +160,7 @@ type SideEffect string
 type Source interface{ ... }
 type State map[string]string
 type Step struct{ ... }
+type StepLog struct{ ... }
 type Target struct{ ... }
 type Verdict struct{ ... }
     func Fail(format string, args ...any) Verdict

@@ -55,6 +55,9 @@ type Report struct {
 	// Plan says the run only read the schedule: nothing was sent or judged.
 	Plan bool `json:"plan,omitempty"`
 	Once bool `json:"once,omitempty"`
+	// Log is, for a single pass, every request the scenario sent and the
+	// start of each answer, in order, credentials redacted.
+	Log []string `json:"log,omitempty"`
 	// Schedules are every scheduled scenario's cost and expected detection,
 	// selected by Only or not.
 	Schedules []Schedule `json:"schedules,omitempty"`
@@ -79,6 +82,9 @@ type MemoryCheck struct {
 
 // memoryText is the memory check's lines after its red results: why it was
 // skipped, or its notes counted (listed in full when verbose).
+// maxNoteLine bounds one memory-check note in a verbose journeys report.
+const maxNoteLine = 160
+
 func (r Report) memoryText(verbose bool) string {
 	if r.Memory == nil {
 		return ""
@@ -90,9 +96,14 @@ func (r Report) memoryText(verbose bool) string {
 	switch {
 	case len(r.Memory.Notes) == 0:
 	case verbose:
+		// Notes never block; one short line each keeps a verbose run readable.
 		for _, note := range r.Memory.Notes {
+			if line, _, cut := strings.Cut(note, "\n"); cut || len(note) > maxNoteLine {
+				note = strings.TrimSpace(line[:min(len(line), maxNoteLine)]) + " …"
+			}
 			fmt.Fprintf(&b, "note %s: %s\n", ItemMemoryCheck, note)
 		}
+		fmt.Fprintf(&b, "memory check: notes cut to one line; sdo-operator memory check prints them whole\n")
 	default:
 		noun := "notes"
 		if len(r.Memory.Notes) == 1 {
@@ -265,7 +276,7 @@ func singlePass(ctx context.Context, c Config) Report {
 			result.Detail = "no health-probe workload schedules it"
 		} else {
 			j := judge{c: c, scenario: scenario, workload: workload, shared: &sharedSetup{}}
-			result = j.singlePass(ctx)
+			result, report.Log = j.singlePass(ctx)
 		}
 	}
 	report.Results = []Result{result}
@@ -345,7 +356,6 @@ type judge struct {
 	next     uint64
 	// slowest is the slowest of the healthy runs, once they all passed.
 	slowest time.Duration
-	trace   func(string)
 }
 
 func (j *judge) engine(client traffic.Doer, shared *sharedSetup, iterationTimeout time.Duration) (*traffic.Engine, error) {
@@ -374,7 +384,7 @@ func (j *judge) iterate(ctx context.Context, e *traffic.Engine) traffic.Sample {
 	waited := time.Duration(0)
 	for {
 		j.next++
-		_, sample := e.IterateWithTrace(ctx, j.next, j.trace)
+		_, sample := e.Iterate(ctx, j.next)
 		if sample.IdentityWait == 0 || waited >= maxIdentityWait || j.c.Wait(ctx, identityPoll) != nil {
 			return sample
 		}
@@ -382,15 +392,15 @@ func (j *judge) iterate(ctx context.Context, e *traffic.Engine) traffic.Sample {
 	}
 }
 
-func (j *judge) singlePass(ctx context.Context) Result {
+func (j *judge) singlePass(ctx context.Context) (Result, []string) {
 	result := Result{Item: ItemSinglePass, Subject: j.scenario.ID, Status: Red}
 	e, err := j.engine(j.c.Client, j.shared, 0)
 	if err != nil {
 		result.Detail = err.Error()
-		return result
+		return result, nil
 	}
-	var steps []string
-	j.trace = func(step string) { steps = append(steps, step) }
+	var log []string
+	e.UseStepLog(func(entry traffic.StepLog) { log = append(log, entry.String()) })
 	sample := j.iterate(ctx, e)
 	if sample.Outcome == traffic.OutcomeOK {
 		result.Status = Green
@@ -402,10 +412,7 @@ func (j *judge) singlePass(ctx context.Context) Result {
 		result.Status = Red
 		result.Detail += "; cleanup failed: " + sample.CleanupError
 	}
-	if len(steps) > 0 {
-		result.Detail += "; " + strings.Join(steps, " → ")
-	}
-	return result
+	return result, log
 }
 
 func (j *judge) run(ctx context.Context) []Result {
@@ -577,6 +584,9 @@ func pauses(s traffic.Sample) string {
 func (r Report) VerboseText() string {
 	var b strings.Builder
 	b.WriteString(r.checklistText())
+	for _, line := range r.Log {
+		b.WriteString(line + "\n")
+	}
 	for _, status := range []string{Red, Green} {
 		for _, x := range r.Results {
 			if x.Status == status {

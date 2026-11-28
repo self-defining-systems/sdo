@@ -193,7 +193,40 @@ type Engine struct {
 	// scenario's identities (writeIdentity).
 	identities   *identityLocks
 	identityKeys map[string][]string
+	// stepLog receives every sent request and its answer (UseStepLog).
+	stepLog func(StepLog)
 }
+
+// StepLog is one request a scenario sent and what came back, with probe-user
+// credentials redacted: the line a prober's log would print.
+type StepLog struct {
+	Phase   string
+	Step    string
+	Request string
+	Status  int
+	Took    time.Duration
+	Answer  string
+	Error   string
+}
+
+func (l StepLog) String() string {
+	line := fmt.Sprintf("%s %s: %s", l.Phase, l.Step, l.Request)
+	if l.Status != 0 {
+		line += fmt.Sprintf(" -> %d", l.Status)
+	}
+	line += fmt.Sprintf(" in %s", l.Took.Round(time.Millisecond))
+	if l.Answer != "" {
+		line += " " + l.Answer
+	}
+	if l.Error != "" {
+		line += "; " + l.Error
+	}
+	return line
+}
+
+// UseStepLog sends every request the engine sends, and its answer, to log.
+// It is for a person or agent trying one scenario; a prober leaves it unset.
+func (e *Engine) UseStepLog(log func(StepLog)) { e.stepLog = log }
 
 // rateLimits is, per target base URL, the end of the wait the application
 // last asked for.
@@ -668,9 +701,11 @@ type stepResult struct {
 	err     string
 	// observed is the server's body excerpt or the bare transport cause.
 	observed string
-	dial     bool
-	defect   string
-	byteCap  int
+	// answer is the body excerpt of a passing answer, kept only for the step log.
+	answer  string
+	dial    bool
+	defect  string
+	byteCap int
 	// pending is set when the step's check answered NotYet.
 	pending bool
 	// converge is set for a step that answered NotYet at least once.
@@ -696,6 +731,24 @@ func (sample *Sample) record(result stepResult) {
 }
 
 func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, passwords State, phase stepPhase) stepResult {
+	if e.stepLog == nil {
+		return e.sendStep(ctx, scenario, step, rng, state, passwords, phase)
+	}
+	started := e.clock.Now()
+	result := e.sendStep(ctx, scenario, step, rng, state, passwords, phase)
+	answer := result.answer
+	if answer == "" {
+		answer = result.observed
+	}
+	e.stepLog(StepLog{
+		Phase: [...]string{phaseStep: "step", phaseSetup: "setup", phaseCleanup: "cleanup"}[phase], Step: step.Name,
+		Request: redactCredentials(result.request, passwords), Status: result.status, Took: e.since(started),
+		Answer: redactCredentials(answer, passwords), Error: redactCredentials(result.err, passwords),
+	})
+	return result
+}
+
+func (e *Engine) sendStep(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, passwords State, phase stepPhase) stepResult {
 	request, err := step.Endpoint.Build(ctx, rng, state)
 	if err != nil {
 		return stepResult{outcome: OutcomeInvalid, err: "build: " + err.Error()}
@@ -873,7 +926,11 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 		}
 		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observed.excerpt(""), pending: verdict.Pending}
 	}
-	return stepResult{outcome: OutcomeOK, status: response.StatusCode, sent: 1, request: line}
+	result := stepResult{outcome: OutcomeOK, status: response.StatusCode, sent: 1, request: line}
+	if e.stepLog != nil {
+		result.answer = observed.excerpt("")
+	}
+	return result
 }
 
 // Run starts iterations at the workload's arrival pattern and rate, from

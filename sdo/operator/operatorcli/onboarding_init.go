@@ -26,8 +26,8 @@ const OnboardingInitUsage = `usage: sdo-operator onboarding init --repo DIR --na
                                     [--kubeconfig FILE] [--context NAME]
 
   List live Service ports and scaffold the map and one Go probe per journey
-  in .sdo/goal.md. Prefer a sole exposed entry, or pass --entry when several
-  ports are plausible. Edit routes and assertions before scheduling the probes.
+  in .sdo/goal.md. The entry is the sole exposed Service port, else one no other
+  component calls; it names the other ports, or pass --entry. Edit routes and assertions before scheduling the probes.
   Run before authoring operations, probes or generators. No app requests are sent.`
 
 const initGenerator = layout.TrafficGeneratorsDir + "/generators.go"
@@ -87,72 +87,104 @@ func onboardingInit(ctx context.Context, args []string, stdout io.Writer) error 
 			*entry = exposed[0].String()
 		}
 	}
-	if err := writeOnboardingScaffold(*repo, candidates, *entry); err != nil {
+	note, err := writeOnboardingScaffold(*repo, candidates, *entry)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Scaffolded .sdo/arch.md and %s. Fill in routes and assertions, then schedule one probe.\n", initGenerator)
+	fmt.Fprintf(stdout, "Scaffolded .sdo/arch.md and %s with %s. Fill in routes and assertions, then try one probe.\n", initGenerator, note)
 	return nil
 }
 
-func selectInitEntry(candidates []initEntry, requested string) (initEntry, error) {
-	if requested == "" && len(candidates) == 1 {
-		return candidates[0], nil
-	}
+// selectInitEntry picks the scaffold's entry: the requested one, the sole
+// candidate, or else the candidates whose component no other component calls
+// and that hold no data (the seeded map's entry candidates), first by name.
+// others names the rest, so the author can move an operation's entry.
+func selectInitEntry(candidates []initEntry, requested string, m appmap.Map) (entry initEntry, others string, err error) {
 	names := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate.String() == requested {
-			return candidate, nil
+		if requested != "" && candidate.String() == requested {
+			return candidate, "", nil
 		}
 		names = append(names, candidate.String())
 	}
-	if len(names) == 0 {
-		return initEntry{}, errors.New("no non-metrics TCP Service ports found; check --namespace")
-	}
 	slices.Sort(names)
-	return initEntry{}, fmt.Errorf("choose --entry SERVICE:PORT from %s", strings.Join(names, ", "))
+	if len(names) == 0 {
+		return initEntry{}, "", errors.New("no non-metrics TCP Service ports found; check --namespace")
+	}
+	if requested != "" {
+		return initEntry{}, "", fmt.Errorf("--entry %s is not a Service port; choose from %s", requested, strings.Join(names, ", "))
+	}
+	called, stores, owner := map[string]bool{}, map[string]bool{}, map[string]string{}
+	for _, edge := range m.Edges {
+		called[edge.To] = true
+	}
+	for _, component := range m.Components {
+		for _, service := range component.Services {
+			owner[service] = component.Name
+		}
+		stores[component.Name] = component.HoldsData || component.Data != nil
+	}
+	pool := slices.Clone(candidates)
+	if entries := slices.DeleteFunc(slices.Clone(candidates), func(c initEntry) bool {
+		name, known := owner[c.service]
+		return !known || called[name] || stores[name]
+	}); len(entries) > 0 {
+		pool = entries
+	}
+	slices.SortFunc(pool, func(a, b initEntry) int { return strings.Compare(a.String(), b.String()) })
+	entry = pool[0]
+	var rest []string
+	for _, name := range names {
+		if name != entry.String() {
+			rest = append(rest, name)
+		}
+	}
+	return entry, strings.Join(rest, ", "), nil
 }
 
-func writeOnboardingScaffold(repo string, candidates []initEntry, requested string) error {
-	entry, err := selectInitEntry(candidates, requested)
-	if err != nil {
-		return err
-	}
+// writeOnboardingScaffold writes the map's operations and probes and one Go
+// stub per goal journey, and says which entry it chose.
+func writeOnboardingScaffold(repo string, candidates []initEntry, requested string) (string, error) {
 	journeys, err := goalJourneys(repo)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(journeys) == 0 {
-		return errors.New(".sdo/goal.md lists no journeys")
+		return "", errors.New(".sdo/goal.md lists no journeys")
 	}
 	const archPath = ".sdo/arch.md"
 	arch, err := os.ReadFile(filepath.Join(repo, archPath))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return "", err
 	}
 	region, found, err := appmap.Find(string(arch))
 	if err != nil {
-		return err
+		return "", err
 	}
 	m := appmap.Map{Version: appmap.Version}
 	if found {
 		m, err = appmap.Parse(region.YAML)
 		if err != nil {
-			return err
+			return "", err
 		}
 	}
 	if len(m.Operations) != 0 || len(m.Probes) != 0 {
-		return errors.New("the application map already has operations or probes; continue editing it directly")
+		return "", errors.New("the application map already has operations or probes; continue editing it directly")
 	}
 	files, err := os.ReadDir(filepath.Join(repo, layout.TrafficGeneratorsDir))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return "", err
 	}
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".go") {
-			return errors.New("the checkout already has traffic generators; continue editing them directly")
+			return "", errors.New("the checkout already has traffic generators; continue editing them directly")
 		}
 	}
 
+	entry, others, err := selectInitEntry(candidates, requested, m)
+	if err != nil {
+		return "", err
+	}
 	var callPath []string
 	for _, component := range m.Components {
 		if slices.Contains(component.Services, entry.service) {
@@ -182,7 +214,7 @@ Steps: []traffic.Step{{Name: "todo", Endpoint: traffic.GET("/{replace-with-journ
 	source.WriteString("}\n}\n")
 	generator, err := format.Source([]byte(source.String()))
 	if err != nil {
-		return err
+		return "", err
 	}
 	header := ""
 	if found {
@@ -190,7 +222,7 @@ Steps: []traffic.Step{{Name: "todo", Endpoint: traffic.GET("/{replace-with-journ
 	}
 	body, err := appmap.Render(m, header)
 	if err != nil {
-		return err
+		return "", err
 	}
 	block := appmap.BeginMarker + "\n```yaml\n" + body + "```\n" + appmap.EndMarker + "\n"
 	document := strings.TrimRight(string(arch), "\n") + "\n\n" + block
@@ -200,10 +232,14 @@ Steps: []traffic.Step{{Name: "todo", Endpoint: traffic.GET("/{replace-with-journ
 		document = block
 	}
 	if err := safefs.CreateNewFile(repo, initGenerator, generator, 0o644); err != nil {
-		return err
+		return "", err
 	}
 	if err := safefs.WriteFile(repo, archPath, []byte(document), 0o644); err != nil {
-		return errors.Join(err, safefs.Remove(repo, initGenerator))
+		return "", errors.Join(err, safefs.Remove(repo, initGenerator))
 	}
-	return nil
+	note := "entry " + entry.String()
+	if others != "" {
+		note += "; other Service ports: " + others + " (move an operation's entry if one fits better)"
+	}
+	return note, nil
 }

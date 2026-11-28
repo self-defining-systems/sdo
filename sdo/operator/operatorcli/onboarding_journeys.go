@@ -61,11 +61,11 @@ const OnboardingJourneysUsage = `usage: sdo-operator onboarding journeys --repo 
   Probe cadence targets detection within 30s by default. Set a different target in the human
   goal with a line such as Detection target: 45s. SDO uses the target for an unset sampleInterval
   and defaults an unset ratePerSecond to one iteration per scenario per interval.
-  --quick runs memory check --replay off (using its publication environment), then runs one iteration
-  of the exact scenario named by --only, including setup and cleanup, and prints its step trace.
-  Use it to iterate on a probe before the full checks. A rejected memory check stops before any requests
-  and prints its own diagnostics (MemoryCheckReport with --json).
-  Every other mode also runs memory check --replay off, so no separate memory check is needed: each
+  --quick compiles the probes and runs one iteration of the exact scenario named by --only, setup and
+  cleanup included, printing each request, its status, time and the start of its answer, like a
+  prober log. It skips memory check and the other checks: use it after every edit of one probe, and
+  run the full journeys once the probe passes.
+  Every mode but --quick also runs memory check --replay off, so no separate memory check is needed: each
   blocking error is a red memory-check line, notes are counted (--verbose lists them), and a rejection
   does not stop the probes. Without SDO_ACTOR, SDO_PHASE and SDO_BASE_COMMIT it prints one line saying it was skipped.
   Exit 0 when nothing is red and
@@ -101,26 +101,6 @@ func onboardingJourneys(ctx context.Context, args []string, stdout, stderr io.Wr
 		return 0, errors.New("--quick requires --only with one exact scenario ID and cannot combine with --plan, --alter or --soak")
 	}
 	slog.SetLogLoggerLevel(slog.LevelWarn) // the build's stage lines are not findings
-	if *quick {
-		checkArgs := []string{"check", "--repo", *repo, "--replay", "off"}
-		if *asJSON {
-			checkArgs = append(checkArgs, "--json")
-		}
-		var checked bytes.Buffer
-		code := RunMemory(ctx, checkArgs, func(key string) string {
-			if key == "SDO_OPERATOR_ROOT" {
-				return *operatorRoot
-			}
-			return processio.Environment(key)
-		}, &checked, stderr)
-		if code != exitClean {
-			fmt.Fprint(stdout, checked.String())
-			return code, nil
-		}
-		if *verbose && !*asJSON {
-			fmt.Fprint(stdout, checked.String())
-		}
-	}
 	var memoryResults []journeycheck.Result
 	var memoryCheck *journeycheck.MemoryCheck
 	if !*quick {

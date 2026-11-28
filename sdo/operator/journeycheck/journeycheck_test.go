@@ -275,8 +275,14 @@ func TestSinglePassRunsAndCleansUpOneIteration(t *testing.T) {
 		if s.next != 1 || (!failCleanup && len(s.items) != 0) || r.Red() != failCleanup {
 			t.Fatalf("cleanup fails=%v: created %d, remaining %d, results %+v", failCleanup, s.next, len(s.items), r.Results)
 		}
-		if text := r.Text(); !strings.Contains(text, "create → read → delete") || (!failCleanup && !strings.Contains(text, "delete → gone")) {
-			t.Fatalf("expected an ordered trace through cleanup: %s", text)
+		text := r.Text()
+		for _, want := range []string{"step create: POST /items -> 201", "step read: GET /items/1 -> 200", "cleanup delete: DELETE /items/1"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("want the prober log line %q: %s", want, text)
+			}
+		}
+		if !failCleanup && !strings.Contains(text, "cleanup gone: GET /items/1?probe=sdoprobe -> 404") {
+			t.Fatalf("expected the cleanup read-back in the log: %s", text)
 		}
 	}
 	s := &store{items: map[string]string{}}
@@ -329,5 +335,20 @@ func TestAlteredRunsKeepTheWorkloadRequestTimeout(t *testing.T) {
 	r := Run(context.Background(), c)
 	if got := find(r, ItemAltered); got.Status != Green {
 		t.Fatalf("altered run with a 10s request timeout: %+v", got)
+	}
+}
+
+// A verbose report lists memory-check notes one short line each: notes never
+// block, and whole paragraphs made verbose runs four times longer.
+func TestVerboseNotesAreOneShortLineEach(t *testing.T) {
+	long := strings.Repeat("a coverage gap explained at length ", 20) + "\nsecond paragraph"
+	text := Report{Memory: &MemoryCheck{Notes: []string{long, "short"}}}.VerboseText()
+	for _, line := range strings.Split(text, "\n") {
+		if len(line) > 200 {
+			t.Fatalf("long note line: %q", line)
+		}
+	}
+	if !strings.Contains(text, "note memory-check: short") || strings.Contains(text, "second paragraph") {
+		t.Fatalf("%s", text)
 	}
 }

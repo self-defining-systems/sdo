@@ -151,6 +151,20 @@ type Step struct {
     key over HTTP and then use it over SSH. Its Service must be the scenario's
     target or one of its DependsOn.
 
+type StepLog struct {
+	Phase   string
+	Step    string
+	Request string
+	Status  int
+	Took    time.Duration
+	Answer  string
+	Error   string
+}
+    StepLog is one request a scenario sent and what came back, with probe-user
+    credentials redacted: the line a prober's log would print.
+
+func (l StepLog) String() string
+
 type Target struct {
 	Service string `json:"service"`
 	Port    int    `json:"port"`
@@ -225,12 +239,4 @@ func (w Window) SLO() SLO
 func (w Window) WarmupHorizon() time.Duration
     WarmupHorizon is how long a freshly started prober needs, at the workload's
     rate, to give every scenario its SLO's minimum samples.
-
-type WindowSet interface {
-	TrafficWindows() map[string]Window
-}
-    WindowSet lists every window a source carries, so a capture of the detection
-    context keeps them for replay. Every program.ReadView, the controller's
-    live view, the memory host's view and recorded snapshots implement it;
-    a source without traffic returns an empty map.
 ```

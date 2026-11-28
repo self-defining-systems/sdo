@@ -23,7 +23,7 @@ type RouteLister interface {
 func judgeRoutes(ctx context.Context, cfg Config, report *Report) {
 	m := cfg.Map
 	if m.Routes == nil || m.Routes.List == nil || len(m.Routes.List.Command) == 0 {
-		report.add(ItemRoutesAssigned, "routes", Red, "the map has no route list: add routes.list (component, command) whose output is one \"METHOD route\" per line, so every route of the application is a journey or excluded with a reason")
+		report.add(ItemRoutesAssigned, "routes", Red, routesListDetail)
 		return
 	}
 	for _, x := range m.Routes.Excluded {
@@ -107,3 +107,6 @@ func judgeGivenJourneys(cfg Config, report *Report) {
 		report.add(ItemGivenJourneys, g.ID, Green, "served by "+strings.Join(served[g.ID], ", "))
 	}
 }
+
+const routesListDetail = "the map has no route list: add `routes: {list: {component: <name>, container: <name>, command: [<argv>]}}` " +
+	"whose output is one \"METHOD route\" per line, so every route of the application is a journey or excluded with a reason"

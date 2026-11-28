@@ -173,7 +173,7 @@ func judgeProbesAndPointers(cfg Config, report *Report) {
 		if len(op.Path) == 0 {
 			report.add(ItemPointers, op.ID, Red, "the operation has no component path")
 		} else if len(missing) > 0 {
-			report.add(ItemPointers, op.ID, Red, fmt.Sprintf("components on the path without observe metrics and logs pointers: %s", strings.Join(missing, ", ")))
+			report.add(ItemPointers, op.ID, Red, pointersDetail(missing))
 		} else {
 			report.add(ItemPointers, op.ID, Green, "every component on the path has metrics and logs pointers")
 		}
@@ -237,6 +237,7 @@ func errorClasses(errors string, observed []string) string {
 // table from every item's results.
 func finalize(cfg Config, r *Report) {
 	judgeProbesAndPointers(cfg, r)
+	applyReasons(cfg, r)
 	for _, op := range cfg.Map.Operations {
 		j := Journey{Operation: op.ID, Given: op.Journey}
 		j.Mapping = cellOf(*r, op.ID, ItemJourneys, ItemObserved)
@@ -361,4 +362,30 @@ func journeyTable(js []Journey) string {
 		}
 	}
 	return b.String()
+}
+
+func pointersDetail(missing []string) string {
+	return fmt.Sprintf("components on the path without observe metrics and logs pointers: %s; give each component a line such as "+
+		"`observe: {metrics: \"<where its metrics are>\", logs: \"container <name>: <what it logs>\"}`, or add under `reasons:` "+
+		"`- {item: %s, subject: <operation>, reason: <why>}`", strings.Join(missing, ", "), ItemPointers)
+}
+
+// excusable are the map items a recorded reason may turn into a note
+// wherever they are raised. Items about what the live detectors saw (an
+// operation the metric does not count, its latency) stay red whatever the map says.
+var excusable = map[string]bool{ItemPointers: true, ItemJourneys: true}
+
+// applyReasons turns each red result of an excusable item the map gives a
+// reason for (an item and subject under `reasons:`) into a note carrying the
+// reason, so a recorded reason takes effect whichever check raised the item.
+func applyReasons(cfg Config, r *Report) {
+	reasons := map[[2]string]string{}
+	for _, reason := range cfg.Map.Reasons {
+		reasons[[2]string{reason.Item, reason.Subject}] = reason.Reason
+	}
+	for i, result := range r.Results {
+		if why, ok := reasons[[2]string{result.Item, result.Subject}]; ok && result.Status == Red && excusable[result.Item] {
+			r.Results[i].Status, r.Results[i].Detail = Note, result.Detail+" (reason: "+why+")"
+		}
+	}
 }
