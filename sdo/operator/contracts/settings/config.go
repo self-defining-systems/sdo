@@ -41,7 +41,7 @@ var AgentEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 // set, and a test keeps the two equal.
 var ReasoningSummaries = []string{"auto", "concise", "detailed", "none"}
 
-// DefaultLifecycleTimeout is the limit of one lifecycle (detection designer) session. A from-scratch
+// DefaultLifecycleTimeout is the limit of one lifecycle (detection designer or deployer) session. A from-scratch
 // onboarding judge spends 13+ minutes reading before it authors (36-52 calls at 900 s timed out with
 // no writes in 3 of 3 runs) and the retry needs 8-10 minutes, so one session needs generous headroom over 900 s (quality over onboarding speed).
 const DefaultLifecycleTimeout = 3600 * time.Second
@@ -102,7 +102,7 @@ type Agent struct {
 	Model              string   `yaml:"model" doc:"agent model of every worker (required)"`
 	Effort             string   `yaml:"effort" doc:"reasoning effort of every worker: low, medium, high, xhigh or max"`
 	ReasoningSummary   string   `yaml:"reasoning_summary" doc:"reasoning summaries Codex workers record in their rollouts: auto, concise, detailed or none (auto and concise record readable summaries)"`
-	LifecycleTimeout   Duration `yaml:"lifecycle_timeout" doc:"limit of one lifecycle (detection designer) session"`
+	LifecycleTimeout   Duration `yaml:"lifecycle_timeout" doc:"limit of one lifecycle session (detection designer or deployer)"`
 	MemoryCheckTimeout Duration `yaml:"memory_check_timeout" doc:"limit of one memory check a worker runs on its checkout"`
 	CodePath           string   `yaml:"code_path" doc:"programming-model plugin set: go or shell"`
 	CodePathOverrides  string   `yaml:"code_path_overrides" doc:"CodePathOverrides as a JSON object (for example {\"response_stages\":[\"agent\"]}); empty selects the code path's own seams"`
