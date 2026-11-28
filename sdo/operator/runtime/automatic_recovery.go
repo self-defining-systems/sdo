@@ -64,7 +64,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	// A stage that bound no learned plan wrote only SDO's built-in restore:
 	// there is no learned repair to wait for, so the agent starts as its apply
 	// returns, beside the restore's rollout.
-	builtinOnly := applied && report.StabilityDeadline == nil && !learnedPlanBound(report) && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages)
+	builtinOnly := canDispatch && applied && report.StabilityDeadline == nil && !learnedPlanBound(report) && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages)
 	if !failed && !gaveUp && !beyond && !builtinOnly && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
@@ -828,9 +828,7 @@ func stageDispatchRequest(request IncidentRequest) IncidentRequest {
 		return request
 	}
 	if lines := stageReportLines(request.PriorStages); len(lines) > 0 {
-		if changes := append(lines, request.RecentChanges...); recentChangesWithin(changes) {
-			request.RecentChanges = changes
-		}
+		request.RecentChanges, _ = boundedRecentChanges(append(lines, request.RecentChanges...))
 	}
 	if pageOpened(&request) {
 		return request

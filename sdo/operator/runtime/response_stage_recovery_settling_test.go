@@ -139,6 +139,8 @@ type settlingCase struct {
 	unnamed bool
 	// clues are further non-alert findings the incident opened with.
 	clues []sdk.Finding
+	// stages replaces the selected response stages (automaticRecoveryWorld only).
+	stages []string
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario

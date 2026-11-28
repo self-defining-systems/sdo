@@ -52,6 +52,9 @@ func automaticRecoveryWorld(t *testing.T, tc settlingCase, policy string, extra 
 	}
 	controller.now = world.clock.Now
 	controller.codePath = &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}
+	if tc.stages != nil {
+		controller.codePath.Selection.ResponseStages = tc.stages
+	}
 	controller.responderLoop = loop
 	controller.incidentOpen = true
 	controller.incidentDetectedAt, controller.incidentDispatchedAt = now, now

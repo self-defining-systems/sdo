@@ -817,8 +817,18 @@ func recentChangesWithin(lines []string) bool {
 // exceeds the contract keeps its leading lines rather than failing state
 // persistence on every step and never starting the responder.
 func (c *Controller) boundRecentChanges(lines []string) []string {
+	kept, trimmed := boundedRecentChanges(lines)
+	if trimmed && c.OnError != nil {
+		c.OnError(fmt.Errorf("incident_request.recent_changes exceeded its contract (%d lines); sent %d", len(lines), len(kept)))
+	}
+	return kept
+}
+
+// boundedRecentChanges keeps the longest prefix of lines, each capped, that
+// satisfies the contract, and reports whether it cut anything.
+func boundedRecentChanges(lines []string) ([]string, bool) {
 	if recentChangesWithin(lines) {
-		return lines
+		return lines, false
 	}
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -826,9 +836,5 @@ func (c *Controller) boundRecentChanges(lines []string) []string {
 	}
 	// With every line capped, validity is monotone in the prefix length.
 	keep := sort.Search(len(kept)+1, func(n int) bool { return n > 0 && !recentChangesWithin(kept[:n]) }) - 1
-	kept = kept[:max(keep, 0)]
-	if c.OnError != nil {
-		c.OnError(fmt.Errorf("incident_request.recent_changes exceeded its contract (%d lines); sent %d", len(lines), len(kept)))
-	}
-	return kept
+	return kept[:max(keep, 0)], true
 }

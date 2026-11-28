@@ -151,3 +151,44 @@ func TestLiveRequestCarriesTheCurrentStageReport(t *testing.T) {
 		t.Fatalf("stage lines = %q", lines)
 	}
 }
+
+// Without an agent to start, a built-in-only stage waits for its recovery as
+// before: no early handoff under escalate or wait, and none when the agent is
+// not a selected stage; the restore that heals closes the incident.
+func TestABuiltInOnlyStageWithoutAnAgentWaitsForRecovery(t *testing.T) {
+	for name, tc := range map[string]struct {
+		policy string
+		stages []string
+	}{
+		"escalate":       {policy: settings.AfterPlaybookEscalate},
+		"wait":           {policy: settings.AfterPlaybookWait},
+		"no agent stage": {policy: settings.AfterPlaybookAgent, stages: []string{"deterministic"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, world, closed := automaticRecoveryWorld(t, settlingCase{builtinOnly: true, healAfter: 20 * time.Second, stages: tc.stages}, tc.policy)
+			for closed.Result == nil && world.clock.Now().Before(autoReport(c).GetRecoveryDeadline().AsTime()) {
+				if autoReport(c).GetHandoffSelected() || !c.escalatedAt.IsZero() {
+					t.Fatalf("handed off or escalated a healing restore: %v", autoReport(c))
+				}
+				autoStep(t, c, world.clock, time.Second)
+			}
+			if final := deterministicStageReport(closed.Request.PriorStages); closed.Result == nil || final.GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED {
+				t.Fatalf("the restore's recovery did not close the incident: %+v", closed)
+			}
+		})
+	}
+}
+
+// A full candidate block cedes its last lines, not the stage's report.
+func TestTheStageReportLeadsAFullCandidateBlock(t *testing.T) {
+	full := make([]string, 0, 1024)
+	for len(full) < 1024 {
+		full = append(full, "candidate")
+	}
+	request := IncidentRequest{RecentChanges: full, PriorStages: []*contracts.StageReport{{Stage: "deterministic", HandoffSelected: true,
+		Mitigations: []*contracts.StageMitigation{{PlaybookId: "p", Result: "applied_still_matching"}}}}}
+	got := stageDispatchRequest(request).RecentChanges
+	if len(got) != 1024 || got[0] != "stage: by sdo (playbook p): applied_still_matching" || !recentChangesWithin(got) {
+		t.Fatalf("candidate block = %d lines, first %q", len(got), got[0])
+	}
+}
