@@ -18,7 +18,7 @@ description: Incident repair.
 - **Test each change.** Predict its fix; wait on its effect (`sdo detect --wait`), not a sleep. No effect counts against it; replace processes not yet using the fix.
 - **Restore lost data.** Use its authoritative copy first. Before recreating, search all backups or copies: configuration, jobs, object stores, replicas. Never seed substitute data to pass health checks.
 - **App-managed state** (schema, migrations, indexes, caches) behind its code or config: bring it current through the app's own maintenance path; hand edits are a last resort.
-- **Late background work**: drain the queue (workers, poison jobs); never edit app code; escalate if nothing drains.
+- **Late background work**: drain the queue (workers, poison jobs); never edit app code; note it if nothing drains.
 - **Verify recovery.** Detector-opened: done is Recovered for all alerts, joined too, not one passing test. Paged: `completed` if verified, else `failed`.
   Fenced: return unless this incident's test fails; then keep working.
   Recovery covers all users. Probes sample user health. Never change state for probe/test identities. If the app serves others, verify with real traffic or a non-SDO request.

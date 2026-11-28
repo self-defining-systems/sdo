@@ -134,7 +134,7 @@ func TestTheUnevaluatedWaitNeverOutlivesAnExistingDeadline(t *testing.T) {
 	if !hold(world.clock.Now()) || !hold(bound.Add(-time.Millisecond)) || hold(bound) {
 		t.Fatal("the automatic stage's deadline must end the wait")
 	}
-	c.escalateLocked(bound)
+	report.HandoffSelected = true // the agent owns the incident now
 	grace := c.recoveryGraceEndsLocked()
 	if !hold(grace.Add(-time.Millisecond)) || hold(grace) {
 		t.Fatal("a returned responder's verification bound must end the wait")

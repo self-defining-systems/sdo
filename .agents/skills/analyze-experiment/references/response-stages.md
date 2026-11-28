@@ -19,7 +19,7 @@ program execution or a controller restart.
 `ControllerConfig.code_path.overrides.response_stages` defaults to `deterministic,agent`; `agent`
 alone is the baseline. A page that opened the incident (`page` set, no `opening_keys`) starts the
 responder directly, even during startup. Read `responder_dispatched` for the
-dispatch and `escalated_at` for a verification-bound closure without proof.
+dispatch and an unverified (failed) closure at the verification bound for a page without proof.
 A page-only alert set uses the responder's explicit verification of the reported
 operation and controller settlement evidence. Joined alerts use detector proof.
 `IncidentRequest.prior_stages` and
@@ -27,10 +27,10 @@ operation and controller settlement evidence. Joined alerts use detector proof.
 Each mitigation identifies the accepted playbook revision, bindings, plan,
 `apply_receipt`, post-apply Diagnose, and cleared/remaining finding fingerprints.
 Results distinguish `applied_cleared`, `applied_still_matching`, `rollout_failed`,
-`rollout_pending_at_handoff`, `apply_error`, `escalated` (a matched Diagnose whose verdict is
+`rollout_pending_at_handoff`, `apply_error`, `out_of_reach` (`escalated` in older records: a matched Diagnose whose verdict is
 `reach: out-of-reach`, from a Diagnose-only playbook or a plan whose only action is `Escalate`: nothing
 was written, `escalation` holds the verdict, its targeted findings leave the stage's work and the
-synthesized cause carries `cause_class`/`reach`, so closure derives `escalated` while they still fire),
+synthesized cause carries `cause_class`/`reach`; the controller hands the incident to the agent at once, `wait` included),
 and `skipped` with `skip_reason` (a Diagnose-only playbook with any other verdict is still `no_mitigation`)
 (historical `stage_budget` meant observation exhaustion; current observation exhaustion never suppresses an admitted write).
 `holds_data` (historic only; current stages never skip for it) meant the plan would have restarted, deleted, scaled down or rewritten a workload the accepted application map marks `holds_data`, or one of its Pods; `error` named the action and nothing was written. A learned restart of a `holds_data` workload now runs like any other match.

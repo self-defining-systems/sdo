@@ -83,22 +83,19 @@ func TestAUserTestFailingAfterTheJoinWindowPagesAtOnceWhileTheIncidentStaysOpen(
 			t.Fatalf("a late page dispatched the agent %d times", calls)
 		}
 
-		// A's responder returns while its alert set still fails: A closes
-		// escalated and the late journey, still failing, opens the next incident.
+		// A's responder returns while its alert set still fails: A stays open
+		// and a fresh session starts on it (SDO never escalates); the late
+		// journey, past A's window, keeps waiting for the next incident.
 		result := completedResult(first)
 		c.mu.Lock()
 		c.responderDone, c.dispatchState, c.responderCompletedAt, c.currentIncidentResult = true, contracts.DispatchState_DISPATCH_STATE_COMPLETED, w.now, &result
 		c.mu.Unlock()
-		w.drive(60, func() bool { return w.incidentID() != "" && w.incidentID() != first })
-		if len(w.closed) != 1 || w.closed[0].Request.IncidentID != first || len(w.closed[0].Request.LatePages) != 1 {
-			t.Fatalf("incident A did not close with its late page: %+v", w.closed)
+		w.drive(60, func() bool { return c.currentIncidentRequest != nil && c.currentIncidentRequest.SessionGeneration > 0 })
+		if len(w.closed) != 0 || w.incidentID() != first || c.currentIncidentRequest.SessionGeneration != 1 || len(c.currentIncidentRequest.LatePages) != 1 {
+			t.Fatalf("incident A did not stay open for a fresh session: closed %+v, request %+v", w.closed, c.currentIncidentRequest)
 		}
-		next := c.currentIncidentRequest
-		if next == nil || next.IncidentID == first || !slices.Contains(next.OpeningKeys, loginKey) {
-			t.Fatalf("the late journey did not open the next incident: %+v", next)
-		}
-		if len(next.LatePages) != 0 {
-			t.Fatalf("the next incident inherited late pages: %+v", next.LatePages)
+		if !slices.ContainsFunc(c.batcher.Snapshot().Findings, func(f sdk.Finding) bool { return findingKey(f) == loginKey }) {
+			t.Fatalf("the late journey was lost: batch %v", c.batcher.Snapshot().Findings)
 		}
 	})
 }

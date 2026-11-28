@@ -278,9 +278,8 @@ func (n NativeIncidentBroker) cleanupBeforePublish(ctx context.Context, id strin
 		})
 	}
 	closure := incidentClosureState(ledger.Closure)
-	// Escalated closures get no turn (committed source still publishes), nor does a closure without a session,
-	// a cleaner or a turn budget.
-	if ledger.GetClosure().GetEscalatedAt() != nil || n.ClosingTurnOff || n.Cleaner == nil || n.CleanupTurns <= 0 || !hasResponderSession(closure) {
+	// A closure without a session, a cleaner or a turn budget gets no turn (committed source still publishes).
+	if n.ClosingTurnOff || n.Cleaner == nil || n.CleanupTurns <= 0 || !hasResponderSession(closure) {
 		finish()
 		return
 	}

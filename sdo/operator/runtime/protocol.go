@@ -126,6 +126,12 @@ type IncidentRequest struct {
 	PriorResponseProgress []*contracts.ResponseProgress
 	PriorStages           []*contracts.StageReport
 	MaxResponseLoops      int
+	// SessionGeneration is which agent session of the incident this request
+	// starts (0 first; n for the nth fresh session after one ended before
+	// Recovered); PriorSession is the Go-rendered summary a fresh session
+	// starts from.
+	SessionGeneration int
+	PriorSession      string
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string
 }
@@ -285,10 +291,7 @@ type IncidentClosure struct {
 	// RecoveryVerification is the closure's recovered test: each faulted
 	// component's verification set, its strength and whether it recovered
 	// after SDO's last write settled. nil when it was not computed.
-	RecoveryVerification *contracts.RecoveryVerification
-	// EscalatedAt is when the incident escalated: its responder ended before
-	// Recovered held. Zero otherwise.
-	EscalatedAt             time.Time
+	RecoveryVerification    *contracts.RecoveryVerification
 	StatePersistenceFailure *contracts.StatePersistenceFailure
 	// SourceCheckNotes lists what the accepted-source checks found when the
 	// closure committed: checks that were unavailable, and objects that still

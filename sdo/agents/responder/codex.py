@@ -15,7 +15,7 @@ from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_pro
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
 from sdo.agents.replay import selected_skills_root
-from sdo.agents.responder import page_only
+from sdo.agents.responder import finish, page_only
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.incident_opening import (
     earlier_attempts_block,
@@ -42,6 +42,8 @@ from sdo.contracts import (
 
 if TYPE_CHECKING:
     from agentshim import CommandExecutor
+
+    from libs.agent_cli.structured import StructuredTurn
 
 
 class ResponderExecutionError(RuntimeError):
@@ -91,7 +93,8 @@ def execute_incident(
         raise ResponderExecutionError(str(exc)) from exc
     if recovery is not None:
         prompt += recovery.recovered_prompt()
-    corrected_result = False
+    if request.prior_session and not plain:
+        prompt += named_prompt("responder.prior_session", "\n" + request.prior_session)
     started = datetime.now(UTC)
     usage: dict[str, int | float] = {}
     options = session_turn_options(selected_provider, Path(request.repository_worktree))
@@ -104,68 +107,105 @@ def execute_incident(
         }
     else:
         options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
+        if finish.enabled():
+            options["claude_hooks"] = finish.claude_hooks()
+    result: IncidentResult | None = None
+    completed: StructuredTurn | None = None
+    unresumable = ""
     while True:
-        checkpoint_directory = os.environ.get("SDO_RESPONDER_USAGE_DIR", "")
-        checkpoint = (
-            UsageCheckpoint.open(
-                Path(checkpoint_directory),
-                request.incident_id,
-                os.environ.get("SDO_RESPONDER_TASK_ID", request.incident_id),
-                "respond",
+        corrected_result = False
+        while True:
+            checkpoint_directory = os.environ.get("SDO_RESPONDER_USAGE_DIR", "")
+            checkpoint = (
+                UsageCheckpoint.open(
+                    Path(checkpoint_directory),
+                    request.incident_id,
+                    os.environ.get("SDO_RESPONDER_TASK_ID", request.incident_id),
+                    "respond",
+                )
+                if checkpoint_directory
+                else None
             )
-            if checkpoint_directory
-            else None
-        )
-        try:
-            completed = run_structured_turn(
-                selected_provider,  # type: ignore[arg-type]
-                prompt,
-                cwd=working_directory,
-                access="danger-full-access",
-                model=model,
-                reasoning_effort=effort,
-                timeout_seconds=recovery.remaining_seconds() if recovery is not None else None,
-                resume_session_id=resume_session_id,
-                executor=executor,
-                on_session_started=recovery.checkpoint if recovery is not None else None,
-                on_usage=checkpoint.publish if checkpoint is not None else None,
-                **options,
-            )
-        except SessionRecoveryError as exc:
-            raise ResponderExecutionError(str(exc)) from exc
-        except StructuredTurnError as exc:
-            raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
-        for name, value in turn_usage(completed).items():
-            usage[name] = usage.get(name, 0) + value
-        try:
-            payload = unwrap_branch(completed.output_json, "incident_result")
-            if page_opened(request):
-                payload.setdefault("status", "failed")
-            result = parse_incident_result(
-                with_worker_facts(payload, request.incident_id, started),
-                usage,
-                incident_id=request.incident_id,
-            )
-            break
-        except WrongBranchError as exc:
-            if corrected_result:
-                raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
-            corrected_result = True
-            resume_session_id = completed.session_id
-            prompt = branch_correction("incident_result")
-        except ValueError as exc:
-            if not corrected_result:
+            try:
+                completed = run_structured_turn(
+                    selected_provider,  # type: ignore[arg-type]
+                    prompt,
+                    cwd=working_directory,
+                    access="danger-full-access",
+                    model=model,
+                    reasoning_effort=effort,
+                    timeout_seconds=recovery.remaining_seconds() if recovery is not None else None,
+                    resume_session_id=resume_session_id,
+                    executor=executor,
+                    on_session_started=recovery.checkpoint if recovery is not None else None,
+                    on_usage=checkpoint.publish if checkpoint is not None else None,
+                    **options,
+                )
+            except SessionRecoveryError as exc:
+                if result is not None:
+                    unresumable = f"resume unavailable: {exc}"
+                    break
+                raise ResponderExecutionError(str(exc)) from exc
+            except StructuredTurnError as exc:
+                if result is not None:
+                    # A resumed turn failed: the provider lost the session or its context is full.
+                    unresumable = f"resume failed: {exc}"
+                    break
+                raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
+            for name, value in turn_usage(completed).items():
+                usage[name] = usage.get(name, 0) + value
+            try:
+                payload = unwrap_branch(completed.output_json, "incident_result")
+                if page_opened(request):
+                    payload.setdefault("status", "failed")
+                result = parse_incident_result(
+                    with_worker_facts(payload, request.incident_id, started),
+                    usage,
+                    incident_id=request.incident_id,
+                )
+                break
+            except WrongBranchError as exc:
+                if corrected_result and result is not None:
+                    unresumable = f"invalid resumed result: {exc}"
+                    break
+                if corrected_result:
+                    raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
                 corrected_result = True
                 resume_session_id = completed.session_id
-                prompt = render_prompt(
-                    "responder",
-                    "result_correction",
-                    part="session.instructions",
-                    result_type=type(exc).__name__,
-                    diagnostic=str(exc),
-                )
-                continue
-            raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
+                prompt = branch_correction("incident_result")
+            except ValueError as exc:
+                if not corrected_result:
+                    corrected_result = True
+                    resume_session_id = completed.session_id
+                    prompt = render_prompt(
+                        "responder",
+                        "result_correction",
+                        part="session.instructions",
+                        result_type=type(exc).__name__,
+                        diagnostic=str(exc),
+                    )
+                    continue
+                if result is not None:
+                    unresumable = f"invalid resumed result: {exc}"
+                    break
+                raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
+        # Go owns the done verdict: before Recovered, SDO resumes this same session with its facts.
+        if plain or not finish.enabled():
+            break
+        answer = finish.await_decision(
+            str(result.status) if result is not None else "", resumable=not unresumable, reason=unresumable
+        )
+        if answer.action != "resume" or unresumable or completed is None:
+            break
+        try:
+            prompt = named_prompt("responder.resume", answer.message)
+        except ValueError as exc:
+            # A message over its budget must not cost the session its result: SDO ends it and starts fresh.
+            finish.await_decision(str(result.status), resumable=False, reason=f"resume message refused: {exc}")
+            break
+        resume_session_id = completed.session_id
+    if result is None or completed is None:
+        raise ResponderExecutionError(f"{selected_provider} responder returned no incident result")
     try:
         if recovery is not None:
             recovery.acknowledge_reports()

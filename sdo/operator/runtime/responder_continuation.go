@@ -15,30 +15,33 @@ import (
 	"sdo.dev/operator/worker_registry"
 )
 
-// The responder's single task record is controller state, separate from provider
+// The responder's task record is controller state, separate from provider
 // sessions and apply batches. Persist it before dispatch so a restart rejoins the
-// same task: SDO sends the agent exactly one incident turn per incident.
+// same task. One record per agent session of the incident: Generation is the
+// request's SessionGeneration, and a fresh session starts a new record.
 type responderContinuation struct {
-	Attempts int
-	Result   *contracts.IncidentResult
-	Done     bool
+	Attempts   int
+	Result     *contracts.IncidentResult
+	Done       bool
+	Generation int `json:",omitempty"`
 }
 
 type agentTaskExecutor interface {
 	Execute(context.Context, *contracts.AgentTask) (*contracts.AgentResult, error)
 }
 
-// executeResponder runs the incident's one agent task. The agent's own loop,
-// guided by `sdo detect`, pursues the opening alerts; SDO never prompts it again
-// for the same symptoms. When it returns before Recovered the controller
-// escalates the incident.
+// executeResponder runs one agent session's task. The agent's own loop,
+// guided by `sdo detect`, pursues the alert set; a finish before Recovered is
+// answered with Go's facts, and a returned session is resumed in the same
+// worker (answerFinish). When the worker ends before Recovered the controller
+// starts a fresh session (restartSessionLocked); SDO never escalates.
 func (d KubernetesJobDispatcher) executeResponder(ctx context.Context, executor worker_registry.KubernetesExecutor, task *contracts.AgentTask, loop *ResponderLoop, request IncidentRequest) (IncidentResult, error) {
 	if loop == nil {
 		return d.executeResponderTask(ctx, executor, task)
 	}
 	var state responderContinuation
 	loop.locked(func() { state = loop.continuation })
-	if state.Done && state.Result != nil {
+	if state.Done && state.Result != nil && state.Generation == request.SessionGeneration {
 		return incidentResultState(state.Result), nil
 	}
 	payload, err := wire.Canonical(task)
@@ -66,7 +69,7 @@ func (d KubernetesJobDispatcher) executeResponder(ctx context.Context, executor 
 		result.Status = IncidentCompleted
 		result.FinalDetectorStates = verification.DetectorStates
 	}
-	state.Attempts, state.Done = 1, true
+	state.Attempts, state.Done, state.Generation = 1, true, request.SessionGeneration
 	if state.Result, err = incidentResultContract(result); err != nil {
 		return IncidentResult{}, err
 	}

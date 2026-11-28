@@ -220,8 +220,8 @@ type Verdict struct {
 }
     Verdict is what Diagnose returns; NeedsJudgement requires a Question.
     CauseClass is a cause label. Unrecognized labels count as other. A Match
-    whose Reach is out-of-reach lets the automatic stage escalate the incident
-    instead of repairing it (see Escalate).
+    whose Reach is out-of-reach makes the automatic stage write nothing for it
+    and hand the incident to the agent with the verdict (see Escalate).
 
 func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadline time.Duration) (verdict Verdict)
     RunDiagnose runs a Diagnose over v with a deadline and the read rules every
@@ -240,7 +240,8 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
       - Unknown and NeedsJudgement are unchanged.
 
 func (v Verdict) CanEscalate() bool
-    CanEscalate reports whether a diagnosis may drive automatic escalation.
+    CanEscalate reports whether a diagnosis is a confirmed out-of-reach match,
+    which the automatic stage hands to the agent without a repair.
 
 func (v Verdict) Validate() error
 

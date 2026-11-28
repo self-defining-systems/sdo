@@ -178,5 +178,5 @@ Replay outcomes, missing captures and detector coverage are information.
 - Resolve stores by relation: `v.AppMap()` (`ComponentOf`, `Derived`), `program.StoreTargetFor`,
   `datacheck.Verdicts(v)`; never name a component.
 - An out-of-reach cause: `Verdict{Match, CauseClass, Reach: program.ReachOutOfReach}` with no Mitigate or a
-  sole `program.Escalate`; SDO closes it `escalated`.
+  sole `program.Escalate`; SDO hands it to the agent.
 - `program.ProposeSourceChange` (last in a plan) becomes a source commit (Go edits and commits the file as the responder) after verified recovery.

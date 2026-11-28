@@ -427,7 +427,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				continue
 			}
 			// A Diagnose-only playbook still runs: an out-of-reach diagnosis
-			// escalates without a mitigation.
+			// hands off to the agent without a mitigation.
 			mitigator, canMitigate := loop.Programs.Mitigator(match.PlaybookId)
 			diagnoser, ok := loop.Programs.Diagnoser(match.PlaybookId)
 			if !ok {
@@ -501,7 +501,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 				continue
 			}
-			escalation, escalates, escalationErr := stageEscalation(ctx, mitigator, canMitigate, view, bindings, before, loop.deadline())
+			escalation, escalates, escalationErr := stageOutOfReach(ctx, mitigator, canMitigate, view, bindings, before, loop.deadline())
 			var refusal *NonExecutablePlanError
 			if match.PlaybookId != SourceRestoreID && errors.As(escalationErr, &refusal) {
 				loop.rememberTerminalPlanError(attempt.PlaybookId, attempt.ProgramRevision, bindings, refusal)
@@ -519,7 +519,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				continue
 			}
 			if escalates {
-				escalateStageAttempt(state, attempt, match, bindings, before, escalation)
+				recordOutOfReachAttempt(state, attempt, match, bindings, before, escalation)
 				progressed = true
 				if err := save(false); err != nil {
 					return report, err

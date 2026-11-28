@@ -175,7 +175,7 @@ type Escalate struct {
 	Reason    string
 	Resources []sdk.ObjectRef
 }
-    Escalate closes the incident as escalated, without a repair. The program's
+    Escalate hands the incident to the agent without a repair. The program's
     Diagnose matched an out-of-reach cause (Verdict.Reach ReachOutOfReach)
     the application namespace cannot fix, such as a node, the network fabric,
     an external dependency or cluster policy. It writes nothing. It must be

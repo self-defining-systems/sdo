@@ -147,13 +147,13 @@ func TestAPageJoinsTheOpenIncidentInsteadOfOpeningASecond(t *testing.T) {
 // supply recovery proof even if the responder gave up.
 func TestAPageOpenedIncidentClosesOnlyAfterTheResponderReturns(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		joined     bool
-		escalation bool
+		name    string
+		joined  bool
+		bounded bool
 	}{
 		{name: "verified by responder"},
 		{name: "joined user test recovers", joined: true},
-		{name: "joined user test keeps failing", joined: true, escalation: true},
+		{name: "joined user test keeps failing", joined: true, bounded: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -209,12 +209,12 @@ func TestAPageOpenedIncidentClosesOnlyAfterTheResponderReturns(t *testing.T) {
 				if !c.incidentOpen || closed.Result != nil {
 					t.Fatal("closed while a joined user test still failed")
 				}
-				if test.escalation {
+				if test.bounded {
 					now = c.recoveryGraceEndsLocked().Add(-time.Second)
 					step(1)
-					if c.incidentOpen || closed.EscalatedAt.IsZero() || closed.HealthClearedAt != nil ||
+					if c.incidentOpen || closed.HealthClearedAt != nil ||
 						closed.Result == nil || len(closed.Result.UnresolvedFindings) != 1 {
-						t.Fatal("escalation did not close the page with its unresolved joined alert")
+						t.Fatal("the page's bound did not close it with its unresolved joined alert")
 					}
 					return
 				}
@@ -225,8 +225,8 @@ func TestAPageOpenedIncidentClosesOnlyAfterTheResponderReturns(t *testing.T) {
 			if c.incidentOpen || closed.Result == nil {
 				t.Fatal("the page-opened incident did not close after the responder returned and alerts stayed clear")
 			}
-			if !c.escalatedAt.IsZero() || closed.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED || closed.HealthClearedAt == nil {
-				t.Fatalf("closure is not a verified one: escalated %v reason %v states %d", c.escalatedAt, closed.UnconfirmedReason, len(closed.FinalDetectorStates))
+			if closed.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED || closed.HealthClearedAt == nil {
+				t.Fatalf("closure is not a verified one: reason %v states %d", closed.UnconfirmedReason, len(closed.FinalDetectorStates))
 			}
 			state, err := c.ExportState()
 			if err != nil {

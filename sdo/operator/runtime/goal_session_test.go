@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 )
 
 // resumingDispatcher offers the old re-prompt hook. The controller must never
-// call it: SDO sends the agent one task per incident.
+// call it: a resume runs in the session's own worker (answerFinish).
 type resumingDispatcher struct {
 	recordingDispatcher
 	resumes atomic.Int32
@@ -68,66 +69,67 @@ func stepGoalSession(t *testing.T, c *Controller, now *time.Time, steps int) {
 	}
 }
 
-func TestReturnBeforeRecoveredEscalatesWithoutAnotherAgentTurn(t *testing.T) {
+// A session that returned before Recovered, with its alert still failing, is
+// never escalated: once SDO's writes settled, a fresh paced session starts on
+// the same incident with a Go-rendered summary of the one before it.
+func TestReturnBeforeRecoveredStartsAFreshSessionNeverAnEscalation(t *testing.T) {
 	dispatcher := &resumingDispatcher{recordingDispatcher: recordingDispatcher{requests: make(chan IncidentRequest, 8)}}
 	c, now, closures := goalSessionController(t, true, dispatcher)
 	stepGoalSession(t, c, now, 6)
 	if got := dispatcher.resumes.Load(); got != 0 {
-		t.Fatalf("the responder was re-prompted %d times for the same symptoms", got)
-	}
-	if got := dispatcher.callCount(); got != 0 {
-		t.Fatalf("a new agent was dispatched %d times for the same symptoms", got)
+		t.Fatalf("the old re-prompt hook ran %d times", got)
 	}
 	if len(*closures) != 0 {
-		t.Fatal("an escalated incident closed while its opening alert was still active")
+		t.Fatal("the incident closed while its opening alert was still active")
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.escalatedAt.IsZero() || !c.incidentOpen {
-		t.Fatalf("incident must be escalated and open: escalatedAt=%v open=%v", c.escalatedAt, c.incidentOpen)
+	request := c.currentIncidentRequest
+	if !c.incidentOpen || request.SessionGeneration != 1 || c.responderDone || request.PreparedAgentTask != "" {
+		t.Fatalf("want an open incident with a fresh session pending: open=%v generation=%d done=%v", c.incidentOpen, request.SessionGeneration, c.responderDone)
 	}
-	if until := c.busyUntilLocked(*now); !until.IsZero() {
-		t.Fatalf("an escalated incident published a busy bound %v; a harness must read it as the fault's end state", until)
+	if !strings.Contains(request.PriorSession, "earlier agent session") || !strings.Contains(request.PriorSession, "unhealthy") {
+		t.Fatalf("prior session summary = %q", request.PriorSession)
 	}
-}
-
-func TestEscalatedIncidentClosesEscalatedWhenItsAlertsClear(t *testing.T) {
-	c, now, closures := goalSessionController(t, false, &recordingDispatcher{requests: make(chan IncidentRequest, 1)})
-	c.escalatedAt = now.Add(-time.Minute)
-	stepGoalSession(t, c, now, 4)
-	if len(*closures) != 1 {
-		t.Fatalf("closures = %d, want 1", len(*closures))
+	if !request.ResponseDeadline.After(*now) {
+		t.Fatalf("the fresh session has no response window of its own: %s", request.ResponseDeadline)
 	}
-	if (*closures)[0].EscalatedAt.IsZero() {
-		t.Fatal("the closure lost escalated_at")
+	if until := c.busyUntilLocked(*now); until.IsZero() {
+		t.Fatal("an incident SDO still works published no busy bound")
 	}
 }
 
-func TestRecoveredInsideTheGraceAfterAReturnIsNotAnEscalation(t *testing.T) {
+func TestRecoveredInsideTheGraceAfterAReturnClosesVerified(t *testing.T) {
 	c, now, closures := goalSessionController(t, false, &recordingDispatcher{requests: make(chan IncidentRequest, 1)})
 	c.responderCompletedAt = now.Add(-time.Second)
 	stepGoalSession(t, c, now, 4)
-	if len(*closures) != 1 || !(*closures)[0].EscalatedAt.IsZero() {
-		t.Fatalf("a fix that held inside the grace was labelled escalated: %+v", *closures)
+	if len(*closures) != 1 || (*closures)[0].HealthClearedAt == nil || (*closures)[0].Request.SessionGeneration != 0 {
+		t.Fatalf("a fix that held inside the grace did not close verified on its first session: %+v", *closures)
 	}
 }
 
-func TestResponseTimeoutIsAnEscalationNotAFailure(t *testing.T) {
+// The response timeout ends the session, never the incident: no dispatch
+// failure is recorded, and the next pass starts a fresh session.
+func TestResponseTimeoutEndsTheSessionNotTheIncident(t *testing.T) {
 	c, now, _ := goalSessionController(t, true, &recordingDispatcher{requests: make(chan IncidentRequest, 1)})
 	c.responderDone, c.responderCompletedAt = false, time.Time{}
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	cause := &ResponderJobFailedError{JobName: "job", Cause: errors.Join(&ResponseTimeoutError{Deadline: *now}, context.Canceled)}
 	c.handleDispatchCompletion(dispatchCompletion{incidentID: "synthetic", err: cause}, *now)
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.escalatedAt.IsZero() {
-		t.Fatal("the response timeout did not escalate")
-	}
 	if c.dispatchError != "" {
 		t.Fatalf("the response timeout was recorded as a dispatch failure: %q", c.dispatchError)
 	}
 	if !c.responderDone {
 		t.Fatal("the responder is not done after its timeout")
+	}
+	c.config.VerificationTimeout = time.Second
+	c.mu.Unlock()
+	stepGoalSession(t, c, now, 4)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.incidentOpen || c.currentIncidentRequest.SessionGeneration != 1 {
+		t.Fatalf("after the timeout: open=%v generation=%d", c.incidentOpen, c.currentIncidentRequest.SessionGeneration)
 	}
 }
 
@@ -136,5 +138,15 @@ func TestClosedIncidentCarriesTheSessionTheClosingTurnResumes(t *testing.T) {
 	result := earlyResultSnapshot(loop, IncidentRequest{IncidentID: "synthetic"}, time.Unix(1000, 0).UTC())
 	if result.ResponderSessionID != "session-1" {
 		t.Fatalf("the controller-built result lost the session id: %q", result.ResponderSessionID)
+	}
+}
+
+// Past its grace, an alert-opened incident whose alerts are not failing waits
+// for the next observation; the expired grace is never a wake (it would spin
+// the controller loop).
+func TestAnExpiredGraceWithNothingFailingIsNotAWake(t *testing.T) {
+	c, now, _ := goalSessionController(t, false, &recordingDispatcher{requests: make(chan IncidentRequest, 1)})
+	if wake, reason := c.nextWake(); reason == "verification deadline" {
+		t.Fatalf("an expired grace is the next wake at %s (now %s)", wake, *now)
 	}
 }

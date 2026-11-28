@@ -145,7 +145,7 @@ const (
 	// start, so restarting the store applies the configured one, and its data
 	// survives the restart.
 	RestoreByRestart RestoreBy = "restart"
-	// RestoreNone: nothing in SDO restores it; escalate.
+	// RestoreNone: nothing in SDO restores it; the agent takes over.
 	RestoreNone RestoreBy = "none"
 )
 func RestorePath(view sdk.DetectionContext, store RefusedStore) RestoreBy

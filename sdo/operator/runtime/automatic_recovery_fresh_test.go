@@ -294,21 +294,20 @@ func TestARolloutKubernetesGaveUpOnHandsOff(t *testing.T) {
 	}
 }
 
-// wait and escalate keep the bound they computed, whatever the evidence.
-func TestAFailingUserTestLeavesTheOtherPoliciesAlone(t *testing.T) {
-	for _, policy := range []string{settings.AfterPlaybookWait, settings.AfterPlaybookEscalate} {
-		test := &buyTest{failing: alwaysFails}
-		c, world, _ := freshWorld(t, test, policy)
-		stretchDeadline(c, 15*time.Minute)
-		setRollout(t, world, false, appsv1.DeploymentCondition{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded"})
-		stepSeconds(t, c, world, 15*60-1)
-		if autoReport(c).GetHandoffSelected() || !c.escalatedAt.IsZero() {
-			t.Fatalf("%s: ended early at %s", policy, c.escalatedAt)
-		}
-		stepSeconds(t, c, world, 2)
-		if c.escalatedAt.IsZero() {
-			t.Fatalf("%s: did not end at its bound", policy)
-		}
+// wait keeps the bound it computed, whatever the evidence, then hands off to
+// the agent (SDO never escalates).
+func TestAFailingUserTestLeavesTheWaitPolicyAlone(t *testing.T) {
+	test := &buyTest{failing: alwaysFails}
+	c, world, _ := freshWorld(t, test, settings.AfterPlaybookWait)
+	stretchDeadline(c, 15*time.Minute)
+	setRollout(t, world, false, appsv1.DeploymentCondition{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded"})
+	stepSeconds(t, c, world, 15*60-1)
+	if autoReport(c).GetHandoffSelected() {
+		t.Fatal("wait handed off before its bound")
+	}
+	stepSeconds(t, c, world, 2)
+	if !autoReport(c).GetHandoffSelected() {
+		t.Fatal("wait did not hand off to the agent at its bound")
 	}
 }
 

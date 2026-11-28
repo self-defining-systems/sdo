@@ -324,7 +324,7 @@ func (c *Controller) keepIncidentDispatched(state, original *contracts.Controlle
 		c.mu.Unlock()
 	}
 	report := deterministicStageReport(state.GetIncidentRequest().GetPriorStages())
-	stageOnly := path == "deterministic" && session == "" && original.GetEscalatedAt() == nil && !report.GetHandoffSelected() && state.GetIncidentRequest().GetPreparedAgentTask() == ""
+	stageOnly := path == "deterministic" && session == "" && !report.GetHandoffSelected() && state.GetIncidentRequest().GetPreparedAgentTask() == ""
 	now := timestamppb.New(c.clock())
 	if !stageOnly {
 		if lostResult {
@@ -341,10 +341,13 @@ func (c *Controller) keepIncidentDispatched(state, original *contracts.Controlle
 	}
 	deadline := state.GetIncidentRequest().GetResponseDeadline()
 	agent := c.codePath == nil || slices.Contains(c.codePath.Selection.ResponseStages, "agent")
-	if !agent || deadline != nil && !now.AsTime().Before(deadline.AsTime()) {
+	if !agent {
 		state.IncidentResult = failedStateResult(state.GetIncidentRequest().GetIncidentId(), nil, now)
-		state.EscalatedAt = now
 		return nil
+	}
+	if deadline != nil && !now.AsTime().Before(deadline.AsTime()) {
+		// The lost stage used the response window: the agent's session gets its own.
+		state.IncidentRequest.ResponseDeadline = timestamppb.New(now.AsTime().Add(c.config.ResponseTimeout))
 	}
 	if report == nil {
 		report = &contracts.StageReport{Stage: "deterministic", StartedAt: now}

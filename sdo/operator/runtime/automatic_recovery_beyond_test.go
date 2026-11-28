@@ -270,7 +270,7 @@ func TestAlertsTheWritesCanStillClearWaitTheBound(t *testing.T) {
 			for world.clock.Now().Before(bound.Add(-time.Second)) {
 				stepSeconds(t, c, world, 1)
 			}
-			if autoReport(c).GetHandoffSelected() || !c.escalatedAt.IsZero() {
+			if autoReport(c).GetHandoffSelected() {
 				t.Fatalf("the agent started at %s, bound %s", world.clock.Now(), bound)
 			}
 		})
@@ -389,10 +389,11 @@ func TestALearnedPassHoldsTheHandoff(t *testing.T) {
 	}
 }
 
-// after_playbook wait and escalate, and a response without an agent, keep
-// their bound.
-func TestPoliciesWithoutAnAgentKeepTheirBound(t *testing.T) {
-	for _, policy := range []string{settings.AfterPlaybookWait, settings.AfterPlaybookEscalate, "no agent stage"} {
+// after_playbook wait, and a response without an agent, keep their bound: wait
+// then hands off to the agent; without an agent stage the incident stays open
+// for closure (SDO never escalates).
+func TestPoliciesWithoutAnEarlyAgentKeepTheirBound(t *testing.T) {
+	for _, policy := range []string{settings.AfterPlaybookWait, "no agent stage"} {
 		configured := policy
 		if policy == "no agent stage" {
 			configured = settings.AfterPlaybookAgent
@@ -406,12 +407,17 @@ func TestPoliciesWithoutAnAgentKeepTheirBound(t *testing.T) {
 		for world.clock.Now().Before(bound.Add(-time.Second)) {
 			stepSeconds(t, c, world, 1)
 		}
-		if autoReport(c).GetHandoffSelected() || !c.escalatedAt.IsZero() {
+		if autoReport(c).GetHandoffSelected() {
 			t.Fatalf("%s: ended before its bound", policy)
 		}
 		autoStep(t, c, world.clock, time.Second)
-		if autoReport(c).GetHandoffSelected() || !c.escalatedAt.Equal(bound) {
-			t.Fatalf("%s: handoff=%v escalated=%s, bound %s", policy, autoReport(c).GetHandoffSelected(), c.escalatedAt, bound)
+		if want := policy == settings.AfterPlaybookWait; autoReport(c).GetHandoffSelected() != want || !c.IncidentOpen() {
+			t.Fatalf("%s: handoff=%v (want %v) open=%v, bound %s", policy, autoReport(c).GetHandoffSelected(), want, c.IncidentOpen(), bound)
+		}
+		// Past the bound with no handoff, the expired bound is never the next
+		// wake: it would spin the controller loop.
+		if wake, reason := c.nextWake(); reason == "verification deadline" && !wake.After(world.clock.Now()) {
+			t.Fatalf("%s: the expired stage bound is the next wake at %s", policy, wake)
 		}
 	}
 }

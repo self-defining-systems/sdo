@@ -99,18 +99,20 @@ func TestRecoveredWaitsForUserTestsThatJoinWhileTheResponderRuns(t *testing.T) {
 	}
 }
 
-// After the responder returned, a user test that starts failing is a symptom
-// nobody works on: the incident closes on its own alert set, verified, and
-// the test opens the next incident.
-func TestAUserTestFailingAfterTheResponderReturnedOpensTheNextIncident(t *testing.T) {
+// A user test that starts failing past the join window is not the open
+// incident's: the incident closes on its own alert set, verified, and the test
+// opens the next incident. (Within the window it joins, even after the
+// responder returned: an open incident is always worked.)
+func TestAUserTestFailingPastTheJoinWindowOpensTheNextIncident(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	c, closed, hurt := lateUserTestController(t, now)
+	c.incidentDetectedAt = now.Add(-AlertJoinWindow - time.Second)
 	first := c.currentIncidentRequest.IncidentID
 	for step := 0; step < 20 && (c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID == first); step++ {
 		stepFor(t, c, now, 1)
 		now = now.Add(time.Second)
 	}
-	if closed.Result == nil || closed.Request.IncidentID != first || !closed.EscalatedAt.IsZero() || len(closed.Request.JoinedKeys) != 0 ||
+	if closed.Result == nil || closed.Request.IncidentID != first || len(closed.Request.JoinedKeys) != 0 ||
 		len(closed.FinalDetectorStates) == 0 {
 		t.Fatalf("the first incident did not close verified on its own alert set: %+v", closed)
 	}

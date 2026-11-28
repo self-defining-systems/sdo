@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -130,10 +131,11 @@ func (w *lateWorld) openingKeys() []string {
 }
 
 // A fault that keeps the incident's own alert failing and breaks another user
-// test after the responder returned: nothing works the incident any more, so
-// it closes escalated (no learning credit) and the next incident opens on
-// every alert still failing.
-func TestAnEscalatedIncidentHandsItsFailingAlertsToTheNextIncident(t *testing.T) {
+// test after the responder returned: the incident is still worked, so the test
+// joins its alert set, the incident never closes on a failing set, and a fresh
+// session starts on the same incident with both alerts in its summary. SDO
+// never escalates or hands the alerts to another incident.
+func TestAReturnedIncidentKeepsItsJoinersAndStartsAFreshSession(t *testing.T) {
 	for _, withBroker := range []bool{false, true} {
 		t.Run(map[bool]string{false: "direct", true: "broker"}[withBroker], func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -146,37 +148,39 @@ func TestAnEscalatedIncidentHandsItsFailingAlertsToTheNextIncident(t *testing.T)
 				}
 				first := w.incidentID()
 				w.late.failing.Store(true)
-				w.drive(30, func() bool { return len(w.closed) > 0 })
-				if len(w.closed) != 1 {
-					t.Fatal("the escalated incident never closed while a new opener waited")
+				w.drive(30, func() bool {
+					w.c.mu.Lock()
+					defer w.c.mu.Unlock()
+					return w.c.currentIncidentRequest != nil && w.c.currentIncidentRequest.SessionGeneration > 0
+				})
+				if len(w.closed) != 0 || w.incidentID() != first {
+					t.Fatalf("the incident closed or changed with its alerts failing: %+v", w.closed)
 				}
-				closed := w.closed[0]
-				if closed.Request.IncidentID != first || closed.EscalatedAt.IsZero() || len(closed.FinalDetectorStates) != 0 || closed.HealthClearedAt != nil ||
-					len(closed.Request.JoinedKeys) != 0 {
-					t.Fatalf("want an escalated, unverified close of the first incident on its own set: %+v", closed)
+				w.c.mu.Lock()
+				defer w.c.mu.Unlock()
+				request := w.c.currentIncidentRequest
+				if request.SessionGeneration != 1 || !slices.Contains(request.JoinedKeys, findingKey(w.late.finding())) {
+					t.Fatalf("generation=%d joined=%v; want one fresh session with the late test joined", request.SessionGeneration, request.JoinedKeys)
 				}
-				if closed.Result == nil || !slices.ContainsFunc(closed.Result.UnresolvedFindings, func(f sdk.Finding) bool { return f.DetectorID == w.cond.id }) {
-					t.Fatalf("the escalated close must name its unresolved alert: %+v", closed.Result)
-				}
-				w.drive(30, func() bool { return w.incidentID() != "" && w.incidentID() != first })
-				want := findingKeys([]sdk.Finding{w.cond.finding(), w.late.finding()})
-				if got := w.openingKeys(); w.incidentID() == first || !slices.Equal(got, want) {
-					t.Fatalf("next incident opening keys = %v, want %v (every alert still failing)", got, want)
+				if !strings.Contains(request.PriorSession, "joined alert") || !strings.Contains(request.PriorSession, "opening alert") {
+					t.Fatalf("the fresh session's summary misses an alert: %q", request.PriorSession)
 				}
 			})
 		})
 	}
 }
 
-// An escalated incident with no waiting opener stays open until its alerts
-// clear.
-func TestAnEscalatedIncidentWithNothingWaitingStaysOpen(t *testing.T) {
+// A returned incident with no waiting opener stays open and is worked by a
+// fresh session until its alerts clear.
+func TestAReturnedIncidentWithNothingWaitingStaysOpenAndIsWorked(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := newLateWorld(t, true)
 		w.c.config.VerificationTimeout = 3 * time.Second
 		w.runUntil(30, func() bool { return len(w.closed) > 0 })
-		if len(w.closed) != 0 || !w.c.IncidentOpen() || w.c.escalatedAt.IsZero() {
-			t.Fatalf("closed=%d open=%v escalated=%s", len(w.closed), w.c.IncidentOpen(), w.c.escalatedAt)
+		w.c.mu.Lock()
+		defer w.c.mu.Unlock()
+		if len(w.closed) != 0 || !w.c.incidentOpen || w.c.currentIncidentRequest.SessionGeneration != 1 {
+			t.Fatalf("closed=%d open=%v generation=%d", len(w.closed), w.c.incidentOpen, w.c.currentIncidentRequest.SessionGeneration)
 		}
 	})
 }
@@ -186,6 +190,7 @@ func TestAnEscalatedIncidentWithNothingWaitingStaysOpen(t *testing.T) {
 func TestAWaitingOpenerSurvivesARestart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := newLateWorld(t, false)
+		w.c.incidentDetectedAt = w.now.Add(-AlertJoinWindow - time.Second) // past the join window
 		first := w.incidentID()
 		w.late.failing.Store(true)
 		w.step()
@@ -210,7 +215,7 @@ func TestAWaitingOpenerSurvivesARestart(t *testing.T) {
 		restarted.OnIncidentClosed = func(closure IncidentClosure) { w.closed = append(w.closed, closure) }
 		w.c = restarted
 		w.runUntil(30, func() bool { return w.incidentID() != "" && w.incidentID() != first })
-		if len(w.closed) != 1 || !w.closed[0].EscalatedAt.IsZero() || len(w.closed[0].FinalDetectorStates) == 0 {
+		if len(w.closed) != 1 || len(w.closed[0].FinalDetectorStates) == 0 {
 			t.Fatalf("the first incident did not close verified: %+v", w.closed)
 		}
 		if got := w.openingKeys(); !slices.Equal(got, findingKeys([]sdk.Finding{w.late.finding()})) {
@@ -224,6 +229,7 @@ func TestAWaitingOpenerSurvivesARestart(t *testing.T) {
 func TestAFlappingUserTestOpensAtMostOneMoreIncident(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := newLateWorld(t, false)
+		w.c.incidentDetectedAt = w.now.Add(-AlertJoinWindow - time.Second) // past the join window
 		first := w.incidentID()
 		seen := map[string]bool{first: true}
 		for i := range 40 {
@@ -236,54 +242,39 @@ func TestAFlappingUserTestOpensAtMostOneMoreIncident(t *testing.T) {
 		if len(seen) > 2 {
 			t.Fatalf("a flapping user test opened %d incidents: %v", len(seen)-1, seen)
 		}
-		if len(w.closed) == 0 || w.closed[0].Request.IncidentID != first || !w.closed[0].EscalatedAt.IsZero() ||
+		if len(w.closed) == 0 || w.closed[0].Request.IncidentID != first ||
 			len(w.closed[0].Request.JoinedKeys) != 0 || len(w.closed[0].FinalDetectorStates) == 0 {
 			t.Fatalf("the first incident's outcome changed: %+v", w.closed)
 		}
 	})
 }
 
-// After an applied playbook, under after_playbook=escalate or =wait, a user
-// test that fails while the stage owns the repair joins the alert set; one
-// that fails after the stage escalated waits for the next incident, which the
-// escalated incident hands it to. It is never lost.
-func TestJoinersAfterAPlaybookWithoutAnAgentAreNeverLost(t *testing.T) {
-	for _, policy := range []string{settings.AfterPlaybookEscalate, settings.AfterPlaybookWait} {
-		t.Run(policy, func(t *testing.T) {
-			c, world, closed := automaticRecoveryWorld(t, settlingCase{}, policy)
-			c.config.VerificationTimeout = time.Second
-			joined := (&switchedProbe{id: memory.TrafficDetectorPrefix + "joined", scenario: "browse"}).finding()
-			c.admitActivation(t.Context(), joined, world.clock.Now(), sdk.DetectorSpec{})
-			if !slices.Contains(c.currentIncidentRequest.JoinedKeys, findingKey(joined)) {
-				t.Fatal("a user test did not join while the stage owned the repair")
-			}
-			for range 600 {
-				if !c.escalatedAt.IsZero() {
-					break
-				}
-				autoStep(t, c, world.clock, time.Second)
-			}
-			if c.escalatedAt.IsZero() {
-				t.Fatal("the stage never escalated")
-			}
-			late := (&switchedProbe{id: memory.TrafficDetectorPrefix + "late", scenario: "write"}).finding()
-			c.admitActivation(t.Context(), late, world.clock.Now(), sdk.DetectorSpec{})
-			if slices.Contains(c.currentIncidentRequest.JoinedKeys, findingKey(late)) {
-				t.Fatal("a user test joined an escalated incident")
-			}
-			for range 10 {
-				if closed.Result != nil {
-					break
-				}
-				autoStep(t, c, world.clock, time.Second)
-			}
-			if closed.Result == nil || closed.EscalatedAt.IsZero() {
-				t.Fatalf("the escalated incident did not close with a new opener waiting: %+v", closed)
-			}
-			if !slices.ContainsFunc(c.batcher.Snapshot().Findings, func(f sdk.Finding) bool { return findingKey(f) == findingKey(late) }) {
-				t.Fatalf("the late user test was lost: batch %v", c.batcher.Snapshot().Findings)
-			}
-		})
+// After an applied playbook under after_playbook=wait, a user test that fails
+// while the stage owns the repair joins the alert set; at the wait's bound the
+// stage hands off to the agent, and a test that fails after that joins too.
+// It is never lost.
+func TestJoinersAfterAPlaybookUnderWaitAreNeverLost(t *testing.T) {
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{}, settings.AfterPlaybookWait)
+	c.config.VerificationTimeout = time.Second
+	joined := (&switchedProbe{id: memory.TrafficDetectorPrefix + "joined", scenario: "browse"}).finding()
+	c.admitActivation(t.Context(), joined, world.clock.Now(), sdk.DetectorSpec{})
+	if !slices.Contains(c.currentIncidentRequest.JoinedKeys, findingKey(joined)) {
+		t.Fatal("a user test did not join while the stage owned the repair")
+	}
+	for range 600 {
+		if autoReport(c).GetHandoffSelected() {
+			break
+		}
+		autoStep(t, c, world.clock, time.Second)
+	}
+	if !autoReport(c).GetHandoffSelected() {
+		t.Fatal("the stage never handed off to the agent")
+	}
+	late := (&switchedProbe{id: memory.TrafficDetectorPrefix + "late", scenario: "write"}).finding()
+	c.admitActivation(t.Context(), late, world.clock.Now(), sdk.DetectorSpec{})
+	if !slices.Contains(c.currentIncidentRequest.JoinedKeys, findingKey(late)) &&
+		!slices.ContainsFunc(c.batcher.Snapshot().Findings, func(f sdk.Finding) bool { return findingKey(f) == findingKey(late) }) {
+		t.Fatalf("the late user test was lost: joined %v, batch %v", c.currentIncidentRequest.JoinedKeys, c.batcher.Snapshot().Findings)
 	}
 }
 

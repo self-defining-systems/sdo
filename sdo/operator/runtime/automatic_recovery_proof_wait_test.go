@@ -28,8 +28,8 @@ func (d *clearingUserTest) Detect(ctx context.Context, view sdk.DetectionContext
 // that samples every three minutes has too few samples since the settle for
 // Recovered to hold at the stage's bound. Clear alerts leave nothing to hand
 // off and nothing failed: the stage waits for Recovered's own horizon and the
-// incident closes as the stage's success, never escalated.
-func TestClearAlertsWaitForRecoveredInsteadOfEscalating(t *testing.T) {
+// incident closes as the stage's success.
+func TestClearAlertsWaitForRecovered(t *testing.T) {
 	for _, policy := range []string{settings.AfterPlaybookAgent, settings.AfterPlaybookWait} {
 		t.Run(policy, func(t *testing.T) {
 			detector := &clearingUserTest{}
@@ -49,13 +49,13 @@ func TestClearAlertsWaitForRecoveredInsteadOfEscalating(t *testing.T) {
 			}
 			for i := 0; c.IncidentOpen() && i < 15*60; i++ {
 				autoStep(t, c, world.clock, time.Second)
-				if !c.escalatedAt.IsZero() || report.GetHandoffSelected() {
-					t.Fatalf("clear alerts at %s: escalated=%v handoff=%v, waiting on %q",
-						world.clock.Now().Sub(test.start), c.escalatedAt, report.GetHandoffSelected(), c.recoveryWaitingOn)
+				if report.GetHandoffSelected() {
+					t.Fatalf("clear alerts at %s: handoff=%v, waiting on %q",
+						world.clock.Now().Sub(test.start), report.GetHandoffSelected(), c.recoveryWaitingOn)
 				}
 			}
-			if c.IncidentOpen() || closed.Result == nil || !closed.EscalatedAt.IsZero() {
-				t.Fatalf("Recovered did not close the incident: open=%v escalated=%v", c.IncidentOpen(), closed.EscalatedAt)
+			if c.IncidentOpen() || closed.Result == nil {
+				t.Fatalf("Recovered did not close the incident: open=%v", c.IncidentOpen())
 			}
 			stage := deterministicStageReport(closed.Request.PriorStages)
 			if exit := stage.GetRecoveryWait().GetExitReason(); exit != contracts.RecoveryWait_EXIT_REASON_CLEARED {
@@ -81,8 +81,9 @@ func TestClearAlertsWaitForRecoveredInsteadOfEscalating(t *testing.T) {
 }
 
 // A user test that never reaches its sample count does not hold a stage with
-// clear alerts forever: past Recovered's horizon the stage escalates as before.
-func TestClearAlertsEscalatePastRecoveredsHorizon(t *testing.T) {
+// clear alerts forever: past Recovered's horizon the stage stops waiting (with
+// nothing failing there is nothing to hand off; closure keeps judging).
+func TestClearAlertsStopTheStagePastRecoveredsHorizon(t *testing.T) {
 	detector := &clearingUserTest{}
 	c, world, closed := automaticRecoveryWorld(t, settlingCase{healAfter: 5 * time.Second}, settings.AfterPlaybookAgent, detector)
 	test := &buyTest{every: 2 * time.Minute, failing: func(time.Duration) bool { return false }, start: world.clock.Now()}
@@ -95,10 +96,14 @@ func TestClearAlertsEscalatePastRecoveredsHorizon(t *testing.T) {
 	stepSeconds(t, c, world, 20)
 	detector.cleared.Store(true)
 	horizon := test.window(test.start)["shop"].Workload.ScenarioHorizon("buy")
-	for i := 0; c.escalatedAt.IsZero() && i < 15*60; i++ {
+	ended := func() bool {
+		return autoReport(c).GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_DEADLINE
+	}
+	for i := 0; !ended() && i < 15*60; i++ {
 		autoStep(t, c, world.clock, time.Second)
 	}
-	if c.escalatedAt.IsZero() || c.escalatedAt.Before(test.start.Add(horizon)) || c.escalatedAt.After(test.start.Add(horizon+time.Minute)) {
-		t.Fatalf("escalated at %s, want just past the horizon %s (closed %+v)", c.escalatedAt.Sub(test.start), horizon, closed.EscalatedAt)
+	at := world.clock.Now()
+	if !ended() || at.Before(test.start.Add(horizon)) || at.After(test.start.Add(horizon+time.Minute)) || autoReport(c).GetHandoffSelected() {
+		t.Fatalf("stage wait ended=%v at %s, want just past the horizon %s without a handoff (closed %+v)", ended(), at.Sub(test.start), horizon, closed)
 	}
 }

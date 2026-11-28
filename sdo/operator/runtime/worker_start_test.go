@@ -221,7 +221,7 @@ func TestTwoDeadWorkersEndTheDispatch(t *testing.T) {
 	if !errors.As(err, &never) || never.Attempts != 2 || !strings.Contains(never.Reason, "synthetic crash") {
 		t.Fatalf("Dispatch = %v; want WorkerNeverStartedError after two workers", err)
 	}
-	// A restart before the escalation is saved must not start a third worker.
+	// A restart before the ended dispatch is saved must not start a third worker.
 	if _, err := w.dispatch(); !errors.As(err, &never) || len(w.jobs) != 2 {
 		t.Fatalf("rejoin = %v, workers %v", err, w.jobs)
 	}
@@ -289,7 +289,7 @@ func TestARestartDuringAReplacementStartsOneFreshWorker(t *testing.T) {
 // What the automatic stage applied before the agent's workers died stays in the
 // result, whatever response.after_playbook says.
 func TestNeverStartedWorkersKeepTheStagesApplications(t *testing.T) {
-	for _, after := range []string{"agent", "escalate", "wait"} {
+	for _, after := range []string{"agent", "wait"} {
 		h := newPreparationHarness(t, func(int) error { return nil })
 		h.step()
 		h.controller.mu.Lock()
@@ -301,17 +301,18 @@ func TestNeverStartedWorkersKeepTheStagesApplications(t *testing.T) {
 		applied := IncidentResult{IncidentID: id, PlanApplications: make([]RecordedPlanApplication, 1)}
 		h.controller.handleDispatchCompletion(dispatchCompletion{incidentID: id, result: applied, err: &WorkerNeverStartedError{Attempts: 2, Reason: "synthetic"}}, h.now)
 		h.controller.mu.Lock()
-		result, escalated := h.controller.currentIncidentResult, h.controller.escalatedAt
+		result, done := h.controller.currentIncidentResult, h.controller.responderDone
 		h.controller.mu.Unlock()
-		if result == nil || len(result.PlanApplications) != 1 || escalated.IsZero() {
-			t.Fatalf("%s: result %v, escalated %v", after, result, escalated)
+		if result == nil || len(result.PlanApplications) != 1 || !done {
+			t.Fatalf("%s: result %v, done %v", after, result, done)
 		}
 	}
 }
 
-// Prepared, then both workers died: the incident escalates and stays open, and
-// the reason is in the result, the lifecycle event and the saved state.
-func TestWorkersThatNeverStartedEscalateTheIncident(t *testing.T) {
+// Prepared, then both workers died: the dispatch ends and the incident stays
+// open for a fresh session, and the reason is in the result, the lifecycle
+// event and the saved state.
+func TestWorkersThatNeverStartedEndTheDispatchAndKeepTheIncidentOpen(t *testing.T) {
 	h := newPreparationHarness(t, func(int) error { return nil })
 	h.step()
 	h.controller.mu.Lock()
@@ -321,11 +322,11 @@ func TestWorkersThatNeverStartedEscalateTheIncident(t *testing.T) {
 	cause := fmt.Errorf("response stage agent: %w", &WorkerNeverStartedError{Attempts: 2, Reason: "exit_code=1 synthetic"})
 	h.controller.handleDispatchCompletion(dispatchCompletion{incidentID: id, err: cause}, h.now)
 	h.controller.mu.Lock()
-	open, escalated, done, dispatchErr := h.controller.incidentOpen, h.controller.escalatedAt, h.controller.responderDone, h.controller.dispatchError
+	open, done, dispatchErr := h.controller.incidentOpen, h.controller.responderDone, h.controller.dispatchError
 	result := h.controller.currentIncidentResult
 	h.controller.mu.Unlock()
-	if !open || escalated.IsZero() || !done || dispatchErr != "" {
-		t.Fatalf("open %v, escalated %v, done %v, dispatch error %q", open, escalated, done, dispatchErr)
+	if !open || !done || dispatchErr != "" {
+		t.Fatalf("open %v, done %v, dispatch error %q", open, done, dispatchErr)
 	}
 	if result == nil || result.Status != IncidentFailed || !strings.Contains(result.Error, "exit_code=1 synthetic") {
 		t.Fatalf("result = %+v", result)

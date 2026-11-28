@@ -217,7 +217,7 @@ func responsePipelineResult(state *IncidentState, started, completed time.Time) 
 			if attempt.PostApplyDiagnose != nil {
 				result.ProgramRuns = append(result.ProgramRuns, programRunState(attempt.PostApplyDiagnose))
 			}
-			if cause, ok := escalatedCause(attempt, state.Request.Findings); ok {
+			if cause, ok := outOfReachCause(attempt, state.Request.Findings); ok {
 				result.ConfirmedRootCauses = mergeStageCause(result.ConfirmedRootCauses, cause)
 				continue
 			}

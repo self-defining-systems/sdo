@@ -131,7 +131,10 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 		archived = append(archived, application)
 	}
 	l.archivedApplications = archived
-	if state.SessionID != "" {
+	// A fresh agent session of the incident keeps the applied evidence and
+	// receipts, but none of the earlier session's identity or task record.
+	fresh := state.Continuation.Generation != l.Request.SessionGeneration
+	if state.SessionID != "" && !fresh {
 		l.sessionID = state.SessionID
 	}
 	l.effectShown = state.EffectShown
@@ -154,6 +157,9 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	}
 	l.continuation = state.Continuation
 	l.menuSession = state.MenuSession
+	if fresh {
+		l.continuation, l.menuSession = responderContinuation{Generation: l.Request.SessionGeneration}, nil
+	}
 	l.menuReports = state.MenuReports
 	l.menuRepairs = state.MenuRepairs
 	l.menuExecutions = state.MenuExecutions

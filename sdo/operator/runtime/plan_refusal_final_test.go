@@ -104,7 +104,7 @@ func TestAutomaticPlanningFailure(t *testing.T) {
 }
 
 func TestPlanRefusalPreservesEarlierWriteRecovery(t *testing.T) {
-	for _, policy := range []string{settings.AfterPlaybookAgent, settings.AfterPlaybookWait, settings.AfterPlaybookEscalate} {
+	for _, policy := range []string{settings.AfterPlaybookAgent, settings.AfterPlaybookWait} {
 		t.Run(policy, func(t *testing.T) {
 			for _, scenario := range []struct {
 				name      string
@@ -123,23 +123,23 @@ func TestPlanRefusalPreservesEarlierWriteRecovery(t *testing.T) {
 					})
 					autoStep(t, c, world.clock, time.Second)
 					report = autoReport(c)
-					if !report.GetRecoveryDeadline().AsTime().Equal(bound) || report.GetHandoffSelected() || !c.escalatedAt.IsZero() {
-						t.Fatalf("refusal interrupted recovery before %s: handoff=%v escalated=%s deadline=%v", bound, report.GetHandoffSelected(), c.escalatedAt, report.GetRecoveryDeadline())
+					if !report.GetRecoveryDeadline().AsTime().Equal(bound) || report.GetHandoffSelected() {
+						t.Fatalf("refusal interrupted recovery before %s: handoff=%v deadline=%v", bound, report.GetHandoffSelected(), report.GetRecoveryDeadline())
 					}
 					if scenario.healAfter > 0 {
 						autoStep(t, c, world.clock, scenario.healAfter-time.Second)
 						autoStep(t, c, world.clock, c.config.ClosureStabilityWindow)
 						autoStep(t, c, world.clock, time.Second)
 						report := deterministicStageReport(closed.Request.PriorStages)
-						if closed.Result == nil || report.GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED || !closed.EscalatedAt.IsZero() {
-							t.Fatalf("the earlier write did not recover: closed=%t exit=%s escalated=%s", closed.Result != nil, report.GetRecoveryWait().GetExitReason(), closed.EscalatedAt)
+						if closed.Result == nil || report.GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED {
+							t.Fatalf("the earlier write did not recover: closed=%t exit=%s", closed.Result != nil, report.GetRecoveryWait().GetExitReason())
 						}
 						return
 					}
 					autoStep(t, c, world.clock, bound.Sub(world.clock.Now()))
-					wantHandoff := policy == settings.AfterPlaybookAgent
-					if report.GetHandoffSelected() != wantHandoff || !wantHandoff && !c.escalatedAt.Equal(bound) {
-						t.Fatalf("at deadline: handoff=%v escalated=%s, policy=%s", report.GetHandoffSelected(), c.escalatedAt, policy)
+					// Both policies hand off to the agent at the bound; SDO never escalates.
+					if !report.GetHandoffSelected() {
+						t.Fatalf("at deadline: handoff=%v, policy=%s", report.GetHandoffSelected(), policy)
 					}
 				})
 			}

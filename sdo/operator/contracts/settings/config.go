@@ -136,22 +136,21 @@ func (c Config) DetectionDigest() string {
 
 // The values of response.after_playbook.
 const (
-	AfterPlaybookAgent    = "agent"
-	AfterPlaybookEscalate = "escalate"
-	AfterPlaybookWait     = "wait"
+	AfterPlaybookAgent = "agent"
+	AfterPlaybookWait  = "wait"
 )
 
 // Response bounds and shapes the incident response.
 type Response struct {
-	Timeout              Duration `yaml:"timeout" doc:"how long the responder may work on one incident; the reflection deadline derives from it"`
+	Timeout              Duration `yaml:"timeout" doc:"how long one responder session may work on an incident; when it passes before Recovered, SDO starts a fresh session on the same incident (it never escalates). The reflection deadline derives from it"`
 	VerificationTimeout  Duration `yaml:"verification_timeout" doc:"how long the independent verification of a repair may take"`
 	MaxLoops             int      `yaml:"max_loops" doc:"mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)"`
 	DiagnosisDeadline    Duration `yaml:"diagnosis_deadline" doc:"shared deadline of candidate diagnosis in the automatic stage"`
 	StageBudget          Duration `yaml:"stage_budget" doc:"scheduling bound of one automatic-stage pass; a follow-up pass before responder handoff may take up to twice this"`
 	RepairPolicy         string   `yaml:"repair_policy" doc:"the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs)"`
-	AfterPlaybook        string   `yaml:"after_playbook" doc:"what happens when a learned playbook applied and the alert set did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; recovery is judged on the incident's whole alert set (opening alerts plus joined user tests), so a joined test still failing at the bound dispatches the agent"`
-	AfterPlaybookWait    Duration `yaml:"after_playbook_wait" doc:"how long after_playbook: wait keeps waiting for the alert set to recover after the playbook applied, capped by the response timeout; under agent and escalate it caps the estimated wait after the playbook's last write"`
-	DispatchPrepareBound Duration `yaml:"dispatch_prepare_bound" doc:"how long a transient failure to prepare the responder's task (a Git, IO or Kubernetes API error) is retried with backoff before the incident escalates without an agent, capped by the response timeout; a permanent failure (unreadable operational memory, a task over budget) escalates at once"`
+	AfterPlaybook        string   `yaml:"after_playbook" doc:"what happens when a learned playbook applied and the alert set did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did, as soon as the stage sees it cannot recover) or wait (keep waiting for recovery up to after_playbook_wait, then dispatch the agent). SDO never escalates. When recovery holds, no agent runs in any setting; recovery is judged on the incident's whole alert set (opening alerts plus joined user tests), so a joined test still failing at the bound dispatches the agent"`
+	AfterPlaybookWait    Duration `yaml:"after_playbook_wait" doc:"how long after_playbook: wait keeps waiting for the alert set to recover after the playbook applied, capped by the response timeout; under agent it caps the estimated wait after the playbook's last write"`
+	DispatchPrepareBound Duration `yaml:"dispatch_prepare_bound" doc:"how long a transient failure to prepare the responder's task (a Git, IO or Kubernetes API error) is retried with backoff before that dispatch ends, capped by the response timeout; a permanent failure (unreadable operational memory, a task over budget) ends it at once. An ended dispatch is followed by a fresh, paced session while the incident's alerts fail"`
 	Standby              bool     `yaml:"standby" doc:"pre-start a responder worker; false forces cold Jobs"`
 	Menu                 bool     `yaml:"menu" doc:"offer the responder its tool menu"`
 	BuiltinRestoreAuto   bool     `yaml:"builtin_restore_auto" doc:"let the automatic stage apply the built-in source-restore playbook when its diagnosis matches: put back a non-SDO departure from accepted source, made before the onset, whose content the install was not seen healthy with, on a component on a failing path or on the opening condition's own component at any path position, dependency hops included; off, it is only offered like any playbook and the responder decides"`
@@ -160,7 +159,7 @@ type Response struct {
 	CleanupTurns         int      `yaml:"cleanup_turns" doc:"how many times the responder's session is asked, after Recovered, to keep or remove the app-file edits it left uncaptured; edits still left after that are discarded and recorded as source_repair_uncaptured. 0 asks no cleanup turn"`
 	PageOnly             bool     `yaml:"page_only" doc:"the responder is a plain agent that gets only the incident page: no sdo commands on its PATH, no skills, no memory checkout, no investigators, no closing or cleanup turn, and no learning from the incident. SDO still detects, pages and verifies as usual. For comparing SDO's page alone against SDO's tools and memory"`
 	ExternalClues        bool     `yaml:"external_clues" doc:"with mode external: keep the detectors, synthetic traffic and state baseline running as clues (sdo detect, the candidate view). Their findings never open, join or close an external incident; the caller opens it and the responder's completion closes it. Default off: an external controller observes nothing"`
-	Investigators        int      `yaml:"investigators" doc:"how many read-only investigator sessions SDO starts when the responder has made no progress SDO can see by investigator_delay (no known write, no alert of the set cleared, recovery not verified): one per top candidate node with non-routine evidence, each testing one hypothesis and writing a report the responder reads with sdo investigations. They never fix, never close or escalate an incident and are stopped before the closing turn. 0 starts none"`
+	Investigators        int      `yaml:"investigators" doc:"how many read-only investigator sessions SDO starts when the responder has made no progress SDO can see by investigator_delay (no known write, no alert of the set cleared, recovery not verified): one per top candidate node with non-routine evidence, each testing one hypothesis and writing a report the responder reads with sdo investigations. They never fix or close an incident and are stopped before the closing turn. 0 starts none"`
 	InvestigatorDelay    Duration `yaml:"investigator_delay" doc:"how long after its first tool call the responder may work without progress (a known write, a cleared alert or verified recovery) before investigators start; a fix faster than this costs nothing. Measured fast fixes land in 25-60 s, so the 60s default starts them only for the slow incidents"`
 	StartupBound         Duration `yaml:"startup_bound" doc:"how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before detectors can open incidents. Pages can start the responder during startup. 0s turns the start-up period off"`
 }
@@ -319,7 +318,7 @@ func (c Config) Validate() error {
 	}
 	positive("source.poll_interval", c.Source.PollInterval)
 	oneOf("response.repair_policy", c.Response.RepairPolicy, "commit", "recorded-actions")
-	oneOf("response.after_playbook", c.Response.AfterPlaybook, AfterPlaybookAgent, AfterPlaybookEscalate, AfterPlaybookWait)
+	oneOf("response.after_playbook", c.Response.AfterPlaybook, AfterPlaybookAgent, AfterPlaybookWait)
 	positive("response.after_playbook_wait", c.Response.AfterPlaybookWait)
 	positive("response.dispatch_prepare_bound", c.Response.DispatchPrepareBound)
 	positive("detection.self_heal_hold", c.Detection.SelfHealHold)

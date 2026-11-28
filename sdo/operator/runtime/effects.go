@@ -7,6 +7,8 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"time"
 
+	"sdo.dev/operator/runtime/internal/lifecycleio"
+
 	"google.golang.org/protobuf/proto"
 )
 
@@ -94,6 +96,10 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 // that ignores both reaches this bound.
 const responseEndGrace = 30 * time.Second
 
+// responseEndQuiescence bounds stopping a timed-out responder's work and
+// seeing it stopped.
+const responseEndQuiescence = time.Minute
+
 // responseEndBound is how long the response pipeline may run: until the response
 // deadline plus responseEndGrace. A dispatch that resumes past its deadline (a
 // restarted controller rejoining a finished Job) still gets the grace to harvest.
@@ -119,15 +125,36 @@ type incidentWorkEnder interface {
 }
 
 // endTimedOutResponse ends a responder that outlived its response deadline: it
-// stops the dispatcher's work and returns the terminal failure the controller
-// records for the attempt, the same as a responder Job that failed. The incident
-// then closes by health alone, so it reaches an outcome and later incidents run.
+// stops the dispatcher's work and, once that work is shown stopped, returns the
+// terminal failure the controller records for the session, the same as a
+// responder Job that failed; a fresh session may then follow, so one writer
+// holds. Work it cannot show stopped is not ended: the error is not terminal,
+// and the dispatch rejoins the old Job and tries again.
 func (c *Controller) endTimedOutResponse(ctx context.Context, request IncidentRequest, cause error) error {
 	if ender, ok := c.dispatcher.(incidentWorkEnder); ok {
-		endCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		endCtx, cancel := context.WithTimeout(ctx, responseEndQuiescence)
 		defer cancel()
-		if err := ender.EndIncidentWork(endCtx, request.IncidentID); err != nil && c.OnError != nil {
-			c.OnError(fmt.Errorf("end responder work of incident %s: %w", request.IncidentID, err))
+		err := ender.EndIncidentWork(endCtx, request.IncidentID)
+		if checker, ok := c.dispatcher.(incidentWorkChecker); ok && err == nil {
+			for {
+				var work IncidentWork
+				if work, err = checker.IncidentWork(endCtx, request.IncidentID); err != nil || !work.Active {
+					break
+				}
+				select {
+				case <-endCtx.Done():
+					err = fmt.Errorf("responder work still active: %w", endCtx.Err())
+				case <-lifecycleio.After(time.Second):
+					continue
+				}
+				break
+			}
+		}
+		if err != nil {
+			if c.OnError != nil {
+				c.OnError(fmt.Errorf("end responder work of incident %s: %w", request.IncidentID, err))
+			}
+			return fmt.Errorf("end timed-out responder work: %w", errors.Join(err, cause))
 		}
 	}
 	return &ResponderJobFailedError{JobName: IncidentJobName(request.IncidentID), Cause: errors.Join(&ResponseTimeoutError{Deadline: request.ResponseDeadline}, cause)}

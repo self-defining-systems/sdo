@@ -89,8 +89,8 @@ func TestControllerRecoveryIgnoresHealthOutsideTheAlertSet(t *testing.T) {
 				provider.view.PodList[1].Status.Conditions[0].LastTransitionTime = metav1.NewTime(now)
 			}
 			step()
-			if !closed.VerifiedAt.Equal(now) || !closed.EscalatedAt.IsZero() {
-				t.Fatalf("verified at %s, escalated at %s, want verified at %s", closed.VerifiedAt, closed.EscalatedAt, now)
+			if !closed.VerifiedAt.Equal(now) {
+				t.Fatalf("verified at %s, want verified at %s", closed.VerifiedAt, now)
 			}
 		})
 	}

@@ -235,7 +235,7 @@ func (c *Controller) clearIncidentLocked() {
 	c.earlyStopRetryAt = time.Time{}
 	c.recoveryFenceMayStand, c.withdrawnNoticeMayStand = false, false
 	c.incidentOpen = false
-	c.escalatedAt = time.Time{}
+	c.session, c.writesSettled = sessionProgress{}, false
 	c.responderDone = false
 	c.currentIncidentRequest = nil
 	c.publishHeldLocked()

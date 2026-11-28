@@ -71,7 +71,7 @@ func closeFirstIntoItsClosingTurn(t *testing.T, w *lateWorld, running func() boo
 		t.Fatalf("the first incident did not close into its closing turn: closed=%d", len(w.closed))
 	}
 	first := w.closed[0]
-	if !first.EscalatedAt.IsZero() || first.HealthClearedAt == nil || len(first.Request.JoinedKeys) != 0 {
+	if first.HealthClearedAt == nil || len(first.Request.JoinedKeys) != 0 {
 		t.Fatalf("the first incident did not close verified on its own alert set: %+v", first)
 	}
 	return first

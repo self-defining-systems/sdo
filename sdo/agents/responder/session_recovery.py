@@ -126,7 +126,23 @@ class SessionRecovery:
             message.acknowledged_attempt_ids.extend(report.attempt_id for report in self.session.pending_reports)
         return message
 
+    def _retire_earlier_session(self) -> None:
+        """Set aside the checkpoint of an earlier agent session of this incident.
+
+        A fresh session (the controller started a new logical session after one ended
+        before Recovered) never resumes the earlier transcript.
+        """
+        if self.session.provider_session_id or not self.checkpoint_path.exists():
+            return
+        try:
+            logical = json.loads(self.checkpoint_path.read_text(encoding="utf-8")).get("logical_session_id")
+        except (OSError, ValueError, AttributeError):
+            return
+        if isinstance(logical, str) and logical and logical != self.session.session_id:
+            os.replace(self.checkpoint_path, self.scratch / f"provider-checkpoint-{logical}.json")
+
     def resume_session_id(self) -> str | None:
+        self._retire_earlier_session()
         if not self.session.provider_session_id and not self.checkpoint_path.exists():
             if self.session.pending_reports or self.session.writes_frozen:
                 raise SessionRecoveryError("interrupted: missing checkpoint for recovered responder")

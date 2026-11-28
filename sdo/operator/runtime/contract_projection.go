@@ -230,9 +230,10 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
 		PriorResponseProgress: cloneResponseProgress(request.PriorResponseProgress),
-		PlaybookCoverage:      cloneCoverage(request.PlaybookCoverage),
-		PriorStages:           cloneStageReports(request.PriorStages),
-		NamespaceOnboarding:   cloneNamespaceOnboarding(request.NamespaceOnboarding),
+		SessionGeneration:     uint32(request.SessionGeneration), PriorSession: request.PriorSession,
+		PlaybookCoverage:    cloneCoverage(request.PlaybookCoverage),
+		PriorStages:         cloneStageReports(request.PriorStages),
+		NamespaceOnboarding: cloneNamespaceOnboarding(request.NamespaceOnboarding),
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
@@ -512,7 +513,6 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		StatePersistenceFailure: clonePersistenceFailure(closure.StatePersistenceFailure),
 		SourceCheckNotes:        append([]string(nil), closure.SourceCheckNotes...),
 		Frozen:                  closure.Frozen,
-		EscalatedAt:             optionalTimestamp(closure.EscalatedAt),
 	}
 	if closure.RecoveryVerification != nil {
 		message.RecoveryVerification = proto.Clone(closure.RecoveryVerification).(*contracts.RecoveryVerification)
@@ -618,6 +618,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		Page:                  message.GetPage(),
 		Telemetry:             message.GetTelemetry(),
 		PriorResponseProgress: cloneResponseProgress(message.GetPriorResponseProgress()),
+		SessionGeneration:     int(message.GetSessionGeneration()), PriorSession: message.GetPriorSession(),
 		ObservationGeneration: message.GetObservationGeneration(),
 		DetectedAt:            controllerTime(message.GetDetectedAt()),
 		NamespaceOnboarding:   cloneNamespaceOnboarding(message.GetNamespaceOnboarding()),
@@ -716,7 +717,6 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		StatePersistenceFailure: clonePersistenceFailure(message.GetStatePersistenceFailure()),
 		SourceCheckNotes:        append([]string(nil), message.GetSourceCheckNotes()...),
 		Frozen:                  message.GetFrozen(),
-		EscalatedAt:             controllerTime(message.GetEscalatedAt()),
 	}
 	if message.GetRecoveryVerification() != nil {
 		closure.RecoveryVerification = proto.Clone(message.GetRecoveryVerification()).(*contracts.RecoveryVerification)

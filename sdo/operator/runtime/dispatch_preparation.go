@@ -14,11 +14,11 @@ import (
 // request) is a step of the controller's dispatch, never a precondition of
 // saving state: no durable save may depend on an optional side computation. A
 // failure is classified. A permanent one (unreadable memory, a task over
-// budget) escalates the incident at once: no agent runs and nothing is learned,
-// and the incident stays open under ordinary closure until its alerts clear.
-// A transient one (Git, IO or Kubernetes API errors, a deadline) retries with
-// bounded exponential backoff and escalates the same way when
-// response.dispatch_prepare_bound passes.
+// budget) ends this dispatch at once; a transient one (Git, IO or Kubernetes
+// API errors, a deadline) retries with bounded exponential backoff and ends it
+// the same way when response.dispatch_prepare_bound passes. The incident stays
+// open: a page closes at its bound, an alert-opened incident starts a fresh,
+// paced session (restartSessionLocked) while its alerts fail.
 
 const (
 	dispatchPrepareFirstBackoff = 2 * time.Second
@@ -116,7 +116,7 @@ func (c *Controller) PrepareDispatchStep(ctx context.Context) (bool, error) {
 
 // noteDispatchPrepareFailure applies the preparation policy to err for the open
 // incident incidentID and reports whether the controller's state changed (an
-// escalation or a scheduled retry that a save should record).
+// ended dispatch or a scheduled retry that a save should record).
 func (c *Controller) noteDispatchPrepareFailure(incidentID string, err error) bool {
 	c.mu.Lock()
 	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
@@ -137,7 +137,7 @@ func (c *Controller) noteDispatchPrepareFailure(incidentID string, err error) bo
 		class = "transient_bound_exceeded"
 	}
 	c.prepareRetries.cleared(incidentID)
-	c.escalateDispatchFailureLocked(now, class, err)
+	c.endDispatchFailureLocked(now, class, err)
 	c.mu.Unlock()
 	if c.OnError != nil {
 		c.OnError(fmt.Errorf("dispatch incident: %w", err))
@@ -145,12 +145,11 @@ func (c *Controller) noteDispatchPrepareFailure(incidentID string, err error) bo
 	return true
 }
 
-// escalateDispatchFailureLocked ends the incident's response without a
-// responder: it records the failure, emits responder_dispatch_failed and
-// escalates. The incident stays open under ordinary closure, so it closes when
-// its alerts recover (never learning, as an escalated close) or fails at the
-// verification bound. Callers hold c.mu.
-func (c *Controller) escalateDispatchFailureLocked(now time.Time, class string, cause error) {
+// endDispatchFailureLocked ends the incident's response without a
+// responder: it records the failure and emits responder_dispatch_failed. The
+// incident stays open: Recovered closes it, a page fails at its bound, and an
+// alert-opened incident starts a fresh, paced session. Callers hold c.mu.
+func (c *Controller) endDispatchFailureLocked(now time.Time, class string, cause error) {
 	incidentID := c.currentIncidentRequest.IncidentID
 	reason := class + ": " + cause.Error()
 	c.responderDone = true
@@ -177,7 +176,6 @@ func (c *Controller) escalateDispatchFailureLocked(now time.Time, class string, 
 		Event: PhaseDispatchFailed, RecordedAt: contractTimestamp(now), IncidentId: incidentID, DispatchError: true, Reason: reason,
 	})
 	slog.Error("responder_dispatch_failed", "incident_id", incidentID, "class", class, "error", cause)
-	c.escalateLocked(now)
 }
 
 // dispatchPrepareFailure returns the preparation failure inside err, if any.

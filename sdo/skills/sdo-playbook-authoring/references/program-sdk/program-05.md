@@ -133,11 +133,11 @@ type ReconcileFromSource struct{ Ref sdk.ObjectRef }
     removing additions SourceDiff reports; prefer SetField for one field.
     An object accepted source declares that is absent is created from source,
     exactly as CreateFromSource (the receipt names the create). For a Secret
-    the controller writes the literal data of the accepted render (the keys
-    the source declares; other keys stay) and nothing records a value:
-    the receipt names the keys. It refuses a Secret whose source has no literal
-    data or whose render is not deterministic (a generated password); then
-    Escalate. Restart the readers that started after the foreign change with
+    the controller writes the literal data of the accepted render (the keys the
+    source declares; other keys stay) and nothing records a value: the receipt
+    names the keys. It refuses a Secret whose source has no literal data or
+    whose render is not deterministic (a generated password); then the agent
+    takes over. Restart the readers that started after the foreign change with
     RestartRollout later in the same plan, because a running Pod keeps the value
     it started with. Identify readers from their pod template Secret references.
     After it restores a StatefulSet's pod template, each Pod still on another

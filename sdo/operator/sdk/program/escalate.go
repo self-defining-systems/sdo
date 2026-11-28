@@ -24,7 +24,8 @@ var causeClasses = []string{
 // CauseClasses lists the categories used to summarize diagnosed causes.
 func CauseClasses() []string { return slices.Clone(causeClasses) }
 
-// CanEscalate reports whether a diagnosis may drive automatic escalation.
+// CanEscalate reports whether a diagnosis is a confirmed out-of-reach match,
+// which the automatic stage hands to the agent without a repair.
 func (v Verdict) CanEscalate() bool {
 	return v.Result == Match && v.Reach == ReachOutOfReach && slices.Contains(causeClasses, v.CauseClass) && v.Validate() == nil
 }

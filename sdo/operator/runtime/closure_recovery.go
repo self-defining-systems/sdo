@@ -66,11 +66,7 @@ func (c *Controller) reobserveClosureLocked(now time.Time, request *IncidentRequ
 	c.incidentDetectedAt = closure.DetectedAt
 	c.incidentDispatchedAt = closure.DispatchedAt
 	c.responderCompletedAt = closure.ResponderCompletedAt
-	c.escalatedAt = closure.EscalatedAt
 	c.responderDone = true
-	if !slices.Equal(resumed.JoinedKeys, closure.Request.JoinedKeys) && c.awaitingAutomaticRecoveryLocked() == nil {
-		c.escalateLocked(now)
-	}
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 	c.incidentFindingKeys = findingKeys(request.Findings)
 	c.cleanedHelpers = append([]string(nil), closure.CleanedHelpers...)

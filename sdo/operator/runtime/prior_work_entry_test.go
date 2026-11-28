@@ -16,6 +16,7 @@ import (
 func TestTheNextIncidentOpensDuringAResumedClosingTurnAfterARestart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := newLateWorld(t, false)
+		w.c.incidentDetectedAt = w.now.Add(-AlertJoinWindow - time.Second) // the late test waits for the next incident
 		queue := &publishingQueue{release: make(chan struct{})}
 		t.Cleanup(func() { close(queue.release) })
 		w.c.broker = queue

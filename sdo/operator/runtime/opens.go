@@ -161,9 +161,12 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 		return false
 	}
 	// Before the responder returns it sees the joiner in sdo detect; the
-	// automatic stage evaluates it while it owns the repair.
+	// automatic stage evaluates it while it owns the repair. An open
+	// alert-opened incident is always worked: a session that returned before
+	// Recovered is resumed (or a fresh one starts), and the joiner is in its
+	// message. A verified incident whose session returned is closing.
 	early := c.earlyReportPendingLocked()
-	running := !c.responderDone && (c.incidentOpen || early)
+	running := !c.responderDone && (c.incidentOpen || early) || c.incidentOpen && !pageOpened(request)
 	if !running && c.awaitingAutomaticRecoveryLocked() == nil {
 		return false
 	}
@@ -290,25 +293,6 @@ func (c *Controller) captureJoinedAlerts(snapshot sdk.DetectionContext) {
 	joinContext.KnownWritesBefore = len(joinContext.WriteSources) > 0
 	if err := memory.CaptureJoinContext(c.config.CorpusSessionRoot, id, joined, joinContext); err != nil && c.OnError != nil {
 		c.OnError(fmt.Errorf("record joined alert capture context: %w", err))
-	}
-}
-
-// nextIncidentWaitingLocked reports a confirmed opener in the batcher: a
-// symptom no one works on that opens the next incident once this one closes.
-// Caller holds c.mu.
-func (c *Controller) nextIncidentWaitingLocked(now time.Time) bool {
-	return c.batcher.Ready(now)
-}
-
-// handOverStillFailingLocked queues every alert of a closing escalated
-// incident that still fails, so the next incident opens on all of them with
-// the waiting opener. Caller holds c.mu.
-func (c *Controller) handOverStillFailingLocked(request IncidentRequest, now time.Time) {
-	states := c.tracker.Snapshot()
-	for _, key := range alertKeys(&request) {
-		if state, ok := states[key]; ok && state.Active {
-			c.batcher.AddAt(state.Finding, now)
-		}
 	}
 }
 

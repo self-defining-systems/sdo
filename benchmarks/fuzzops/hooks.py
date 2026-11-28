@@ -24,7 +24,7 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
               from the host sink the interval's incidents and tasks (``evidence/``) and ``transcripts.json``; then
               the dashboard view (``view.json``, ``view/transcripts/``; ``benchmarks.fuzzops.view``); last, after the
               run has settled and its evidence is copied, the operator reset between problems
-              (``sdo-operator incidents reset``: any open or escalated incident closes as RESET, no learning credit,
+              (``sdo-operator incidents reset``: any open incident closes as RESET, no learning credit,
               memory untouched), so the next run's gate starts on a clean slate (``incidents-reset.json``).
 ``teardown``  delete the control namespace (waiting, so the evidence sidecar's final pass runs), then the cluster grant
               install-existing made for it.
@@ -647,8 +647,8 @@ def idle_verdict(
     ``baselines=False`` skips the promoted-store-baseline requirement: only an inject needs it, while the waits
     before the seed import and after resets do not (a fresh install promotes later). ``incident=False`` (a
     teardown's idle) waits for the work an open incident has in flight (a responder dispatch, a closing turn,
-    reflection), never for the incident to close: an escalated one stays open until its alerts clear or a human
-    resets it, and the operator is about to be deleted."""
+    reflection), never for the incident to close: SDO keeps working an open one until its alerts clear or it is
+    reset, and the operator is about to be deleted."""
     if incident and state is not None and idle_reason(state) == "incident open":
         return f"alarm: incident open {_incident_id(state)}".rstrip()
     if not pod_ready:
@@ -1390,7 +1390,7 @@ def _binary(env: Mapping[str, str]) -> Path:
 
 
 def reset_incidents(binary: Path, control: str, kubeconfig: Path | None) -> dict[str, Any]:
-    """``sdo-operator incidents reset``: the operator closes any open or escalated incident as RESET (no learning
+    """``sdo-operator incidents reset``: the operator closes any open incident as RESET (no learning
     credit, memory untouched). Returns its JSON receipt; raises unless the controller acknowledged it."""
     args = [str(binary), "incidents", "reset", "--control-namespace", control, "--timeout", RESET_TIMEOUT]
     if kubeconfig is not None:

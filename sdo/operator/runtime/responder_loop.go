@@ -54,6 +54,9 @@ type ToolRequest struct {
 	// test, a detector or an item of the summary.
 	MapView string `json:"map_view,omitempty"`
 	Name    string `json:"name,omitempty"`
+	// Finish is the `finish` command: the session finishing before or after
+	// its turn ended; SDO answers in ToolResponse.Finish.
+	Finish *FinishRequest `json:"finish,omitempty"`
 	// Since is how far before onset `changes` and `timeline` reach, a Go
 	// duration such as 30m; Limit keeps the newest N changes.
 	Since string `json:"since,omitempty"`
@@ -125,6 +128,8 @@ type ToolResponse struct {
 	VerificationStatus  VerificationStatus  `json:"verification_status,omitempty"`
 	MemoryCheckReport   json.RawMessage     `json:"memory_check_report,omitempty"`
 	MemoryCheckTimedOut bool                `json:"memory_check_timed_out,omitempty"`
+	// Finish is SDO's answer to a `finish` request.
+	Finish *FinishAnswer `json:"finish,omitempty"`
 
 	VerificationBlockers []VerificationBlocker `json:"verification_blockers,omitempty"`
 	DataEffects          []string              `json:"data_effects,omitempty"`
@@ -254,6 +259,9 @@ type ResponderLoop struct {
 	RecoveryWaiting func() string
 	// AlertProgress reports whether an alert of the incident's set cleared since detection (the investigator gate).
 	AlertProgress func() bool
+	// Finish answers a session's finish (in-turn or after its turn); nil ends
+	// every finish, as without a controller.
+	Finish func(FinishRequest) FinishAnswer
 	// firstCall closes on the responder's first own tool call (firstToolCall); the investigator delay counts from it.
 	firstCallInit, firstCallMark sync.Once
 	firstCall                    chan struct{}
@@ -609,6 +617,15 @@ func (l *ResponderLoop) Exhausted() bool {
 type toolTiming struct{ capture, refresh, persist time.Duration }
 
 func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
+	if request.Command == "finish" {
+		// A finish is the session's own lifecycle, not a tool call: no lock,
+		// no record, no persisted state.
+		answer := FinishAnswer{Action: FinishEnd}
+		if l.Finish != nil && request.Finish != nil {
+			answer = l.Finish(*request.Finish)
+		}
+		return ToolResponse{Command: request.Command, Finish: &answer, Summary: answer.Action}
+	}
 	if !request.isolatedRead {
 		l.markFirstToolCall()
 	}

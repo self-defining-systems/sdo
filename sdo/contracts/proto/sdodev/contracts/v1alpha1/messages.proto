@@ -418,6 +418,13 @@ message IncidentRequest {
   // the alert set or re-prompts the responder, and each opens the next
   // incident if it still fails when this one closes.
   repeated LatePage late_pages = 45;
+  // Which agent session of the incident this request starts: 0 for the first,
+  // n for the nth fresh session SDO started after a session ended before
+  // Recovered held. A fresh session never resumes an earlier transcript.
+  uint32 session_generation = 46;
+  // For a fresh session: the Go-rendered facts of the incident and the
+  // session before it (its result, known writes, alerts still failing).
+  string prior_session = 47 [(buf.validate.field).string.max_len = 4096];
 }
 
 // LatePage is one late user-facing failure paged on an open incident.
@@ -750,9 +757,10 @@ message IncidentClosure {
   // Controller-computed: whether each faulted component's verification set
   // passed after SDO's last write settled, and at what strength.
   RecoveryVerification recovery_verification = 29;
-  // When the responder returned (or its response timeout passed) before
-  // Recovered held: the incident escalated. Unset otherwise.
-  google.protobuf.Timestamp escalated_at = 30;
+  // SDO never escalates: an incident closes on Recovered, on reset, or as a
+  // bounded page.
+  reserved 30;
+  reserved "escalated_at";
 }
 
 // RecoveryVerification is the controller's one "recovered" test for a
@@ -896,7 +904,7 @@ message StageMitigation {
   repeated Binding bindings = 3;
   string plan_id = 4;
   PlanApplication apply_receipt = 5;
-  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "reverted_ineffective", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped", "escalated"]}];
+  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "reverted_ineffective", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped", "out_of_reach", "escalated"]}];
   string skip_reason = 7 [(buf.validate.field).string = {in: ["", "multiple_entry_points", "no_mitigation", "unbound_parameter", "diagnose_no_longer_matches", "diagnose_unavailable", "unexplained_coverage", "already_attempted", "repair_policy", "stage_budget", "plan_not_executable", "ineffective", "holds_data", "builtin_restore_manual"]}];
   ProgramRun post_apply_diagnose = 8;
   repeated string cleared_finding_fingerprints = 9;

@@ -54,8 +54,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	// its responder can verify a page, so a page never waits either.
 	failed := report.StabilityDeadline == nil && stageScriptsFailed(report) && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages)
 	page := pageOpened(request)
-	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
-		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
+	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent")
 	// Nor do the writes have anything left to do for an alert they did not clear.
 	// Nor for a cause its settled writes provably did not address, nor for a
 	// joined alert none of its writes or plans reaches.
@@ -65,7 +64,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	// there is no learned repair to wait for, so the agent starts as its apply
 	// returns, beside the restore's rollout.
 	builtinOnly := applied && report.StabilityDeadline == nil && !learnedPlanBound(report) && agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages)
-	if !failed && !gaveUp && !beyond && !builtinOnly && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
+	if !failed && !gaveUp && !beyond && !builtinOnly && !page && (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageOutOfReachIn(request.PriorStages) {
 		return
 	}
 	if stabilityOnly && scoped {
@@ -84,7 +83,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	keys := alertKeys(request)
 	if scoped {
 		keys = c.unresolvedAlertKeysLocked(now, *request)
-	} else if !stageEscalatedIn(request.PriorStages) {
+	} else if !stageOutOfReachIn(request.PriorStages) {
 		keys = findingKeys(request.Findings)
 	}
 	if scoped && len(keys) == 0 && !page {
@@ -104,9 +103,16 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 		markAutomaticRecovery(report, observedAt, exit)
 		markUnsettledRollouts(report, check.record, rolloutBlockers)
 	}
-	if !canDispatch || stageEscalatedIn(request.PriorStages) || !agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) || scoped && len(keys) == 0 && !page {
-		c.escalateLocked(observedAt)
+	// SDO never escalates. Without an agent stage, or with nothing left to
+	// hand off, closure judges Recovered on the alert set; after_playbook wait
+	// reaches here only at its bound and hands off like agent.
+	if !canDispatch || scoped && len(keys) == 0 && !page {
 		return
+	}
+	if !request.ResponseDeadline.IsZero() && !observedAt.Before(request.ResponseDeadline) {
+		// The stage used the incident's response window: the agent's session
+		// gets its own.
+		request.ResponseDeadline = observedAt.Add(c.config.ResponseTimeout).UTC()
 	}
 
 	// The causes the stage did not cover go to the agent with the alerts.
@@ -874,7 +880,7 @@ func stageDispatchRequest(request IncidentRequest) IncidentRequest {
 }
 
 func (c *Controller) awaitingAutomaticRecoveryLocked() *contracts.StageReport {
-	if !c.incidentOpen || c.currentIncidentRequest == nil || !c.responderDone || !c.escalatedAt.IsZero() || c.dispatchError != "" {
+	if !c.incidentOpen || c.currentIncidentRequest == nil || !c.responderDone || c.dispatchError != "" {
 		return nil
 	}
 	report := deterministicStageReport(c.currentIncidentRequest.PriorStages)

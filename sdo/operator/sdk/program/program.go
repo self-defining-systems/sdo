@@ -236,8 +236,8 @@ type Evidence struct {
 
 // Verdict is what Diagnose returns; NeedsJudgement requires a Question.
 // CauseClass is a cause label. Unrecognized labels count as other. A Match whose
-// Reach is out-of-reach lets the automatic stage escalate the incident instead
-// of repairing it (see Escalate).
+// Reach is out-of-reach makes the automatic stage write nothing for it and hand
+// the incident to the agent with the verdict (see Escalate).
 type Verdict struct {
 	Result     Result     `json:"result"`
 	Evidence   []Evidence `json:"evidence,omitempty"`
@@ -300,8 +300,8 @@ func (DeleteObject) action() {}
 // For a Secret the controller writes the literal data of the accepted render
 // (the keys the source declares; other keys stay) and nothing records a value:
 // the receipt names the keys. It refuses a Secret whose source has no literal
-// data or whose render is not deterministic (a generated password); then
-// Escalate. Restart the readers that started after the foreign change with
+// data or whose render is not deterministic (a generated password); then the
+// agent takes over. Restart the readers that started after the foreign change with
 // RestartRollout later in the same plan, because a running Pod keeps the value
 // it started with. Identify readers from their pod template Secret references.
 // After it restores a StatefulSet's pod template, each Pod still on another
@@ -364,7 +364,7 @@ type Exec struct {
 
 func (Exec) action() {}
 
-// Escalate closes the incident as escalated, without a repair.
+// Escalate hands the incident to the agent without a repair.
 // The program's Diagnose matched an out-of-reach cause (Verdict.Reach ReachOutOfReach) the
 // application namespace cannot fix, such as a node, the network fabric, an
 // external dependency or cluster policy. It writes nothing. It must be the only

@@ -5,13 +5,11 @@ const (
 	RuleUpkeepMigration = "ownership.upkeep-migration"
 	RulePlaybookStatus  = "playbook.status"
 	// Publication content and lifecycle context.
-	RuleEmptyDiff          = "diff.empty"
-	RuleBootstrapClosed    = "lifecycle.bootstrap-closed"
-	RuleAcceptedOutcome    = "lifecycle.accepted-outcome"
-	RuleVerifiedSource     = "lifecycle.verified-source"
-	RuleReflectionDecision = "reflection.decision"
-	// An escalated closure the responder confirmed saves its localization as a
-	// Diagnose-only playbook, so a repeat escalates without an agent.
+	RuleEmptyDiff                = "diff.empty"
+	RuleBootstrapClosed          = "lifecycle.bootstrap-closed"
+	RuleAcceptedOutcome          = "lifecycle.accepted-outcome"
+	RuleVerifiedSource           = "lifecycle.verified-source"
+	RuleReflectionDecision       = "reflection.decision"
 	RuleWhitespace               = "diff.whitespace"
 	RuleSnapshotBudget           = "memory.snapshot-budget"
 	RuleSnapshotProjection       = "memory.snapshot"

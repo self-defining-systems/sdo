@@ -33,49 +33,34 @@ func outOfReachClosure(reach string, healthy bool) *contracts.IncidentClosure {
 	return closure
 }
 
-// A responder that ended before Recovered held escalated; the incident closed
-// when its alerts cleared. The label comes from escalated_at, however the agent
-// reported its own status, and it never asks for repair learning.
-func TestEscalatedClosureIsEscalatedNotSuccess(t *testing.T) {
+// SDO never escalates: no closure derives the historical escalated class,
+// whatever the agent reported, and a dispatch failure stays failed.
+func TestNoClosureDerivesEscalated(t *testing.T) {
 	for name, mutate := range map[string]func(*contracts.IncidentClosure){
 		"agent reported completed": func(*contracts.IncidentClosure) {},
 		"agent reported failed":    func(c *contracts.IncidentClosure) { c.Result.Status = "failed" },
+		"dispatch failed": func(c *contracts.IncidentClosure) {
+			dispatchError := "responder Job failed"
+			c.DispatchError = &dispatchError
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			closure := outOfReachClosure(outcomeclass.ReachOutOfReach, true)
-			closure.EscalatedAt = timestamppb.New(time.Date(2026, 11, 10, 12, 0, 4, 0, time.UTC))
+			closure := outOfReachClosure(outcomeclass.ReachOutOfReach, false)
 			mutate(closure)
 			derived, err := Derive(context.Background(), closure, "", "codex", "model", true)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := derived.Record.GetClassification(); got != outcomeclass.Escalated {
-				t.Fatalf("classification = %q, want %q", got, outcomeclass.Escalated)
-			}
-			if derived.RequiresReflection {
-				t.Fatal("an escalated outcome must not ask for repair learning")
+			if got := derived.Record.GetClassification(); got != outcomeclass.Failed {
+				t.Fatalf("classification = %q, want %q", got, outcomeclass.Failed)
 			}
 		})
 	}
 }
 
-func TestDispatchFailureStaysFailedEvenWhenEscalated(t *testing.T) {
-	closure := outOfReachClosure(outcomeclass.ReachOutOfReach, true)
-	closure.EscalatedAt = timestamppb.New(time.Date(2026, 11, 10, 12, 0, 4, 0, time.UTC))
-	dispatchError := "responder Job failed"
-	closure.DispatchError = &dispatchError
-	derived, err := Derive(context.Background(), closure, "", "codex", "model", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := derived.Record.GetClassification(); got != outcomeclass.Failed {
-		t.Fatalf("classification = %q, want %q", got, outcomeclass.Failed)
-	}
-}
-
-// Without escalated_at an unrecovered closure is a failure, even with an
-// out-of-reach cause: escalation is the responder ending early, not a cause.
-func TestEscalationNeedsEscalatedAtAndNeverOverridesVerifiedHealth(t *testing.T) {
+// An unrecovered closure is a failure, even with an out-of-reach cause, and
+// an out-of-reach cause never overrides verified health.
+func TestOutOfReachNeverOverridesVerifiedHealth(t *testing.T) {
 	for name, tc := range map[string]struct {
 		reach   string
 		healthy bool

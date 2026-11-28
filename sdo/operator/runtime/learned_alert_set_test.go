@@ -98,9 +98,9 @@ func TestNewJoinedSymptomReopensAfterAnEarlierPass(t *testing.T) {
 // A playbook's restart makes the opening workload alert re-fire after the
 // stage first saw it clear, and the verification grace runs out while the
 // alerts are already clear and only the stability window is still counting.
-// Escalation says the responder returned before Recovered held; Recovered is
-// holding, so the incident must close success instead.
-func TestIncidentDoesNotEscalateWhileTheStabilityWindowRuns(t *testing.T) {
+// A fresh session follows a return before Recovered; Recovered is holding,
+// so the incident must close success instead.
+func TestIncidentDoesNotRestartItsSessionWhileTheStabilityWindowRuns(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1000, 0).UTC()
 	condition := &switchedProbe{id: memory.KubernetesConditionDetectorIDs()[0], scenario: "not-ready"}
@@ -116,8 +116,8 @@ func TestIncidentDoesNotEscalateWhileTheStabilityWindowRuns(t *testing.T) {
 		if err := c.Step(ctx, now, nil); err != nil {
 			t.Fatal(err)
 		}
-		if !c.escalatedAt.IsZero() {
-			t.Fatalf("escalated at %s with clear alerts and a running stability window (completed %s)", now, c.responderCompletedAt)
+		if c.currentIncidentRequest != nil && c.currentIncidentRequest.SessionGeneration != 0 {
+			t.Fatalf("restarted the session at %s with clear alerts and a running stability window (completed %s)", now, c.responderCompletedAt)
 		}
 		now = now.Add(time.Second)
 	}
