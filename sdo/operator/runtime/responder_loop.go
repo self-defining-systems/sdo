@@ -1148,8 +1148,8 @@ func (l *ResponderLoop) scanPage(ctx context.Context) []ProgramRun {
 }
 
 // selectCandidates diagnoses the candidates for findings. stage is the
-// automatic stage, which binds a playbook with credited pairs only through
-// them; the responder's own diagnosis also sees the finding-bound ones.
+// automatic stage, which ranks a playbook's credited pairs before its
+// finding-bound bindings and keeps one Match per credited playbook.
 func (l *ResponderLoop) selectCandidates(ctx context.Context, view program.ReadView, findings []sdk.Finding, stage bool) []ProgramRun {
 	return SelectKeyedProgramCandidates(ctx, l.Programs, view, findings, l.deadline(), KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: stage, Restore: sourceRestoreCandidates(view, l.Request, findings)})
 }

@@ -279,3 +279,45 @@ func Baseline(view sdk.DetectionContext, component string, pod sdk.ObjectRef) (F
 	}
 	return Facts{}, false
 }
+
+// ObjectNames lists the store objects the view's store-state reads name: each
+// database-scoped namespace item (a collection, table or keyspace) as
+// "scope/name" and "scope.name", from current, baseline and history readings
+// alike. Code that names one of these serves that one object; a sibling
+// object of the same role needs its own copy.
+func ObjectNames(view sdk.DetectionContext) []string {
+	set, ok := view.(podread.ResultSet)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	for id, result := range set.PodReadResults() {
+		engine, component, ok := ParseQueryID(id)
+		if !ok {
+			continue
+		}
+		adapter, ok := AdapterFor(engine)
+		if !ok {
+			continue
+		}
+		readings := append(append(append([]podread.Reading{}, result.Readings...), result.Baseline...), result.History...)
+		for _, reading := range readings {
+			f, err := parseReading(adapter, component, reading)
+			if err != nil {
+				continue
+			}
+			for _, item := range f.Items {
+				if item.Kind == KindNamespace && item.Scope != "" && item.Name != "" {
+					seen[item.Scope+"/"+item.Name] = true
+					seen[item.Scope+"."+item.Name] = true
+				}
+			}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}

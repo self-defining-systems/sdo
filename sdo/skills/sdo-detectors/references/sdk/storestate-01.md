@@ -176,6 +176,13 @@ func NewDetector(c Config) (sdk.Detector, error)
     complete answer is a detector error, never a clear, except a store a
     GapWithoutBaseline reader has never read healthy, which is a coverage gap.
 
+func ObjectNames(view sdk.DetectionContext) []string
+    ObjectNames lists the store objects the view's store-state reads name:
+    each database-scoped namespace item (a collection, table or keyspace) as
+    "scope/name" and "scope.name", from current, baseline and history readings
+    alike. Code that names one of these serves that one object; a sibling object
+    of the same role needs its own copy.
+
 func ObserveChanges(id string, result podread.Result, previous map[string]map[string]podread.Observed, read map[string]time.Time) map[string]map[string]podread.Observed
     ObserveChanges returns when each change of a store-state result's readings
     from their baseline was first read, carrying previous (of the result's
@@ -240,15 +247,4 @@ func AuthFailures(engine Engine, logs string) []AuthFailure
     AuthFailures counts, by user, the refused sign-ins in a store Pod's logs.
     It returns names and counts only, most refused first. An engine without a
     pattern (redis does not log the refused user) returns nil.
-
-type Change struct {
-	Before *Item `json:"before,omitempty"`
-	After  *Item `json:"after,omitempty"`
-	// Noisy is set when the item changed in most of the store's healthy
-	// readings (a key count, an offset): its change says nothing by itself.
-	Noisy bool `json:"noisy,omitempty"`
-}
-    Change is one item that differs between a baseline and the current facts.
-    Before is nil for an added item and After is nil for a removed one.
-    A restore puts Before back.
 ```

@@ -1191,7 +1191,9 @@ func (stage *DeterministicResponseStage) readPlaybookDetectors(ctx context.Conte
 // cannot bind a playbook for this incident and the stage does not wait for it.
 // A missing map, an opening alert that is not a mapped user test, a playbook
 // with no credit or one whose program takes an object parameter keeps the
-// detector, as before.
+// detector, as before. A credit pair needs a bound component role, so a
+// role-less playbook earns none and is always kept: this skip only acts on
+// credits that predate that rule.
 func detectorsOnFailingPaths(detectors []sdk.Detector, credits ProgramCredits, fixedReach map[string]bool, m appmap.Map, request IncidentRequest) []sdk.Detector {
 	if len(m.Components) == 0 {
 		return detectors
