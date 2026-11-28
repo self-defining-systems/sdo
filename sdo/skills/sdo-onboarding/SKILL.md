@@ -12,10 +12,9 @@ the [worked example](references/example.md), [probe design](references/probe-des
 
 1. Read the manifests, README and API: how users enter, sign in and tell a result is correct. Try requests with curl.
 2. Run `sdo-operator onboarding init --repo DIR --namespace NS`; fill in routes, paths and exact assertions.
-3. Write one scenario; run `onboarding journeys --only ID --quick` after each edit (one pass, each request and
-   answer printed). Then the next scenario. Run the full `journeys` once all pass, and after a fix rerun only
-   that ID (`--only ID`).
-4. If the app counts requests by route, method and status, map that metric (`onboarding check --metrics`;
+3. Write one scenario at a time; run `onboarding journeys --only ID --quick` after each edit (one pass, every
+   request and answer). Run the full `journeys` once all pass; after a fix rerun only that ID.
+4. Map a request counter by route, method and status if the app has one (`onboarding check --metrics`,
    [example](../sdo-operations-map/references/request-metrics.md)).
 
 What the checks require, so plan for it: every operation in a `call` probe; a writing one also in a `write-read`
@@ -24,7 +23,7 @@ iterations read it); and one step of a `call` or `read-later` probe lists record
 (`ReadsExistingRecords`, templating no id the probe wrote).
 
 `onboarding journeys --plan` sends nothing. Fix `missing-map`, `missing-probe`, then `failing` and `unchecked`.
-Keep every journey ID. Dotted JSON paths name keys and array indexes (`data.items.0.id`); `""` is the whole body.
+Keep every journey ID. Dotted JSON paths name keys and indexes (`data.items.0.id`); `""` is the whole body.
 
 <!-- probe-sdk:begin -->
 ## Probe SDK
