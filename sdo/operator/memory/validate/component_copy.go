@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/memory"
 
 	"sdo.dev/operator/memory/layout"
 )
@@ -60,28 +60,12 @@ func loadMemoryNames(ctx context.Context, r Request) memoryNames {
 	return names
 }
 
-// scenarioIDs lists the scenario IDs the traffic workloads declare.
+// scenarioIDs lists the scenario IDs the traffic workloads run, including
+// those the application map's probe lines place in a workload.
 func scenarioIDs(root string) []string {
-	files, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(layout.TrafficWorkloadsDir), "*.yaml"))
 	var ids []string
-	for _, file := range files {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			continue
-		}
-		var workload struct {
-			Scenarios []struct {
-				ID string `yaml:"id"`
-			} `yaml:"scenarios"`
-		}
-		if yaml.Unmarshal(data, &workload) != nil {
-			continue
-		}
-		for _, scenario := range workload.Scenarios {
-			if scenario.ID != "" {
-				ids = append(ids, scenario.ID)
-			}
-		}
+	for _, workload := range memory.MapWorkloads(root) {
+		ids = append(ids, workload.Scenarios...)
 	}
 	return ids
 }

@@ -25,16 +25,16 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
 - Components, workloads and Services exist in the manifest inventory; edge ends, path entries and probe
   operations name map entries. Enforced by: `map.unknown-name`.
 - An operation's path starts at the component whose Service is its entry and reaches every component through
-  edges inside the path. A probe scenario's `DependsOn` names a Service of every component on its probe's path
-  and no other Service. Enforced by: `map.path-mismatch`.
+  edges inside the path. A probe scenario's `DependsOn` (Go fills an empty one from the map) names a Service of
+  every component on its probe's path and no other Service. Enforced by: `map.path-mismatch`.
 
 ## Coverage
 
 - Every operation, writing ones too, is in a `call` probe; a write-read or read-later probe does not count.
   Enforced by: `map.uncovered-operation`.
 - Every writing operation is also in a write-read probe. Enforced by: `map.uncovered-write`.
-- Every data-holding component on a writing operation's path is on a read-later probe's path. Enforced by:
-  `map.uncovered-data`.
+- Every data-holding component on a writing operation's path that another operation also reaches is on a
+  read-later probe's path. Enforced by: `map.uncovered-data`.
 - A health-probe scenario declared `knownBroken` (with a short `reason` and the baseline `failsWith`) covers the
   operations no gated probe exercises, without a write-read or read-later probe; it never gates health. Each such
   probe must exercise one operation no gated probe covers, and these operations are at most half of the map's.

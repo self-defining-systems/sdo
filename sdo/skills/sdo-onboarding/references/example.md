@@ -68,8 +68,7 @@ import (
 const marker = "sdoprobe" // in every user and object name; at least 6 characters
 
 var (
-	web  = traffic.Target{Service: "web", Port: 80}
-	path = []string{"web", "orders-db"} // Services of exactly the components on the operations' map paths
+	web = traffic.Target{Service: "web", Port: 80} // DependsOn comes from the map's probe paths
 
 	buyer  = traffic.ProbeUser{Name: "sdoprobe-buyer", Token: "token"}   // writes
 	reader = traffic.ProbeUser{Name: "sdoprobe-reader", Token: "token"}  // owns the fixtures reads check
@@ -113,7 +112,7 @@ func Scenarios() traffic.Catalog {
 	return traffic.Catalog{
 		{
 			ID: "write-order", Description: "place an order, read it back, its receipt appears", Target: web,
-			DependsOn: path, Marker: marker, // SideEffect is inferred: a write with Cleanup
+			Marker: marker, // SideEffect is inferred: a write with Cleanup
 			Users: []traffic.ProbeUser{buyer},
 			Steps: []traffic.Step{
 				step("create", auth(traffic.POST("/api/orders", nil).WithJSON(`{"ref":"{ref}","item":"pen"}`,
@@ -127,7 +126,7 @@ func Scenarios() traffic.Catalog {
 		},
 		{
 			ID: "call-orders", Description: "list orders, the fixture among them, and records users already have", Target: web,
-			DependsOn: path, Marker: marker, // a read: GET steps only
+			Marker: marker, // a read: GET steps only
 			Users: []traffic.ProbeUser{reader}, Setup: fixture(reader),
 			Steps: []traffic.Step{
 				// the list as a user first sees it (default order, first page); members by name, so probe records show
@@ -139,7 +138,7 @@ func Scenarios() traffic.Catalog {
 		},
 		{
 			ID: "later-order", Description: "an order written once is still exactly there", Target: web,
-			DependsOn: path, Marker: marker,
+			Marker: marker,
 			Users: []traffic.ProbeUser{keeper}, Setup: fixture(keeper),
 			Steps: []traffic.Step{step("read", auth(traffic.GET("/api/orders", traffic.Params{"ref": traffic.Const("sdoprobe-fixture-" + keeper.Name)})).
 				ExactSet("items", "ref", "sdoprobe-fixture-"+keeper.Name).JSONEquals("items.0.item", "pen"))},
@@ -172,7 +171,7 @@ sampleInterval: 60s
 timeout: 5s
 iterationTimeout: 30s
 slo: {window: 4, minSamples: 1, maxAge: 10m, maxErrorRate: 1, maxTimeoutRate: 1, maxLatency: 10s}
-scenarios: [{id: write-order}]
+# no scenarios list: the map's write-read probe line places write-order here
 ---
 # probe-fast-write.yaml: the core writes again, every 10 s
 apiVersion: sdo.dev/v1alpha1
@@ -187,8 +186,9 @@ scenarios:
     slo: {maxLatency: 2s}
 ```
 
-Put each workload in its own file. Schedule `call-orders` in `probe-call.yaml` and `later-order` in
-`probe-read-later.yaml` using the home workload shape. Each scenario has one map entry even when several workloads run it.
+Put each workload in its own file; `probe-call.yaml` and `probe-read-later.yaml` take the home workload shape.
+The map's probe lines place each scenario in its kind's workload; list it in a file only for its own settings.
+Each scenario has one map entry even when several workloads run it.
 
 ## `.sdo/playbooks/health-objective/README.md`
 

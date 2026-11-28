@@ -362,7 +362,7 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err != nil {
 		return nil, err
 	}
-	_, err = generateTraffic(directory, module, target)
+	_, err = generateTraffic(directory, module, target, readApplicationMap(config.ApplicationRoot))
 	if err != nil {
 		return nil, err
 	}
