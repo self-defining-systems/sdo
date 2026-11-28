@@ -13,6 +13,7 @@ import (
 
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/operability"
+	"sdo.dev/operator/patchset"
 )
 
 // cleanPlan expects the one ConfigMap world has: no workloads.
@@ -170,5 +171,44 @@ func TestOperabilityCheckOfflineCompleteStageRunsTheMemoryValidator(t *testing.T
 	_, out, _ = operabilityCLI(t, env, "check", "--offline", "--root", work, "--stage", "complete")
 	if strings.Contains(out, "skipped  O6.ownership") {
 		t.Fatalf("ownership skipped despite base, actor and phase:\n%s", out)
+	}
+}
+
+// treeWorld is a checkout of an accepted repository holding files and no
+// plan: the source is derived from the files, as deploy derives it.
+func treeWorld(t *testing.T, files map[string]string) string {
+	t.Helper()
+	accepted := t.TempDir()
+	testutil.InitGit(t, accepted)
+	for name, content := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(accepted, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(accepted, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testutil.Git(t, accepted, "add", ".")
+	testutil.Git(t, accepted, "commit", "-qm", "seed")
+	work := filepath.Join(t.TempDir(), "checkout")
+	testutil.Git(t, filepath.Dir(work), "clone", "-q", accepted, work)
+	if _, err := patchset.Materialize(context.Background(), work); err != nil {
+		t.Fatal(err)
+	}
+	return work
+}
+
+// With the push target, the offline check applies deploy's image rule: an
+// image under it with no Dockerfile fails O2.images before any build.
+func TestOperabilityCheckOfflineMatchesPushedImagesToDockerfiles(t *testing.T) {
+	const web = "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: web}\nspec:\n  selector: {matchLabels: {app: web}}\n  template:\n    metadata: {labels: {app: web}}\n    spec: {containers: [{name: web, image: 'reg.example/team/web:v1'}]}\n"
+	missing := treeWorld(t, map[string]string{"k8s/web.yaml": web, "src/main.go": "package main\n"})
+	code, out, errOut := operabilityCLI(t, nil, "check", "--offline", "--root", missing, "--registry-host", "reg.example")
+	if code != 1 || !strings.Contains(out, "fail     O2.images") || !strings.Contains(out, "Dockerfile.web") {
+		t.Fatalf("no Dockerfile = %d\n%s%s", code, out, errOut)
+	}
+	built := treeWorld(t, map[string]string{"k8s/web.yaml": web, "web/Dockerfile": "FROM scratch\n", "Dockerfile.tools": "FROM scratch\n"})
+	if code, out, errOut := operabilityCLI(t, nil, "check", "--offline", "--root", built, "--registry-host", "reg.example"); code != 0 || !strings.Contains(out, "pass     O2.images") {
+		t.Fatalf("matched Dockerfile = %d\n%s%s", code, out, errOut)
 	}
 }

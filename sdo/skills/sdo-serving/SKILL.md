@@ -74,4 +74,5 @@ SDO's operability report names each failing check as
 - `scope` and `allowlist`: an object outside the application namespace, a cluster-scoped kind or an unlisted
   registry. Fix the files.
 
-Preview a render without a cluster: `sdo-operator deployment render --plan FILE`.
+Check your committed files the way Go will, without a cluster, in seconds:
+`sdo-operator operability check --offline --registry-host <trusted registry>` (render, image rule, scope).
