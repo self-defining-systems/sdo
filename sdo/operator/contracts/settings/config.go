@@ -178,7 +178,7 @@ type Learning struct {
 
 // Deployment bounds deployment attempts and the policy they run under.
 type Deployment struct {
-	MaxAttempts    int              `yaml:"max_attempts" doc:"maximum deployment attempts"`
+	MaxAttempts    int              `yaml:"max_attempts" doc:"deployer correction rounds after its first task, and architecture and health-judge rounds"`
 	BuildTimeout   Duration         `yaml:"build_timeout" doc:"deadline of one source image build"`
 	BuildBudget    Duration         `yaml:"build_budget" doc:"deadline of all source image builds of one deployment attempt"`
 	RolloutTimeout Duration         `yaml:"rollout_timeout" doc:"how long to wait for each applied workload to finish rolling out"`

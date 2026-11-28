@@ -182,8 +182,9 @@ func TestOperateJobDeadlineBudgetsTheConfiguredLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deadline := time.Duration(*job.Spec.ActiveDeadlineSeconds) * time.Second; deadline < 4*3*time.Hour {
-		t.Fatalf("operate Job deadline %s leaves no room for four 3h designer sessions", deadline)
+	// Four correction rounds plus the deployer's first task, which is not one.
+	if deadline := time.Duration(*job.Spec.ActiveDeadlineSeconds) * time.Second; deadline < 5*3*time.Hour {
+		t.Fatalf("operate Job deadline %s leaves no room for the first task and four corrections of 3h sessions", deadline)
 	}
 }
 

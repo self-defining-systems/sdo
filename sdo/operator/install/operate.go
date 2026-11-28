@@ -162,7 +162,8 @@ func OperateJob(cfg Config, healthObjective, operationID string) (*batchv1.Job, 
 	ttl := int32(600)
 	policy := cfg.Settings
 	attempt := time.Duration(policy.Response.Timeout) + time.Duration(policy.Agent.LifecycleTimeout) + time.Duration(policy.Deployment.BuildBudget) + time.Duration(policy.Deployment.RolloutTimeout)
-	deadline := int64((attempt*time.Duration(policy.Deployment.MaxAttempts) + 600*time.Second) / time.Second)
+	// The deployer's first task is not a correction round, so it gets one more.
+	deadline := int64((attempt*time.Duration(policy.Deployment.MaxAttempts+1) + 600*time.Second) / time.Second)
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: OperateJobName(operationID), Namespace: cfg.controlNamespace(), Annotations: map[string]string{PreparedCommitAnnotation: cfg.AcceptedCommit}}, Spec: batchv1.JobSpec{BackoffLimit: &zero, TTLSecondsAfterFinished: &ttl, ActiveDeadlineSeconds: &deadline}}
 	job.Spec.Template.Labels = map[string]string{"app.kubernetes.io/name": "sdo-operate", "sdo.dev/operation": OperateJobName(operationID)}
 	pod := &job.Spec.Template.Spec

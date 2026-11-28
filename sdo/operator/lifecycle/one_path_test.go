@@ -139,14 +139,38 @@ func TestNoRegisteredDeployerHoldsAFailedApply(t *testing.T) {
 	}
 }
 
-// The deployer's corrections are bounded by MaxAttempts.
+// The budget counts correction rounds only: the deployer's first task answers
+// the failure of a commit it never wrote (no deployment files, or the app's own
+// files), so it is not a correction. MaxAttempts rejections of the deployer's
+// own commits end the stage.
 func TestDeployerCorrectionsAreBounded(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-	h.readiness.errors = []error{errors.New("rollout stuck: a"), errors.New("rollout stuck: b"), errors.New("rollout stuck: c"), errors.New("rollout stuck: d")}
+	h.readiness.errors = []error{errors.New("rollout stuck: a"), errors.New("rollout stuck: b"), errors.New("rollout stuck: c"), errors.New("rollout stuck: d"), errors.New("rollout stuck: e")}
 	_, err := h.coordinator.Run(context.Background(), config())
 	var stuck *lifecycle.AgentNotConvergingError
-	if !errors.As(err, &stuck) || h.workers.deployerAttempts() != 3 || h.readiness.calls != 4 {
-		t.Fatalf("err=%v tasks=%d deploys=%d, want three tasks after four failed deploys", err, h.workers.deployerAttempts(), h.readiness.calls)
+	if !errors.As(err, &stuck) || h.workers.deployerAttempts() != 4 || h.readiness.calls != 5 {
+		t.Fatalf("err=%v tasks=%d deploys=%d, want the first task plus three corrections after five failed deploys", err, h.workers.deployerAttempts(), h.readiness.calls)
+	}
+	if !strings.Contains(err.Error(), "3 correction rounds") {
+		t.Fatalf("error %q must name the correction rounds it spent", err)
+	}
+}
+
+// Case A: the authoring task (the files the stripped tree lacks) does not use
+// up a correction, so three build or rollout failures of the deployer's own
+// files still each get a correction task.
+func TestCaseAAuthoringTaskIsNotACorrection(t *testing.T) {
+	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
+	r := &treeReadiness{fakeReadiness: h.readiness}
+	h.coordinator.Readiness = r
+	h.coordinator.Workers = &committingWorkers{fakeWorkers: h.workers, t: t}
+	h.readiness.errors = []error{errors.New("build currency: a"), errors.New("build currency: b"), errors.New("build currency: c")}
+	result, err := h.coordinator.Run(context.Background(), config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.workers.deployerAttempts() != 4 || h.readiness.calls != 4 || result.SourceCommit == "" {
+		t.Fatalf("tasks=%d deploys=%d result=%+v, want the authoring task and three corrections, then a pass", h.workers.deployerAttempts(), h.readiness.calls, result)
 	}
 }
 
