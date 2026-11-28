@@ -46,8 +46,14 @@ type openers struct {
 //
 // Every other finding (drift, wiring, events, saturation, links, store state,
 // data checks, metrics alerts, authored and learned detectors) is a clue: it
-// never opens or holds an incident.
+// never opens or holds an incident. With PagesOnly every finding is a clue
+// and only a page opens an incident; the clues still ride in its request.
+// openingRole keeps the role a finding would have (startup period, closure
+// and verification openers read it).
 func (c *Controller) opens(finding sdk.Finding) bool {
+	if c.config.PagesOnly {
+		return false
+	}
 	return c.openingRole(finding, nil) != noOpener
 }
 
@@ -124,7 +130,11 @@ func (c *Controller) verificationOpeners(detectors []sdk.Detector, catalog []app
 }
 
 // closureOpeners uses the accepted workload files even when a probe is down.
+// Under PagesOnly no detector is an opener, so none joins a closure's proof.
 func (c *Controller) closureOpeners(ctx context.Context, detectors []sdk.Detector) map[string]bool {
+	if c.config.PagesOnly {
+		return map[string]bool{}
+	}
 	tests := c.userTests()
 	c.openers.mu.Lock()
 	var catalog []appmap.Workload

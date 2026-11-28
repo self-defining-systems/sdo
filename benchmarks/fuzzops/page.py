@@ -12,6 +12,7 @@ completion closes it.
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -75,6 +76,34 @@ class PageConfig:
             rate=int(raw.get("rate", 6)),
             rechecks=int(raw.get("rechecks", 2)),
         )
+
+
+@dataclass(frozen=True)
+class ScheduledPage:
+    """``settings.scheduled_page``: one generic page (``fallback_message``) at the inject plus ``offset_s``, whatever
+    SDO's detectors saw. For a controller with ``detection.pages_only``, whose detectors open no incident: the page
+    opens the one incident at the same offset from injection as SDO's own page in the paired row (``paired_cell``,
+    recorded with the page), so the arm differs from that row in what the responder is told, not in when."""
+
+    offset_s: float
+    paired_cell: str
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.offset_s) or self.offset_s <= 0:
+            raise ValueError("scheduled_page.offset_s must be finite and positive")
+        if not self.paired_cell.strip():
+            raise ValueError("scheduled_page.paired_cell must name the paired row")
+
+    @classmethod
+    def from_settings(cls, raw: Any) -> ScheduledPage | None:
+        if raw is None:
+            return None
+        if not isinstance(raw, Mapping):
+            raise TypeError("scheduled_page must be an object")
+        unknown = set(raw) - {"offset_s", "paired_cell"}
+        if unknown or "offset_s" not in raw or "paired_cell" not in raw:
+            raise ValueError(f"scheduled_page needs exactly offset_s and paired_cell, got {sorted(raw)}")
+        return cls(offset_s=float(raw["offset_s"]), paired_cell=str(raw["paired_cell"]))
 
 
 def journeys(pack: Path) -> dict[str, Any]:

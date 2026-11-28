@@ -116,6 +116,7 @@ type Detection struct {
 	StabilityWindow      Duration `yaml:"stability_window" doc:"how long the alert set (opening alerts and user tests that failed during the incident) must stay clear after SDO's last write settled before the incident counts as recovered"`
 	DriftBatchWindow     Duration `yaml:"drift_batch_window" doc:"batch window for unexplained drift"`
 	RequestMetricsShadow bool     `yaml:"request_metrics_shadow" doc:"shadow mode of the request-metrics detector: its per-operation findings are recorded as clues in sdo detect and the evidence sink but never open or hold an incident. Off by default: a failing operation or route in real user traffic opens an incident"`
+	PagesOnly            bool     `yaml:"pages_only,omitempty" doc:"only a page (the external-incident inbox) opens an incident: every detector finding, failing user tests, failing user traffic and Kubernetes conditions included, is a clue that never opens, joins or holds one. Clues still ride in a page's incident as evidence. One --evaluate-once run (deployment health) still classifies openers as without it. Off by default; for runs where someone else pages SDO (a benchmark arm without SDO's own paging)"`
 }
 
 // DefaultSelfHealHold is written here, not referenced from the SDK, because the contracts module cannot depend on
@@ -317,6 +318,9 @@ func (c Config) Validate() error {
 	positive("detection.drift_batch_window", c.Detection.DriftBatchWindow)
 	oneOf("learning.replay", c.Learning.Replay, "on", "off")
 	oneOf("learning.reflection_guidance", c.Learning.ReflectionGuidance, "baseline", "generalize", "generalize-spec")
+	if c.Detection.PagesOnly && c.Mode != ModeOperate && c.Mode != ModeFrozen {
+		bad("detection.pages_only", "requires mode %s or %s (pages are read in detector mode), not %s", ModeOperate, ModeFrozen, c.Mode)
+	}
 	if c.Response.ExternalClues && c.Mode != ModeExternal {
 		bad("response.external_clues", "requires mode %s, not %s", ModeExternal, c.Mode)
 	}

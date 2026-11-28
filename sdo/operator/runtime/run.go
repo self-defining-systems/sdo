@@ -2181,6 +2181,9 @@ func evaluateOnce(
 	}
 	// One evaluation never dispatches, so it has no start-up period.
 	once.StartupBound = 0
+	// It opens no incident either: its verdict (deployment health) classifies
+	// openers as SDO's own paging does, whoever pages the controller.
+	once.PagesOnly = false
 	controller, err := NewController(once, detectors, provider, evaluationDispatcher{}, start)
 	if err != nil {
 		return err

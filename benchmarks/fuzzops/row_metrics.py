@@ -742,13 +742,13 @@ def _sdo(
     opened = min((at for t in timelines if (at := _time(t.get("opened_at")))), default=None)
     page_source = collect.get("page_source")
     page = _time(collect.get("sdo_page_at"))
-    if page_source == "fallback" or (page_source is None and collect.get("fallback_page_at")):
+    if page_source in {"fallback", "scheduled"} or (page_source is None and collect.get("fallback_page_at")):
         page = _time(collect.get("fallback_page_at")) or page
-        page_source = "fallback"
+        page_source = page_source or "fallback"
     page = page or opened
     row.inject_to_page_s = _seconds(inject, page)
     if page is not None:
-        row.page_source = page_source if page_source in {"own", "fallback"} else "own"
+        row.page_source = page_source if page_source in {"own", "fallback", "scheduled"} else "own"
     if "timelines" not in manifest:
         return
     root = run / "operator/evidence/incidents"

@@ -433,6 +433,9 @@ class OperatorBlock:
     #: ``settings.harness_page``: the harness-paged arm (``page.PageConfig``): the benchmark opens the one SDO
     #: incident through the external-incident inbox at the inject plus ``after`` seconds; detectors only observe.
     harness_page: page.PageConfig | None = None
+    #: ``settings.scheduled_page``: the generic page at a fixed offset from injection (``page.ScheduledPage``), for
+    #: an overlay with ``detection.pages_only``; it replaces the fallback page.
+    scheduled_page: page.ScheduledPage | None = None
     fallback_page: bool = True
     fallback_page_seconds: float = page.DEFAULT_FALLBACK_SECONDS
     #: ``settings.dev_mount``: run the pods from the base images (``image_tag``) with the checkout's sources and
@@ -460,6 +463,14 @@ class OperatorBlock:
             raise ValueError("settings.fallback_page_seconds must be finite and positive")
         if self.harness_page is not None and "mode" in self.config:
             raise ValueError("settings.harness_page sets the operator mode; settings.config may not")
+        if self.scheduled_page is not None:
+            if self.harness_page is not None:
+                raise ValueError("settings.scheduled_page and settings.harness_page are two different arms")
+            if (self.config.get("detection") or {}).get("pages_only") is not True:
+                raise ValueError(
+                    "settings.scheduled_page needs settings.config detection.pages_only: true "
+                    "(otherwise SDO's own page races the scheduled one)"
+                )
 
     def effective_config(self) -> dict[str, Any]:
         """The experiment overlay, with the harness-paged arm's mode: external alerts only, detectors as clues."""
@@ -492,6 +503,7 @@ class OperatorBlock:
                 auth_file=Path(str(settings.get("auth_file") or Path.home() / ".codex" / "auth.json")).expanduser(),
                 config=settings.get("config") or {},
                 harness_page=page.PageConfig.from_settings(settings.get("harness_page")),
+                scheduled_page=page.ScheduledPage.from_settings(settings.get("scheduled_page")),
                 fallback_page=settings.get("fallback_page", True),
                 fallback_page_seconds=float(settings.get("fallback_page_seconds", page.DEFAULT_FALLBACK_SECONDS)),
                 dev_mount=bool(settings.get("dev_mount")),
@@ -1690,6 +1702,15 @@ def watch(env: Mapping[str, str]) -> int:
             json.dumps(asdict(block.harness_page)),
             "--page-pack",
             _need(env, "BENCH_PACK"),
+            "--page-namespace",
+            _need(env, "FUZZOPS_NAMESPACE"),
+        ]
+    elif fault and fault != "none" and block is not None and block.scheduled_page is not None:
+        argv += [
+            "--scheduled-page-after",
+            str(block.scheduled_page.offset_s),
+            "--paired-cell",
+            block.scheduled_page.paired_cell,
             "--page-namespace",
             _need(env, "FUZZOPS_NAMESPACE"),
         ]
