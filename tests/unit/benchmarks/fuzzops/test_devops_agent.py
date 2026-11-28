@@ -48,7 +48,8 @@ def step(name, *commands, kind="command"):
 class FakeService:
     def __init__(self, plan=None, statuses=("IN_PROGRESS", "COMPLETED")):
         self.plan, self.statuses = plan, list(statuses)
-        self.created, self.cancelled = [], []
+        self.created, self.cancelled, self.queries = [], [], []
+        self.listed = []
 
     def create(self, title, description, token):
         self.created.append((title, description, token))
@@ -59,6 +60,11 @@ class FakeService:
         if status == "ERROR":
             raise HookError("throttled")
         return {"taskId": task_id, "status": status}
+
+    def tasks(self, created_after):
+        self.queries.append(created_after)
+        visible = [t for t in self.listed if t.get("after_create") is None or self.created]
+        return [{k: v for k, v in t.items() if k != "after_create"} for t in visible]
 
     def cancel(self, task_id):
         self.cancelled.append(task_id)
@@ -287,3 +293,167 @@ print(json.dumps({{'task': {{'taskId': 't1', 'status': 'PENDING_START'}}, 'recor
     assert all(a[0] == "devops-agent" and a[a.index("--agent-space-id") + 1] == "space-1" for a in argv)
     assert argv[0][argv[0].index("--task-type") + 1] == "INVESTIGATION"
     assert argv[2][argv[2].index("--task-status") + 1] == "CANCELED"
+
+
+ASSOCIATION = "assoc-1"
+
+
+def alarm_task(task_id="alarm-t", created=None, association=ASSOCIATION, reference_id="inc-1", after_create=None):
+    created = created or datetime.now(timezone.utc) + timedelta(seconds=1)
+    return {
+        "taskId": task_id,
+        "status": "COMPLETED",
+        "createdAt": created.isoformat(),
+        "reference": {"associationId": association, "referenceId": reference_id},
+        "after_create": after_create,
+    }
+
+
+@pytest.fixture
+def alarm_env(env, tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"incident_id": "other", "alarm_name": "wrong", "transition": "OK"},
+                {"incident_id": "inc-1", "alarm_name": "web-5xx", "transition": "ALARM", "extra": 1},
+            )
+        )
+    )
+    return alarm_settings(env, tmp_path, {"mode": "alarm", "fallback_seconds": 0.3, **paging(ledger)})
+
+
+def paging(ledger):
+    return {"event_channel_association_id": ASSOCIATION, "relay_ledger": str(ledger)}
+
+
+def alarm_settings(env, tmp_path, block):
+    operator = json.loads((tmp_path / "operator.json").read_text())
+    operator["settings"]["devops_agent"]["paging"] = block
+    path = tmp_path / "operator-alarm.json"
+    path.write_text(json.dumps(operator))
+    first_bad = datetime.now(timezone.utc)
+    (vanilla.run_dir({**env, "BENCH_OPERATOR": str(path)})).mkdir(parents=True, exist_ok=True)
+    onset = vanilla.run_dir(env) / "onset.json"
+    onset.write_text(json.dumps({"first_bad": first_bad.isoformat()}))
+    return {**env, "BENCH_OPERATOR": str(path)}
+
+
+def evidence(env, name):
+    return json.loads((vanilla.run_dir(env) / name).read_text())
+
+
+def test_alarm_task_is_followed_without_a_harness_page(alarm_env):
+    service = FakeService([step("apply", "kubectl patch x")])
+    service.listed = [alarm_task(created=datetime.now(timezone.utc) + timedelta(seconds=1))]
+    done = respond(alarm_env, service, time.time() - 1)
+    assert service.created == []
+    assert (done["paged_by"], done["task_status"]) == ("alarm", "COMPLETED")
+    paged = evidence(alarm_env, "paging.json")
+    assert (paged["mode"], paged["paged_by"], paged["task_id"], paged["reference_id"]) == (
+        "alarm",
+        "alarm",
+        "alarm-t",
+        "inc-1",
+    )
+    assert (paged["alarm_name"], paged["alarm_transition"]) == ("web-5xx", "ALARM")
+    assert paged["late_alarm_tasks"] == []
+    assert not (vanilla.run_dir(alarm_env) / "page.json").exists()
+
+
+def test_alarm_task_without_ledger_match_leaves_alarm_fields_null(alarm_env, tmp_path):
+    (tmp_path / "ledger.jsonl").unlink()
+    service = FakeService()
+    service.listed = [alarm_task()]
+    respond(alarm_env, service, time.time() - 1)
+    paged = evidence(alarm_env, "paging.json")
+    assert (paged["paged_by"], paged["alarm_name"], paged["alarm_transition"]) == ("alarm", None, None)
+
+
+def test_no_alarm_task_pages_as_the_fallback(alarm_env):
+    service = FakeService()
+    started = time.time()
+    done = respond(alarm_env, service, started - 1)
+    assert len(service.created) == 1
+    assert time.time() - started >= 0.3
+    assert done["paged_by"] == "fallback"
+    paged = evidence(alarm_env, "paging.json")
+    assert (paged["paged_by"], paged["task_id"], paged["alarm_name"]) == ("fallback", "t1", None)
+    assert evidence(alarm_env, "page.json")["title"].startswith("Users are reporting")
+    first_bad = datetime.fromisoformat(paged["first_bad"])
+    assert datetime.fromisoformat(paged["fallback_due"]) == first_bad + timedelta(seconds=0.3)
+
+
+def test_foreign_and_early_alarm_tasks_are_ignored(alarm_env):
+    injected = time.time()
+    service = FakeService()
+    before = datetime.fromtimestamp(injected - 60, timezone.utc)
+    service.listed = [alarm_task("foreign", association="other"), alarm_task("early", created=before)]
+    done = respond(alarm_env, service, injected)
+    assert (done["paged_by"], len(service.created)) == ("fallback", 1)
+    assert evidence(alarm_env, "paging.json")["late_alarm_tasks"] == []
+
+
+def test_alarm_task_after_the_fallback_is_recorded_not_followed(alarm_env):
+    service = FakeService()
+    service.listed = [alarm_task("late", reference_id="inc-late", after_create=True)]
+    done = respond(alarm_env, service, time.time() - 1)
+    assert (done["paged_by"], len(service.created)) == ("fallback", 1)
+    paged = evidence(alarm_env, "paging.json")
+    assert paged["task_id"] == "t1"
+    assert [(t["task_id"], t["reference_id"]) for t in paged["late_alarm_tasks"]] == [("late", "inc-late")]
+
+
+def test_harness_mode_records_its_page(env):
+    service = FakeService()
+    done = respond(env, service)
+    assert done["paged_by"] == "harness"
+    assert len(service.created) == 1
+    assert service.queries == []
+    paged = evidence(env, "paging.json")
+    assert (paged["mode"], paged["paged_by"], paged["task_id"]) == ("harness", "harness", "t1")
+    assert "page_at" in paged
+    assert (vanilla.run_dir(env) / "page.json").exists()
+
+
+def test_paging_validation():
+    assert devops_agent.Paging().mode == "harness"
+    ok = {"mode": "alarm", "fallback_seconds": 120, "event_channel_association_id": "a"}
+    assert devops_agent.Paging(**ok, relay_ledger="/tmp/x.jsonl").fallback_seconds == 120
+    for bad, error in (
+        ({"mode": "page"}, ValueError),
+        ({**ok, "fallback_seconds": 0}, ValueError),
+        ({**ok, "fallback_seconds": -1}, ValueError),
+        ({**ok, "fallback_seconds": "120"}, TypeError),
+        ({**ok, "event_channel_association_id": ""}, ValueError),
+        ({**ok, "event_channel_association_id": 3}, TypeError),
+        ({**ok, "relay_ledger": "ledger.jsonl"}, ValueError),
+        ({**ok, "relay_ledger": 4}, TypeError),
+    ):
+        with pytest.raises(error):
+            devops_agent.Paging(**bad)
+
+
+def test_settings_reject_invalid_paging_block(env, tmp_path):
+    bad = alarm_settings(env, tmp_path, {"mode": "alarm", "fallback_seconds": 0, "event_channel_association_id": "a"})
+    with pytest.raises(HookError, match="paging"):
+        devops_agent.settings(bad)
+
+
+def test_cli_lists_alarm_tasks_across_pages(env, tmp_path):
+    aws = tmp_path / "bin" / "aws"
+    aws.write_text(
+        f"""#!/usr/bin/python3
+import json, sys
+open({str(tmp_path / "aws.log")!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')
+token = sys.argv[sys.argv.index('--next-token') + 1] if '--next-token' in sys.argv else None
+print(json.dumps({{'tasks': [{{'taskId': 'b'}}]}} if token else {{'tasks': [{{'taskId': 'a'}}], 'nextToken': 'n1'}}))
+"""
+    )
+    aws.chmod(0o755)
+    found = devops_agent.connect(env).tasks("2026-01-01T00:00:00+00:00")
+    assert [t["taskId"] for t in found] == ["a", "b"]
+    first = json.loads((tmp_path / "aws.log").read_text().splitlines()[0])
+    assert first[0:2] == ["devops-agent", "list-backlog-tasks"]
+    assert json.loads(first[first.index("--filter") + 1]) == {"createdAfter": "2026-01-01T00:00:00+00:00"}
