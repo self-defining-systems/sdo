@@ -187,6 +187,9 @@ type Coordinator struct {
 	// Wait pauses between bounded re-evaluations and infrastructure retries;
 	// nil waits on a timer.
 	Wait func(context.Context, time.Duration) error
+	// Now reads the clock the pending window is measured on; nil reads the
+	// wall clock.
+	Now func() time.Time
 }
 
 type Config struct {

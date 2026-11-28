@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// Now is the wall clock.
+func Now() time.Time { return time.Now() }
+
 // Wait pauses for d, or until ctx ends.
 func Wait(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)

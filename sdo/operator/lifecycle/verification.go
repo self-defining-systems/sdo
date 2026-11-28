@@ -134,6 +134,13 @@ func orDefault[T int | time.Duration](value, fallback T) T {
 	return value
 }
 
+func (c Coordinator) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return waitio.Now()
+}
+
 func (c Coordinator) wait(ctx context.Context, d time.Duration) error {
 	if c.Wait != nil {
 		return c.Wait(ctx, d)
@@ -186,9 +193,15 @@ func (c Coordinator) awaitObserved(ctx context.Context, cfg Config, evaluate fun
 	return c.await(ctx, cfg, evaluate, true)
 }
 
+// The pending window is evaluations x interval of elapsed time as well as a
+// count: an evaluation that itself observes for minutes (a cold prober's
+// warm-up) spends the window, so repeating it the full count would multiply a
+// two-minute window into tens of minutes.
 func (c Coordinator) await(ctx context.Context, cfg Config, evaluate func() (HealthVerdict, error), existingRecords bool) (HealthVerdict, error) {
 	evaluations := orDefault(cfg.PendingEvaluations, defaultPendingEvaluations)
 	interval := orDefault(cfg.PendingInterval, defaultPendingInterval)
+	window := time.Duration(evaluations) * interval
+	started := c.now()
 	extended := false
 	for evaluation := 1; ; evaluation++ {
 		var verdict HealthVerdict
@@ -203,13 +216,15 @@ func (c Coordinator) await(ctx context.Context, cfg Config, evaluate func() (Hea
 		if verdict.Outcome != VerificationPending && !(unobserved && evaluation < evaluations) {
 			return verdict, nil
 		}
-		if evaluation >= evaluations && verdict.Outcome == VerificationPending && verdict.EnvironmentWait > 0 && !extended {
+		spent := func() bool { return evaluation >= evaluations || c.now().Sub(started) >= window }
+		if spent() && verdict.Outcome == VerificationPending && verdict.EnvironmentWait > 0 && !extended {
 			// A probe user still being provisioned is an environment wait: wait
 			// once for the run it declared, plus one interval to judge after it.
 			extended = true
-			evaluations += int((verdict.EnvironmentWait + interval + interval - 1) / interval)
+			evaluations = evaluation + int((verdict.EnvironmentWait+interval+interval-1)/interval)
+			window = c.now().Sub(started) + verdict.EnvironmentWait + interval
 		}
-		if evaluation >= evaluations {
+		if spent() {
 			return verdict, &PendingVerificationError{Evaluations: evaluation, Window: time.Duration(evaluation-1) * interval, Verdict: verdict}
 		}
 		if err := c.wait(ctx, interval); err != nil {
