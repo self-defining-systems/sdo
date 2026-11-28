@@ -99,6 +99,7 @@ the onboarding agent discovers them (production requires them; a harness that ha
 | `detection.stability_window` | `SDO_DETECTION_STABILITY_WINDOW` | duration | `15s` | how long the alert set (opening alerts and user tests that failed during the incident) must stay clear after SDO's last write settled before the incident counts as recovered |
 | `detection.drift_batch_window` | `SDO_DETECTION_DRIFT_BATCH_WINDOW` | duration | `20s` | batch window for unexplained drift |
 | `detection.request_metrics_shadow` | `SDO_DETECTION_REQUEST_METRICS_SHADOW` | bool | `false` | shadow mode of the request-metrics detector: its per-operation findings are recorded as clues in sdo detect and the evidence sink but never open or hold an incident. Off by default: a failing operation or route in real user traffic opens an incident |
+| `detection.pages_only` | `SDO_DETECTION_PAGES_ONLY` | bool | `false` | only a page (the external-incident inbox) opens an incident: every detector finding, failing user tests, failing user traffic and Kubernetes conditions included, is a clue that never opens, joins or holds one. Clues still ride in a page's incident as evidence, so learned playbooks still run on it, and the page is Recovered when every health detector stays clear. Off by default; for runs where someone else pages SDO (a benchmark arm without SDO's own paging) |
 
 ### `learning`
 

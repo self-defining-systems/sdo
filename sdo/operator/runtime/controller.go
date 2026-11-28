@@ -46,6 +46,9 @@ type ControllerConfig struct {
 	// RequestMetricsOpens lets a request-metrics finding open an incident. The
 	// zero value is shadow mode: those findings are clues and never open one.
 	RequestMetricsOpens bool
+	// PagesOnly makes every detector finding a clue: only a page opens an
+	// incident (detection.pages_only).
+	PagesOnly bool
 	// WatchOnly detects, opens, verifies and closes incidents as usual but never
 	// responds: the controller's dispatcher is replaced by one that idles until
 	// the incident ends, and no automatic stage is selected.
@@ -323,6 +326,11 @@ type Controller struct {
 	// dispatchJitter overrides the dispatch retry jitter source in tests; it
 	// must return a value in [0, 1). Nil defaults to a real random source.
 	dispatchJitter func() float64
+
+	// pageWait is the page waiting for health evidence under PagesOnly
+	// (pageEvidenceReady): its ID and when the controller first read it.
+	pageWaitID    string
+	pageWaitSince time.Time
 }
 
 // WithSettings fills the timing and policy fields from the operator
@@ -343,6 +351,7 @@ func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig 
 	c.DispatchPrepareBound = time.Duration(policy.Response.DispatchPrepareBound)
 	c.ExternalClues = policy.Response.ExternalClues
 	c.RequestMetricsOpens = !policy.Detection.RequestMetricsShadow
+	c.PagesOnly = policy.Detection.PagesOnly
 	return c
 }
 

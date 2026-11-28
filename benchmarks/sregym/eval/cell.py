@@ -111,6 +111,10 @@ class PageHook(Protocol):
         """When the hook found that SDO had opened an incident of its own since injection (so it did not page)."""
         ...
 
+    def record(self, cell: Cell) -> dict[str, Any] | None:
+        """Extra ``page.json`` fields of the page this hook sent for the cell, if it keeps any."""
+        ...
+
 
 class NoPageHook:
     """Never pages: the arm's own page (or instruction) is its clock."""
@@ -121,6 +125,9 @@ class NoPageHook:
         return None
 
     def own_incident_at(self, cell: Cell) -> float | None:
+        return None
+
+    def record(self, cell: Cell) -> dict[str, Any] | None:
         return None
 
 
@@ -582,6 +589,7 @@ def _identity(
             "probe_interval_seconds": config.probe_interval_seconds,
             "after_playbook": config.after_playbook,
             "fallback_page_seconds": config.fallback_page_seconds,
+            "page": config.page,
             "cell_cap_seconds": config.cell_cap_seconds,
         },
     }

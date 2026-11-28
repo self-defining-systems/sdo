@@ -8,6 +8,7 @@ no fault name and no SDO-specific hint. One decision per cell: it pages once, or
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from benchmarks.sregym.eval.cell import Cell, Lane
+    from benchmarks.sregym.eval.plan import EvalConfig
 
 
 def incident_notice(application: str, namespace: str, description: str) -> str:
@@ -116,3 +118,86 @@ class FallbackPageHook:
 
     def own_incident_at(self, cell: Cell) -> float | None:
         return self.own.get(cell.id)
+
+    def record(self, cell: Cell) -> dict[str, Any] | None:
+        return None
+
+
+def first_unhealthy_at(probes: Path, since: float) -> float | None:
+    """The time of the runner's first unhealthy prober sample at or after ``since`` (``health.Prober`` writes one JSON
+    line per sample). A gap line (the host could not ask) is not a sample, and a partly written last line is skipped."""
+    try:
+        text = probes.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    for line in text.splitlines():
+        try:
+            sample = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(sample, dict) and sample.get("healthy") is False and float(sample["at"]) >= since:
+            return float(sample["at"])
+    return None
+
+
+@dataclass
+class ImpactPageHook:
+    """Pages SDO once, at the first unhealthy sample of the runner's own prober after injection (not SDO's detectors),
+    or at ``injected_at + deadline_seconds`` when the prober saw nothing by then. For the detector-ablation arm, whose
+    controller runs with ``detection.pages_only``: SDO's detectors never open an incident, so this page always does.
+
+    The text is the same generic notice as the fallback page (``lane_notice``): no detector, alert or diagnosis content.
+    ``record`` is what the row writes to ``page.json``: ``source`` (``impact`` or ``deadline``), ``impact_at``
+    (``None`` for a deadline page), ``paged_at`` (the write's acknowledgement), ``text``, and whether SDO had an
+    incident of its own before the page (``sdo_incident_before_page``; always false under ``pages_only``).
+    """
+
+    deadline_seconds: float
+    cluster: PageCluster
+    now: Callable[[], float]
+    #: The cell's prober output (``<cell directory>/probes.jsonl``).
+    probes: Callable[[Cell], Path]
+    notice: Callable[[Lane], str] = lane_notice
+    new_id: Callable[[], str] = _page_id
+    records: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.deadline_seconds <= 0:
+            raise ValueError("deadline_seconds must be positive")
+
+    def page(
+        self, lane: Lane, cell: Cell, injected_at: float, known_incident_ids: frozenset[str] = frozenset()
+    ) -> float | None:
+        if cell.arm != "sdo" or cell.id in self.records:
+            return None
+        impact = first_unhealthy_at(self.probes(cell), injected_at)
+        if impact is None and self.now() < injected_at + self.deadline_seconds:
+            return None
+        own = self.cluster.own_incident(lane, known_incident_ids)
+        text = self.notice(lane)
+        self.cluster.send(lane, self.new_id(), text)
+        at = self.now()
+        self.records[cell.id] = {
+            "source": "deadline" if impact is None else "impact",
+            "injected_at": injected_at,
+            "impact_at": impact,
+            "paged_at": at,
+            "text": text,
+            "sdo_incident_before_page": own,
+        }
+        return at
+
+    def own_incident_at(self, cell: Cell) -> float | None:
+        return None
+
+    def record(self, cell: Cell) -> dict[str, Any] | None:
+        return self.records.get(cell.id)
+
+
+def page_hook(config: EvalConfig, cluster: PageCluster, now: Callable[[], float]) -> FallbackPageHook | ImpactPageHook:
+    """The SDO arm's page hook the config names (``EvalConfig.page``); ``fallback_page_seconds`` is its deadline."""
+    if config.page == "impact":
+        return ImpactPageHook(
+            config.fallback_page_seconds, cluster, now, probes=lambda cell: cell.directory(config) / "probes.jsonl"
+        )
+    return FallbackPageHook(config.fallback_page_seconds, cluster, now)

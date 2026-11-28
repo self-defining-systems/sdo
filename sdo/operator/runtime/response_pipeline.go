@@ -119,6 +119,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		return merged, cloneStageReports(reports), err
 	}
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), AfterPlaybook: c.config.AfterPlaybook}
+	state.pageWork = c.config.PagesOnly && pageOpened(&request) && len(request.Findings) == 0
 	var stages []ResponseStage
 	automaticAvailable, agentConfigured := false, false
 	for _, name := range c.codePath.Selection.ResponseStages {

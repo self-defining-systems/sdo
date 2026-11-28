@@ -42,8 +42,12 @@ type openers struct {
 //
 // Every other finding (drift, wiring, events, saturation, links, store state,
 // data checks, metrics alerts, authored and learned detectors) is a clue: it
-// never opens or holds an incident.
+// never opens or holds an incident. With PagesOnly every finding is a clue
+// and only a page opens an incident; the clues still ride in its request.
 func (c *Controller) opens(finding sdk.Finding) bool {
+	if c.config.PagesOnly {
+		return false
+	}
 	if c.isUserTraffic(finding) {
 		return true
 	}
@@ -82,7 +86,7 @@ const AlertJoinWindow = 5 * time.Minute
 // It reports whether the finding is now (or already was) in the set. It never
 // dispatches or re-prompts the agent.
 func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
-	if !c.isUserTest(finding) && !c.isUserTraffic(finding) {
+	if c.config.PagesOnly || !c.isUserTest(finding) && !c.isUserTraffic(finding) {
 		return false
 	}
 	c.mu.Lock()

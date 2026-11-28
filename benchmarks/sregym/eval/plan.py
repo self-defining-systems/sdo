@@ -64,6 +64,10 @@ class EvalConfig(BaseModel):
     #: The SDO arm is paged this long after injection when it has not opened its own incident
     #: (``page.FallbackPageHook``).
     fallback_page_seconds: float = Field(default=120.0, gt=0)
+    #: Which page the SDO arm gets: ``fallback`` (only when SDO opened no incident of its own) or ``impact`` (always,
+    #: at the runner prober's first unhealthy sample, for a controller with ``detection.pages_only``;
+    #: ``page.ImpactPageHook``). Both page by ``fallback_page_seconds`` at the latest.
+    page: Literal["fallback", "impact"] = "fallback"
     cell_cap_seconds: float = Field(default=1800.0, gt=0)
     #: After the agent ends, keep probing at most this long for the hold to be satisfied.
     settle_cap_seconds: float = Field(default=300.0, gt=0)

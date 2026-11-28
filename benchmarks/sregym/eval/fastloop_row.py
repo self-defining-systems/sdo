@@ -682,10 +682,9 @@ class FastloopRowRunner:
             )
         if paged_at is not None:
             state["fallback_page_at"] = paged_at
-            (directory / "page.json").write_text(
-                json.dumps({"injected_at": injected, "paged_at": paged_at, "source": "fallback"}) + "\n",
-                encoding="utf-8",
-            )
+            page = {"injected_at": injected, "paged_at": paged_at, "source": "fallback"}
+            page |= context.page_hook.record(cell) or {}
+            (directory / "page.json").write_text(json.dumps(page) + "\n", encoding="utf-8")
 
     def _stop(self, process: Any) -> None:
         process.terminate()

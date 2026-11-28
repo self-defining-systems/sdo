@@ -41,14 +41,19 @@ type IncidentState struct {
 	// afterWrite is set once a playbook of this stage wrote: from then on the
 	// stage observes only the incident's opening alerts.
 	afterWrite bool
+	// pageWork marks a page-opened incident under detection.pages_only that
+	// carried no finding: the page itself is the work, so the stages run
+	// (the agent included) instead of stopping for lack of findings.
+	pageWork bool
 }
 
-// RunResponseStages stops when no findings remain. Every attempted stage has a
+// RunResponseStages stops when no findings remain (a clue-less page under
+// detection.pages_only is work in itself). Every attempted stage has a
 // report, including errors, so subsequent workers never infer success by silence.
 func RunResponseStages(ctx context.Context, state *IncidentState, stages []ResponseStage) error {
 	state.refreshUnexplained()
 	for _, stage := range stages {
-		if len(state.Findings) == 0 {
+		if len(state.Findings) == 0 && !state.pageWork {
 			break
 		}
 		if stage.Name() == "agent" && !agentMayFollowPlaybook(state.AfterPlaybook, state.PriorStages) {
