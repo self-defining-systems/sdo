@@ -1,4 +1,9 @@
-"""Lanes subject for a plain Claude Code agent responding to failing pack journeys."""
+"""Lanes subject for a plain Claude Code agent responding to failing pack journeys.
+
+The agent is paged at the first harm onset, and paged again (a new session: same scoped identity, same prompt, nothing
+carried over) when users are harmed anew after a quiet period (:mod:`benchmarks.fuzzops.repage`). Every page is a line
+of ``pages.jsonl``; ``done.json``, ``usage.json``, the transcript and the session directory cover all of them.
+"""
 
 from __future__ import annotations
 
@@ -16,8 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from benchmarks.fuzzops import eks
-from benchmarks.fuzzops.cellevidence import atomic_write_json, cell_problems
+from benchmarks.fuzzops import eks, repage
+from benchmarks.fuzzops.cellevidence import atomic_write, atomic_write_json, cell_problems, read_json_object
 from benchmarks.fuzzops.hooks import HookError, fuzzops_app, prove_golden
 from benchmarks.fuzzops.view import redact_json_line
 
@@ -31,6 +36,12 @@ IDENTITY = "vanilla-agent"
 MODULE = "benchmarks.fuzzops.vanilla"
 VERTEX_ENV = ("CLAUDE_CODE_USE_VERTEX", "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID")
 ONSET_EVIDENCE = "onset-probes.jsonl"
+PAGES = "pages.jsonl"
+#: In the lane state while the supervisor only watches for a new onset; in the run directory to end that watch.
+STANDBY = "standby"
+STOP = "stop"
+#: How long collect waits for a watching supervisor to leave.
+RELEASE_SECONDS = 30.0
 #: What a full EKS lane carries in kube-system (benchmarks/lanes/deploy/eks-lane.sh): the lane admin identity, the node
 #: agent DaemonSet with its pods, and the node agent's pre-pull list. They belong to the lane, not to SDO.
 LANE_PLATFORM = re.compile(
@@ -43,6 +54,7 @@ EVIDENCE_FILES = (
     "onset.json",
     ONSET_EVIDENCE,
     "done.json",
+    PAGES,
     "usage.json",
     "transcript.jsonl",
     "stderr.log",
@@ -297,10 +309,10 @@ def sandbox(env: Mapping[str, str], box: Path, auth: Path, config: Path, extra: 
     return [*isolated(env, box, mounts, settings), "/tools/claude"]
 
 
-def copy_log(source: Path, dest: Path, identities: Sequence[str]) -> dict[str, Any]:
+def copy_log(source: Path, dest: Path, identities: Sequence[str], mode: str = "w") -> dict[str, Any]:
     # Keep the CLI JSONL shape (including IDs) for the evidence validator.
     result: dict[str, Any] = {}
-    with source.open(errors="replace") as raw, dest.open("w") as out:
+    with source.open(errors="replace") as raw, dest.open(mode) as out:
         for line in raw:
             safe = redact_json_line(line.rstrip("\n"), identities)
             out.write(safe + "\n")
@@ -313,7 +325,21 @@ def copy_log(source: Path, dest: Path, identities: Sequence[str]) -> dict[str, A
     return result
 
 
-def capture_agent(env: Mapping[str, str], target: Path, injected: float) -> None:
+def session_id(stream: Path) -> str | None:
+    """A capped session has no result event; its first records name it too."""
+    with stream.open(errors="replace") as lines:
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and isinstance(event.get("session_id"), str):
+                return event["session_id"]
+    return None
+
+
+def capture_agent(env: Mapping[str, str], target: Path, cutoff: float) -> dict[str, Any]:
+    """One page: a new Claude Code session, stopped at ``cutoff``. Its logs add to the run's; returns its record."""
     auth, extra = vertex(env)
     ns = env["FUZZOPS_NAMESPACE"]
     with tempfile.TemporaryDirectory(prefix="vanilla-claude-") as temp:
@@ -345,14 +371,14 @@ def capture_agent(env: Mapping[str, str], target: Path, injected: float) -> None
                     stdout=stream,
                     stderr=stderr,
                     check=False,
-                    timeout=max(0.01, injected + AGENT_SECONDS - started),
+                    timeout=max(0.01, cutoff - started),
                 ).returncode
             except subprocess.TimeoutExpired:
                 # Killing bwrap's PID namespace supervisor also kills Claude's descendants.
                 capped, exit_code = True, None
         ended = time.time()
-        result = copy_log(box / "stream", target / "transcript.jsonl", secrets)
-        copy_log(box / "stderr", target / "stderr.log", secrets)
+        result = copy_log(box / "stream", target / "transcript.jsonl", secrets, "a")
+        copy_log(box / "stderr", target / "stderr.log", secrets, "a")
         projects = box / "config" / "projects"
         if projects.is_dir() and not projects.is_symlink():
             for path in projects.rglob("*.jsonl"):
@@ -361,29 +387,132 @@ def capture_agent(env: Mapping[str, str], target: Path, injected: float) -> None
                 dest = target / "session-dir" / path.relative_to(projects)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 copy_log(path, dest, secrets)
-        atomic_write_json(
-            target / "usage.json",
-            {
-                **(result.get("usage") or {}),
-                "total_cost_usd": result.get("total_cost_usd"),
-            },
-        )
         summary = result.get("result")
-        if isinstance(summary, str) and env.get("FUZZOPS_REPORT"):
-            atomic_write_json(Path(env["FUZZOPS_REPORT"]), {"summary": summary[:600]})
-        atomic_write_json(
-            target / "done.json",
-            {
-                "started_at": timestamp(started),
-                "ended_at": timestamp(ended),
-                "capped": capped,
-                "exit": exit_code,
-                "model": MODEL,
-                "effort": EFFORT,
-                "result_event": bool(result),
-                "is_error": result.get("is_error"),
+        return {
+            "started_at": timestamp(started),
+            "ended_at": timestamp(ended),
+            "seconds": round(ended - started, 3),
+            "session_id": session_id(box / "stream"),
+            "capped": capped,
+            "exit": exit_code,
+            "result_event": bool(result),
+            "is_error": result.get("is_error"),
+            "usage": result.get("usage") or {},
+            "total_cost_usd": result.get("total_cost_usd"),
+            "summary": summary[:600] if isinstance(summary, str) else None,
+        }
+
+
+def add_usage(total: Any, more: Any) -> Any:
+    """Sum two ``result.usage`` values field by field."""
+    if isinstance(total, dict) and isinstance(more, dict):
+        return {key: add_usage(total.get(key), more.get(key)) for key in {**total, **more}}
+    if isinstance(total, list) and isinstance(more, list):
+        return total + more
+    if type(total) in (int, float) and type(more) in (int, float):
+        return total + more
+    return more if total is None else total
+
+
+def write_pages(env: Mapping[str, str], target: Path, pages: Sequence[Mapping[str, Any]], stopped: str | None) -> None:
+    """The run's evidence over every page so far (``stopped``: why no further page will come, once known)."""
+    atomic_write(target / PAGES, "".join(json.dumps(page) + "\n" for page in pages))
+    # A session without a result event has unknown tokens and cost: the run's totals are then unknown, never partial.
+    usage: dict[str, Any] = {}
+    cost: float | None = 0.0
+    if all(page["result_event"] for page in pages):
+        for page in pages:
+            usage = add_usage(usage, page["usage"])
+    for page in pages:
+        known = page["result_event"] and page["total_cost_usd"] is not None
+        cost = cost + page["total_cost_usd"] if known and cost is not None else None
+    atomic_write_json(target / "usage.json", {**usage, "total_cost_usd": cost})
+    summaries = [page["summary"] for page in pages if page["summary"] is not None]
+    if summaries and env.get("FUZZOPS_REPORT"):
+        atomic_write_json(Path(env["FUZZOPS_REPORT"]), {"summary": " | ".join(summaries)})
+    exits = [page["exit"] for page in pages]
+    errors = [page["is_error"] for page in pages]
+    atomic_write_json(
+        target / "done.json",
+        {
+            "started_at": pages[0]["started_at"],
+            "ended_at": pages[-1]["ended_at"],
+            "agent_seconds": round(sum(page["seconds"] for page in pages), 3),
+            "pages": len(pages),
+            "capped": any(page["capped"] for page in pages),
+            "exit": next((code for code in exits if code not in (None, 0)), None if None in exits else 0),
+            "model": MODEL,
+            "effort": EFFORT,
+            "result_event": all(page["result_event"] for page in pages),
+            "is_error": True if True in errors else errors[-1],
+            "repage": {
+                "page_limit": repage.page_limit(env.get("BENCH_FAULT", "")),
+                "quiet_seconds": repage.QUIET_SECONDS,
+                "stopped": stopped,
             },
-        )
+        },
+    )
+
+
+@contextmanager
+def standing_by(env: Mapping[str, str]) -> Iterator[None]:
+    """Say that nothing is working: to lanes' ``idle`` (the marker) and to FuzzOps' early stop (its standby file)."""
+    markers = [state(env) / STANDBY]
+    if env.get("FUZZOPS_STANDBY"):
+        markers.append(Path(env["FUZZOPS_STANDBY"]))
+    try:
+        for marker in markers:
+            marker.touch()
+        yield
+    finally:
+        for marker in markers:
+            marker.unlink(missing_ok=True)
+
+
+def respond(
+    env: Mapping[str, str],
+    target: Path,
+    injected: float,
+    session: Callable[[Mapping[str, str], Path, float], dict[str, Any]] = capture_agent,
+    clock: Callable[[], float] = time.time,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Page the agent at the first onset, then again at each later one while the window lasts."""
+    limit = repage.page_limit(env.get("BENCH_FAULT", ""))
+    deadline = datetime.fromisoformat(env["FUZZOPS_DEADLINE"]).timestamp()
+    traffic = repage.Traffic(Path(env["FUZZOPS_TRAFFIC"]))
+    harm = repage.Harm()
+
+    def observe() -> None:
+        for sample in traffic.drain():
+            harm.observe(sample)
+
+    observe()
+    harm.page()
+    pages: list[dict[str, Any]] = []
+    paged_at, cutoff = clock(), injected + AGENT_SECONDS
+    while True:
+        onset = timestamp(harm.paged.timestamp()) if harm.paged else None
+        record = session(env, target, cutoff)
+        pages.append({"page": len(pages) + 1, "paged_at": timestamp(paged_at), "onset": onset, **record})
+        write_pages(env, target, pages, None)
+        if len(pages) >= limit:
+            stopped = repage.PAGE_LIMIT
+            observe()
+        else:
+            with standing_by(env):
+                stopped = repage.await_onset_again(
+                    traffic, harm, deadline, (target / STOP).exists, clock=clock, sleep=sleep
+                )
+        # Whether users had a quiet period after this page: if not, it is never followed by another.
+        pages[-1]["users_recovered"] = None if harm.unsupported else harm.recovered
+        if stopped != repage.ONSET:
+            break
+        harm.page()
+        paged_at = clock()
+        cutoff = paged_at + AGENT_SECONDS
+        print(f"vanilla: users harmed again, page {len(pages) + 1}", file=sys.stderr, flush=True)
+    write_pages(env, target, pages, stopped)
 
 
 def await_onset(env: Mapping[str, str], target: Path, deadline: float) -> dict[str, Any]:
@@ -412,7 +541,8 @@ def await_onset(env: Mapping[str, str], target: Path, deadline: float) -> dict[s
 
 def supervise(env: Mapping[str, str], injected: float, lock_fd: int) -> None:
     os.set_inheritable(lock_fd, False)
-    capture_agent(env, run_dir(env), injected)
+    (state(env) / STANDBY).unlink(missing_ok=True)
+    respond(env, run_dir(env), injected)
 
 
 def watch(env: Mapping[str, str], module: str = MODULE, agent: str = "Claude Code") -> int:
@@ -454,6 +584,12 @@ def watch(env: Mapping[str, str], module: str = MODULE, agent: str = "Claude Cod
 
 def problems_of(dest: Path, done: Mapping[str, Any]) -> list[str]:
     problems = cell_problems(dest, "vanilla")
+    paging = done.get("repage") or {}
+    # A single fault's row stays usable on an older pin; with several faults the arm would be one-shot.
+    if paging.get("stopped") == repage.UNSUPPORTED and paging.get("page_limit", 0) > 2:
+        problems.append("the agent could not be paged again: this FuzzOps pin's traffic stream has no last_bad")
+    if done.get("error") and done.get("result_event"):
+        problems.append(f"vanilla supervisor failed: {done['error']}")
     if not done.get("result_event"):
         problems.append("Claude Code result event missing" + (f" ({done['error']})" if done.get("error") else ""))
     elif done.get("is_error") or done.get("exit") not in (None, 0):
@@ -489,7 +625,22 @@ def publish(
     return int(bool(problems))
 
 
+def release_standby(env: Mapping[str, str]) -> None:
+    """Lanes collects once the window is over: end a supervisor that is only watching, so it frees the lane."""
+    if not (state(env) / STANDBY).exists() or not run_dir(env).is_dir():
+        return
+    (run_dir(env) / STOP).touch()
+    until = time.monotonic() + RELEASE_SECONDS
+    while time.monotonic() < until:
+        try:
+            with lane_lock(env):
+                return
+        except HookError:
+            time.sleep(0.1)
+
+
 def collect(env: Mapping[str, str]) -> int:
+    release_standby(env)
     with lane_lock(env):
         return publish(env, "vanilla", EVIDENCE_FILES, problems_of)
 
@@ -559,6 +710,9 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
             supervise(environ, float(args[1]), int(args[2]))
         elif verb == "collect":
             return collect(environ)
+        elif verb == "idle" and (state(environ) / STANDBY).exists():
+            # As for SDO between incidents: nothing is working, so an operator-signalled window end may apply.
+            print("idle")
         elif verb == "transcripts":
             # Lanes asks on pool build and teardown, outside a row. Collect validates each row's transcript.
             print("row transcripts are verified by collect")
@@ -570,7 +724,9 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         # Avoid echoing malformed credential contents or process arguments in hook logs.
         why = str(exc) if isinstance(exc, HookError) else f"{verb} failed ({type(exc).__name__})"
         if verb == "supervise":
-            atomic_write_json(run_dir(environ) / "done.json", {"error": why})
+            # Keep what earlier pages recorded.
+            done = read_json_object(run_dir(environ) / "done.json")
+            atomic_write_json(run_dir(environ) / "done.json", {**done, "error": why})
         if verb == "preflight":
             print(json.dumps({"checks": [{"check": "vanilla-sandbox", "ok": False, "detail": why}]}))
             return 0

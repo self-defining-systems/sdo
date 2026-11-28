@@ -538,7 +538,9 @@ def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Documen
     row.inject_to_page_s = _seconds(inject, start)
     # The headline time to fix ends at the last fixing write for both arms (set by _record_write); the agent's
     # session end includes its own verification after the fix, so it is kept apart.
-    row.agent_wall_s = _seconds(start, end)
+    # With several pages, the time between them is not the agent's.
+    sessions = _number(done.get("agent_seconds"))
+    row.agent_wall_s = sessions if done.get("pages", 1) > 1 else _seconds(start, end)
     transcript = op / "transcript.jsonl"
     usage = _read(op / "usage.json")
     if not usage:
