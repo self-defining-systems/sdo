@@ -252,20 +252,30 @@ func sourceResidualPaths(observed, source *unstructured.Unstructured) ([]string,
 // Controller exclusions come from the same managed-field and annotation
 // policies as source comparison. No list of manager names or new allowlist.
 func preserveSourceControllerFields(next, observed *unstructured.Unstructured) {
-	preserveSubresourceFields(next, observed)
+	preserveSubresourceFields(next, observed, ownsDriftPath(ownedBySubresourceWriters(observed), "spec.replicas"))
 	preserveSourceBookkeeping(next, observed)
 }
 
 // preserveSubresourceFields keeps what controllers wrote through a
-// subresource (an autoscaler's replicas) across a restore.
-func preserveSubresourceFields(next, observed *unstructured.Unstructured) {
+// subresource across a restore. Replicas are kept only when autoscaled: a
+// scale with no autoscaler behind it (kubectl scale) is drift that source
+// comparison reports, so the restore puts accepted replicas back.
+func preserveSubresourceFields(next, observed *unstructured.Unstructured, autoscaled bool) {
 	owned := ownedBySubresourceWriters(observed)
+	if autoscaled {
+		if replicas, found, _ := unstructured.NestedFieldCopy(observed.Object, "spec", "replicas"); found {
+			_ = unstructured.SetNestedField(next.Object, replicas, "spec", "replicas")
+		}
+	}
 	var preserve func(string, map[string]any, map[string]any)
 	preserve = func(prefix string, target, live map[string]any) {
 		for key, value := range live {
 			path := key
 			if prefix != "" {
 				path = prefix + "." + key
+			}
+			if path == "spec.replicas" {
+				continue
 			}
 			if ownsDriftPath(owned, path) {
 				target[key] = runtime.DeepCopyJSONValue(value)

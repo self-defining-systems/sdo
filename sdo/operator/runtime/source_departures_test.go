@@ -19,6 +19,7 @@ import (
 type departureView struct {
 	detectFake
 	diffs map[string]sdk.SourceDiff
+	errs  map[string]error
 	gone  map[string]bool
 	// written gives a live object its managedFields (manager to write time).
 	written map[string][]metav1.ManagedFieldsEntry
@@ -27,6 +28,9 @@ type departureView struct {
 func (v departureView) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error) {
 	if diff, ok := v.diffs[ref.Kind+"/"+ref.Name]; ok {
 		return diff, nil
+	}
+	if err, ok := v.errs[ref.Kind+"/"+ref.Name]; ok {
+		return sdk.SourceDiff{}, err
 	}
 	return sdk.SourceDiff{}, errors.New("not compared")
 }
@@ -258,5 +262,29 @@ func TestSourceDeparturesHonourTheInFlightFlagCarriedByTheRequest(t *testing.T) 
 		if (len(got) == 0) != inFlight {
 			t.Fatalf("in flight %v: departures = %v", inFlight, got)
 		}
+	}
+}
+
+// A comparison the API server refused is listed as not compared, with the
+// server's reason and no restore command; any other comparison error still
+// claims nothing.
+func TestARefusedSourceComparisonIsListedAsNotCompared(t *testing.T) {
+	claim := dref("PersistentVolumeClaim", "data")
+	refused := fmt.Errorf("normalize accepted manifest: %w", &SourceComparisonRefusedError{Ref: claim, Err: errors.New("spec is immutable after creation")})
+	view := departureView{detectFake: detectApp(), errs: map[string]error{"PersistentVolumeClaim/data": refused, "Service/api": errors.New("timeout")}}
+	got := SourceDepartures(DepartureInput{View: view, Onset: detectOnset}, []sdk.ObjectRef{claim, dref("Service", "api")})
+	if len(got) != 1 || got[0].Kind != DepartureUncompared || got[0].Command() != "" {
+		t.Fatalf("departures = %+v", got)
+	}
+	if text := got[0].Text(); !strings.Contains(text, "could not be compared") || !strings.Contains(text, "immutable") {
+		t.Fatalf("text = %q", text)
+	}
+	row := IncidentChange{Source: "kubernetes", ReaderOrObject: "PersistentVolumeClaim/data", Key: got[0].Error, Before: "accepted-source", After: string(got[0].Kind)}
+	if routineChange(row) {
+		t.Fatal("an uncompared object is never routine churn")
+	}
+	evidence, ok := rowEvidence(row, detectOnset)
+	if !ok || !strings.Contains(evidence.Text, "could not be compared with accepted source") || !strings.Contains(evidence.Text, "immutable") {
+		t.Fatalf("evidence = %+v (%v)", evidence, ok)
 	}
 }

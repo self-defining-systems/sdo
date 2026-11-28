@@ -91,6 +91,19 @@ func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 	return planUnstructured(object, ref)
 }
 
+// AutoscalerTargets reports whether a live HorizontalPodAutoscaler in ref's
+// namespace targets ref.
+func (c TypedPlanClient) AutoscalerTargets(ctx context.Context, ref sdk.ObjectRef) (bool, error) {
+	if c.Client == nil || ref.Namespace == "" {
+		return false, nil
+	}
+	list, err := c.Client.AutoscalingV2().HorizontalPodAutoscalers(ref.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, fmt.Errorf("list autoscalers for %s/%s: %w", ref.Kind, ref.Name, err)
+	}
+	return hpaTargets(list.Items, ref), nil
+}
+
 func (c TypedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
 	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
 		return err

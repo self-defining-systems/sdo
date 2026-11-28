@@ -356,7 +356,11 @@ func dryRunSourceReplacement(ctx context.Context, client kubernetes.Interface, r
 	if err != nil {
 		return nil, err
 	}
-	return resource.dryRunUpdate(ctx, ref, next)
+	replaced, err := resource.dryRunUpdate(ctx, ref, next)
+	if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
+		return nil, &SourceComparisonRefusedError{Ref: ref, Err: err}
+	}
+	return replaced, err
 }
 
 func applyAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool) (*unstructured.Unstructured, error) {
