@@ -58,12 +58,7 @@ then use `SaveJSON("token", "token")` or `SaveCookie("session", "session")` to p
 ```go
 package generators
 
-import (
-	"encoding/json"
-	"strings"
-
-	"sdo.dev/operator/sdk/traffic"
-)
+import "sdo.dev/operator/sdk/traffic"
 
 const marker = "sdoprobe" // in every user and object name; at least 6 characters
 
@@ -90,23 +85,6 @@ func fixture(u traffic.ProbeUser) []traffic.Step {
 	}
 }
 
-// receipt waits for background work: a pending answer is sent again until the iteration times out.
-type receipt struct{ *traffic.HTTPEndpoint }
-
-func (r receipt) Check(resp traffic.Response, state traffic.State) traffic.Verdict {
-	if v := r.HTTPEndpoint.Check(resp, state); !v.OK {
-		return v
-	}
-	var body struct{ Receipt string }
-	if err := json.Unmarshal(resp.Body, &body); err != nil {
-		return traffic.Fail("order is not JSON: %v", err)
-	}
-	if !strings.Contains(body.Receipt, state["ref"]) {
-		return traffic.NotYet("no receipt for %s yet", state["ref"])
-	}
-	return traffic.Pass()
-}
-
 func Scenarios() traffic.Catalog {
 	byRef := traffic.Params{"ref": traffic.FromPrevious("ref")}
 	return traffic.Catalog{
@@ -117,7 +95,9 @@ func Scenarios() traffic.Catalog {
 			Steps: []traffic.Step{
 				step("create", auth(traffic.POST("/api/orders", nil).WithJSON(`{"ref":"{ref}","item":"pen"}`,
 					traffic.Params{"ref": traffic.Unique("sdoprobe-")})).Status(201).SaveJSON("id", "id").SaveJSON("ref", "ref")),
-				step("read-back", receipt{auth(traffic.GET("/api/orders/{id}", nil)).JSONEquals("ref", "{ref}").JSONEquals("item", "pen")}),
+				// the worker writes the receipt after the answer: Eventually sends the read again until it appears
+				step("read-back", traffic.Eventually(auth(traffic.GET("/api/orders/{id}", nil)).
+					JSONEquals("ref", "{ref}").JSONEquals("item", "pen").JSONEquals("receipt.order", "{ref}"))),
 				step("find", auth(traffic.GET("/api/orders", byRef)).ExactSet("items", "id", "{id}")),
 			},
 			// the id the marked create saved marks the delete; SDO then reads /api/orders/{id} back and expects 404
@@ -160,35 +140,20 @@ delete can mean the removal is only scheduled. Where deleted records stay readab
 
 ## `.sdo/diagnostics/traffic/workloads/`
 
+One file per probe kind: `probe-call.yaml`, `probe-write.yaml`, `probe-read-later.yaml`. The map's probe lines place
+each scenario in its kind's file; list a scenario only to give it its own settings.
+
 ```yaml
-# probe-write.yaml: the home of every write-read scenario (probe-call and probe-read-later alike)
 apiVersion: sdo.dev/v1alpha1
 kind: TrafficWorkload
 name: probe-write
 purpose: health-probe
-ratePerSecond: 0.02
-sampleInterval: 60s
 timeout: 5s
 iterationTimeout: 30s
 slo: {window: 4, minSamples: 1, maxAge: 10m, maxErrorRate: 1, maxTimeoutRate: 1, maxLatency: 10s}
-# no scenarios list: the map's write-read probe line places write-order here
----
-# probe-fast-write.yaml: the core writes again, every 10 s
-apiVersion: sdo.dev/v1alpha1
-kind: TrafficWorkload
-name: probe-fast-write
-purpose: health-probe
-ratePerSecond: 0.1
-timeout: 5s
-iterationTimeout: 20s
-scenarios:
-  - id: write-order
-    slo: {maxLatency: 2s}
 ```
 
-Put each workload in its own file; `probe-call.yaml` and `probe-read-later.yaml` take the home workload shape.
-The map's probe lines place each scenario in its kind's workload; list it in a file only for its own settings.
-Each scenario has one map entry even when several workloads run it.
+A faster extra workload for a core journey (`probe-fast-write.yaml`, `ratePerSecond: 0.1`) lists its scenarios.
 
 ## `.sdo/playbooks/health-objective/README.md`
 
