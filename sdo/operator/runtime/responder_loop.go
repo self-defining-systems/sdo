@@ -242,7 +242,12 @@ type ResponderLoop struct {
 	IncidentStatus  func() *apihistory.IncidentVerified
 	// RecoveryWaiting is what Recovered waits on, for `sdo detect`; "" when unknown.
 	RecoveryWaiting func() string
-	WaitClosure     func(context.Context, time.Duration) ToolResponse
+	// AlertProgress reports whether an alert of the incident's set cleared since detection (the investigator gate).
+	AlertProgress func() bool
+	// firstCall closes on the responder's first own tool call (firstToolCall); the investigator delay counts from it.
+	firstCallInit, firstCallMark sync.Once
+	firstCall                    chan struct{}
+	WaitClosure                  func(context.Context, time.Duration) ToolResponse
 	// WaitClock paces `sdo detect --wait`; nil uses production timers.
 	WaitClock kclock.WithTicker
 	// ExternalReceipts is the write recording the responder's writes are read from; nil when no recording
@@ -540,6 +545,9 @@ func (l *ResponderLoop) Exhausted() bool {
 type toolTiming struct{ capture, refresh, persist time.Duration }
 
 func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
+	if !request.isolatedRead {
+		l.markFirstToolCall()
+	}
 	if !request.isolatedRead && concurrentRead(request.Command) {
 		return l.handleRead(ctx, request)
 	}

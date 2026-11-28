@@ -139,6 +139,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	if err != nil {
 		return err
 	}
+	agentEnvironment = worker_registry.ClosingTurnEnvironment(agentEnvironment, policy.Learning)
 	freshExecutor := worker_registry.KubernetesExecutor{
 		Recording:      policy.Agent.Recording,
 		ToolchainImage: config.GetToolchainImage(),

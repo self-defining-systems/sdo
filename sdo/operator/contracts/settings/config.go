@@ -160,8 +160,8 @@ type Response struct {
 	CleanupTurns         int      `yaml:"cleanup_turns" doc:"how many times the responder's session is asked, after Recovered, to keep or remove the app-file edits it left uncaptured; edits still left after that are discarded and recorded as source_repair_uncaptured. 0 asks no cleanup turn"`
 	PageOnly             bool     `yaml:"page_only" doc:"the responder is a plain agent that gets only the incident page: no sdo commands on its PATH, no skills, no memory checkout, no investigators, no closing or cleanup turn, and no learning from the incident. SDO still detects, pages and verifies as usual. For comparing SDO's page alone against SDO's tools and memory"`
 	ExternalClues        bool     `yaml:"external_clues" doc:"with mode external: keep the detectors, synthetic traffic and state baseline running as clues (sdo detect, the candidate view). Their findings never open, join or close an external incident; the caller opens it and the responder's completion closes it. Default off: an external controller observes nothing"`
-	Investigators        int      `yaml:"investigators" doc:"how many read-only investigator sessions SDO starts when the responder has made no write for investigator_delay: one per top candidate node with non-routine evidence, each testing one hypothesis and writing a report the responder reads with sdo investigations. They never fix, never close or escalate an incident and are stopped before the closing turn. 0 starts none"`
-	InvestigatorDelay    Duration `yaml:"investigator_delay" doc:"how long the responder may work without a write before investigators start; a fix faster than this costs nothing. Measured fast fixes land in 25-60 s, so the 60s default starts them only for the slow incidents"`
+	Investigators        int      `yaml:"investigators" doc:"how many read-only investigator sessions SDO starts when the responder has made no progress SDO can see by investigator_delay (no known write, no alert of the set cleared, recovery not verified): one per top candidate node with non-routine evidence, each testing one hypothesis and writing a report the responder reads with sdo investigations. They never fix, never close or escalate an incident and are stopped before the closing turn. 0 starts none"`
+	InvestigatorDelay    Duration `yaml:"investigator_delay" doc:"how long after its first tool call the responder may work without progress (a known write, a cleared alert or verified recovery) before investigators start; a fix faster than this costs nothing. Measured fast fixes land in 25-60 s, so the 60s default starts them only for the slow incidents"`
 	StartupBound         Duration `yaml:"startup_bound" doc:"how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before detectors can open incidents. Pages can start the responder during startup. 0s turns the start-up period off"`
 }
 
@@ -171,6 +171,8 @@ type Learning struct {
 	ReflectionGuidance string `yaml:"reflection_guidance" doc:"the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator"`
 	ForceReflection    bool   `yaml:"force_reflection" doc:"always dispatch reflection after a verified closure (not with a frozen mode)"`
 	ClosingTurn        bool   `yaml:"closing_turn" doc:"whether a closed incident is learned from: the responder session's closing turn and cleanup turns, and Go's corpus capture. Off: detection, response, verification and the committed outcome are unchanged, but the incident's work ends when its outcome is acknowledged and nothing is learned (the ledger's reflection_skipped_reason is closing_turn_off); a committed source repair is still deployed. For runs whose learning is discarded (a benchmark arm that measures a fixed memory)"`
+	ClosingEffort      string `yaml:"closing_effort" doc:"reasoning effort of the closing and cleanup turns (low, medium, high, xhigh or max); empty runs them at agent.effort. The closing turn resumes the responder's session, so a lower effort keeps its context and prompt cache"`
+	ClosingModel       string `yaml:"closing_model" doc:"model of the closing and cleanup turns; empty runs them at agent.model. A different model resumes the same session but starts a fresh prompt cache"`
 	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"opt-in detector gate: a proposal that changes learned detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts"`
 }
 
@@ -269,6 +271,9 @@ func (c Config) Validate() error {
 		bad("agent.model", "a model is required")
 	}
 	oneOf("agent.effort", c.Agent.Effort, AgentEfforts...)
+	if c.Learning.ClosingEffort != "" {
+		oneOf("learning.closing_effort", c.Learning.ClosingEffort, AgentEfforts...)
+	}
 	oneOf("agent.reasoning_summary", c.Agent.ReasoningSummary, ReasoningSummaries...)
 	positive("agent.lifecycle_timeout", c.Agent.LifecycleTimeout)
 	positive("agent.memory_check_timeout", c.Agent.MemoryCheckTimeout)

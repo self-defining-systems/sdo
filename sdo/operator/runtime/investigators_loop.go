@@ -67,15 +67,35 @@ func (l *ResponderLoop) investigatorBriefs(ctx context.Context, max int) []inves
 	return investigatorBriefs(view, set, request, max)
 }
 
-// hasKnownWrite reports whether the responder made a write Go knows of (a plan application or, while the
-// recording exists, a recorded write). With the recording off only SDO-mediated writes are visible.
-func (l *ResponderLoop) hasKnownWrite() bool {
+// firstToolCall closes on the responder's first own tool call; investigator reads never close it.
+func (l *ResponderLoop) firstToolCall() <-chan struct{} {
+	l.firstCallInit.Do(func() { l.firstCall = make(chan struct{}) })
+	return l.firstCall
+}
+
+func (l *ResponderLoop) markFirstToolCall() {
+	l.firstToolCall()
+	l.firstCallMark.Do(func() { close(l.firstCall) })
+}
+
+// responderProgressed reports progress of the responder that Go can see, the investigator gate: a write Go knows
+// of (a plan application or, while the recording exists, a recorded write), an alert of the incident's set that
+// cleared, or a verified recovery. With the recording off the agent's own writes are invisible, but the alerts
+// they clear are not, so an investigator never starts after the fix (nobody would read its report).
+func (l *ResponderLoop) responderProgressed() bool {
 	var known bool
 	l.locked(func() {
 		times, _ := l.writeTimes()
 		known = len(times) > 0
 	})
-	return known
+	switch {
+	case known:
+		return true
+	case l.IncidentStatus != nil && l.IncidentStatus() != nil:
+		return true
+	default:
+		return l.AlertProgress != nil && l.AlertProgress()
+	}
 }
 
 // hasCandidateView reports whether the incident can show the candidate view the briefs come from: every
