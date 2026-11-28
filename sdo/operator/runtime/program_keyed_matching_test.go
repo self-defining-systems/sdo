@@ -54,6 +54,11 @@ func keyedView(names ...string) program.ReadView {
 
 func matchAll(program.Bindings) program.Result { return program.Match }
 
+// suspectDeployments makes exactly the named Deployments suspects.
+func suspectDeployments(names ...string) func(sdk.ObjectRef) bool {
+	return func(ref sdk.ObjectRef) bool { return ref.Kind == "Deployment" && slices.Contains(names, ref.Name) }
+}
+
 func boundNames(runs []ProgramRun, id string) []string {
 	var names []string
 	for _, run := range runs {
@@ -101,23 +106,67 @@ func TestCreditedPairNeedsItsSymptomOpen(t *testing.T) {
 	}
 }
 
-// With a credited key the stage never falls back to the finding binding for the
-// playbook: a same-Kind suspect without a pair is not bound automatically, even
-// when the finding alone would have bound it.
-func TestStageNeverBindsAKeyedPlaybookToAnUncreditedSuspect(t *testing.T) {
+// Credits rank candidate bindings and never filter them: a playbook credited
+// on one component still binds a sibling suspect through the finding, so the
+// stage applies it when its Diagnose matches there and every parameter binds.
+func TestStageBindsACreditedPlaybookToANewSuspect(t *testing.T) {
 	registry := keyedRegistry(t, matchAll, "fix")
-	findings := []sdk.Finding{keyedFinding("api")}
-	if runs := SelectProgramCandidates(context.Background(), registry, keyedView("api"), findings, time.Second); len(runs) != 1 {
-		t.Fatalf("setup: the finding alone binds api, got %+v", runs)
+	findings := []sdk.Finding{keyedFinding("store-b")}
+	keyed := KeyedMatching{Credits: credits("fix", "k1", "store-a"), OpeningKeys: []string{"k1"}, Stage: true, Suspect: suspectDeployments("store-b")}
+	runs := SelectKeyedProgramCandidates(context.Background(), registry, keyedView("store-b"), findings, time.Second, keyed)
+	if got := boundNames(runs, "fix"); !slices.Equal(got, []string{"store-b"}) || runs[0].BindingSource == BindingSourceCredited {
+		t.Fatalf("stage runs = %+v, want fix bound to the sibling store-b through the finding", runs)
 	}
-	keyed := KeyedMatching{Credits: credits("fix", "k1", "front"), OpeningKeys: []string{"k1"}, Stage: true}
-	if runs := SelectKeyedProgramCandidates(context.Background(), registry, keyedView("api"), findings, time.Second, keyed); len(runs) != 0 {
-		t.Fatalf("stage bound an uncredited suspect: %+v", runs)
+	// An incident that opened on another alert binds it the same way.
+	keyed.OpeningKeys = []string{"another-alert"}
+	runs = SelectKeyedProgramCandidates(context.Background(), registry, keyedView("store-b"), findings, time.Second, keyed)
+	if got := boundNames(runs, "fix"); !slices.Equal(got, []string{"store-b"}) {
+		t.Fatalf("other opening alert: bound %v, want store-b", got)
 	}
-	// The responder's own diagnosis still sees it, so `sdo detect` can offer it.
+	// Diagnose stays the gate: a sibling where it does not match is not applied.
+	registry = keyedRegistry(t, func(program.Bindings) program.Result { return program.NoMatch }, "fix")
+	runs = SelectKeyedProgramCandidates(context.Background(), registry, keyedView("store-b"), findings, time.Second, keyed)
+	for _, run := range runs {
+		if run.Verdict.Result == program.Match {
+			t.Fatalf("NoMatch diagnosis applied: %+v", runs)
+		}
+	}
+}
+
+// A clue on a component that is no suspect never binds a credited playbook in
+// the stage, however its Diagnose would answer there; the responder's own
+// diagnosis still offers it.
+func TestStageBindsNoSiblingOffTheFailingPaths(t *testing.T) {
+	registry := keyedRegistry(t, matchAll, "fix")
+	findings := []sdk.Finding{keyedFinding("unrelated")}
+	keyed := KeyedMatching{Credits: credits("fix", "k1", "store-a"), OpeningKeys: []string{"k1"}, Stage: true, Suspect: suspectDeployments("store-b")}
+	if runs := SelectKeyedProgramCandidates(context.Background(), registry, keyedView("unrelated"), findings, time.Second, keyed); len(runs) != 0 {
+		t.Fatalf("stage bound a component off the failing paths: %+v", runs)
+	}
 	keyed.Stage = false
-	if runs := SelectKeyedProgramCandidates(context.Background(), registry, keyedView("api"), findings, time.Second, keyed); !slices.Equal(boundNames(runs, "fix"), []string{"api"}) {
-		t.Fatalf("responder diagnosis lost the uncredited suspect: %+v", runs)
+	runs := SelectKeyedProgramCandidates(context.Background(), registry, keyedView("unrelated"), findings, time.Second, keyed)
+	if got := boundNames(runs, "fix"); !slices.Equal(got, []string{"unrelated"}) {
+		t.Fatalf("responder diagnosis bound %v, want unrelated", got)
+	}
+}
+
+// A credited suspect ranks before a finding-bound sibling, and the stage keeps
+// one Match per playbook per pass.
+func TestStageRanksCreditedSuspectBeforeFindingBoundSibling(t *testing.T) {
+	registry := keyedRegistry(t, matchAll, "fix")
+	// The sibling comes first in findings order; the credit still ranks first.
+	findings := []sdk.Finding{keyedFinding("store-b"), keyedFinding("store-a", "gateway-db")}
+	findings[1].Fingerprint = "second"
+	keyed := KeyedMatching{Credits: credits("fix", "k1", "store-a"), OpeningKeys: []string{"k1"}, Stage: true, Suspect: suspectDeployments("store-a", "store-b")}
+	runs := SelectKeyedProgramCandidates(context.Background(), registry, keyedView("store-a", "store-b", "gateway-db"), findings, time.Second, keyed)
+	var matched []string
+	for _, run := range runs {
+		if run.ProgramID == "fix" && run.Verdict.Result == program.Match {
+			matched = append(matched, run.Bindings.Objects[ComponentRole].Name+"/"+run.BindingSource)
+		}
+	}
+	if !slices.Equal(matched, []string{"store-a/" + BindingSourceCredited}) {
+		t.Fatalf("matched %v, want only the credited store-a", matched)
 	}
 }
 
@@ -150,18 +199,18 @@ func TestStageKeepsOnlyTheFirstMatchInSuspectOrder(t *testing.T) {
 	}
 }
 
-// A playbook with no credited pair keeps today's finding binding, so memory
-// that predates the key is not stranded.
+// A playbook with no credited pair keeps the finding binding, and a credited
+// one binds an uncredited suspect through it too.
 func TestPlaybookWithoutPairsKeepsFindingBinding(t *testing.T) {
 	registry := keyedRegistry(t, matchAll, "legacy", "fix")
 	findings := []sdk.Finding{keyedFinding("api")}
-	keyed := KeyedMatching{Credits: credits("fix", "k1", "front"), OpeningKeys: []string{"k1"}, Stage: true}
+	keyed := KeyedMatching{Credits: credits("fix", "k1", "front"), OpeningKeys: []string{"k1"}, Stage: true, Suspect: suspectDeployments("api")}
 	runs := SelectKeyedProgramCandidates(context.Background(), registry, keyedView("api"), findings, time.Second, keyed)
 	if got := boundNames(runs, "legacy"); !slices.Equal(got, []string{"api"}) || runs[0].BindingSource == "credited" {
 		t.Fatalf("legacy playbook bound %v (%+v), want api by finding binding", got, runs)
 	}
-	if got := boundNames(runs, "fix"); len(got) != 0 {
-		t.Fatalf("keyed playbook bound %v, want none", got)
+	if got := boundNames(runs, "fix"); !slices.Equal(got, []string{"api"}) {
+		t.Fatalf("keyed playbook bound %v, want api through the finding", got)
 	}
 }
 

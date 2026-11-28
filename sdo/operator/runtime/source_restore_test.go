@@ -116,7 +116,7 @@ func TestSourceRestoreIsListedLikeAPlaybookAndNeverBoundByFindings(t *testing.T)
 
 func restoreCandidateNames(view program.ReadView, request IncidentRequest) []string {
 	var names []string
-	for _, candidate := range sourceRestoreCandidates(view, request, request.Findings) {
+	for _, candidate := range buildSuspectSet(detectInput{Request: request, View: view, Findings: request.Findings}).restoreCandidates() {
 		names = append(names, candidate.bindings.Values[SourceRestoreComponentParam].(string))
 	}
 	return names

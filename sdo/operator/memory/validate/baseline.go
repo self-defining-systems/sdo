@@ -51,12 +51,9 @@ func selectCompileBaseline(ctx context.Context, request Request) (Request, error
 		return request, nil
 	}
 	if request.Actor == Responder && request.Phase == ReflectionPhase {
-		capture := request.CaptureDirectory
-		if capture == "" && request.CaptureRoot != "" {
-			capture, err = memory.IncidentCorpusDir(request.CaptureRoot, request.IncidentID)
-			if err != nil {
-				return Request{}, err
-			}
+		capture, err := captureDirectory(request)
+		if err != nil {
+			return Request{}, err
 		}
 		request.HealthyBaseline = ""
 		if capture != "" {
@@ -71,4 +68,13 @@ func selectCompileBaseline(ctx context.Context, request Request) (Request, error
 		}
 	}
 	return request, nil
+}
+
+// captureDirectory is the controller's capture of the request's incident:
+// the explicit directory, else the incident's directory under CaptureRoot.
+func captureDirectory(request Request) (string, error) {
+	if request.CaptureDirectory != "" || request.CaptureRoot == "" {
+		return request.CaptureDirectory, nil
+	}
+	return memory.IncidentCorpusDir(request.CaptureRoot, request.IncidentID)
 }

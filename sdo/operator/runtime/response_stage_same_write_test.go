@@ -113,13 +113,22 @@ type restartProgram struct {
 	undecided bool
 	// fixed declares no object parameter: the program acts on resources it names itself.
 	fixed bool
+	// role names the Deployment parameter; empty is "deployment".
+	role string
+}
+
+func (p restartProgram) param() string {
+	if p.role == "" {
+		return "deployment"
+	}
+	return p.role
 }
 
 func (p restartProgram) Spec() program.ProgramSpec {
 	if p.fixed {
 		return program.ProgramSpec{ID: p.id}
 	}
-	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}}}
+	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: p.param(), Kind: "Deployment", Required: true}}}
 }
 
 func (p restartProgram) Diagnose(_ context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
@@ -130,7 +139,7 @@ func (p restartProgram) Diagnose(_ context.Context, view program.ReadView, b pro
 		return program.Verdict{}, errors.New("memory host unavailable")
 	}
 	for _, deployment := range view.Deployments() {
-		if deployment.Name == b.Objects["deployment"].Name && (p.blind || deployment.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] == "") {
+		if deployment.Name == b.Objects[p.param()].Name && (p.blind || deployment.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] == "") {
 			return program.Verdict{Result: program.Match}, nil
 		}
 	}
@@ -138,7 +147,7 @@ func (p restartProgram) Diagnose(_ context.Context, view program.ReadView, b pro
 }
 
 func (p restartProgram) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
-	return program.Plan{Actions: []program.Action{program.RestartRollout{Ref: b.Objects["deployment"], Reason: p.id + " restarts the stalled service"}}}, nil
+	return program.Plan{Actions: []program.Action{program.RestartRollout{Ref: b.Objects[p.param()], Reason: p.id + " restarts the stalled service"}}}, nil
 }
 
 func sameWriteLoop(t *testing.T) (*sameWriteWorld, *ResponderLoop, *IncidentState) {

@@ -2,6 +2,7 @@ package validate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -14,10 +15,14 @@ import (
 	"strings"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/podread"
+	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/sdk/storestate"
 )
 
 // componentLiteralDiagnostics rejects a change that writes a component name
-// (an accepted-source object or traffic scenario ID) into code a role or
+// (an accepted-source object, a traffic scenario ID or a store object such as
+// a database's collection from captured store state) into code a role or
 // binding could supply it to: a playbook program, with or without a role (one
 // without finds its subject by relation, so a name is as much an over-fit), or
 // a learned detector that binds roles. Such code serves one component; the
@@ -48,7 +53,7 @@ func componentLiteralDiagnostics(ctx context.Context, r Request, paths []string)
 	if len(units) == 0 {
 		return nil
 	}
-	components := loadMemoryNames(ctx, r).components
+	components := append(loadMemoryNames(ctx, r).components, storeObjectNames(r)...)
 	dirs := make([]string, 0, len(units))
 	for dir := range units {
 		dirs = append(dirs, dir)
@@ -105,7 +110,7 @@ func componentLiteralDiagnostics(ctx context.Context, r Request, paths []string)
 			}
 			diagnostics = append(diagnostics, Diagnostic{Rule: RulePlaybookComponentLiteral, Path: dir,
 				Message: fmt.Sprintf("playbook program names the component %s %s; it repairs only that component", strings.Join(added, ", "), supplier),
-				Hint:    "derive per-component values from the bound object, or for a role-less program from the subject found by relation, through ReadView: a container from the bound workload's Pod template, its Pods by owner, the failing journeys through it with localize.FromContext(v, <the application's probe workload>) and Implicates(ref) instead of a scenario ID; the same program then repairs every component its detector binds"})
+				Hint:    "bind it through a role or relation, or take it as a parameter: derive per-component values from the bound object, or for a role-less program from the subject found by relation, through ReadView (a store's collections from its store-state diff, storestate.Changes): a container from the bound workload's Pod template, its Pods by owner, the failing journeys through it with localize.FromContext(v, <the application's probe workload>) and Implicates(ref) instead of a scenario ID; the same program then repairs every component its detector binds"})
 		}
 	}
 	return diagnostics
@@ -193,4 +198,56 @@ func componentUses(name string, data []byte, components []string) []string {
 		return true
 	})
 	return used
+}
+
+// storeObjectNames are the store objects (storestate.ObjectNames) the
+// captured snapshots name: every committed corpus case's snapshots, the
+// request's healthy baseline and the controller's capture of the incident.
+// Only the snapshots' store reads are decoded.
+func storeObjectNames(r Request) []string {
+	var files []string
+	cases, _ := os.ReadDir(filepath.Join(r.Root, filepath.FromSlash(layout.CorpusDir)))
+	for _, entry := range cases {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(r.Root, filepath.FromSlash(layout.CorpusDir), entry.Name())
+		for _, name := range []string{"open.json", "fixed.json", "healthy.json"} {
+			files = append(files, sdktest.CorpusSnapshotFile(dir, name))
+		}
+	}
+	if r.HealthyBaseline != "" {
+		baseline, _ := filepath.Glob(filepath.Join(r.HealthyBaseline, "*.json"))
+		files = append(files, baseline...)
+	}
+	if capture, err := captureDirectory(r); err == nil && capture != "" {
+		captured, _ := filepath.Glob(filepath.Join(capture, "*", "*.json"))
+		files = append(files, captured...)
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, file := range files {
+		if seen[file] {
+			continue
+		}
+		seen[file] = true
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		var reads struct {
+			PodReads map[string]podread.Result `json:"pod_reads"`
+		}
+		if json.Unmarshal(data, &reads) != nil || len(reads.PodReads) == 0 {
+			continue
+		}
+		for _, name := range storestate.ObjectNames(sdktest.Snapshot{PodReads: reads.PodReads}) {
+			if !seen["\x00"+name] {
+				seen["\x00"+name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
 }

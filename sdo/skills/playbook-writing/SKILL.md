@@ -17,8 +17,8 @@ Start from `examples/template-drift/` or `examples/stuck-pods/`. Write `diagnose
 - Scope absence claims to where you looked. Before recreating or overwriting lost data, require a live check for the authoritative copy; restore it if found. Without that check, leave the write to the responder.
 - Set the known-good value directly, not from controller history a repeat may lack.
 - Carry a whole source restore as `program.ReconcileFromSource`. Omit changes that did not help.
-- Memory is for this application and may name its tables, resources and commands; generalize over what varies, not away from the application. Automate mechanical steps; leave judgement to the README. No passwords.
-- Save commands that worked with waits and checks, recheck state first, find names through relations. A matching Diagnose can select scripts or typed actions. Script output is discarded; signal by exit code.
+- Memory may name this application's commands and fields; generalize over what varies, not away from the application: bind components and stores by relation or parameter. Automate mechanical steps; leave judgement to the README. No passwords.
+- Save working commands with waits and checks; recheck state first. A matching Diagnose can select scripts or typed actions. Script output is discarded; signal by exit code.
 
 A cause with its own signal gets a detector naming the playbook: [detector.md](detector.md).
 

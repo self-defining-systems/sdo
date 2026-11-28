@@ -46,7 +46,7 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
 
 - [One playbook per repair method](references/rules.md#one-playbook-per-repair-method), not per symptom or service.
 - Roles come from findings: one `ParamSpec` per object Kind. Read other objects through ReadView by
-  relation (selector, owner, mount) where that is natural. Memory belongs to this application and may name its own tables, resources and commands; generalize over what varies between incidents, not away from the application. A partial program beats none.
+  relation (selector, owner, mount) where that is natural. Memory belongs to this application and may name its own commands and fields (programs bind components and stores by relation or parameter); generalize over what varies between incidents, not away from the application. A partial program beats none.
 - Write values only as `FromSource`, `FromObserved` or `FromParam` (a declared scalar with a default).
 - Diagnose returns Match on positive evidence about the bound component, NoMatch when absent, an error
   (Unknown) when a read is unavailable. A deleted object is

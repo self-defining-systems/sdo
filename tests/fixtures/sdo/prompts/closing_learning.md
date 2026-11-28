@@ -6,6 +6,6 @@ Known changes by target:
 2. cache entries: reported: removed stale entries
 Answer in the `reflection` field and leave `incident_result` null.
 For a distinct signal, add a learned detector naming its playbook, with a test and a near-miss test: /opt/sdo/skills/playbook-writing/detector.md.
-Memory may name this application's tables, resources and commands. Generalize over what varies, not away from the application. A program for just the mechanical part beats none; leave judgement to the README.
+Memory may name this application's commands and fields. Generalize over what varies, not away from the application. A program for just the mechanical part beats none; leave judgement to the README.
 Check learned diagnoses and mitigations against recorded evidence before use. Use supported cause classes and plan forms.
 One-line note: map repairs to playbooks or explain omissions.

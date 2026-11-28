@@ -88,19 +88,24 @@ func findingRetrieval(spec program.ProgramSpec, finding sdk.Finding) string {
 // BindingSources lists every value a candidate producer can emit.
 var BindingSources = []string{BindingSourceFinding, BindingSourceHint, BindingSourceSuspect, BindingSourceCredited}
 
-// KeyedMatching binds playbooks by the pairs they were credited for.
+// KeyedMatching ranks playbook bindings by the pairs they were credited for.
 type KeyedMatching struct {
 	// Credits are the pairs each playbook earned. A playbook without any keeps
 	// the finding binding.
 	Credits ProgramCredits
 	// OpeningKeys are the alerts the incident opened on: the symptom side of a pair.
 	OpeningKeys []string
-	// Stage is the automatic stage: a playbook with credited pairs binds only
-	// through them, and of several credited Matches only the first in suspect
-	// order is kept. The responder's own diagnosis (Stage false) also sees the
-	// finding-bound candidates, so a playbook that matches a suspect it was not
-	// yet credited for can still be offered.
+	// Stage is the automatic stage. Credits rank a playbook's bindings and
+	// never filter them: a credited playbook binds through its credited pairs
+	// first and through finding suspects after them, so a sibling component its
+	// Diagnose matches still applies. Of several Matches of one credited
+	// playbook only the first in rank order is kept: one application per pass.
 	Stage bool
+	// Suspect reports whether a resource is the workload of a component on a
+	// failing path, or of an opening condition's own component. In the stage
+	// only such a resource lets a finding bind a credited playbook to a
+	// sibling, so an unrelated clue never does; nil admits no sibling.
+	Suspect func(sdk.ObjectRef) bool
 	// Restore are the built-in source-restore candidates: components on a
 	// failing path, bound by component name. They are offered like any playbook's
 	// candidates; whether the stage applies one is the loop's BuiltinRestoreAuto.
@@ -153,6 +158,15 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 		if keyed.Attempted[key] && source != BindingSourceCredited {
 			return
 		}
+		// In the stage a credited pair ranks the binding a finding already found.
+		if seen[key] && keyed.Stage && source == BindingSourceCredited && candidates[position[key]].source != BindingSourceCredited {
+			previous := candidates[position[key]]
+			candidates[position[key]] = candidate{fingerprint: fingerprint, source: source, retrieval: retrieval, id: id, bindings: bindings, rank: rank}
+			if previous.fingerprint != "" {
+				aliases[key] = append(aliases[key], previous)
+			}
+			return
+		}
 		if seen[key] {
 			// A finding that names the playbook is why it was tried, whichever finding got there first.
 			if retrieval == RetrievalDetector {
@@ -167,17 +181,25 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 		position[key] = len(candidates)
 		candidates = append(candidates, candidate{fingerprint: fingerprint, source: source, retrieval: retrieval, id: id, bindings: bindings, rank: rank})
 	}
-	for _, finding := range findings {
+	for index, finding := range findings {
 		if finding.Status != sdk.FindingActive {
 			continue
 		}
 		for _, spec := range registry.List() {
-			if spec.ID == SourceRestoreID || keyed.Stage && keyed.Credits.Has(spec.ID) {
+			if spec.ID == SourceRestoreID {
 				continue
 			}
 			bindings, source, ok := findingProgramBindings(spec, finding)
 			if ok {
-				add(spec.ID, bindings, FindingFingerprint(finding), source, findingRetrieval(spec, finding), 0)
+				rank := 0
+				if keyed.Stage && keyed.Credits.Has(spec.ID) {
+					if !keyed.suspectSibling(bindings, finding) {
+						continue
+					}
+					// After every credited pair, in finding order.
+					rank = findingBoundRank + index
+				}
+				add(spec.ID, bindings, FindingFingerprint(finding), source, findingRetrieval(spec, finding), rank)
 			}
 		}
 	}
@@ -262,6 +284,10 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 	return keyedStageRuns(runs, keyed)
 }
 
+// findingBoundRank places a credited playbook's finding-bound bindings after
+// all of its credited ones, which rank by suspect position from 1.
+const findingBoundRank = 1 << 30
+
 type creditedBinding struct {
 	bindings    program.Bindings
 	fingerprint string
@@ -304,26 +330,48 @@ func creditedBindings(spec program.ProgramSpec, keyed KeyedMatching, findings []
 	return result
 }
 
-// keyedStageRuns keeps, for each playbook with credited pairs, only the first
-// Match in suspect order: one playbook application per stage pass. Diagnoses
-// that did not Match stay as evidence.
+// keyedStageRuns keeps, for each playbook with credited pairs, only its first
+// Match in rank order (credited pairs by suspect position, then finding-bound
+// bindings): one playbook application per stage pass. Diagnoses that did not
+// Match stay as evidence.
 func keyedStageRuns(runs []ProgramRun, keyed KeyedMatching) []ProgramRun {
 	if !keyed.Stage || !keyed.active() {
 		return runs
 	}
-	first := map[string]int{}
+	first := map[string]ProgramRun{}
 	for _, run := range runs {
-		if run.BindingSource != BindingSourceCredited || run.Verdict.Result != program.Match {
+		if !keyed.Credits.Has(run.ProgramID) || run.Verdict.Result != program.Match {
 			continue
 		}
-		if rank, ok := first[run.ProgramID]; !ok || run.suspectRank < rank {
-			first[run.ProgramID] = run.suspectRank
+		if best, ok := first[run.ProgramID]; !ok || run.suspectRank < best.suspectRank {
+			first[run.ProgramID] = run
 		}
 	}
 	return slices.DeleteFunc(runs, func(run ProgramRun) bool {
-		rank, ok := first[run.ProgramID]
-		return ok && run.BindingSource == BindingSourceCredited && run.Verdict.Result == program.Match && run.suspectRank != rank
+		best, ok := first[run.ProgramID]
+		return ok && run.Verdict.Result == program.Match && !run.Bindings.Equal(best.Bindings)
 	})
+}
+
+// suspectSibling reports whether finding may bind a credited playbook in the
+// stage: the bound component is a suspect. A binding without the component
+// role is judged by its other objects, and one with no object by the
+// resources the finding names.
+func (k KeyedMatching) suspectSibling(bindings program.Bindings, finding sdk.Finding) bool {
+	if k.Suspect == nil {
+		return false
+	}
+	if ref, ok := bindings.Objects[ComponentRole]; ok {
+		return k.Suspect(ref)
+	}
+	var refs []sdk.ObjectRef
+	for _, ref := range bindings.Objects {
+		refs = append(refs, ref)
+	}
+	if len(refs) == 0 {
+		refs = objectOfFinding(finding)
+	}
+	return slices.ContainsFunc(refs, k.Suspect)
 }
 
 // findingProgramBindings is the shared candidate/target boundary. Optional
