@@ -107,6 +107,62 @@ def test_deployer_receives_trusted_registry_and_rejects_other_image_host(
     assert request.registry_host in prompts[0]
 
 
+def _proposal_with_image(image: str):
+    from types import SimpleNamespace
+
+    def turn(_provider: str, _prompt: str, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            output_json=(
+                '{"proposed":true,"summary":"ready","image_builds":[{"image":"' + image + '",'
+                '"context_path":".","dockerfile_path":"Dockerfile"}],"manifest_paths":["deploy/app.yaml"],'
+                '"expected_workload_ids":["Deployment/demo/api"]}'
+            ),
+            session_id="session-1",
+        )
+
+    return turn
+
+
+# The Go host validates --registry-host as host[:port] (buildkit.ValidateRegistryHost): the port is optional, so a
+# registry served on the default HTTPS port (a cloud registry) is a valid trusted host for the deployer too.
+@pytest.mark.parametrize("registry", ["registry.example.com", "registry.example.com:5000", "10.0.0.5:5000"])
+def test_deployer_accepts_every_registry_host_the_go_host_accepts(
+    registry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "sdo.agents.source_deployment.worker.run_structured_turn", _proposal_with_image(f"{registry}/team/app:v1")
+    )
+    request = SourceDeploymentRequest(
+        application="demo", namespace="demo", health_objective="healthy", attempt=1, registry_host=registry
+    )
+    result = propose_source(request, tmp_path)
+    assert [image.image for image in result.plan.images] == [f"{registry}/team/app:v1"]
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        "registry.example.com/team",
+        "https://registry.example.com",
+        "Registry.example.com",
+        "registry.example.com:0",
+        "registry.example.com:70000",
+        "-registry.example.com",
+    ],
+)
+def test_deployer_rejects_registry_hosts_the_go_host_rejects(
+    registry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "sdo.agents.source_deployment.worker.run_structured_turn", _proposal_with_image(f"{registry}/app:v1")
+    )
+    request = SourceDeploymentRequest(
+        application="demo", namespace="demo", health_objective="healthy", attempt=1, registry_host=registry
+    )
+    with pytest.raises(ValueError, match="trusted registry host"):
+        propose_source(request, tmp_path)
+
+
 def test_propose_source_emits_new_form_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 

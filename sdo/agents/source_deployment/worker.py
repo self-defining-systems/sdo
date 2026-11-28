@@ -92,8 +92,20 @@ def _authored_deployment_path(path: Path) -> bool:
     return len(path.parts) >= 4 and path.parts[1] == "deployment" and path.parts[2] in _EFFECTIVE_DEPLOYMENT_DIRS
 
 
+# A DNS-1123 subdomain, the rule the Go host applies to --registry-host (buildkit.ValidateRegistryHost).
+_DNS_SUBDOMAIN = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
+
+
+def _valid_registry_host(registry_host: str) -> bool:
+    """host[:port] exactly as the Go host accepts it: the port is optional (a cloud registry serves HTTPS on 443)."""
+    name, has_port, port = registry_host.partition(":")
+    if has_port and not (port.isdigit() and port.isascii() and 1 <= int(port) <= 65535):
+        return False
+    return len(name) <= 253 and _DNS_SUBDOMAIN.fullmatch(name) is not None
+
+
 def _trusted_image(image: str, registry_host: str) -> str:
-    if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*:[1-9][0-9]{0,4}", registry_host):
+    if not _valid_registry_host(registry_host):
         raise ValueError("source deployment requires a trusted registry host")
     if not image.startswith(registry_host + "/") or image == registry_host + "/":
         raise ValueError(f"image build target must use trusted registry {registry_host!r}")
